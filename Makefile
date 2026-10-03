@@ -1,5 +1,5 @@
 .PHONY: install fmt fmt-check lint typecheck imports test-unit test-integration test \
-	audit secrets migrations-check infra-up infra-down run check
+	audit secrets migrations-check dev-env infra-up infra-down run check
 
 BACKEND := backend
 GITLEAKS_IMAGE := zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
@@ -41,6 +41,8 @@ test:
 		--cov-fail-under=95
 	$(UV) coverage report --include='*/svoi_pravila/domain/*' --fail-under=100
 	$(UV) coverage report --include='*/svoi_pravila/application/*' --fail-under=100
+	$(UV) coverage report --include='*/svoi_pravila/crypto/*' --fail-under=100
+	$(UV) coverage report --include='*/svoi_pravila/adapters/persistence/*' --fail-under=95
 
 audit:
 	cd $(BACKEND) && uv export --frozen --no-dev --no-emit-project -o /tmp/svoi-pravila-requirements.txt
@@ -53,8 +55,11 @@ migrations-check:
 	$(UV) alembic upgrade head
 	$(UV) alembic check
 
-infra-up:
+dev-env:
 	test -f .env || cp .env.example .env
+	cd $(BACKEND) && uv run python ../scripts/ensure_dev_env.py
+
+infra-up: dev-env
 	docker compose up -d --wait
 
 infra-down:
@@ -63,4 +68,4 @@ infra-down:
 run:
 	$(UV) svoi-pravila-api
 
-check: lint fmt-check typecheck imports test audit secrets migrations-check
+check: lint fmt-check typecheck imports migrations-check test audit secrets

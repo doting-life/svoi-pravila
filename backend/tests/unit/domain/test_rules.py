@@ -102,6 +102,25 @@ def test_reject_edit_keeps_effective() -> None:
 
 
 @pytest.mark.unit
+def test_approve_edit_stays_active() -> None:
+    active = Rule.propose(
+        rule_id=RuleId(UUID(int=14)),
+        scope=PairScope(pair_id=PairId(UUID(int=23))),
+        category=RuleCategory.APOLOGY,
+        approvers=frozenset({OWNER, PARTNER}),
+        author_id=OWNER,
+        text=RuleText("first"),
+        now=NOW,
+    ).approve(PARTNER, NOW)
+    edited = active.propose_edit(OWNER, RuleText("second"), NOW + timedelta(seconds=1))
+    approved = edited.approve(PARTNER, NOW + timedelta(seconds=2))
+    assert approved.status is RuleStatus.ACTIVE
+    assert approved.effective_revision is not None
+    assert approved.effective_revision.text.value == "second"
+    assert _reconstruct(approved) == approved
+
+
+@pytest.mark.unit
 def test_invalid_rehydration_rejected() -> None:
     with pytest.raises(InvalidValueError):
         Rule(

@@ -8,7 +8,7 @@ from uuid import UUID
 import pytest
 
 from svoi_pravila.application.errors import ConflictError
-from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
+from svoi_pravila.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from svoi_pravila.domain.consent import Consent
 from svoi_pravila.domain.contact import Contact
 from svoi_pravila.domain.enums import ConsentKind, RelationshipKind, RuleCategory, RuleStatus
@@ -30,15 +30,24 @@ from svoi_pravila.domain.user import User
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-@pytest.mark.unit
-async def test_user_repo_roundtrip(uow_factory: UnitOfWorkFactory) -> None:
-    user = User(
-        id=UserId(UUID(int=1)),
-        telegram_user_id=TelegramUserId(42),
+def _user(n: int, telegram: int) -> User:
+    return User(
+        id=UserId(UUID(int=n)),
+        telegram_user_id=TelegramUserId(telegram),
         created_at=NOW,
         age_confirmed_at=None,
         active_contact_id=None,
     )
+
+
+async def _seed_users(uow: UnitOfWork, *users: User) -> None:
+    for user in users:
+        await uow.users.add(user)
+
+
+@pytest.mark.unit
+async def test_user_repo_roundtrip(uow_factory: UnitOfWorkFactory) -> None:
+    user = _user(1, 42)
     async with uow_factory() as uow:
         await uow.users.add(user)
         assert await uow.users.get(user.id) == user
@@ -63,20 +72,8 @@ async def test_user_repo_roundtrip(uow_factory: UnitOfWorkFactory) -> None:
 
 @pytest.mark.unit
 async def test_user_add_duplicate_telegram_id_conflicts(uow_factory: UnitOfWorkFactory) -> None:
-    first = User(
-        id=UserId(UUID(int=1)),
-        telegram_user_id=TelegramUserId(42),
-        created_at=NOW,
-        age_confirmed_at=None,
-        active_contact_id=None,
-    )
-    second = User(
-        id=UserId(UUID(int=2)),
-        telegram_user_id=TelegramUserId(42),
-        created_at=NOW,
-        age_confirmed_at=None,
-        active_contact_id=None,
-    )
+    first = _user(1, 42)
+    second = _user(2, 42)
     async with uow_factory() as uow:
         await uow.users.add(first)
         await uow.commit()
@@ -88,21 +85,42 @@ async def test_user_add_duplicate_telegram_id_conflicts(uow_factory: UnitOfWorkF
 @pytest.mark.unit
 async def test_invite_add_duplicate_token_hash_conflicts(uow_factory: UnitOfWorkFactory) -> None:
     token_hash = InviteTokenHash.from_raw_token("same-token")
+    inviter_a = _user(10, 110)
+    inviter_b = _user(11, 111)
+    contact_a = Contact(
+        id=ContactId(UUID(int=20)),
+        owner_id=inviter_a.id,
+        label=ContactLabel("A"),
+        relationship=RelationshipKind.FRIEND,
+        pair_id=None,
+        created_at=NOW,
+    )
+    contact_b = Contact(
+        id=ContactId(UUID(int=21)),
+        owner_id=inviter_b.id,
+        label=ContactLabel("B"),
+        relationship=RelationshipKind.FRIEND,
+        pair_id=None,
+        created_at=NOW,
+    )
     first = Invite.create(
         invite_id=InviteId(UUID(int=50)),
-        inviter_id=UserId(UUID(int=10)),
-        contact_id=ContactId(UUID(int=20)),
+        inviter_id=inviter_a.id,
+        contact_id=contact_a.id,
         token_hash=token_hash,
         created_at=NOW,
     )
     second = Invite.create(
         invite_id=InviteId(UUID(int=51)),
-        inviter_id=UserId(UUID(int=11)),
-        contact_id=ContactId(UUID(int=21)),
+        inviter_id=inviter_b.id,
+        contact_id=contact_b.id,
         token_hash=token_hash,
         created_at=NOW,
     )
     async with uow_factory() as uow:
+        await _seed_users(uow, inviter_a, inviter_b)
+        await uow.contacts.add(contact_a)
+        await uow.contacts.add(contact_b)
         await uow.invites.add(first)
         await uow.commit()
     async with uow_factory() as uow:
@@ -112,10 +130,13 @@ async def test_invite_add_duplicate_token_hash_conflicts(uow_factory: UnitOfWork
 
 @pytest.mark.unit
 async def test_pair_add_duplicate_members_conflicts(uow_factory: UnitOfWorkFactory) -> None:
-    a, b = UserId(UUID(int=10)), UserId(UUID(int=11))
+    a_user = _user(10, 210)
+    b_user = _user(11, 211)
+    a, b = a_user.id, b_user.id
     first = Pair(id=PairId(UUID(int=30)), members=frozenset({a, b}), created_at=NOW)
     second = Pair(id=PairId(UUID(int=31)), members=frozenset({a, b}), created_at=NOW)
     async with uow_factory() as uow:
+        await _seed_users(uow, a_user, b_user)
         await uow.pairs.add(first)
         await uow.commit()
     async with uow_factory() as uow:
@@ -125,8 +146,10 @@ async def test_pair_add_duplicate_members_conflicts(uow_factory: UnitOfWorkFacto
 
 @pytest.mark.unit
 async def test_contact_pair_rule_invite_repos(uow_factory: UnitOfWorkFactory) -> None:
-    owner = UserId(UUID(int=10))
-    partner = UserId(UUID(int=11))
+    owner_user = _user(10, 310)
+    partner_user = _user(11, 311)
+    owner = owner_user.id
+    partner = partner_user.id
     contact = Contact(
         id=ContactId(UUID(int=20)),
         owner_id=owner,
@@ -167,6 +190,7 @@ async def test_contact_pair_rule_invite_repos(uow_factory: UnitOfWorkFactory) ->
     )
 
     async with uow_factory() as uow:
+        await _seed_users(uow, owner_user, partner_user)
         await uow.contacts.add(contact)
         await uow.pairs.add(pair)
         await uow.rules.add(rule)

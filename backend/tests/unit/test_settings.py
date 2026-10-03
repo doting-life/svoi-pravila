@@ -29,6 +29,8 @@ def test_settings_rejects_missing_environment(monkeypatch: pytest.MonkeyPatch) -
             valkey_url="redis://127.0.0.1:6379/0",
             readiness_timeout_seconds=1.0,
             forwarded_allow_ips="127.0.0.1",
+            data_kek="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            data_kek_id="test-1",
         )
 
 
@@ -77,6 +79,11 @@ def test_settings_from_env_requires_environment(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("SP_VALKEY_URL", "redis://127.0.0.1:6379/0")
     monkeypatch.setenv("SP_READINESS_TIMEOUT_SECONDS", "1.5")
     monkeypatch.setenv("SP_FORWARDED_ALLOW_IPS", "127.0.0.1")
+    monkeypatch.setenv(
+        "SP_DATA_KEK",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    )
+    monkeypatch.setenv("SP_DATA_KEK_ID", "test-1")
     with pytest.raises(ValidationError):
         Settings()
 
@@ -94,7 +101,23 @@ def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SP_VALKEY_URL", "redis://127.0.0.1:6379/0")
     monkeypatch.setenv("SP_READINESS_TIMEOUT_SECONDS", "1.5")
     monkeypatch.setenv("SP_FORWARDED_ALLOW_IPS", "10.0.0.1")
+    monkeypatch.setenv(
+        "SP_DATA_KEK",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    )
+    monkeypatch.setenv("SP_DATA_KEK_ID", "test-1")
     settings = Settings()
     assert settings.environment is Environment.TEST
     assert settings.readiness_timeout_seconds == 1.5
     assert settings.forwarded_allow_ips == "10.0.0.1"
+    assert len(settings.data_kek_bytes()) == 32
+
+
+@pytest.mark.unit
+def test_settings_rejects_bad_data_kek() -> None:
+    with pytest.raises(ValidationError):
+        make_settings(data_kek="not-base64!!!")
+    with pytest.raises(ValidationError):
+        make_settings(data_kek="AAAA")  # too short
+    with pytest.raises(ValidationError):
+        make_settings(data_kek_id="BAD_ID")

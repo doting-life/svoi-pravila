@@ -14,6 +14,8 @@ import structlog
 from svoi_pravila.observability.logging import configure_logging
 from tests.factories import make_settings
 
+pytest_plugins = ["tests.support.postgres"]
+
 _NAMED_LOGGERS = (
     "uvicorn",
     "uvicorn.error",

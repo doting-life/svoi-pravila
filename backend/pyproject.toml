@@ -17,6 +17,8 @@ dependencies = [
     "asyncpg==0.31.0",
     "alembic==1.20.0",
     "redis==8.1.0",
+    "cryptography==50.0.2",
+    "uuid-utils==1.0.0",
 ]
 
 [project.scripts]
@@ -125,6 +127,7 @@ source_modules = [
 forbidden_modules = [
     "svoi_pravila.config",
     "svoi_pravila.observability",
+    "svoi_pravila.crypto",
     "fastapi",
     "starlette",
     "pydantic",
@@ -149,6 +152,7 @@ forbidden_modules = [
     "svoi_pravila.bootstrap",
     "svoi_pravila.config",
     "svoi_pravila.observability",
+    "svoi_pravila.crypto",
     "fastapi",
     "starlette",
     "pydantic",
@@ -162,4 +166,20 @@ forbidden_modules = [
     "uvicorn",
     "hypothesis",
     "pytest",
+]
+
+[[tool.importlinter.contracts]]
+name = "Crypto may not import application layers"
+type = "forbidden"
+source_modules = [
+    "svoi_pravila.crypto",
+]
+forbidden_modules = [
+    "svoi_pravila.domain",
+    "svoi_pravila.application",
+    "svoi_pravila.adapters",
+    "svoi_pravila.api",
+    "svoi_pravila.bootstrap",
+    "svoi_pravila.config",
+    "svoi_pravila.observability",
 ]

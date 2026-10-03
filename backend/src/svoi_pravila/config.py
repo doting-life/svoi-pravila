@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import re
 from enum import StrEnum
 from typing import Self
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_KEK_ID_RE = re.compile(r"^[a-z0-9-]{1,32}$")
+_KEK_BYTES = 32
 
 
 class Environment(StrEnum):
@@ -44,6 +50,8 @@ class Settings(BaseSettings):
     valkey_url: SecretStr
     readiness_timeout_seconds: float = Field(default=2.0, gt=0, le=5)
     forwarded_allow_ips: str
+    data_kek: SecretStr
+    data_kek_id: str
 
     @field_validator("database_url")
     @classmethod
@@ -64,6 +72,34 @@ class Settings(BaseSettings):
             msg = "valkey_url must start with redis:// or rediss://"
             raise ValueError(msg)
         return value
+
+    @field_validator("data_kek")
+    @classmethod
+    def data_kek_must_be_32_bytes_base64(cls, value: SecretStr) -> SecretStr:
+        """Reject KEK values that are not base64 of exactly 32 bytes."""
+        raw = value.get_secret_value()
+        try:
+            decoded = base64.b64decode(raw, validate=True)
+        except binascii.Error as exc:
+            msg = "data_kek must be valid base64"
+            raise ValueError(msg) from exc
+        if len(decoded) != _KEK_BYTES:
+            msg = f"data_kek must decode to exactly {_KEK_BYTES} bytes"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("data_kek_id")
+    @classmethod
+    def data_kek_id_must_match_pattern(cls, value: str) -> str:
+        """Reject KEK identifiers outside the allowed pattern."""
+        if _KEK_ID_RE.fullmatch(value) is None:
+            msg = "data_kek_id must match ^[a-z0-9-]{1,32}$"
+            raise ValueError(msg)
+        return value
+
+    def data_kek_bytes(self) -> bytes:
+        """Return the decoded 32-byte KEK."""
+        return base64.b64decode(self.data_kek.get_secret_value(), validate=True)
 
     @model_validator(mode="after")
     def debug_forbidden_outside_local_test(self) -> Self:

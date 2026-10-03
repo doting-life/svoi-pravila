@@ -1,0 +1,1 @@
+"""Svoi Pravila backend service."""

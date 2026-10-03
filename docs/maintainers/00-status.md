@@ -4,8 +4,9 @@
 
 ## Текущее
 - Дата: 2026-10-03 · Спринт 0 (Фундамент)
-- Активная задача: **0005-b — честный бенчмарк, выбор модели, итерация промптов** · ветка `task/0005-llm-gigachat`
-- Риск: качество/латентность GigaChat-2 на сценариях не проходят цели; выбор модели — по данным 0005-b; если ни одна модель не проходит — решение владельца (компромисс латентность/качество)
+- Активная задача: **0005-c — двухфазный «Расшифровать», чистка подавлений, финальный бенчмарк** · ветка `task/0005-llm-gigachat`
+- Модели (0005-b): «Смягчить» и «Помоги сказать» — GigaChat-3-Lightning (цели выполнены); «Расшифровать» — по итогам 0005-c (ADR-0006 ред. 1.1)
+- Риск: лимиты GigaChat (429) на личном ключе мешают полным прогонам — владелец проверяет остаток и лимиты в кабинете
 - Разработка и ручное тестирование — локально в Docker; VPS — после полной приёмки (ADR-0005)
 - Основная ветка — `master` (решение владельца 03.10)
 - Правило с 03.10: промпты и отчёты Cursor — только в чате, в репозитории не хранятся
@@ -28,7 +29,8 @@
 | 0004-a | Local stack review fixes | `task/0004-local-stack` | проверен 03.10 | **ACCEPT** (0004 целиком) |
 | 0005 | Generation port, GigaChat adapter, prompt registry, benchmark | `task/0005-llm-gigachat` | проверен 03.10 | BLOCKED (нет ключей) + CHANGES REQUIRED (9 пунктов) |
 | 0005-a | GigaChat adapter fixes, live benchmark, HTTP-level tests | `task/0005-llm-gigachat` | проверен 03.10 | CHANGES REQUIRED (адаптер принят; бенчмарк недостоверен: широкий `except`, TTFC; нераскрытые omit/подавления) |
-| 0005-b | Trustworthy benchmark, model selection, prompt iteration | `task/0005-llm-gigachat` | выдан | — |
+| 0005-b | Trustworthy benchmark, model selection, prompt iteration | `task/0005-llm-gigachat` | проверен 03.10 | BLOCKED (decode) + CHANGES REQUIRED: протокол decode_stream не допускает повтора; неразрешённые per-file ignores (с 0005); 4xx → `server` |
+| 0005-c | Two-phase decode, suppression cleanup, final benchmark | `task/0005-llm-gigachat` | выдан | — |
 
 ## Решения
 | № | Решение | Статус |

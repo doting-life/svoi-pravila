@@ -4,11 +4,11 @@
 
 ## Текущее
 - Дата: 2026-10-03 · Спринт 0 (Фундамент)
-- Активная задача: **0004-a — тест изоляции портит рабочую БД, нестабильные тесты healthcheck** · ветка `task/0004-local-stack` · промпт выдан в чате (03.10)
+- Активная задача: **0005 — порт генерации и адаптер GigaChat, реестр промптов, бенчмарк** · ветка `task/0005-llm-gigachat` · промпт выдан в чате (03.10)
 - Разработка и ручное тестирование — локально в Docker; VPS — после полной приёмки (ADR-0005)
 - Основная ветка — `master` (решение владельца 03.10)
 - Правило с 03.10: промпты и отчёты Cursor — только в чате, в репозитории не хранятся
-- Следующая: 0005 — порт LLM и адаптер GigaChat
+- Следующая: 0006 — события использования и канал Telegram
 - Допущение до решения владельца: D-8 (18+) реализуется как рекомендовано
 
 ## Журнал задач
@@ -24,7 +24,8 @@
 | 0003-a | Persistence review fixes | `task/0003-persistence` | проверен 03.10 | CHANGES REQUIRED (`make typecheck` красный) |
 | 0003-b | Typed contract fixture | `task/0003-persistence` | проверен 03.10 | **ACCEPT** (0003 целиком) |
 | 0004 | Local full stack in Docker | `task/0004-local-stack` | проверен 03.10 | CHANGES REQUIRED (повторный `make check` красный, флаки-тесты) |
-| 0004-a | Local stack review fixes | `task/0004-local-stack` | выдан | — |
+| 0004-a | Local stack review fixes | `task/0004-local-stack` | проверен 03.10 | **ACCEPT** (0004 целиком) |
+| 0005 | Generation port, GigaChat adapter, prompt registry, benchmark | `task/0005-llm-gigachat` | выдан | — |
 
 ## Решения
 | № | Решение | Статус |

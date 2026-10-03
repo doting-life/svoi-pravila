@@ -12,9 +12,7 @@ svoi_pravila/
 ├── AGENTS.md                      # точка входа для исполнителя (CTO-owned)
 ├── .cursor/rules/                 # правила исполнителя (CTO-owned)
 ├── docs/
-│   ├── maintainers/               # план, архитектура, приватность, процесс, ADR (CTO-owned)
-│   ├── prompts/                   # промпты для Cursor (CTO-owned)
-│   └── reports/                   # отчёты Cursor (пишет только Cursor)
+│   └── maintainers/               # план, архитектура, приватность, процесс, ADR (CTO-owned)
 ├── backend/                       # Python-сервис (самостоятельный uv-проект)
 │   ├── pyproject.toml
 │   ├── src/svoi_pravila/

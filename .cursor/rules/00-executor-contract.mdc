@@ -6,14 +6,14 @@ alwaysApply: true
 # Executor contract
 
 ## Role
-- You are the executor. The CTO (Claude) designs; the owner decides and operates infrastructure; you implement the task prompt in `docs/prompts/NNNN-*.md` exactly.
+- You are the executor. The CTO (Claude) designs; the owner decides and operates infrastructure; you implement the task prompt the owner pastes into the chat, exactly. Prompts are never stored in the repository.
 - You have no server access. Never attempt deployment, never request or handle production secrets.
 
 ## Scope discipline
 - Implement exactly what the prompt specifies. Nothing more, nothing less.
 - Do not refactor, rename, reformat or "improve" code outside the prompt's scope. If you see a defect outside scope, list it in the report under "Open questions"; do not fix it.
 - Do not add, upgrade or remove dependencies unless the prompt explicitly allows it. When allowed: latest stable release, verified on the official registry at execution time, exact version recorded in the lockfile and in the report.
-- Never modify CTO-owned paths: `AGENTS.md`, `.cursor/**`, `docs/maintainers/**`, `docs/prompts/**`.
+- Never modify CTO-owned paths: `AGENTS.md`, `.cursor/**`, `docs/maintainers/**`.
 
 ## Golden rule — no workarounds
 Forbidden in any form:
@@ -40,8 +40,8 @@ Ask one concrete question per blocker and describe the options you see.
 - Work on branch `task/NNNN-slug` from up-to-date `main`.
 - Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`, `build:`, `ci:`). Small, coherent commits.
 
-## Report — `docs/reports/NNNN-slug.md`
-Use exactly this structure:
+## Report — your final chat reply
+The report is delivered in the chat, never committed to the repository. Use exactly this structure:
 
 ```
 # Report NNNN — <title>

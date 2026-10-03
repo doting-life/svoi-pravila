@@ -1,0 +1,15 @@
+---
+description: Testing standards and coverage gates
+alwaysApply: true
+---
+
+# Testing rules
+
+- Layout: `backend/tests/unit` (no I/O), `backend/tests/integration` (real PostgreSQL and Valkey from docker compose / CI services), `backend/tests/contract` (adapter behaviour against recorded provider responses).
+- Coverage gates: `domain` and `application` — 100 % lines and branches; overall — at least 95 %. Never lower a threshold.
+- Unit tests use in-memory fakes of ports defined in `tests/fakes`, not mocks of internals. Mock only at true process boundaries.
+- No network access in unit or contract tests. LLM and Telegram behaviour is tested with fakes or recorded fixtures that contain synthetic text only.
+- Test behaviour and invariants, including edge cases and failure paths (timeouts, invalid LLM output, duplicate updates, unauthorized access). Coverage without assertions is a defect.
+- Property-based tests (Hypothesis) for parsers, validators and crypto round-trips.
+- Tests are deterministic: time via fake `Clock`, ids via fake `IdGenerator`, no sleeps.
+- LLM quality evals (`backend/evals`) are separate from the test suite and run on demand; they never call the provider from the default `pytest` run.

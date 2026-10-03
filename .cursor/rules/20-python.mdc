@@ -1,0 +1,17 @@
+---
+description: Python backend standards
+globs: backend/**
+alwaysApply: false
+---
+
+# Python standards
+
+- Python 3.13 (pinned in `.python-version`). Package manager: `uv` only; commit `uv.lock`. Never use pip directly.
+- Fully typed code; `mypy --strict` must pass. No `Any` in public signatures. Prefer `Protocol`, `TypedDict`, frozen `dataclass(slots=True)` in domain/application; Pydantic v2 models only at the edges (config, API schemas, LLM output schemas).
+- Async all the way for I/O. No blocking calls in async code. Every network call has an explicit timeout.
+- `ruff` is the linter and formatter; configuration lives in `backend/pyproject.toml` and is CTO-controlled through prompts.
+- SQLAlchemy 2.x typed ORM (`Mapped[...]`) with `asyncpg`; sessions only through the Unit of Work adapter. Every schema change is an Alembic migration with a working downgrade. No raw SQL string interpolation.
+- Settings via `pydantic-settings`; secrets typed as `SecretStr`; never log or `repr` a secret.
+- Logging via `structlog` through the project logger factory only. Never use `print`. Never pass user text, LLM prompts/outputs, rule text, contact labels or Telegram message objects to a logger — log ids, counts, durations and enums.
+- Exceptions: catch the narrowest type; re-raise or translate; never swallow. No bare `except`.
+- Public functions and classes have concise docstrings describing behaviour and invariants, not implementation trivia.

@@ -1,0 +1,27 @@
+---
+description: Personal data and security requirements (privacy by design, highly sensitive relationship data)
+alwaysApply: true
+---
+
+# Privacy and security rules
+
+Reference: `docs/maintainers/03-privacy-and-security.md` and `docs/maintainers/adr/ADR-0002-*` (read-only for you).
+
+## Non-negotiable
+1. Conversation texts (drafts, incoming messages, LLM prompts and outputs) are **never persisted**: not in the database, not in Valkey (except the encrypted, single-use, short-TTL prepared result defined by the architecture), not in logs, metrics, traces, exceptions or test fixtures taken from real users.
+2. Third-party metadata (forward origin, sender names, usernames, ids) is dropped at the channel adapter boundary before any use case is called.
+3. C2 data (rule text, contact labels) is encrypted through the `Cipher` port before persistence. Never add a plaintext column for C2.
+4. Analytics events carry the HMAC pseudonym of the user, never the raw Telegram id, and never text.
+5. No external SaaS for logs, errors, analytics or LLM inference outside the approved providers. No new outbound network destination without an explicit prompt.
+6. TLS verification is never disabled.
+
+## Secrets
+- Secrets only from settings (`SecretStr`). Never commit secrets, real tokens, real user data or production URLs. `.env.example` contains names and safe descriptions only.
+
+## Input handling
+- Treat every user- and partner-supplied text as untrusted. Pass it to the LLM only as a delimited data block per the prompt registry conventions; validate LLM output against its schema.
+- Validate and bound all inputs (length, type, enum) at the edges.
+
+## Required tests when touching these areas
+- A log canary test: a unique marker inside processed text must not appear in any captured log event.
+- Authorization tests for every endpoint/use case that accesses contacts, pairs or rules (owner, partner, stranger).

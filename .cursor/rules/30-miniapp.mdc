@@ -1,0 +1,17 @@
+---
+description: Mini-app (TypeScript/React) standards
+globs: miniapp/**
+alwaysApply: false
+---
+
+# Mini-app standards
+
+- Vite + React + TypeScript with `strict: true` and `noUncheckedIndexedAccess: true`. Package manager: `pnpm`; commit the lockfile.
+- Linter/formatter: Biome. Tests: Vitest + Testing Library.
+- API types and client are generated from the backend OpenAPI schema. Never hand-write API types or duplicate backend contracts.
+- Server state via TanStack Query. No global mutable singletons.
+- Telegram integration only through the official community SDK chosen in the bootstrap prompt; `initData` is sent to the backend unmodified and never trusted client-side.
+- Do not store personal data, rule text or contact labels in `localStorage`, `sessionStorage`, `DeviceStorage` or cookies. UI preferences only.
+- No third-party analytics, fonts, CDNs or trackers. Assets are bundled; Content-Security-Policy must remain strict.
+- All user-facing strings go through the localization catalog.
+- Accessibility: semantic elements, labelled controls, respects Telegram theme parameters.

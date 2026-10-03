@@ -1,0 +1,28 @@
+---
+description: Architecture boundaries and module conventions (hexagonal)
+alwaysApply: true
+---
+
+# Architecture rules
+
+Reference: `docs/maintainers/02-architecture.md` (read-only for you).
+
+## Layers (backend/src/svoi_pravila)
+`domain` ← `application` ← `adapters/*`, `api` ← `bootstrap`
+
+- `domain`: entities, value objects, domain errors, pure policies. Standard library only. No Pydantic, SQLAlchemy, aiogram, FastAPI, httpx, logging frameworks, I/O, clocks or randomness (time and ids come through ports).
+- `application`: use cases and ports (`typing.Protocol`). Imports `domain` only. Use cases receive ports via constructor injection. One public `execute`-style entry per use case; input/output are immutable dataclasses.
+- `adapters/<name>`: implement ports. Adapters never import each other (shared `observability` is allowed).
+- `api` and `adapters/channels/*` call use cases only — never repositories, LLM clients or the database directly.
+- `bootstrap.py` is the only composition root. No module-level singletons or global mutable state elsewhere.
+- `config.py` is the only place that reads environment variables.
+
+Boundaries are enforced by `import-linter`; a broken contract is a failed gate. Never weaken a contract.
+
+## Conventions
+- Authorization (who may access a contact/pair/rule) lives in use cases, not in routers or handlers.
+- Domain errors are explicit types; adapters translate them to transport responses. No string-matching on error messages.
+- Identifiers: UUIDv7 generated through the `IdGenerator` port.
+- Time: timezone-aware UTC through the `Clock` port.
+- All user-facing strings live in the localization catalog of the channel adapter, never inline in handlers.
+- Data classes: every new persisted field is classified C0 (not personal), C1 (identifier) or C2 (special-category personal data). C2 is always encrypted via the `Cipher` port. State the classification in the report.

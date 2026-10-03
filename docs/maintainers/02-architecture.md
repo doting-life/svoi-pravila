@@ -22,9 +22,10 @@ svoi_pravila/
 │   │   │   ├── persistence/       # SQLAlchemy-модели, репозитории, unit of work
 │   │   │   ├── cache/             # Valkey: лимиты, дедупликация, prepared results
 │   │   │   ├── llm/               # GigaChat-адаптер, реестр промптов
-│   │   │   ├── crypto/            # envelope encryption
+│   │   │   ├── system/            # часы, UUIDv7, генератор токенов
 │   │   │   └── channels/telegram/ # aiogram: роутеры, презентеры, клавиатуры
 │   │   ├── api/                   # FastAPI: webhook, API mini-app, health
+│   │   ├── crypto/                # общий модуль: AES-256-GCM, envelope encryption (ADR-0004)
 │   │   ├── observability/         # логирование, редактирование ПДн, метрики
 │   │   ├── config.py              # единственная точка чтения окружения
 │   │   └── bootstrap.py           # composition root: сборка зависимостей
@@ -45,7 +46,7 @@ domain  ←  application  ←  adapters / api  ←  bootstrap
 ```
 - `domain` не импортирует ничего, кроме стандартной библиотеки. Никаких Pydantic, SQLAlchemy, aiogram.
 - `application` импортирует только `domain`. Здесь объявлены порты (`typing.Protocol`): `LLM`, `RuleRepository`, `UserRepository`, `ConsentRepository`, `UnitOfWork`, `Cipher`, `RateLimiter`, `PreparedResultStore`, `EventSink`, `Clock`, `IdGenerator`.
-- `adapters/*` реализуют порты и не импортируют друг друга (исключение — общий `observability`).
+- `adapters/*` реализуют порты и не импортируют друг друга. Общие инфраструктурные модули, доступные адаптерам: `observability` и `crypto`; `domain` и `application` их не импортируют, а сами они не импортируют слои приложения.
 - `api` и `adapters/channels` вызывают только сценарии `application`, не репозитории напрямую.
 - `bootstrap.py` — единственное место, где адаптеры связываются с портами.
 - Правила проверяются `import-linter` в CI. Нарушение = красный гейт.
@@ -97,7 +98,7 @@ domain  ←  application  ←  adapters / api  ←  bootstrap
 
 - **Классы данных:** `C0` — не ПДн; `C1` — идентификаторы (telegram id); `C2` — ПДн специальной категории (текст правил, метки контактов).
 - `C2` шифруется на уровне приложения: AES-256-GCM, ключ данных (DEK) на пользователя, обёрнутый мастер-ключом (KEK) из секретов сервера. AAD = идентификатор записи + версия схемы. Удаление аккаунта = уничтожение DEK (crypto-shredding) + удаление записей.
-- Для общего свода — DEK пары, обёрнутый для каждого участника.
+- Для общего свода — собственный DEK пары, обёрнутый KEK (ADR-0004).
 - `usage_events` содержат HMAC-псевдоним пользователя (секретный pepper), не telegram id.
 - Тексты переписки не сохраняются нигде: ни в БД, ни в Valkey (кроме prepared result на минуты, зашифрованного), ни в логах, ни в метриках, ни в трейсах.
 - Сроки хранения: см. `03-privacy-and-security.md`.

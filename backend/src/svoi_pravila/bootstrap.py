@@ -12,7 +12,7 @@ from svoi_pravila.adapters.cache.probe import ValkeyProbe
 from svoi_pravila.adapters.persistence.engine import create_engine, dispose_engine
 from svoi_pravila.adapters.persistence.probe import DatabaseProbe
 from svoi_pravila.api.app import create_app
-from svoi_pravila.application.check_readiness import CheckReadiness
+from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.config import Settings
 from svoi_pravila.observability import configure_logging
 

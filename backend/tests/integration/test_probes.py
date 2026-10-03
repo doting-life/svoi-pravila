@@ -11,7 +11,7 @@ from svoi_pravila.adapters.cache.client import close_client, create_client
 from svoi_pravila.adapters.cache.probe import ValkeyProbe
 from svoi_pravila.adapters.persistence.engine import create_engine, dispose_engine
 from svoi_pravila.adapters.persistence.probe import DatabaseProbe
-from svoi_pravila.application.check_readiness import CheckReadiness, ProbeOutcome
+from svoi_pravila.application.use_cases.check_readiness import CheckReadiness, ProbeOutcome
 from svoi_pravila.config import Settings
 from tests.factories import make_settings
 

@@ -4,11 +4,9 @@
 
 ## Текущее
 - Дата: 2026-10-03 · Спринт 0 (Фундамент)
-- Активная задача: **0003 — персистентность: схема, миграции, репозитории, шифрование полей** · ветка `task/0003-persistence` · промпт выдан в чате (03.10)
-- Основная ветка — `master` (решение владельца 03.10)
+- Активная задача: **0001-c — изоляция логирования в тестах, mypy для тестов** · статус: промпт выдан в чате (03.10)
 - Правило с 03.10: промпты и отчёты Cursor — только в чате, в репозитории не хранятся
-- Следующая: 0004 — порт LLM и адаптер GigaChat (зависит от D-2)
-- Допущение до решения владельца: D-8 (18+) реализуется как рекомендовано
+- Следующая: 0002 — доменная модель и порты (готовится после ACCEPT 0001)
 
 ## Журнал задач
 | № | Задача | Ветка | Статус | Вердикт |
@@ -16,10 +14,7 @@
 | 0001 | Repository bootstrap | `task/0001-repo-bootstrap` | проверен 03.10 | CHANGES REQUIRED (10 пунктов) |
 | 0001-a | Bootstrap review fixes | `task/0001-repo-bootstrap` | проверен 03.10 | CHANGES REQUIRED (4 пункта) |
 | 0001-b | Exception-message redaction, test determinism | `task/0001-repo-bootstrap` | проверен 03.10 | продуктовый код принят; тестовая инфраструктура → 0001-c |
-| 0001-c | Test logging isolation, strict typing of tests | `task/0001-repo-bootstrap` | проверен 03.10 | **ACCEPT** (0001 целиком) |
-| 0002 | Domain core: model, ports, management use cases | `task/0002-domain-core` | проверен 03.10 | CHANGES REQUIRED (10 пунктов, 1 критичный по приватности) |
-| 0002-a | Domain core review fixes | `task/0002-domain-core` | проверен 03.10 | **ACCEPT** (0002 целиком) |
-| 0003 | Persistence, field encryption, system adapters | `task/0003-persistence` | выдан | — |
+| 0001-c | Test logging isolation, strict typing of tests | `task/0001-repo-bootstrap` | выдан | — |
 
 ## Решения
 | № | Решение | Статус |

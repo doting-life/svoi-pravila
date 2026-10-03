@@ -10,7 +10,7 @@ from fastapi import FastAPI, Response, status
 from fastapi.responses import JSONResponse
 
 from svoi_pravila.api.middleware import RequestLoggingMiddleware
-from svoi_pravila.application.check_readiness import CheckReadiness
+from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.config import Environment
 
 DisposeHook = Callable[[], Awaitable[None]]

@@ -28,17 +28,18 @@ imports:
 	$(UV) lint-imports
 
 test-unit:
-	$(UV) pytest tests/unit -m unit --cov=svoi_pravila --cov-report=term-missing
+	$(UV) pytest tests/unit tests/contract -m unit --cov=svoi_pravila --cov-report=term-missing
 
 test-integration:
 	$(UV) pytest tests/integration -m integration --cov=svoi_pravila --cov-append --cov-report=term-missing
 
 test:
 	rm -f $(BACKEND)/.coverage
-	$(UV) pytest tests/unit tests/integration \
+	$(UV) pytest tests/unit tests/contract tests/integration \
 		--cov=svoi_pravila \
 		--cov-report=term-missing \
 		--cov-fail-under=95
+	$(UV) coverage report --include='*/svoi_pravila/domain/*' --fail-under=100
 	$(UV) coverage report --include='*/svoi_pravila/application/*' --fail-under=100
 
 audit:

@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from svoi_pravila.api.app import create_app
 from svoi_pravila.api.middleware import RequestLoggingMiddleware
-from svoi_pravila.application.check_readiness import CheckReadiness
+from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.config import Environment
 from tests.fakes.probes import FailingProbe, OkProbe
 

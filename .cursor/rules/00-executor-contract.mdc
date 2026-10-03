@@ -37,9 +37,7 @@ Ask one concrete question per blocker and describe the options you see.
 - Never fabricate versions, test results or behaviour. If something was not verified, say so.
 
 ## Branch and commits
-- Work on branch `task/NNNN-slug` from up-to-date `master` (the default branch).
-- Never discard, stash, reset, clean or overwrite changes you did not make (`git checkout -- …`, `git restore`, `git reset --hard`, `git stash`, `git clean`). If the working tree contains changes outside your task, stop and report BLOCKED.
-- The CTO commits CTO-owned documents directly to `master` as `docs(cto): …` commits; merge `master` into your task branch when the prompt says so.
+- Work on branch `task/NNNN-slug` from up-to-date `main`.
 - Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`, `build:`, `ci:`). Small, coherent commits.
 
 ## Report — your final chat reply

@@ -1,0 +1,243 @@
+"""In-memory Unit of Work with commit/rollback semantics."""
+
+from __future__ import annotations
+
+from copy import deepcopy
+from dataclasses import dataclass, field
+from types import TracebackType
+
+from svoi_pravila.application.errors import ConflictError
+from svoi_pravila.application.ports.repositories import (
+    ConsentRepository,
+    ContactRepository,
+    InviteRepository,
+    PairRepository,
+    RuleRepository,
+    UserRepository,
+)
+from svoi_pravila.application.ports.unit_of_work import UnitOfWork
+from svoi_pravila.domain.consent import Consent
+from svoi_pravila.domain.contact import Contact
+from svoi_pravila.domain.enums import RuleStatus
+from svoi_pravila.domain.ids import ContactId, InviteId, PairId, RuleId, TelegramUserId, UserId
+from svoi_pravila.domain.invite import Invite, InviteTokenHash
+from svoi_pravila.domain.pair import Pair
+from svoi_pravila.domain.rules import Rule, RuleScope
+from svoi_pravila.domain.user import User
+
+
+@dataclass
+class _DurableState:
+    """Committed durable state."""
+
+    users: dict[UserId, User] = field(default_factory=dict)
+    users_by_telegram: dict[int, UserId] = field(default_factory=dict)
+    consents: dict[object, Consent] = field(default_factory=dict)
+    contacts: dict[ContactId, Contact] = field(default_factory=dict)
+    pairs: dict[PairId, Pair] = field(default_factory=dict)
+    rules: dict[RuleId, Rule] = field(default_factory=dict)
+    invites: dict[InviteId, Invite] = field(default_factory=dict)
+    invites_by_hash: dict[str, InviteId] = field(default_factory=dict)
+
+
+class InMemoryUserRepository:
+    """Transactional user repository backed by a working copy."""
+
+    def __init__(self, working: _DurableState) -> None:
+        self._working = working
+
+    async def get(self, user_id: UserId) -> User | None:
+        return self._working.users.get(user_id)
+
+    async def get_by_telegram_id(self, telegram_user_id: TelegramUserId) -> User | None:
+        user_id = self._working.users_by_telegram.get(telegram_user_id.value)
+        if user_id is None:
+            return None
+        return self._working.users.get(user_id)
+
+    async def add(self, user: User) -> None:
+        if user.telegram_user_id.value in self._working.users_by_telegram:
+            raise ConflictError()
+        self._working.users[user.id] = user
+        self._working.users_by_telegram[user.telegram_user_id.value] = user.id
+
+    async def update(self, user: User) -> None:
+        self._working.users[user.id] = user
+        self._working.users_by_telegram[user.telegram_user_id.value] = user.id
+
+
+class InMemoryConsentRepository:
+    """Transactional consent repository."""
+
+    def __init__(self, working: _DurableState) -> None:
+        self._working = working
+
+    async def list_for_user(self, user_id: UserId) -> list[Consent]:
+        return [c for c in self._working.consents.values() if c.user_id == user_id]
+
+    async def add(self, consent: Consent) -> None:
+        self._working.consents[consent.id] = consent
+
+    async def update(self, consent: Consent) -> None:
+        self._working.consents[consent.id] = consent
+
+
+class InMemoryContactRepository:
+    """Transactional contact repository."""
+
+    def __init__(self, working: _DurableState) -> None:
+        self._working = working
+
+    async def get(self, contact_id: ContactId) -> Contact | None:
+        return self._working.contacts.get(contact_id)
+
+    async def list_for_owner(self, owner_id: UserId) -> list[Contact]:
+        return [c for c in self._working.contacts.values() if c.owner_id == owner_id]
+
+    async def count_for_owner(self, owner_id: UserId) -> int:
+        return sum(1 for c in self._working.contacts.values() if c.owner_id == owner_id)
+
+    async def add(self, contact: Contact) -> None:
+        self._working.contacts[contact.id] = contact
+
+    async def update(self, contact: Contact) -> None:
+        self._working.contacts[contact.id] = contact
+
+
+class InMemoryPairRepository:
+    """Transactional pair repository."""
+
+    def __init__(self, working: _DurableState) -> None:
+        self._working = working
+
+    async def get(self, pair_id: PairId) -> Pair | None:
+        return self._working.pairs.get(pair_id)
+
+    async def find_between(self, a: UserId, b: UserId) -> Pair | None:
+        target = frozenset({a, b})
+        for pair in self._working.pairs.values():
+            if pair.members == target:
+                return pair
+        return None
+
+    async def add(self, pair: Pair) -> None:
+        if await self.find_between(*tuple(pair.members)) is not None:
+            raise ConflictError()
+        self._working.pairs[pair.id] = pair
+
+
+class InMemoryRuleRepository:
+    """Transactional rule repository."""
+
+    def __init__(self, working: _DurableState) -> None:
+        self._working = working
+
+    async def get(self, rule_id: RuleId) -> Rule | None:
+        return self._working.rules.get(rule_id)
+
+    async def list_for_scope(self, scope: RuleScope) -> list[Rule]:
+        return [r for r in self._working.rules.values() if r.scope == scope]
+
+    async def count_open_for_scope(self, scope: RuleScope) -> int:
+        return sum(
+            1
+            for r in self._working.rules.values()
+            if r.scope == scope and r.status in {RuleStatus.PROPOSED, RuleStatus.ACTIVE}
+        )
+
+    async def add(self, rule: Rule) -> None:
+        self._working.rules[rule.id] = rule
+
+    async def update(self, rule: Rule) -> None:
+        self._working.rules[rule.id] = rule
+
+
+class InMemoryInviteRepository:
+    """Transactional invite repository."""
+
+    def __init__(self, working: _DurableState) -> None:
+        self._working = working
+
+    async def get(self, invite_id: InviteId) -> Invite | None:
+        return self._working.invites.get(invite_id)
+
+    async def get_by_token_hash(self, token_hash: InviteTokenHash) -> Invite | None:
+        invite_id = self._working.invites_by_hash.get(token_hash.hex)
+        if invite_id is None:
+            return None
+        return self._working.invites.get(invite_id)
+
+    async def add(self, invite: Invite) -> None:
+        if invite.token_hash.hex in self._working.invites_by_hash:
+            raise ConflictError()
+        self._working.invites[invite.id] = invite
+        self._working.invites_by_hash[invite.token_hash.hex] = invite.id
+
+    async def update(self, invite: Invite) -> None:
+        self._working.invites[invite.id] = invite
+        self._working.invites_by_hash[invite.token_hash.hex] = invite.id
+
+
+class InMemoryUnitOfWork:
+    """Unit of work that commits working copies into shared durable state."""
+
+    def __init__(self, durable: _DurableState) -> None:
+        self._durable = durable
+        self._working: _DurableState | None = None
+        self._committed = False
+        self.users: UserRepository
+        self.consents: ConsentRepository
+        self.contacts: ContactRepository
+        self.pairs: PairRepository
+        self.rules: RuleRepository
+        self.invites: InviteRepository
+
+    async def __aenter__(self) -> InMemoryUnitOfWork:
+        self._working = deepcopy(self._durable)
+        self._committed = False
+        self.users = InMemoryUserRepository(self._working)
+        self.consents = InMemoryConsentRepository(self._working)
+        self.contacts = InMemoryContactRepository(self._working)
+        self.pairs = InMemoryPairRepository(self._working)
+        self.rules = InMemoryRuleRepository(self._working)
+        self.invites = InMemoryInviteRepository(self._working)
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        if not self._committed:
+            self._working = None
+
+    async def commit(self) -> None:
+        if self._working is None:
+            msg = "unit of work is not active"
+            raise RuntimeError(msg)
+        self._durable.users = self._working.users
+        self._durable.users_by_telegram = self._working.users_by_telegram
+        self._durable.consents = self._working.consents
+        self._durable.contacts = self._working.contacts
+        self._durable.pairs = self._working.pairs
+        self._durable.rules = self._working.rules
+        self._durable.invites = self._working.invites
+        self._durable.invites_by_hash = self._working.invites_by_hash
+        self._committed = True
+
+
+class InMemoryUnitOfWorkFactory:
+    """Factory returning units of work over shared durable state."""
+
+    def __init__(self) -> None:
+        self._durable = _DurableState()
+
+    def __call__(self) -> UnitOfWork:
+        return InMemoryUnitOfWork(self._durable)
+
+
+__all__ = [
+    "InMemoryUnitOfWork",
+    "InMemoryUnitOfWorkFactory",
+]

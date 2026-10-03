@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from svoi_pravila.application.check_readiness import CheckReadiness, ProbeOutcome
+from svoi_pravila.application.use_cases.check_readiness import CheckReadiness, ProbeOutcome
 from tests.fakes.probes import FailingProbe, HangingProbe, OkProbe
 
 

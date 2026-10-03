@@ -23,6 +23,7 @@ dependencies = [
 
 [project.scripts]
 svoi-pravila-api = "svoi_pravila.bootstrap:serve"
+svoi-pravila-healthcheck = "svoi_pravila.bootstrap:healthcheck"
 
 [dependency-groups]
 dev = [

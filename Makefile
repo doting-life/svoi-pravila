@@ -1,5 +1,5 @@
 .PHONY: install fmt fmt-check lint typecheck imports test-unit test-integration test \
-	audit secrets migrations-check dev-env infra-up infra-down run check
+	audit secrets migrations-check dev-env infra-up infra-down build up down logs ps check
 
 BACKEND := backend
 GITLEAKS_IMAGE := zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
@@ -65,7 +65,20 @@ infra-up: dev-env
 infra-down:
 	docker compose down
 
-run:
-	$(UV) svoi-pravila-api
+build:
+	docker compose --profile app build
+
+up: build
+	docker compose --profile app up -d --wait
+	@echo "API: http://127.0.0.1:$${API_PORT:-8000}"
+
+down:
+	docker compose --profile app down
+
+logs:
+	docker compose --profile app logs -f api migrate
+
+ps:
+	docker compose --profile app ps
 
 check: lint fmt-check typecheck imports migrations-check test audit secrets

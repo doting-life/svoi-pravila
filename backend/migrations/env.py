@@ -22,10 +22,10 @@ target_metadata = Base.metadata
 
 
 def get_database_url() -> str:
-    """Resolve the database URL from Alembic config override or application Settings."""
-    override = config.get_main_option("sqlalchemy.url")
+    """Resolve the database URL from Alembic config attributes or Settings."""
+    override = config.attributes.get("database_url")
     if override:
-        return override
+        return str(override)
     return settings.database_url.get_secret_value()
 
 

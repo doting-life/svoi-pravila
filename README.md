@@ -5,7 +5,7 @@ AI helper for difficult conversations: a Telegram inline bot and mini-app that r
 ## Prerequisites
 
 - [uv](https://docs.astral.sh/uv/) (Python 3.13 managed by uv)
-- Docker (Compose v2) for local PostgreSQL 18 and Valkey
+- Docker (Compose v2) for the local stack (API, one-shot migrations, PostgreSQL 18, Valkey)
 
 ## Local setup
 
@@ -16,20 +16,41 @@ make infra-up
 make check
 ```
 
-Run the API (after infra is up and `.env` is configured):
+`make infra-up` starts only PostgreSQL and Valkey (for gates and tests). Use the Local stack section below to run the application itself.
+
+## Local stack
+
+The supported way to run the application locally is the Docker stack (same images intended for the VPS): one-shot migrations, then the API, plus PostgreSQL and Valkey.
+
+Prerequisites: Docker Compose v2, and a repo-root `.env` (from `cp .env.example .env` then `make dev-env` to fill `SP_DATA_KEK`).
 
 ```bash
-make run
+make up      # build images, migrate, start API; wait until healthy; print URL
+make logs    # follow api and migrate logs
+make ps      # compose status
+make down    # stop the full stack; keep named volumes
 ```
 
-`make run` starts the `svoi-pravila-api` console script, which loads `SP_*` settings (from the process environment, or via `uv run --env-file ../.env` when `.env` exists) and binds to `SP_HTTP_HOST` / `SP_HTTP_PORT`.
+Data lives in Docker named volumes (`postgres_data`, `valkey_data`). To reset local data:
+
+```bash
+docker compose down -v
+```
+
+That destroys local PostgreSQL and Valkey data.
+
+Tests never write to the manual-testing database: they use a dedicated PostgreSQL database named `<POSTGRES_DB>_test` (for example `svoi_pravila_test`) and Valkey logical database `15`.
 
 ## Make targets
 
 | Target | Purpose |
 |--------|---------|
 | `install` | Sync backend deps with uv (incl. dev group) and install pre-commit hooks |
-| `run` | Start the API (`svoi-pravila-api`) |
+| `build` | Build app images (`svoi-pravila-api:local`) |
+| `up` | Build and start the full stack (profile `app`); wait until API is healthy |
+| `down` | Stop the full stack; keep volumes |
+| `logs` | Follow `api` and `migrate` logs |
+| `ps` | Show compose service status |
 | `fmt` | Ruff format |
 | `lint` | Ruff lint |
 | `typecheck` | mypy |
@@ -40,7 +61,7 @@ make run
 | `audit` | `pip-audit` against the lockfile |
 | `secrets` | gitleaks scan of the working tree |
 | `migrations-check` | Alembic upgrade + check against compose DB |
-| `infra-up` / `infra-down` | Start/stop local Postgres and Valkey |
+| `infra-up` / `infra-down` | Start/stop local Postgres and Valkey (tests/gates) |
 | `check` | All gates in order (fail-fast) |
 
 Agent instructions and ownership: [`AGENTS.md`](AGENTS.md).

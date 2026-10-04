@@ -86,7 +86,6 @@ async def test_ttl_idle_eviction_clears_stats_without_resolve() -> None:
     assert reuse.stats().users == 1
     clock.advance(timedelta(seconds=31))
     later.fire_due()
-    await asyncio.sleep(0)
     assert "k1" not in reuse._entries
     assert reuse.stats().entries == 0
     assert reuse.stats().users == 0
@@ -124,18 +123,19 @@ async def test_error_propagates_to_joiners_and_is_not_stored() -> None:
     reuse, _later = _reuse(clock)
     gate = asyncio.Event()
     calls = 0
+    error = GenerationUnavailable(
+        UnavailableKind.TIMEOUT,
+        usage=TokenUsage(),
+        attempts=1,
+        model="fake",
+        prompt_version="soften@v1",
+    )
 
-    async def produce() -> InlineReuseValue:
+    async def produce() -> InlineReuseValue | GenerationUnavailable:
         nonlocal calls
         calls += 1
         await gate.wait()
-        raise GenerationUnavailable(
-            UnavailableKind.TIMEOUT,
-            usage=TokenUsage(),
-            attempts=1,
-            model="fake",
-            prompt_version="soften@v1",
-        )
+        return error
 
     t1 = asyncio.create_task(reuse.resolve("k", "u", produce))
     await asyncio.sleep(0)
@@ -145,8 +145,9 @@ async def test_error_propagates_to_joiners_and_is_not_stored() -> None:
     r1, r2 = await asyncio.gather(t1, t2)
     assert calls == 1
     assert isinstance(r1, ReuseFailed) and isinstance(r2, ReuseFailed)
-    assert isinstance(r1.error, GenerationUnavailable)
-    assert isinstance(r2.error, GenerationUnavailable)
+    assert r1.error is error
+    assert r2.error is error
+    assert reuse.stats().entries == 0
 
     async def ok() -> InlineReuseValue:
         nonlocal calls
@@ -373,13 +374,32 @@ def test_evict_helpers_cover_empty_and_inconsistent_state() -> None:
 
 
 @pytest.mark.unit
-def test_expire_without_running_loop_is_noop() -> None:
+async def test_join_store_and_expiry_interleave_on_fake_scheduler() -> None:
     clock = FakeClock()
-    reuse, later = _reuse(clock, ttl_seconds=1.0)
-    reuse._store("k", "u", _value())
-    clock.advance(timedelta(seconds=2))
+    reuse, later = _reuse(clock, ttl_seconds=30.0)
+    gate = asyncio.Event()
+
+    async def produce() -> InlineReuseValue:
+        await gate.wait()
+        return _value("shared")
+
+    t1 = asyncio.create_task(reuse.resolve("k", "u", produce))
+    await asyncio.sleep(0)
+    t2 = asyncio.create_task(reuse.resolve("k", "u", produce))
+    await asyncio.sleep(0)
+    assert reuse.stats().flights == 1
+    gate.set()
+    r1, r2 = await asyncio.gather(t1, t2)
+    assert isinstance(r1, ReuseSucceeded) and isinstance(r2, ReuseSucceeded)
+    assert {r1.status, r2.status} == {InlineReuseStatus.MISS, InlineReuseStatus.JOIN}
+    assert reuse.stats().entries == 1
+    assert reuse.stats().users == 1
+    assert reuse.stats().flights == 0
+    clock.advance(timedelta(seconds=31))
     later.fire_due()
-    assert "k" in reuse._entries
+    assert reuse.stats().entries == 0
+    assert reuse.stats().users == 0
+    assert reuse.stats().flights == 0
 
 
 @pytest.mark.unit

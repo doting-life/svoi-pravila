@@ -7,18 +7,31 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from svoi_pravila.application.errors import ApplicationError
+from svoi_pravila.application.errors import (
+    GenerationRefusedByProvider,
+    GenerationUnavailable,
+    InvalidGenerationOutput,
+    ScenarioQuotaExceeded,
+)
 from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
 from svoi_pravila.application.ports.generation import SafetyVerdict
 from svoi_pravila.application.ports.inline_result_reuse import (
     InlineReuseValue,
     ProduceInlineReuse,
+    ProduceOutcome,
     ReuseFailed,
     ReuseSucceeded,
 )
 from svoi_pravila.application.ports.monotonic import MonotonicClock
 
 _MAX_PER_USER = 4
+
+_PRODUCE_ERRORS = (
+    ScenarioQuotaExceeded,
+    GenerationUnavailable,
+    GenerationRefusedByProvider,
+    InvalidGenerationOutput,
+)
 
 
 class CancelHandle(Protocol):
@@ -54,7 +67,7 @@ class _Entry:
 
 @dataclass(slots=True)
 class _Flight:
-    task: asyncio.Task[InlineReuseValue]
+    task: asyncio.Task[ProduceOutcome]
     user_key: str
     store: bool = True
 
@@ -85,12 +98,10 @@ class InProcessInlineResultReuse:
         self._entries: dict[str, _Entry] = {}
         self._user_order: dict[str, list[str]] = {}
         self._flights: dict[str, _Flight] = {}
-        self._tasks: set[asyncio.Task[InlineReuseValue]] = set()
-        self._expire_tasks: set[asyncio.Task[None]] = set()
-        self._lock = asyncio.Lock()
+        self._tasks: set[asyncio.Task[ProduceOutcome]] = set()
 
     @property
-    def tasks(self) -> set[asyncio.Task[InlineReuseValue]]:
+    def tasks(self) -> set[asyncio.Task[ProduceOutcome]]:
         """In-flight produce tasks for shutdown draining."""
         return self._tasks
 
@@ -127,36 +138,34 @@ class InProcessInlineResultReuse:
         produce: ProduceInlineReuse,
     ) -> ReuseSucceeded | ReuseFailed:
         """Hit a fresh OK entry, join an in-flight produce, or run ``produce``."""
-        async with self._lock:
-            hit = self._lookup(key)
-            if hit is not None:
-                return ReuseSucceeded(status=InlineReuseStatus.HIT, value=hit)
-            existing = self._flights.get(key)
-            if existing is not None:
-                task = existing.task
-                status = InlineReuseStatus.JOIN
-            else:
-                task = asyncio.create_task(
-                    self._run_produce(key, user_key, produce),
-                    name="inline-reuse-produce",
-                )
-                self._flights[key] = _Flight(task=task, user_key=user_key, store=True)
-                self._tasks.add(task)
-                task.add_done_callback(self._on_task_done)
-                status = InlineReuseStatus.MISS
+        hit = self._lookup(key)
+        if hit is not None:
+            return ReuseSucceeded(status=InlineReuseStatus.HIT, value=hit)
+        existing = self._flights.get(key)
+        if existing is not None:
+            task = existing.task
+            status = InlineReuseStatus.JOIN
+        else:
+            task = asyncio.create_task(
+                self._run_produce(key, user_key, produce),
+                name="inline-reuse-produce",
+            )
+            self._flights[key] = _Flight(task=task, user_key=user_key, store=True)
+            self._tasks.add(task)
+            task.add_done_callback(self._on_task_done)
+            status = InlineReuseStatus.MISS
 
-        try:
-            value = await self._await_flight(task)
-        except ApplicationError as exc:
-            return ReuseFailed(status=status, error=exc)
-        return ReuseSucceeded(status=status, value=value)
+        outcome = await self._await_flight(task)
+        if isinstance(outcome, _PRODUCE_ERRORS):
+            return ReuseFailed(status=status, error=outcome)
+        return ReuseSucceeded(status=status, value=outcome)
 
-    async def _await_flight(self, task: asyncio.Task[InlineReuseValue]) -> InlineReuseValue:
+    async def _await_flight(self, task: asyncio.Task[ProduceOutcome]) -> ProduceOutcome:
         """Await ``task`` without linking waiter cancellation to the shared produce."""
         loop = asyncio.get_running_loop()
-        local: asyncio.Future[InlineReuseValue] = loop.create_future()
+        local: asyncio.Future[ProduceOutcome] = loop.create_future()
 
-        def _relay(done: asyncio.Task[InlineReuseValue]) -> None:
+        def _relay(done: asyncio.Task[ProduceOutcome]) -> None:
             task.remove_done_callback(_relay)
             if local.done():
                 return
@@ -177,22 +186,25 @@ class InProcessInlineResultReuse:
         key: str,
         user_key: str,
         produce: ProduceInlineReuse,
-    ) -> InlineReuseValue:
-        value: InlineReuseValue | None = None
+    ) -> ProduceOutcome:
+        outcome: ProduceOutcome | None = None
         try:
-            value = await produce()
-            return value
+            outcome = await produce()
+            return outcome
         finally:
-            async with self._lock:
-                flight = self._flights.get(key)
-                should_store = False
-                if flight is not None and flight.task is asyncio.current_task():
-                    should_store = flight.store
-                    del self._flights[key]
-                if value is not None and value.safety is SafetyVerdict.OK and should_store:
-                    self._store(key, user_key, value)
+            flight = self._flights.get(key)
+            should_store = False
+            if flight is not None and flight.task is asyncio.current_task():
+                should_store = flight.store
+                del self._flights[key]
+            if (
+                isinstance(outcome, InlineReuseValue)
+                and outcome.safety is SafetyVerdict.OK
+                and should_store
+            ):
+                self._store(key, user_key, outcome)
 
-    def _on_task_done(self, task: asyncio.Task[InlineReuseValue]) -> None:
+    def _on_task_done(self, task: asyncio.Task[ProduceOutcome]) -> None:
         self._tasks.discard(task)
 
     def _lookup(self, key: str) -> InlineReuseValue | None:
@@ -223,24 +235,11 @@ class InProcessInlineResultReuse:
 
     def _schedule_expiry(self, key: str) -> CancelHandle:
         def _callback() -> None:
-            self._expire(key)
+            self._evict_key(key)
 
         if self._call_later is not None:
             return self._call_later(self._ttl_seconds, _callback)
         return asyncio.get_running_loop().call_later(self._ttl_seconds, _callback)
-
-    def _expire(self, key: str) -> None:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-        task = loop.create_task(self._expire_locked(key), name="inline-reuse-expire")
-        self._expire_tasks.add(task)
-        task.add_done_callback(self._expire_tasks.discard)
-
-    async def _expire_locked(self, key: str) -> None:
-        async with self._lock:
-            self._evict_key(key)
 
     def _evict_oldest_global(self) -> None:
         if not self._entries:

@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from svoi_pravila.application.applied_rules import applied_rule_views
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.errors import (
-    ApplicationError,
     GenerationRefusedByProvider,
     GenerationUnavailable,
     IncomingTextTooLong,
@@ -165,13 +164,13 @@ class InlineCompose:
         )
         key = inline_reuse_key(material)
 
-        async def produce() -> InlineReuseValue:
+        async def produce() -> InlineReuseValue | InlineProduceError:
             return await self._produce(material)
 
         resolution = await self._ports.reuse.resolve(key, user_key, produce)
         if isinstance(resolution, ReuseFailed):
             raise InlineComposeFailed(
-                _as_produce_error(resolution.error),
+                resolution.error,
                 reuse=resolution.status,
             ) from resolution.error
         return InlineComposeResult(
@@ -182,11 +181,13 @@ class InlineCompose:
             reuse=resolution.status,
         )
 
-    async def _produce(self, material: InlineReuseKeyMaterial) -> InlineReuseValue:
+    async def _produce(
+        self, material: InlineReuseKeyMaterial
+    ) -> InlineReuseValue | InlineProduceError:
         quota_pseudonym = self._ports.pseudonymizer.pseudonymize(_QUOTA_PURPOSE, material.user_key)
         decision = await self._ports.quota.check(quota_pseudonym)
         if not decision.allowed:
-            raise ScenarioQuotaExceeded()
+            return ScenarioQuotaExceeded()
         started = self._ports.monotonic.monotonic()
         try:
             if material.intent is not None:
@@ -212,17 +213,17 @@ class InlineCompose:
             await self._persist(
                 self._event_from_error(material.user_key, started, material.scenario, exc)
             )
-            raise
+            return exc
         except GenerationRefusedByProvider as exc:
             await self._persist(
                 self._event_from_error(material.user_key, started, material.scenario, exc)
             )
-            raise
+            return exc
         except InvalidGenerationOutput as exc:
             await self._persist(
                 self._event_from_error(material.user_key, started, material.scenario, exc)
             )
-            raise
+            return exc
         await self._persist(
             self._event_from_ok(material.user_key, started, material.scenario, generated)
         )
@@ -368,18 +369,3 @@ def _match_prefix(
             remainder = query[len(prefix.strip()) :].strip()
             return intent, remainder
     return None
-
-
-def _as_produce_error(error: ApplicationError) -> InlineProduceError:
-    if isinstance(
-        error,
-        (
-            ScenarioQuotaExceeded,
-            GenerationUnavailable,
-            GenerationRefusedByProvider,
-            InvalidGenerationOutput,
-        ),
-    ):
-        return error
-    msg = f"unexpected reuse produce error: {type(error).__name__}"
-    raise TypeError(msg) from error

@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from svoi_pravila.application.errors import ApplicationError
+from svoi_pravila.application.errors import InlineProduceError
 from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
 from svoi_pravila.application.ports.generation import AppliedRuleView, SafetyVerdict, Variant
 from svoi_pravila.domain.enums import UsageScenario
@@ -44,12 +44,14 @@ class ReuseFailed:
     """Failed reuse resolution (join or miss with a typed produce error)."""
 
     status: InlineReuseStatus
-    error: ApplicationError
+    error: InlineProduceError
 
 
 InlineReuseResolution = ReuseSucceeded | ReuseFailed
 
-ProduceInlineReuse = Callable[[], Awaitable[InlineReuseValue]]
+ProduceOutcome = InlineReuseValue | InlineProduceError
+
+ProduceInlineReuse = Callable[[], Awaitable[ProduceOutcome]]
 
 
 class InlineResultReuse(Protocol):

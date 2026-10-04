@@ -4,6 +4,8 @@ on:
   pull_request:
   push:
     branches: [master]
+  schedule:
+    - cron: "17 6 * * 1"
 
 permissions:
   contents: read
@@ -33,6 +35,7 @@ env:
 
 jobs:
   backend:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -97,6 +100,7 @@ jobs:
         run: make audit
 
   secrets:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -139,7 +143,11 @@ jobs:
           format: table
 
   stack-smoke:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    env:
+      SP_ENVIRONMENT: test
+      SP_TELEGRAM_UPDATES_MODE: disabled
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -151,7 +159,23 @@ jobs:
           enable-cache: true
 
       - name: Materialize .env
-        run: make dev-env
+        run: |
+          make dev-env
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path(".env")
+          text = path.read_text()
+          for key, value in (
+              ("SP_ENVIRONMENT", "test"),
+              ("SP_TELEGRAM_UPDATES_MODE", "disabled"),
+          ):
+              import re
+              if re.search(rf"^{key}=", text, flags=re.M):
+                  text = re.sub(rf"^{key}=.*$", f"{key}={value}", text, count=1, flags=re.M)
+              else:
+                  text = text.rstrip() + f"\n{key}={value}\n"
+          path.write_text(text)
+          PY
 
       - name: Start local stack
         run: make up
@@ -167,7 +191,7 @@ jobs:
         run: make down
 
   ownership-guard:
-    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'task/')
+    if: github.event_name != 'schedule' && github.event_name == 'pull_request' && startsWith(github.head_ref, 'task/')
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

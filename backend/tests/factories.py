@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from svoi_pravila.config import Environment, GigaChatScope, LogLevel, Settings
+from svoi_pravila.config import Environment, GigaChatScope, LogLevel, Settings, TelegramUpdatesMode
 
-# Fixed test KEK (32 zero bytes, base64) — never used outside tests.
+# Fixed test secrets (32 zero bytes, base64) — never used outside tests.
 _TEST_DATA_KEK = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+_TEST_PEPPER = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 _CERT = Path(__file__).resolve().parents[1] / "certs" / "russian_trusted_root_ca.pem"
 
 
@@ -32,6 +33,8 @@ def make_settings(**overrides: object) -> Settings:
         "gigachat_model_decode": "GigaChat-2",
         "gigachat_timeout_seconds": 5.0,
         "gigachat_max_retries": 0,
+        "telegram_updates_mode": TelegramUpdatesMode.DISABLED,
+        "pseudonym_pepper": _TEST_PEPPER,
     }
     values.update(overrides)
     return Settings.model_validate(values)

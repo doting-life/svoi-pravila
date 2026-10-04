@@ -22,8 +22,9 @@ from sqlalchemy.sql.compiler import IdentifierPreparer
 from svoi_pravila.adapters.persistence.engine import create_engine, dispose_engine
 from svoi_pravila.adapters.persistence.models import Base
 from svoi_pravila.adapters.persistence.uow import SqlAlchemyUnitOfWorkFactory
-from svoi_pravila.bootstrap import load_settings
+from svoi_pravila.bootstrap import load_test_infra_settings
 from svoi_pravila.config import Settings
+from tests.factories import make_settings
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
@@ -79,7 +80,7 @@ def require_test_database_url(database_url: str) -> str:
 def upgrade_head(*, sqlalchemy_url: str | None = None) -> None:
     """Apply Alembic migrations to head on a ``*_test`` database only."""
     if sqlalchemy_url is None:
-        sqlalchemy_url = load_settings().database_url.get_secret_value()
+        sqlalchemy_url = load_test_infra_settings().database_url.get_secret_value()
     require_test_database_url(sqlalchemy_url)
     cfg = alembic_config(sqlalchemy_url=sqlalchemy_url)
     _run_alembic_in_isolated_loop(lambda: command.upgrade(cfg, "head"))
@@ -88,7 +89,7 @@ def upgrade_head(*, sqlalchemy_url: str | None = None) -> None:
 def downgrade_base(*, sqlalchemy_url: str | None = None) -> None:
     """Downgrade Alembic migrations to base on a ``*_test`` database only."""
     if sqlalchemy_url is None:
-        sqlalchemy_url = load_settings().database_url.get_secret_value()
+        sqlalchemy_url = load_test_infra_settings().database_url.get_secret_value()
     require_test_database_url(sqlalchemy_url)
     cfg = alembic_config(sqlalchemy_url=sqlalchemy_url)
     _run_alembic_in_isolated_loop(lambda: command.downgrade(cfg, "base"))
@@ -141,8 +142,16 @@ async def ensure_test_database_exists(settings: Settings) -> str:
 
 
 def isolated_settings() -> Settings:
-    """Settings aimed at the dedicated test database and Valkey DB 15."""
-    settings = load_settings()
+    """Full Settings aimed at the dedicated test database and Valkey DB 15.
+
+    Loads only database/Valkey URLs from the process environment; Telegram,
+    GigaChat, and crypto secrets come from test factory defaults.
+    """
+    infra = load_test_infra_settings()
+    settings = make_settings(
+        database_url=infra.database_url.get_secret_value(),
+        valkey_url=infra.valkey_url.get_secret_value(),
+    )
     # Run ensure off the pytest-asyncio loop (same reason as Alembic helpers).
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         database_url = pool.submit(

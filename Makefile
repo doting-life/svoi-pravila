@@ -1,9 +1,10 @@
 .PHONY: install fmt fmt-check lint typecheck imports test-unit test-integration test \
-	audit secrets migrations-check dev-env infra-up infra-down build up down logs ps \
-	bench-llm check
+	audit secrets migrations-check image-scan dev-env infra-up infra-down build up down \
+	logs ps bench-llm check
 
 BACKEND := backend
 GITLEAKS_IMAGE := zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+TRIVY_IMAGE := aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e
 
 # Pass repo-root .env into uv when present (path relative to backend/).
 ENV_FILE_ARG := $(if $(wildcard .env),--env-file ../.env,)
@@ -45,6 +46,7 @@ test:
 	$(UV) coverage report --include='*/svoi_pravila/crypto/*' --fail-under=100
 	$(UV) coverage report --include='*/svoi_pravila/adapters/persistence/*' --fail-under=95
 	$(UV) coverage report --include='*/svoi_pravila/adapters/llm/*' --fail-under=95
+	$(UV) coverage report --include='*/svoi_pravila/adapters/channels/*' --fail-under=95
 
 bench-llm:
 	docker compose --profile app run --rm --entrypoint svoi-pravila-bench-llm api $(BENCH_ARGS)
@@ -55,6 +57,12 @@ audit:
 
 secrets:
 	docker run --rm -v "$(CURDIR):/repo:ro" $(GITLEAKS_IMAGE) detect --source=/repo --verbose
+
+image-scan:
+	docker build -t svoi-pravila:ci -f $(BACKEND)/Dockerfile $(BACKEND)
+	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock $(TRIVY_IMAGE) \
+		image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --format table \
+		svoi-pravila:ci
 
 migrations-check:
 	$(UV) alembic upgrade head

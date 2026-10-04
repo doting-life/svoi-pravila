@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from svoi_pravila.api.app import create_app
+from svoi_pravila.api.app import AppLifecycleHooks, create_app
 from svoi_pravila.api.middleware import RequestLoggingMiddleware
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.config import Environment
@@ -83,7 +83,11 @@ async def test_dispose_hook_runs_on_shutdown() -> None:
     async def dispose() -> None:
         calls.append("disposed")
 
-    app = create_app(CheckReadiness([], 1.0), Environment.TEST, dispose=dispose)
+    app = create_app(
+        CheckReadiness([], 1.0),
+        Environment.TEST,
+        AppLifecycleHooks(dispose=dispose),
+    )
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:

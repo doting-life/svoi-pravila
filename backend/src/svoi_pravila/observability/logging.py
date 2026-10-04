@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import IO
+from typing import IO, Protocol
 
 import structlog
 from structlog.processors import ExceptionRenderer
@@ -11,8 +11,14 @@ from structlog.stdlib import ProcessorFormatter
 from structlog.tracebacks import ExceptionDictTransformer
 from structlog.types import Processor
 
-from svoi_pravila.config import Settings
+from svoi_pravila.config import LogLevel
 from svoi_pravila.observability.redaction import redact_log_processor
+
+
+class SupportsLogLevel(Protocol):
+    """Minimal settings surface required to configure logging."""
+
+    log_level: LogLevel
 
 
 def _shared_processors() -> list[Processor]:
@@ -30,7 +36,7 @@ def _shared_processors() -> list[Processor]:
     ]
 
 
-def configure_logging(settings: Settings, stream: IO[str]) -> None:
+def configure_logging(settings: SupportsLogLevel, stream: IO[str]) -> None:
     """Configure structlog and route all stdlib loggers through JSON processors.
 
     ``stream`` is the sink for the root handler. The composition root passes

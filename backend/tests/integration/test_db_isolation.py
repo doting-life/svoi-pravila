@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from svoi_pravila.adapters.persistence.engine import create_engine, dispose_engine
 from svoi_pravila.adapters.persistence.models import Base
-from svoi_pravila.bootstrap import load_settings
+from svoi_pravila.bootstrap import load_test_infra_settings
 from svoi_pravila.config import Settings
 from tests.support.postgres import database_name_from_url, truncate_all_tables
 
@@ -29,8 +29,7 @@ async def _domain_table_counts(database_url: str) -> dict[str, int]:
 
 @pytest.mark.integration
 async def test_manual_database_untouched_by_db_tests(migrated_schema: Settings) -> None:
-    manual = load_settings()
-    manual_url = manual.database_url.get_secret_value()
+    manual_url = load_test_infra_settings().database_url.get_secret_value()
     test_url = migrated_schema.database_url.get_secret_value()
     manual_name = database_name_from_url(manual_url)
     test_name = database_name_from_url(test_url)

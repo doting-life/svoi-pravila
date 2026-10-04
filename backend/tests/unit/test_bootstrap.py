@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import pytest
+from aiogram import Bot
+from aiogram.methods import DeleteWebhook, SetMyCommands, SetWebhook
 from httpx import ASGITransport, AsyncClient
 
+from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
+from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
 from svoi_pravila.bootstrap import create_application
+from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
 from tests.factories import make_settings
 from tests.fakes.probes import FailingProbe, OkProbe
+from tests.fakes.rate_limit import FakeRateLimiter, FakeUpdateDeduplicator
+from tests.fakes.telegram_session import FakeTelegramSession
 
 
 class _FakeEngine:
@@ -16,6 +23,62 @@ class _FakeEngine:
 
 class _FakeValkey:
     """Stand-in Valkey client for bootstrap wiring tests."""
+
+
+def _patch_infrastructure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "svoi_pravila.bootstrap.configure_logging",
+        lambda _settings, _stream: None,
+    )
+    monkeypatch.setattr("svoi_pravila.bootstrap.create_engine", lambda _settings: _FakeEngine())
+    monkeypatch.setattr("svoi_pravila.bootstrap.create_client", lambda _settings: _FakeValkey())
+    monkeypatch.setattr(
+        "svoi_pravila.bootstrap.create_gigachat_client",
+        lambda _settings: object(),
+    )
+    monkeypatch.setattr(
+        "svoi_pravila.bootstrap.DatabaseProbe",
+        lambda _engine: OkProbe("database"),
+    )
+    monkeypatch.setattr(
+        "svoi_pravila.bootstrap.ValkeyProbe",
+        lambda _client: OkProbe("valkey"),
+    )
+
+    async def _noop(_obj: object) -> None:
+        return None
+
+    monkeypatch.setattr("svoi_pravila.bootstrap.close_client", _noop)
+    monkeypatch.setattr("svoi_pravila.bootstrap.dispose_engine", _noop)
+    monkeypatch.setattr("svoi_pravila.bootstrap.close_gigachat_client", _noop)
+    monkeypatch.setattr(
+        "svoi_pravila.bootstrap.ValkeyRateLimiter",
+        lambda _client, *, limit_per_minute: FakeRateLimiter(limit=limit_per_minute),
+    )
+    monkeypatch.setattr(
+        "svoi_pravila.bootstrap.ValkeyUpdateDeduplicator",
+        lambda _client, *, ttl_seconds: FakeUpdateDeduplicator(),
+    )
+
+
+def _patch_lifecycle_with_session(
+    monkeypatch: pytest.MonkeyPatch,
+    session: FakeTelegramSession,
+) -> None:
+    def _build(
+        settings: Settings,
+        deps: TelegramDeps,
+        *,
+        bot: Bot | None = None,
+    ) -> object:
+        _ = bot
+        return build_telegram_lifecycle(
+            settings,
+            deps,
+            bot=Bot(token="1:TEST", session=session),
+        )
+
+    monkeypatch.setattr("svoi_pravila.bootstrap.build_telegram_lifecycle", _build)
 
 
 @pytest.mark.unit
@@ -76,31 +139,11 @@ async def test_create_application_readyz_failed_when_probe_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = make_settings()
-    monkeypatch.setattr(
-        "svoi_pravila.bootstrap.configure_logging",
-        lambda _settings, _stream: None,
-    )
-    monkeypatch.setattr("svoi_pravila.bootstrap.create_engine", lambda _settings: object())
-    monkeypatch.setattr("svoi_pravila.bootstrap.create_client", lambda _settings: object())
-    monkeypatch.setattr(
-        "svoi_pravila.bootstrap.create_gigachat_client",
-        lambda _settings: object(),
-    )
+    _patch_infrastructure(monkeypatch)
     monkeypatch.setattr(
         "svoi_pravila.bootstrap.DatabaseProbe",
         lambda _engine: FailingProbe("database"),
     )
-    monkeypatch.setattr(
-        "svoi_pravila.bootstrap.ValkeyProbe",
-        lambda _client: OkProbe("valkey"),
-    )
-
-    async def _noop(_obj: object) -> None:
-        return None
-
-    monkeypatch.setattr("svoi_pravila.bootstrap.close_client", _noop)
-    monkeypatch.setattr("svoi_pravila.bootstrap.dispose_engine", _noop)
-    monkeypatch.setattr("svoi_pravila.bootstrap.close_gigachat_client", _noop)
 
     app = create_application(settings)
     transport = ASGITransport(app=app)
@@ -108,3 +151,78 @@ async def test_create_application_readyz_failed_when_probe_fails(
         response = await client.get("/readyz")
     assert response.status_code == 503
     assert response.json()["probes"][0]["status"] == "failed"
+
+
+@pytest.mark.unit
+async def test_create_application_disabled_skips_telegram(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_settings(telegram_updates_mode=TelegramUpdatesMode.DISABLED)
+    _patch_infrastructure(monkeypatch)
+    built: list[str] = []
+
+    def _fail_build(*_args: object, **_kwargs: object) -> object:
+        built.append("lifecycle")
+        msg = "must not build telegram when disabled"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr("svoi_pravila.bootstrap.build_telegram_lifecycle", _fail_build)
+    app = create_application(settings)
+    async with app.router.lifespan_context(app):
+        assert built == []
+    assert not any(
+        getattr(route, "path", "").startswith("/telegram/webhook") for route in app.routes
+    )
+
+
+@pytest.mark.unit
+async def test_create_application_polling_lifespan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = FakeTelegramSession()
+    settings = make_settings(
+        environment=Environment.LOCAL,
+        telegram_updates_mode=TelegramUpdatesMode.POLLING,
+        telegram_bot_token="1:TEST",
+    )
+    _patch_infrastructure(monkeypatch)
+    _patch_lifecycle_with_session(monkeypatch, session)
+
+    app = create_application(settings)
+    async with app.router.lifespan_context(app):
+        kinds = {type(req) for req in session.requests}
+        assert SetMyCommands in kinds
+        assert DeleteWebhook in kinds
+    assert session.closed is True
+
+
+@pytest.mark.unit
+async def test_create_application_webhook_lifespan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = FakeTelegramSession()
+    settings = make_settings(
+        environment=Environment.LOCAL,
+        telegram_updates_mode=TelegramUpdatesMode.WEBHOOK,
+        telegram_bot_token="1:TEST",
+        telegram_webhook_base_url="https://example.example",
+        telegram_webhook_path_secret="p" * 32,
+        telegram_webhook_secret_token="s" * 32,
+    )
+    _patch_infrastructure(monkeypatch)
+    _patch_lifecycle_with_session(monkeypatch, session)
+
+    app = create_application(settings)
+    async with app.router.lifespan_context(app):
+        kinds = {type(req) for req in session.requests}
+        assert SetMyCommands in kinds
+        assert SetWebhook in kinds
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/telegram/webhook/{'p' * 32}",
+                headers={"X-Telegram-Bot-Api-Secret-Token": "s" * 32},
+                content=b"{}",
+            )
+        assert response.status_code == 400
+    assert session.closed is True

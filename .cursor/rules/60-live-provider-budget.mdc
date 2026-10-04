@@ -1,0 +1,27 @@
+---
+description: Live LLM provider calls — hard token budget (dev key is strictly limited)
+alwaysApply: true
+---
+
+# Live provider calls — token budget
+
+The development GigaChat key has a hard token limit. Every live call spends the owner's budget. Treat live calls like production writes.
+
+## When a live call is allowed
+- Only when the task prompt contains a **"Live budget"** section that names: models, operations, case subset (ids or size), repeats, and the maximum billable tokens for the whole task.
+- Never otherwise. No exploratory calls, no "quick check", no re-running a whole benchmark to recover from an interruption or a bug in our own code, no live calls while developing or debugging.
+- Never from `pytest`, `make check`, CI or any default target.
+
+## Before spending
+- Validators, metrics, report rendering and failure accounting are proven **offline** first (respx / recorded fixtures). A live run made with a broken metric is wasted budget — the metric must be correct before the first call.
+- Run the benchmark with `--dry-run` first: it prints the planned call count and the token estimate, and makes no call. Proceed only if the estimate is within the prompt's budget.
+- The benchmark always runs with `--max-tokens <budget>`: it stops before the next call once the cumulative billable tokens reach the budget, and marks the output `INCOMPLETE`.
+
+## How to spend
+- Prompt iteration: on the smoke subset named in the prompt, `--repeat 1`. A full-set run is used once, for the final confirmation of a single candidate.
+- Stop at the first `rate_limited` and report; never wait-and-retry.
+- One segment per command, smallest first.
+
+## Report
+- For every live run: the command, the `--out` file verbatim, and the billable tokens actually spent (from the benchmark totals). Sum them for the task.
+- If the budget was not enough to reach a decision, report `BLOCKED` with what was measured; do not exceed it.

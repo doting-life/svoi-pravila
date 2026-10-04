@@ -77,6 +77,9 @@ class TelegramLifecycle:
             [
                 BotCommand(command="start", description=self._strings.commands_start),
                 BotCommand(command="help", description=self._strings.commands_help),
+                BotCommand(command="export", description=self._strings.commands_export),
+                BotCommand(command="revoke", description=self._strings.commands_revoke),
+                BotCommand(command="delete", description=self._strings.commands_delete),
             ]
         )
         if self._mode is TelegramUpdatesMode.POLLING:

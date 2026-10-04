@@ -37,6 +37,18 @@ class TelegramStrings:
     decode_refused: str
     decode_invalid: str
     decode_unavailable: str
+    commands_export: str
+    commands_revoke: str
+    commands_delete: str
+    rights_revoke_explain: str
+    rights_delete_explain: str
+    rights_confirm: str
+    rights_cancel: str
+    rights_cancelled: str
+    rights_confirm_rejected: str
+    rights_deleted: str
+    rights_export_empty: str
+    rights_export_caption: str
 
 
 _KEYS: dict[str, str] = {
@@ -66,6 +78,18 @@ _KEYS: dict[str, str] = {
     "decode.refused": "decode_refused",
     "decode.invalid": "decode_invalid",
     "decode.unavailable": "decode_unavailable",
+    "commands.export": "commands_export",
+    "commands.revoke": "commands_revoke",
+    "commands.delete": "commands_delete",
+    "rights.revoke_explain": "rights_revoke_explain",
+    "rights.delete_explain": "rights_delete_explain",
+    "rights.confirm": "rights_confirm",
+    "rights.cancel": "rights_cancel",
+    "rights.cancelled": "rights_cancelled",
+    "rights.confirm_rejected": "rights_confirm_rejected",
+    "rights.deleted": "rights_deleted",
+    "rights.export_empty": "rights_export_empty",
+    "rights.export_caption": "rights_export_caption",
 }
 
 

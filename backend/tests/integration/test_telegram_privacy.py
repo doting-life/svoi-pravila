@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from svoi_pravila.adapters.cache.client import close_client, create_client
 from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
+from svoi_pravila.adapters.cache.confirmation_tokens import ValkeyConfirmationTokens
 from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
@@ -35,10 +36,13 @@ from svoi_pravila.application.ports.generation import (
 )
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
+from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
+from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocument
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
+from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
 from svoi_pravila.crypto import HmacPseudonymizer
 from svoi_pravila.domain.enums import ConsentKind
@@ -149,6 +153,11 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
         grant_consent=GrantConsent(uow_factory, catalog, ids, clock),
         get_consent_document=GetConsentDocument(catalog),
         decode_incoming=decode,
+        revoke_all_consents=RevokeAllConsents(uow_factory, clock),
+        delete_my_account=DeleteMyAccount(uow_factory, ids, pepper, clock),
+        export_my_data=ExportMyData(uow_factory, clock),
+        confirmation_tokens=ValkeyConfirmationTokens(valkey),
+        clock=clock,
         deduplicator=ValkeyUpdateDeduplicator(valkey, ttl_seconds=60),
         rate_limiter=ValkeyRateLimiter(valkey, limit=30, window_seconds=60, key_prefix="tg:rl"),
         pseudonymizer=pepper,

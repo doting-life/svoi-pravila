@@ -11,6 +11,7 @@ from fastapi import APIRouter, FastAPI
 
 from svoi_pravila.adapters.cache.client import close_client, create_client
 from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
+from svoi_pravila.adapters.cache.confirmation_tokens import ValkeyConfirmationTokens
 from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
 from svoi_pravila.adapters.cache.probe import ValkeyProbe
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
@@ -35,10 +36,13 @@ from svoi_pravila.api.telegram_webhook import (
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
+from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
+from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocument
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
+from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.config import (
     DatabaseSettings,
     Settings,
@@ -124,6 +128,11 @@ def create_application(settings: Settings) -> FastAPI:
             grant_consent=GrantConsent(uow_factory, catalog, ids, clock),
             get_consent_document=GetConsentDocument(catalog),
             decode_incoming=decode_incoming,
+            revoke_all_consents=RevokeAllConsents(uow_factory, clock),
+            delete_my_account=DeleteMyAccount(uow_factory, ids, pseudonymizer, clock),
+            export_my_data=ExportMyData(uow_factory, clock),
+            confirmation_tokens=ValkeyConfirmationTokens(valkey),
+            clock=clock,
             deduplicator=ValkeyUpdateDeduplicator(
                 valkey,
                 ttl_seconds=settings.telegram_dedup_ttl_seconds,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -119,6 +119,13 @@ class SqlAlchemyUserRepository:
         row.active_contact_id = user.active_contact_id
         await flush_or_raise(self._session)
 
+    async def delete(self, user_id: UserId) -> None:
+        await self._keys.delete_user_dek(user_id)
+        row = await self._session.get(UserRow, user_id)
+        if row is not None:
+            await self._session.delete(row)
+        await flush_or_raise(self._session)
+
 
 class SqlAlchemyConsentRepository:
     """Consent repository."""
@@ -165,6 +172,10 @@ class SqlAlchemyConsentRepository:
     async def update(self, consent: Consent) -> None:
         row = self._registry.require(ConsentRow, consent.id)
         row.revoked_at = consent.revoked_at
+        await flush_or_raise(self._session)
+
+    async def delete_for_user(self, user_id: UserId) -> None:
+        await self._session.execute(delete(ConsentRow).where(ConsentRow.user_id == user_id))
         await flush_or_raise(self._session)
 
 
@@ -242,6 +253,24 @@ class SqlAlchemyContactRepository:
         row.pair_id = contact.pair_id
         await flush_or_raise(self._session)
 
+    async def get_for_owner_and_pair(self, owner_id: UserId, pair_id: PairId) -> Contact | None:
+        result = await self._session.execute(
+            select(ContactRow).where(
+                ContactRow.owner_id == owner_id,
+                ContactRow.pair_id == pair_id,
+            )
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        return await self._to_domain(row)
+
+    async def delete(self, contact_id: ContactId) -> None:
+        row = await self._session.get(ContactRow, contact_id)
+        if row is not None:
+            await self._session.delete(row)
+        await flush_or_raise(self._session)
+
 
 class SqlAlchemyPairRepository:
     """Pair repository."""
@@ -291,6 +320,25 @@ class SqlAlchemyPairRepository:
         self._registry.register(PairRow, pair.id, row)
         await flush_or_raise(self._session)
         await self._keys.create_pair_dek(pair.id, created_at=pair.created_at)
+        await flush_or_raise(self._session)
+
+    async def list_for_member(self, user_id: UserId) -> list[Pair]:
+        result = await self._session.execute(
+            select(PairRow).where(
+                or_(PairRow.member_low == user_id, PairRow.member_high == user_id)
+            )
+        )
+        pairs: list[Pair] = []
+        for row in result.scalars():
+            self._registry.register(PairRow, row.id, row)
+            pairs.append(self._to_domain(row))
+        return pairs
+
+    async def delete(self, pair_id: PairId) -> None:
+        await self._keys.delete_pair_dek(pair_id)
+        row = await self._session.get(PairRow, pair_id)
+        if row is not None:
+            await self._session.delete(row)
         await flush_or_raise(self._session)
 
 
@@ -439,6 +487,12 @@ class SqlAlchemyRuleRepository:
         self._touch_rule_aggregate(row)
         await flush_or_raise(self._session)
 
+    async def delete(self, rule_id: RuleId) -> None:
+        row = await self._session.get(RuleRow, rule_id)
+        if row is not None:
+            await self._session.delete(row)
+        await flush_or_raise(self._session)
+
 
 class SqlAlchemyInviteRepository:
     """Invite repository."""
@@ -498,6 +552,24 @@ class SqlAlchemyInviteRepository:
         row.accepted_at = invite.accepted_at
         await flush_or_raise(self._session)
 
+    async def list_involving(self, user_id: UserId) -> list[Invite]:
+        result = await self._session.execute(
+            select(InviteRow).where(
+                or_(InviteRow.inviter_id == user_id, InviteRow.accepted_by == user_id)
+            )
+        )
+        invites: list[Invite] = []
+        for row in result.scalars():
+            self._registry.register(InviteRow, row.id, row)
+            invites.append(self._to_domain(row))
+        return invites
+
+    async def delete(self, invite_id: InviteId) -> None:
+        row = await self._session.get(InviteRow, invite_id)
+        if row is not None:
+            await self._session.delete(row)
+        await flush_or_raise(self._session)
+
 
 class SqlAlchemyUsageEventRepository:
     """Usage-event repository (append-only)."""
@@ -554,4 +626,10 @@ class SqlAlchemyUsageEventRepository:
         )
         self._session.add(row)
         self._registry.register(UsageEventRow, event.id, row)
+        await flush_or_raise(self._session)
+
+    async def delete_for_pseudonym(self, user_pseudonym: str) -> None:
+        await self._session.execute(
+            delete(UsageEventRow).where(UsageEventRow.user_pseudonym == user_pseudonym)
+        )
         await flush_or_raise(self._session)

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncpg
 import structlog
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -25,7 +24,7 @@ class UnitOfWorkUsageEventSink:
             async with self._uow_factory() as uow:
                 await uow.usage_events.add(event)
                 await uow.commit()
-        except (SQLAlchemyError, asyncpg.PostgresError) as exc:
+        except (OSError, TimeoutError, SQLAlchemyError) as exc:
             logger.info(
                 "usage_event_write_failed",
                 error_type=type(exc).__name__,

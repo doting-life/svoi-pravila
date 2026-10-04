@@ -81,3 +81,17 @@ class KeyRing:
         dek = unwrap_dek(self._kek, row.wrapped_dek, owner_kind="pair", owner_id=pair_id)
         self._pair_deks[pair_id] = dek
         return dek
+
+    async def delete_user_dek(self, user_id: UUID) -> None:
+        """Remove the wrapped user DEK (crypto-shred). No-op if missing."""
+        row = await self._session.get(UserKeyRow, user_id)
+        if row is not None:
+            await self._session.delete(row)
+        self._user_deks.pop(user_id, None)
+
+    async def delete_pair_dek(self, pair_id: UUID) -> None:
+        """Remove the wrapped pair DEK (crypto-shred). No-op if missing."""
+        row = await self._session.get(PairKeyRow, pair_id)
+        if row is not None:
+            await self._session.delete(row)
+        self._pair_deks.pop(pair_id, None)

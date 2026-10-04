@@ -8,12 +8,16 @@ from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
+from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
+from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocument
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
+from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from tests.fakes.clock import FakeClock
 from tests.fakes.concurrency import FakeConcurrencyGuard
+from tests.fakes.confirmation import FakeConfirmationTokens
 from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.ids import FakeIdGenerator
@@ -35,6 +39,7 @@ class TelegramTestDeps:
     generator: FakeTextGenerator | None = None
     guard: FakeConcurrencyGuard | None = None
     sink: RecordingUsageEventSink | FailingUsageEventSink | None = None
+    confirmation: FakeConfirmationTokens | None = None
     draft_min_interval_ms: int = 50
     deadline_seconds: float = 45.0
 
@@ -46,6 +51,7 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
     catalog = chosen.catalog or FakeConsentCatalog()
     clock = chosen.clock or FakeClock()
     ids = chosen.ids or FakeIdGenerator()
+    pseudonymizer = FakePseudonymizer()
     decode = DecodeIncoming(
         DecodeIncomingPorts(
             uow_factory=uow,
@@ -57,7 +63,7 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             clock=clock,
             monotonic=clock,
             ids=ids,
-            pseudonymizer=FakePseudonymizer(),
+            pseudonymizer=pseudonymizer,
             deadline_seconds=chosen.deadline_seconds,
         )
     )
@@ -69,9 +75,14 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
         grant_consent=GrantConsent(uow, catalog, ids, clock),
         get_consent_document=GetConsentDocument(catalog),
         decode_incoming=decode,
+        revoke_all_consents=RevokeAllConsents(uow, clock),
+        delete_my_account=DeleteMyAccount(uow, ids, pseudonymizer, clock),
+        export_my_data=ExportMyData(uow, clock),
+        confirmation_tokens=chosen.confirmation or FakeConfirmationTokens(),
+        clock=clock,
         deduplicator=FakeUpdateDeduplicator(),
         rate_limiter=FakeRateLimiter(limit=chosen.rate_limit),
-        pseudonymizer=FakePseudonymizer(),
+        pseudonymizer=pseudonymizer,
         monotonic=clock,
         draft_min_interval_ms=chosen.draft_min_interval_ms,
     )

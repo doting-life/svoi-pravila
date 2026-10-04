@@ -12,6 +12,7 @@ from svoi_pravila.adapters.channels.telegram.localization import (
 )
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
+from svoi_pravila.application.use_cases.create_contact import CreateContact
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
 from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
 from svoi_pravila.application.use_cases.export_my_data import ExportMyData
@@ -20,12 +21,16 @@ from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboarding
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose, InlineComposePorts
+from svoi_pravila.application.use_cases.list_contacts import ListContacts
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoice
+from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
+from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from tests.fakes.clock import FakeClock
 from tests.fakes.concurrency import FakeConcurrencyGuard
 from tests.fakes.confirmation import FakeConfirmationTokens
 from tests.fakes.consent_catalog import FakeConsentCatalog
+from tests.fakes.dialog import FakeDialogState
 from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.prepared import FakePreparedResults
@@ -51,6 +56,7 @@ class TelegramTestDeps:
     sink: RecordingUsageEventSink | FailingUsageEventSink | None = None
     confirmation: FakeConfirmationTokens | None = None
     prepared: FakePreparedResults | None = None
+    dialog: FakeDialogState | None = None
     sleeper: ImmediateSleeper | GateSleeper | None = None
     draft_min_interval_ms: int = 50
     deadline_seconds: float = 45.0
@@ -123,6 +129,11 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
         delete_my_account=DeleteMyAccount(uow, ids, pseudonymizer, clock),
         export_my_data=ExportMyData(uow, clock),
         confirmation_tokens=chosen.confirmation or FakeConfirmationTokens(),
+        create_contact=CreateContact(uow, catalog, ids, clock),
+        list_contacts=ListContacts(uow, catalog),
+        rename_contact=RenameContact(uow, catalog),
+        set_active_contact=SetActiveContact(uow, catalog),
+        dialog_state=chosen.dialog or FakeDialogState(),
         clock=clock,
         deduplicator=FakeUpdateDeduplicator(),
         rate_limiter=FakeRateLimiter(limit=chosen.rate_limit),

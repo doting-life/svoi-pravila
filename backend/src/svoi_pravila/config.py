@@ -216,6 +216,7 @@ class Settings(BaseSettings):
     inline_debounce_ms: int = Field(default=600, ge=0, le=5_000)
     inline_cache_seconds: int = Field(default=30, ge=0, le=300)
     prepared_result_ttl_seconds: int = Field(default=600, ge=1, le=600)
+    dialog_ttl_seconds: int = Field(default=600, ge=1, le=86_400)
 
     @field_validator("database_url")
     @classmethod

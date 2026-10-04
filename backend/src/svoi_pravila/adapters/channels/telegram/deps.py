@@ -8,12 +8,14 @@ from svoi_pravila.adapters.channels.telegram.inline_scheduler import InlineQuery
 from svoi_pravila.adapters.channels.telegram.localization import TelegramStrings
 from svoi_pravila.application.ports.clock import Clock
 from svoi_pravila.application.ports.confirmation_tokens import ConfirmationTokens
+from svoi_pravila.application.ports.dialog_state import DialogState
 from svoi_pravila.application.ports.monotonic import MonotonicClock
 from svoi_pravila.application.ports.prepared_results import PreparedResults
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.rate_limiter import RateLimiter
 from svoi_pravila.application.ports.update_deduplicator import UpdateDeduplicator
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
+from svoi_pravila.application.use_cases.create_contact import CreateContact
 from svoi_pravila.application.use_cases.decode_incoming import IncomingDecoder
 from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
 from svoi_pravila.application.use_cases.export_my_data import ExportMyData
@@ -22,8 +24,11 @@ from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboarding
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose
+from svoi_pravila.application.use_cases.list_contacts import ListContacts
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoice
+from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
+from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +50,11 @@ class TelegramDeps:
     delete_my_account: DeleteMyAccount
     export_my_data: ExportMyData
     confirmation_tokens: ConfirmationTokens
+    create_contact: CreateContact
+    list_contacts: ListContacts
+    rename_contact: RenameContact
+    set_active_contact: SetActiveContact
+    dialog_state: DialogState
     clock: Clock
     deduplicator: UpdateDeduplicator
     rate_limiter: RateLimiter

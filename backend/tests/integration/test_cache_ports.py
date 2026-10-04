@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from urllib.parse import urlsplit, urlunsplit
 
@@ -12,13 +13,15 @@ from redis.asyncio import Redis
 from svoi_pravila.adapters.cache.client import close_client, create_client
 from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
 from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
+from svoi_pravila.adapters.cache.dialog_state import ValkeyDialogState
 from svoi_pravila.adapters.cache.prepared_results import ValkeyPreparedResults
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
 from svoi_pravila.application.errors import PreparedResultUnavailable
+from svoi_pravila.application.ports.dialog_state import DialogRecord
 from svoi_pravila.application.ports.prepared_results import PreparedVariant
 from svoi_pravila.application.prepared_ref import PREPARED_REF_LENGTH
 from svoi_pravila.config import Settings
-from svoi_pravila.domain.enums import Firmness
+from svoi_pravila.domain.enums import Firmness, RelationshipKind
 from tests.factories import make_settings
 
 
@@ -126,3 +129,22 @@ async def test_prepared_token_length_and_ttl_key_has_no_telegram_id(valkey_db15:
     assert len(token) == PREPARED_REF_LENGTH
     keys = [key async for key in valkey_db15.scan_iter(match="tg:prepared:*")]
     assert all("telegram" not in key for key in keys)
+
+
+@pytest.mark.integration
+async def test_dialog_state_round_trip_and_ttl(valkey_db15: Redis) -> None:
+    store = ValkeyDialogState(valkey_db15, ttl_seconds=600)
+    record = DialogRecord(step="awaiting_label", relationship=RelationshipKind.OTHER)
+    await store.set("pseudo-dialog", record)
+    keys = [key async for key in valkey_db15.scan_iter(match="tg:dialog:*")]
+    assert keys == ["tg:dialog:pseudo-dialog"]
+    assert await store.get("pseudo-dialog") == record
+    value = await valkey_db15.get(keys[0])
+    assert value is not None
+    payload = json.loads(value)
+    assert "label" not in payload
+    assert set(payload) <= {"step", "contact_id", "relationship"}
+    ttl = await valkey_db15.ttl(keys[0])
+    assert 1 <= ttl <= 600
+    await store.clear("pseudo-dialog")
+    assert await store.get("pseudo-dialog") is None

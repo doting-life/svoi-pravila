@@ -9,8 +9,12 @@ from aiogram.types import (
     SwitchInlineQueryChosenChat,
 )
 
-from svoi_pravila.adapters.channels.telegram.localization import TelegramStrings
-from svoi_pravila.domain.enums import ConsentKind
+from svoi_pravila.adapters.channels.telegram.localization import (
+    TelegramStrings,
+    relationship_label,
+)
+from svoi_pravila.domain.enums import ConsentKind, RelationshipKind
+from svoi_pravila.domain.ids import ContactId
 
 _CALLBACK_DATA_MAX_BYTES = 64
 
@@ -119,3 +123,48 @@ def variant_reply_markup(
     if not buttons:
         return None
     return InlineKeyboardMarkup(inline_keyboard=[buttons])
+
+
+def _require_callback_bytes(data: str) -> str:
+    if len(data.encode("utf-8")) > _CALLBACK_DATA_MAX_BYTES:
+        msg = "contacts callback_data exceeds 64 bytes"
+        raise ValueError(msg)
+    return data
+
+
+def contacts_keyboard(
+    strings: TelegramStrings,
+    contact_ids: tuple[ContactId, ...],
+) -> InlineKeyboardMarkup:
+    """Per-contact actions plus add. Callback data carries ids only."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for contact_id in contact_ids:
+        ident = str(contact_id)
+        active = _require_callback_bytes(f"ct:a:{ident}")
+        rename = _require_callback_bytes(f"ct:r:{ident}")
+        rows.append(
+            [
+                InlineKeyboardButton(text=strings.contacts_make_active, callback_data=active),
+                InlineKeyboardButton(text=strings.contacts_rename, callback_data=rename),
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=strings.contacts_add,
+                callback_data=_require_callback_bytes("ct:n"),
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def relationship_keyboard(strings: TelegramStrings) -> InlineKeyboardMarkup:
+    """Relationship kinds for a new contact."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for kind in RelationshipKind:
+        data = _require_callback_bytes(f"ct:rel:{kind.value}")
+        rows.append(
+            [InlineKeyboardButton(text=relationship_label(strings, kind), callback_data=data)]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)

@@ -75,6 +75,37 @@ async def test_contact_crud_owner_only(world: AppWorld) -> None:
 
 
 @pytest.mark.unit
+async def test_create_contact_sets_active_only_when_none(world: AppWorld) -> None:
+    owner = await world.ensure_granted_user(20)
+    uc = CreateContact(world.uow_factory, world.catalog, world.ids, world.clock)
+    first = await uc.execute(
+        CreateContactCommand(owner.id, ContactLabel("One"), RelationshipKind.FRIEND)
+    )
+    async with world.uow_factory() as uow:
+        stored = await uow.users.get(owner.id)
+    assert stored is not None
+    assert stored.active_contact_id == first.contact.id
+    second = await uc.execute(
+        CreateContactCommand(owner.id, ContactLabel("Two"), RelationshipKind.WORK)
+    )
+    async with world.uow_factory() as uow:
+        stored = await uow.users.get(owner.id)
+    assert stored is not None
+    assert stored.active_contact_id == first.contact.id
+    assert second.contact.id != first.contact.id
+
+
+@pytest.mark.unit
+async def test_create_contact_missing_user_after_access(world: AppWorld) -> None:
+    owner = await world.ensure_granted_user(21)
+    hiding = _HideUserFactory(world.uow_factory, owner.id)
+    with pytest.raises(NotFound):
+        await CreateContact(hiding, world.catalog, world.ids, world.clock).execute(
+            CreateContactCommand(owner.id, ContactLabel("Alex"), RelationshipKind.FRIEND)
+        )
+
+
+@pytest.mark.unit
 async def test_contact_limit(world: AppWorld) -> None:
     owner = await world.ensure_granted_user(12)
     uc = CreateContact(world.uow_factory, world.catalog, world.ids, world.clock)

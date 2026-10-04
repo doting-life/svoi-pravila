@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from svoi_pravila.application.errors import ContactLimitReached
+from svoi_pravila.application.errors import ContactLimitReached, NotFound
 from svoi_pravila.application.ports.clock import Clock
 from svoi_pravila.application.ports.consent_catalog import ConsentCatalog
 from svoi_pravila.application.ports.id_generator import IdGenerator
@@ -63,5 +63,10 @@ class CreateContact:
                 created_at=self._clock.now(),
             )
             await uow.contacts.add(contact)
+            user = await uow.users.get(command.actor_id)
+            if user is None:
+                raise NotFound()
+            if user.active_contact_id is None:
+                await uow.users.update(user.set_active_contact(contact.id))
             await uow.commit()
             return CreateContactResult(contact=contact)

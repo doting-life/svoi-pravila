@@ -8,8 +8,9 @@ from urllib.parse import urlsplit, urlunsplit
 import pytest
 from aiogram import Bot
 from aiogram.types import CallbackQuery, Chat, Message, Update, User
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy import MetaData, String, Text, select
+from sqlalchemy.dialects.postgresql import BYTEA
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from svoi_pravila.adapters.cache.client import close_client, create_client
 from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
@@ -43,6 +44,33 @@ _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 def _db15_url(valkey_url: str) -> str:
     parts = urlsplit(valkey_url)
     return urlunsplit((parts.scheme, parts.netloc, "/15", parts.query, parts.fragment))
+
+
+def _is_text_or_bytea(column_type: object) -> bool:
+    return isinstance(column_type, (String, Text, BYTEA))
+
+
+async def _assert_no_markers_in_text_columns(
+    conn: AsyncConnection,
+    markers: tuple[str, ...],
+) -> None:
+    metadata = MetaData()
+    await conn.run_sync(metadata.reflect)
+    for table in metadata.tables.values():
+        columns = [column for column in table.columns if _is_text_or_bytea(column.type)]
+        if not columns:
+            continue
+        rows = (await conn.execute(select(*columns))).all()
+        for row in rows:
+            for value in row:
+                for marker in markers:
+                    if marker == str(_SENTINEL_ID) and table.name == "users":
+                        # telegram_user_id is intentionally persisted (C1).
+                        continue
+                    if isinstance(value, (bytes, memoryview)):
+                        assert marker.encode("utf-8") not in bytes(value)
+                    else:
+                        assert marker not in str(value)
 
 
 @pytest.mark.integration
@@ -166,44 +194,7 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
         str(_SENTINEL_ID),
     )
     async with engine.connect() as conn:
-        tables = (
-            (
-                await conn.execute(
-                    text(
-                        "SELECT table_name FROM information_schema.tables "
-                        "WHERE table_schema = 'public'"
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for table in tables:
-            columns = (
-                await conn.execute(
-                    text(
-                        "SELECT column_name, data_type FROM information_schema.columns "
-                        "WHERE table_schema = 'public' AND table_name = :table "
-                        "AND data_type IN ('text', 'character varying', 'bytea')"
-                    ),
-                    {"table": table},
-                )
-            ).all()
-            if not columns:
-                continue
-            select_list = ", ".join(f'"{col}"' for col, _dtype in columns)
-            rows = (await conn.execute(text(f'SELECT {select_list} FROM "{table}"'))).all()
-            for row in rows:
-                for value in row:
-                    for marker in markers:
-                        if marker == str(_SENTINEL_ID) and table == "users":
-                            # telegram_user_id is intentionally persisted (C1).
-                            continue
-                        if isinstance(value, (bytes, memoryview)):
-                            raw = bytes(value)
-                            assert marker.encode("utf-8") not in raw
-                        else:
-                            assert marker not in str(value)
+        await _assert_no_markers_in_text_columns(conn, markers)
 
     keys = [key async for key in valkey.scan_iter(match="*")]
     for key in keys:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import Any
 
 from fastapi import APIRouter, FastAPI, Response, status
@@ -17,27 +18,34 @@ DisposeHook = Callable[[], Awaitable[None]]
 StartHook = Callable[[], Awaitable[None]]
 
 
+@dataclass(frozen=True, slots=True)
+class AppLifecycleHooks:
+    """Optional lifespan and routing hooks for the ASGI app."""
+
+    dispose: DisposeHook | None = None
+    on_startup: StartHook | None = None
+    on_shutdown: DisposeHook | None = None
+    extra_routers: tuple[APIRouter, ...] = field(default_factory=tuple)
+
+
 def create_app(
     check_readiness: CheckReadiness,
     environment: Environment,
-    dispose: DisposeHook | None = None,
-    *,
-    on_startup: StartHook | None = None,
-    on_shutdown: DisposeHook | None = None,
-    extra_routers: tuple[APIRouter, ...] = (),
+    hooks: AppLifecycleHooks | None = None,
 ) -> FastAPI:
     """Build the ASGI app with already-constructed collaborators (no globals)."""
+    lifecycle = hooks or AppLifecycleHooks()
     docs_enabled = environment in {Environment.LOCAL, Environment.TEST}
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-        if on_startup is not None:
-            await on_startup()
+        if lifecycle.on_startup is not None:
+            await lifecycle.on_startup()
         yield
-        if on_shutdown is not None:
-            await on_shutdown()
-        if dispose is not None:
-            await dispose()
+        if lifecycle.on_shutdown is not None:
+            await lifecycle.on_shutdown()
+        if lifecycle.dispose is not None:
+            await lifecycle.dispose()
 
     app = FastAPI(
         title="Svoi Pravila",
@@ -47,7 +55,7 @@ def create_app(
         openapi_url="/openapi.json" if docs_enabled else None,
     )
     app.add_middleware(RequestLoggingMiddleware)
-    for router in extra_routers:
+    for router in lifecycle.extra_routers:
         app.include_router(router)
 
     @app.get("/healthz")

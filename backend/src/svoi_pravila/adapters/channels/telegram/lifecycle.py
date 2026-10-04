@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Coroutine
+from dataclasses import dataclass
 from typing import Any
 
 import structlog
@@ -19,6 +20,17 @@ logger = structlog.get_logger(__name__)
 ALLOWED_UPDATES = ("message", "callback_query")
 
 
+@dataclass(frozen=True, slots=True)
+class TelegramRuntimeConfig:
+    """Mode-specific lifecycle settings bundled to keep the constructor small."""
+
+    mode: TelegramUpdatesMode
+    strings: TelegramStrings
+    webhook_url: str | None
+    webhook_secret_token: str | None
+    shutdown_grace_seconds: float
+
+
 class TelegramLifecycle:
     """Own bot session, update tasks, and mode-specific start/stop."""
 
@@ -27,19 +39,15 @@ class TelegramLifecycle:
         *,
         bot: Bot,
         dispatcher: Dispatcher,
-        mode: TelegramUpdatesMode,
-        strings: TelegramStrings,
-        webhook_url: str | None,
-        webhook_secret_token: str | None,
-        shutdown_grace_seconds: float,
+        config: TelegramRuntimeConfig,
     ) -> None:
         self._bot = bot
         self._dispatcher = dispatcher
-        self._mode = mode
-        self._strings = strings
-        self._webhook_url = webhook_url
-        self._webhook_secret_token = webhook_secret_token
-        self._shutdown_grace_seconds = shutdown_grace_seconds
+        self._mode = config.mode
+        self._strings = config.strings
+        self._webhook_url = config.webhook_url
+        self._webhook_secret_token = config.webhook_secret_token
+        self._shutdown_grace_seconds = config.shutdown_grace_seconds
         self._polling_task: asyncio.Task[None] | None = None
         self._update_tasks: set[asyncio.Task[None]] = set()
         self._accepting = True

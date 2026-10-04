@@ -28,7 +28,7 @@ from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
 from svoi_pravila.adapters.channels.telegram.lifecycle import TelegramLifecycle
 from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
-from svoi_pravila.api.app import create_app
+from svoi_pravila.api.app import AppLifecycleHooks, create_app
 from svoi_pravila.api.telegram_webhook import (
     TelegramWebhookBindings,
     build_telegram_webhook_router,
@@ -129,9 +129,9 @@ def _app(lifecycle: TelegramLifecycle) -> FastAPI:
         )
     )
     return create_app(
-        check_readiness=CheckReadiness(probes=(OkProbe("x"),), timeout_seconds=1.0),
-        environment=Environment.TEST,
-        extra_routers=(router,),
+        CheckReadiness(probes=(OkProbe("x"),), timeout_seconds=1.0),
+        Environment.TEST,
+        AppLifecycleHooks(extra_routers=(router,)),
     )
 
 

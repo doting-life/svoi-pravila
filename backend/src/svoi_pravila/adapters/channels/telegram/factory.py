@@ -7,7 +7,10 @@ from aiogram import Bot, Dispatcher
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.errors import telegram_error_handler
 from svoi_pravila.adapters.channels.telegram.handlers.onboarding import build_router
-from svoi_pravila.adapters.channels.telegram.lifecycle import TelegramLifecycle
+from svoi_pravila.adapters.channels.telegram.lifecycle import (
+    TelegramLifecycle,
+    TelegramRuntimeConfig,
+)
 from svoi_pravila.adapters.channels.telegram.middlewares.dedup import DedupMiddleware
 from svoi_pravila.adapters.channels.telegram.middlewares.private_chat import (
     PrivateChatMiddleware,
@@ -57,9 +60,11 @@ def build_telegram_lifecycle(
     return TelegramLifecycle(
         bot=bot_instance,
         dispatcher=dispatcher,
-        mode=settings.telegram_updates_mode,
-        strings=deps.strings,
-        webhook_url=webhook_url,
-        webhook_secret_token=webhook_secret,
-        shutdown_grace_seconds=settings.telegram_shutdown_grace_seconds,
+        config=TelegramRuntimeConfig(
+            mode=settings.telegram_updates_mode,
+            strings=deps.strings,
+            webhook_url=webhook_url,
+            webhook_secret_token=webhook_secret,
+            shutdown_grace_seconds=settings.telegram_shutdown_grace_seconds,
+        ),
     )

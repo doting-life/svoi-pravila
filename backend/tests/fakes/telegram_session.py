@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import types
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
-from typing import Any, cast, get_origin, override
+from typing import Any, Union, cast, get_args, get_origin, override
 
 from aiogram import Bot
 from aiogram.client.session.base import BaseSession
@@ -42,22 +43,27 @@ class FakeTelegramSession(BaseSession):
         if method_type in self._results:
             return cast(TelegramType, self._results[method_type])
         returning = method.__returning__
-        if returning is bool:
-            return cast(TelegramType, True)
+        origin = get_origin(returning)
+        args = get_args(returning) if origin is not None else ()
+        if returning is bool or (
+            origin in {Union, types.UnionType} and bool in args and Message in args
+        ):
+            ok = True
+            return cast(TelegramType, ok)
         if returning is User:
-            return cast(TelegramType, User(id=1, is_bot=True, first_name="bot"))
-        if returning is list or get_origin(returning) is list:
-            return cast(TelegramType, [])
+            user = User(id=1, is_bot=True, first_name="bot")
+            return cast(TelegramType, user)
+        if returning is list or origin is list:
+            empty: list[Any] = []
+            return cast(TelegramType, empty)
         if returning is Message:
-            return cast(
-                TelegramType,
-                Message(
-                    message_id=1,
-                    date=datetime(2026, 1, 1, tzinfo=UTC),
-                    chat=Chat(id=1, type="private"),
-                    text="ok",
-                ),
+            message = Message(
+                message_id=1,
+                date=datetime(2026, 1, 1, tzinfo=UTC),
+                chat=Chat(id=1, type="private"),
+                text="ok",
             )
+            return cast(TelegramType, message)
         msg = f"no fake result configured for {method_type.__name__}"
         raise LookupError(msg)
 
@@ -68,7 +74,7 @@ class FakeTelegramSession(BaseSession):
         headers: dict[str, Any] | None = None,
         timeout: int = 30,
         chunk_size: int = 65536,
-        raise_for_status: bool = True,
+        raise_for_status: Any = True,
     ) -> AsyncGenerator[bytes]:
         _ = raise_for_status
         yield b""

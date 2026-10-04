@@ -12,8 +12,13 @@ from redis.asyncio import Redis
 from svoi_pravila.adapters.cache.client import close_client, create_client
 from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
 from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
+from svoi_pravila.adapters.cache.prepared_results import ValkeyPreparedResults
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
+from svoi_pravila.application.errors import PreparedResultUnavailable
+from svoi_pravila.application.ports.prepared_results import PreparedVariant
+from svoi_pravila.application.prepared_ref import PREPARED_REF_LENGTH
 from svoi_pravila.config import Settings
+from svoi_pravila.domain.enums import Firmness
 from tests.factories import make_settings
 
 
@@ -90,3 +95,34 @@ async def test_concurrency_guard_exclusive_and_owner_release(valkey_db15: Redis)
     await guard.release("tg:decode:lock:abc", first)
     third = await guard.acquire("tg:decode:lock:abc", ttl_seconds=5)
     assert third is not None
+
+
+@pytest.mark.integration
+async def test_prepared_token_wrong_user_and_tamper_rejected(valkey_db15: Redis) -> None:
+    store = ValkeyPreparedResults(valkey_db15, ttl_seconds=60)
+    owner = "ab" * 32
+    token = await store.store(owner, PreparedVariant(Firmness.GENTLE, "secret-live"))
+    keys = [key async for key in valkey_db15.scan_iter(match="tg:prepared:*")]
+    assert keys
+    assert "secret-live" not in "".join(keys)
+    value = await valkey_db15.get(keys[0])
+    assert value is not None
+    rendered = value if isinstance(value, str) else value.decode()
+    assert "secret-live" not in rendered
+    with pytest.raises(PreparedResultUnavailable):
+        await store.redeem("cd" * 32, token)
+    flipped = ("A" if rendered[0] != "A" else "B") + rendered[1:]
+    await valkey_db15.set(keys[0], flipped)
+    with pytest.raises(PreparedResultUnavailable):
+        await store.redeem(owner, token)
+    with pytest.raises(PreparedResultUnavailable):
+        await store.redeem(owner, "p_" + "?" * 64)
+
+
+@pytest.mark.integration
+async def test_prepared_token_length_and_ttl_key_has_no_telegram_id(valkey_db15: Redis) -> None:
+    store = ValkeyPreparedResults(valkey_db15, ttl_seconds=60)
+    token = await store.store("ff" * 32, PreparedVariant(Firmness.FIRM, "ok"))
+    assert len(token) == PREPARED_REF_LENGTH
+    keys = [key async for key in valkey_db15.scan_iter(match="tg:prepared:*")]
+    assert all("telegram" not in key for key in keys)

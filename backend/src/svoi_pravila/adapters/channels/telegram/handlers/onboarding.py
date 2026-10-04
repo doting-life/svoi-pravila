@@ -5,10 +5,11 @@ from __future__ import annotations
 import structlog
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
+from svoi_pravila.adapters.channels.telegram.localization import render_help
 from svoi_pravila.adapters.channels.telegram.presenters import render_step
 from svoi_pravila.application.use_cases.accept_age_confirmation import (
     AcceptAgeConfirmationCommand,
@@ -35,14 +36,17 @@ def build_router() -> Router:
     router = Router(name="telegram_onboarding")
 
     @router.message(CommandStart())
-    async def start(message: Message, tg_deps: TelegramDeps) -> None:
+    async def start(message: Message, command: CommandObject, tg_deps: TelegramDeps) -> None:
         if message.from_user is None:
+            return
+        if command.args == "help":
+            await message.answer(render_help(tg_deps.strings))
             return
         await render_current_step(message, tg_deps, message.from_user.id)
 
     @router.message(Command("help"))
     async def help_command(message: Message, tg_deps: TelegramDeps) -> None:
-        await message.answer(tg_deps.strings.help_body)
+        await message.answer(render_help(tg_deps.strings))
 
     @router.callback_query(F.data == "age:y")
     async def age_yes(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> None:

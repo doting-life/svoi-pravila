@@ -132,6 +132,18 @@ class IncomingTextTooLong(ApplicationError):
     """Incoming text is longer than the allowed bound."""
 
 
+class InlineQueryTooShort(ApplicationError):
+    """Inline query is empty or shorter than the configured minimum."""
+
+
+class InvalidInlineResultRef(ApplicationError):
+    """chosen_inline_result identifier does not encode a known scenario and firmness."""
+
+
+class PreparedResultUnavailable(ApplicationError):
+    """Prepared-result token is missing, expired, tampered, or bound to another user."""
+
+
 class InvalidGenerationOutput(ApplicationError):
     """Model output failed schema or content validation."""
 

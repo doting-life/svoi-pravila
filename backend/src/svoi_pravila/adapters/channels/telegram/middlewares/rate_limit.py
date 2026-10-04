@@ -45,6 +45,10 @@ def _telegram_user_id(update: Update) -> int | None:
         return update.message.from_user.id
     if update.callback_query and update.callback_query.from_user:
         return update.callback_query.from_user.id
+    if update.inline_query and update.inline_query.from_user:
+        return update.inline_query.from_user.id
+    if update.chosen_inline_result and update.chosen_inline_result.from_user:
+        return update.chosen_inline_result.from_user.id
     return None
 
 

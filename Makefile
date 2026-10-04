@@ -47,6 +47,7 @@ test:
 	$(UV) coverage report --include='*/svoi_pravila/adapters/persistence/*' --fail-under=95
 	$(UV) coverage report --include='*/svoi_pravila/adapters/llm/*' --fail-under=95
 	$(UV) coverage report --include='*/svoi_pravila/adapters/channels/*' --fail-under=95
+	$(UV) coverage report --include='*/svoi_pravila/adapters/cache/*' --fail-under=95
 
 bench-llm:
 	docker compose --profile app run --rm --entrypoint svoi-pravila-bench-llm api $(BENCH_ARGS)

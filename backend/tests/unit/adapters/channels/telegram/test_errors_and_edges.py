@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -37,7 +38,7 @@ from svoi_pravila.adapters.channels.telegram.lifecycle import (
     TelegramLifecycle,
     TelegramRuntimeConfig,
 )
-from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
+from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings, render_help
 from svoi_pravila.adapters.channels.telegram.middlewares.dedup import DedupMiddleware
 from svoi_pravila.adapters.channels.telegram.middlewares.private_chat import (
     PrivateChatMiddleware,
@@ -211,7 +212,7 @@ async def test_consent_decline_and_help_commands() -> None:
         ),
     )
     texts = [str(getattr(req, "text", "")) for req in session.requests]
-    assert deps.strings.help_body in texts
+    assert render_help(deps.strings) in texts
     assert deps.strings.consent_declined in texts
 
 
@@ -296,6 +297,7 @@ async def test_lifecycle_webhook_requires_url() -> None:
             webhook_url=None,
             webhook_secret_token=None,
             shutdown_grace_seconds=0.01,
+            inline_queries=deps.inline_queries,
         ),
     )
     with pytest.raises(RuntimeError, match="webhook url"):
@@ -335,8 +337,8 @@ async def test_middlewares_edge_updates() -> None:
             offset="",
         ),
     )
-    assert await PrivateChatMiddleware()(handler, empty, data) is None
-    assert await RateLimitMiddleware()(handler, empty, data) is None
+    assert await PrivateChatMiddleware()(handler, empty, data) == "ok"
+    assert await RateLimitMiddleware()(handler, empty, data) == "ok"
 
     no_from = Update(
         update_id=100,
@@ -359,25 +361,7 @@ async def test_middlewares_edge_updates() -> None:
         ),
     )
     assert await PrivateChatMiddleware()(handler, callback_no_message, data) is None
-    limited_deps = TelegramDeps(
-        strings=deps.strings,
-        get_onboarding_step=deps.get_onboarding_step,
-        get_user_by_telegram_id=deps.get_user_by_telegram_id,
-        accept_age=deps.accept_age,
-        grant_consent=deps.grant_consent,
-        get_consent_document=deps.get_consent_document,
-        decode_incoming=deps.decode_incoming,
-        revoke_all_consents=deps.revoke_all_consents,
-        delete_my_account=deps.delete_my_account,
-        export_my_data=deps.export_my_data,
-        confirmation_tokens=deps.confirmation_tokens,
-        clock=deps.clock,
-        deduplicator=deps.deduplicator,
-        rate_limiter=FakeRateLimiter(limit=0),
-        pseudonymizer=deps.pseudonymizer,
-        monotonic=deps.monotonic,
-        draft_min_interval_ms=deps.draft_min_interval_ms,
-    )
+    limited_deps = replace(deps, rate_limiter=FakeRateLimiter(limit=0))
     data["tg_deps"] = limited_deps
     assert await RateLimitMiddleware()(handler, callback_no_message, data) is None
 
@@ -605,7 +589,7 @@ async def test_onboarding_handler_edges() -> None:
             ),
         ),
     )
-    assert deps.strings.help_body in [str(getattr(req, "text", "")) for req in session.requests]
+    assert render_help(deps.strings) in [str(getattr(req, "text", "")) for req in session.requests]
 
     # Finish onboarding, then unknown callback while DONE is a no-op beyond answer.
     await lifecycle.dispatcher.feed_update(

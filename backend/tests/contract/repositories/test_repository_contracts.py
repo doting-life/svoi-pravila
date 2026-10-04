@@ -13,9 +13,11 @@ from svoi_pravila.domain.consent import Consent
 from svoi_pravila.domain.contact import Contact
 from svoi_pravila.domain.enums import (
     ConsentKind,
+    Firmness,
     RelationshipKind,
     RuleCategory,
     RuleStatus,
+    UsageEventKind,
     UsageOutcome,
     UsageScenario,
     UsageSurface,
@@ -341,9 +343,35 @@ async def test_usage_event_repo_roundtrip(uow_factory: UnitOfWorkFactory) -> Non
     async with uow_factory() as uow:
         loaded = await uow.usage_events.get(event.id)
         assert loaded == event
+        chosen = UsageEvent(
+            id=UsageEventId(UUID(int=72)),
+            occurred_at=NOW,
+            user_pseudonym="cd" * 32,
+            scenario=UsageScenario.SOFTEN,
+            surface=UsageSurface.INLINE,
+            outcome=UsageOutcome.OK,
+            unavailable_kind=None,
+            safety=None,
+            model=None,
+            prompt_version=None,
+            latency_ms=0,
+            ttfc_ms=None,
+            attempts=0,
+            input_tokens=0,
+            output_tokens=0,
+            billable_tokens=0,
+            event_kind=UsageEventKind.RESULT_CHOSEN,
+            variant_firmness=Firmness.BALANCED,
+        )
+        await uow.usage_events.add(chosen)
+        await uow.commit()
+    async with uow_factory() as uow:
+        loaded_choice = await uow.usage_events.get(chosen.id)
+        assert loaded_choice == chosen
         missing = await uow.usage_events.get(UsageEventId(UUID(int=71)))
         assert missing is None
         await uow.usage_events.delete_for_pseudonym(event.user_pseudonym)
+        await uow.usage_events.delete_for_pseudonym(chosen.user_pseudonym)
         await uow.commit()
     async with uow_factory() as uow:
         assert await uow.usage_events.get(event.id) is None

@@ -34,6 +34,22 @@ class _FakeValkey:
         return _run
 
 
+class _FakePrepared:
+    """Stand-in prepared-result store for bootstrap wiring tests."""
+
+    async def store(self, user_pseudonym: str, variant: object) -> str:
+        _ = user_pseudonym, variant
+        return "p_" + ("A" * 64)
+
+    async def redeem(self, user_pseudonym: str, token: str) -> object:
+        _ = user_pseudonym, token
+        msg = "not used"
+        raise LookupError(msg)
+
+    async def delete(self, user_pseudonym: str, token: str) -> None:
+        _ = user_pseudonym, token
+
+
 def _patch_infrastructure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "svoi_pravila.bootstrap.configure_logging",
@@ -71,6 +87,10 @@ def _patch_infrastructure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "svoi_pravila.bootstrap.ValkeyUpdateDeduplicator",
         lambda _client, *, ttl_seconds: FakeUpdateDeduplicator(),
+    )
+    monkeypatch.setattr(
+        "svoi_pravila.bootstrap.ValkeyPreparedResults",
+        lambda _client, *, ttl_seconds, key_prefix="tg:prepared": _FakePrepared(),
     )
 
 

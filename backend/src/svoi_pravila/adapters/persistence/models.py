@@ -344,14 +344,16 @@ class UsageEventRow(Base):
     outcome: Mapped[str] = mapped_column(Text(), nullable=False)
     unavailable_kind: Mapped[str | None] = mapped_column(Text(), nullable=True)
     safety: Mapped[str | None] = mapped_column(Text(), nullable=True)
-    model: Mapped[str] = mapped_column(Text(), nullable=False)
-    prompt_version: Mapped[str] = mapped_column(Text(), nullable=False)
+    model: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    prompt_version: Mapped[str | None] = mapped_column(Text(), nullable=True)
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     ttfc_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False)
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     billable_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_kind: Mapped[str] = mapped_column(Text(), nullable=False)
+    variant_firmness: Mapped[str | None] = mapped_column(Text(), nullable=True)
 
     __table_args__ = (
         CheckConstraint(
@@ -370,7 +372,28 @@ class UsageEventRow(Base):
             "outcome IN ('ok', 'invalid_output', 'refused', 'unavailable')",
             name="usage_outcome",
         ),
-        CheckConstraint("attempts >= 1", name="usage_attempts"),
+        CheckConstraint(
+            "event_kind IN ('generation', 'result_chosen')",
+            name="usage_event_kind",
+        ),
+        CheckConstraint(
+            "variant_firmness IS NULL OR variant_firmness IN ('gentle', 'balanced', 'firm')",
+            name="usage_variant_firmness",
+        ),
+        CheckConstraint(
+            "("
+            "event_kind = 'generation' AND model IS NOT NULL AND model <> '' "
+            "AND prompt_version IS NOT NULL AND prompt_version <> '' "
+            "AND attempts >= 1 AND variant_firmness IS NULL"
+            ") OR ("
+            "event_kind = 'result_chosen' AND model IS NULL AND prompt_version IS NULL "
+            "AND attempts = 0 AND latency_ms = 0 AND ttfc_ms IS NULL "
+            "AND input_tokens = 0 AND output_tokens = 0 AND billable_tokens = 0 "
+            "AND safety IS NULL AND unavailable_kind IS NULL AND outcome = 'ok' "
+            "AND variant_firmness IN ('gentle', 'balanced', 'firm')"
+            ")",
+            name="usage_event_kind_shape",
+        ),
         CheckConstraint("latency_ms >= 0", name="usage_latency"),
         CheckConstraint("input_tokens >= 0", name="usage_input_tokens"),
         CheckConstraint("output_tokens >= 0", name="usage_output_tokens"),

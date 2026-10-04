@@ -12,12 +12,13 @@ import structlog
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 
+from svoi_pravila.adapters.channels.telegram.inline_scheduler import InlineQueryCoordinator
 from svoi_pravila.adapters.channels.telegram.localization import TelegramStrings
 from svoi_pravila.config import TelegramUpdatesMode
 
 logger = structlog.get_logger(__name__)
 
-ALLOWED_UPDATES = ("message", "callback_query")
+ALLOWED_UPDATES = ("message", "callback_query", "inline_query", "chosen_inline_result")
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +30,7 @@ class TelegramRuntimeConfig:
     webhook_url: str | None
     webhook_secret_token: str | None
     shutdown_grace_seconds: float
+    inline_queries: InlineQueryCoordinator
 
 
 class TelegramLifecycle:
@@ -48,6 +50,7 @@ class TelegramLifecycle:
         self._webhook_url = config.webhook_url
         self._webhook_secret_token = config.webhook_secret_token
         self._shutdown_grace_seconds = config.shutdown_grace_seconds
+        self._inline_queries = config.inline_queries
         self._polling_task: asyncio.Task[None] | None = None
         self._update_tasks: set[asyncio.Task[None]] = set()
         self._accepting = True
@@ -122,7 +125,7 @@ class TelegramLifecycle:
                 await self._polling_task
             self._polling_task = None
 
-        pending = list(self._update_tasks)
+        pending = list(self._update_tasks | self._inline_queries.tasks)
         if pending:
             done, still_pending = await asyncio.wait(
                 pending,

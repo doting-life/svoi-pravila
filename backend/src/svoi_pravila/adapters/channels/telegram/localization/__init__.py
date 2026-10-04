@@ -6,6 +6,9 @@ import json
 from dataclasses import dataclass
 from importlib import resources
 
+from svoi_pravila.application.ports.generation import HelpSayIntent
+from svoi_pravila.domain.enums import Firmness
+
 
 @dataclass(frozen=True, slots=True)
 class TelegramStrings:
@@ -24,9 +27,21 @@ class TelegramStrings:
     done_via_bot: str
     done_commands: str
     help_body: str
+    help_inline: str
+    inline_prefix_decline: str
+    inline_prefix_set_boundary: str
+    inline_prefix_admit_fault: str
+    inline_prefix_reconnect: str
+    inline_prefix_other: str
+    inline_firmness_gentle: str
+    inline_firmness_balanced: str
+    inline_firmness_firm: str
+    inline_button_how_to: str
+    inline_button_finish_setup: str
     rate_limited: str
     error_generic: str
     decode_copy: str
+    decode_insert: str
     decode_need_text: str
     decode_busy: str
     decode_quota: str
@@ -65,9 +80,21 @@ _KEYS: dict[str, str] = {
     "done.via_bot": "done_via_bot",
     "done.commands": "done_commands",
     "help.body": "help_body",
+    "help.inline": "help_inline",
+    "inline.prefix.decline": "inline_prefix_decline",
+    "inline.prefix.set_boundary": "inline_prefix_set_boundary",
+    "inline.prefix.admit_fault": "inline_prefix_admit_fault",
+    "inline.prefix.reconnect": "inline_prefix_reconnect",
+    "inline.prefix.other": "inline_prefix_other",
+    "inline.firmness.gentle": "inline_firmness_gentle",
+    "inline.firmness.balanced": "inline_firmness_balanced",
+    "inline.firmness.firm": "inline_firmness_firm",
+    "inline.button.how_to": "inline_button_how_to",
+    "inline.button.finish_setup": "inline_button_finish_setup",
     "rate_limited": "rate_limited",
     "error.generic": "error_generic",
     "decode.copy": "decode_copy",
+    "decode.insert": "decode_insert",
     "decode.need_text": "decode_need_text",
     "decode.busy": "decode_busy",
     "decode.quota": "decode_quota",
@@ -106,3 +133,31 @@ def load_ru_strings() -> TelegramStrings:
         raise KeyError(msg)
     values = {attr: str(data[key]) for key, attr in _KEYS.items()}
     return TelegramStrings(**values)
+
+
+def help_say_intent_prefixes(
+    strings: TelegramStrings,
+) -> tuple[tuple[str, HelpSayIntent], ...]:
+    """Intent prefixes from the catalog (not literals in use-case code)."""
+    return (
+        (strings.inline_prefix_decline, HelpSayIntent.DECLINE),
+        (strings.inline_prefix_set_boundary, HelpSayIntent.SET_BOUNDARY),
+        (strings.inline_prefix_admit_fault, HelpSayIntent.ADMIT_FAULT),
+        (strings.inline_prefix_reconnect, HelpSayIntent.RECONNECT_AFTER_CONFLICT),
+        (strings.inline_prefix_other, HelpSayIntent.OTHER),
+    )
+
+
+def render_help(strings: TelegramStrings) -> str:
+    """DM decode help plus inline prefixes taken from the catalog."""
+    prefixes = "\n".join(prefix for prefix, _intent in help_say_intent_prefixes(strings))
+    return f"{strings.help_body}\n\n{strings.help_inline}\n{prefixes}"
+
+
+def firmness_label(strings: TelegramStrings, firmness: Firmness) -> str:
+    """Catalog title for a variant's firmness."""
+    if firmness is Firmness.GENTLE:
+        return strings.inline_firmness_gentle
+    if firmness is Firmness.BALANCED:
+        return strings.inline_firmness_balanced
+    return strings.inline_firmness_firm

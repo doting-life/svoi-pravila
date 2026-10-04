@@ -27,6 +27,8 @@ class PrivateChatMiddleware(BaseMiddleware):
 
 
 def _is_private(update: Update) -> bool:
+    if update.inline_query is not None or update.chosen_inline_result is not None:
+        return True
     message = update.message or update.edited_message
     if isinstance(message, Message) and message.chat is not None:
         return message.chat.type == "private"

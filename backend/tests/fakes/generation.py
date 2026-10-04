@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 
 from svoi_pravila.application.errors import (
@@ -15,7 +16,6 @@ from svoi_pravila.application.ports.generation import (
     DecodeEvent,
     DecodeRequest,
     DecodeResult,
-    Firmness,
     GenerationMeta,
     HelpSayRequest,
     HelpSayResult,
@@ -26,6 +26,7 @@ from svoi_pravila.application.ports.generation import (
     TokenUsage,
     Variant,
 )
+from svoi_pravila.domain.enums import Firmness
 
 
 def _meta(operation: str) -> GenerationMeta:
@@ -57,12 +58,25 @@ class FakeTextGenerator:
         self.decode_result = decode_result
         self.stream_chunks = stream_chunks
         self.stream_error = stream_error
+        self.soften_error: (
+            GenerationRefusedByProvider | InvalidGenerationOutput | GenerationUnavailable | None
+        ) = None
+        self.help_say_error: (
+            GenerationRefusedByProvider | InvalidGenerationOutput | GenerationUnavailable | None
+        ) = None
+        self.soften_block: asyncio.Event | None = None
+        self.soften_started = asyncio.Event()
         self.soften_calls: list[SoftenRequest] = []
         self.help_say_calls: list[HelpSayRequest] = []
         self.decode_stream_calls: list[DecodeRequest] = []
 
     async def soften(self, request: SoftenRequest) -> SoftenResult:
         self.soften_calls.append(request)
+        self.soften_started.set()
+        if self.soften_block is not None:
+            await self.soften_block.wait()
+        if self.soften_error is not None:
+            raise self.soften_error
         if self.soften_result is not None:
             return self.soften_result
         return SoftenResult(
@@ -77,6 +91,8 @@ class FakeTextGenerator:
 
     async def help_say(self, request: HelpSayRequest) -> HelpSayResult:
         self.help_say_calls.append(request)
+        if self.help_say_error is not None:
+            raise self.help_say_error
         if self.help_say_result is not None:
             return self.help_say_result
         return HelpSayResult(

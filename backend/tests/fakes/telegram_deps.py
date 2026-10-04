@@ -83,7 +83,7 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             monotonic=clock,
             ids=ids,
             pseudonymizer=pseudonymizer,
-            crisis_screen=CrisisScreen.load_ru_v1(),
+            crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=chosen.deadline_seconds,
         )
     )
@@ -98,7 +98,7 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             monotonic=clock,
             ids=ids,
             pseudonymizer=pseudonymizer,
-            crisis_screen=CrisisScreen.load_ru_v1(),
+            crisis_screen=CrisisScreen.load_ru_v2(),
             min_chars=chosen.inline_min_chars,
             deadline_seconds=chosen.inline_deadline_seconds,
             intent_prefixes=help_say_intent_prefixes(strings),

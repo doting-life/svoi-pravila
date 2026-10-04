@@ -48,6 +48,7 @@ from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
 from tests.fakes.usage_sink import FailingUsageEventSink, RecordingUsageEventSink
 from tests.unit.application.conftest import AppWorld
+from tests.unit.domain.test_crisis_screen import THREAT_AND_HYPERBOLE_NEGATIVES
 
 _PREFIXES = (
     ("откажи:", HelpSayIntent.DECLINE),
@@ -82,7 +83,7 @@ def _ports(
             monotonic=world.clock,
             ids=world.ids,
             pseudonymizer=FakePseudonymizer(),
-            crisis_screen=CrisisScreen.load_ru_v1(),
+            crisis_screen=CrisisScreen.load_ru_v2(),
             min_chars=chosen.min_chars,
             deadline_seconds=8.0,
             intent_prefixes=_PREFIXES,
@@ -239,7 +240,7 @@ async def test_inline_compose_skips_blank_prefix_entries(world: AppWorld) -> Non
             monotonic=world.clock,
             ids=world.ids,
             pseudonymizer=FakePseudonymizer(),
-            crisis_screen=CrisisScreen.load_ru_v1(),
+            crisis_screen=CrisisScreen.load_ru_v2(),
             min_chars=8,
             deadline_seconds=8.0,
             intent_prefixes=(("", HelpSayIntent.OTHER), *_PREFIXES),
@@ -270,7 +271,7 @@ async def test_inline_compose_crisis_screen_skips_quota_and_generator(world: App
     assert event.scenario is UsageScenario.SOFTEN
     assert event.billable_tokens == 0
     help_result = await use_case.execute(
-        InlineComposeCommand(TelegramUserId(100), "граница: убью тебя")
+        InlineComposeCommand(TelegramUserId(100), "граница: я не хочу жить")
     )
     assert help_result.scenario is UsageScenario.HELP_SAY
     assert help_result.safety is SafetyVerdict.CRISIS
@@ -329,3 +330,18 @@ async def test_inline_compose_help_say_ok_event(world: AppWorld) -> None:
     assert generator.help_say_calls[0].intent is HelpSayIntent.SET_BOUNDARY
     assert isinstance(sink, RecordingUsageEventSink)
     assert sink.events[0].scenario is UsageScenario.HELP_SAY
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("phrase", THREAT_AND_HYPERBOLE_NEGATIVES)
+async def test_inline_threat_and_hyperbole_still_calls_generator(
+    world: AppWorld, phrase: str
+) -> None:
+    await world.ensure_granted_user(100)
+    generator = FakeTextGenerator()
+    use_case, sink = _ports(world, _Fakes(generator=generator))
+    result = await use_case.execute(InlineComposeCommand(TelegramUserId(100), phrase))
+    assert result.safety is not SafetyVerdict.CRISIS
+    assert generator.soften_calls
+    assert isinstance(sink, RecordingUsageEventSink)
+    assert sink.events[0].outcome is not UsageOutcome.SCREENED

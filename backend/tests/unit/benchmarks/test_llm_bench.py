@@ -516,7 +516,7 @@ async def test_async_main_list_models(
     def _client_factory(_settings: object) -> _Client:
         return _Client()
 
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
     monkeypatch.setattr(
         "svoi_pravila.benchmarks.llm.create_gigachat_client",
         _client_factory,
@@ -731,7 +731,7 @@ async def test_async_main_runs_models(
             ),
         ),
     ]
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", _client_factory)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.close_gigachat_client", _close)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.GigaChatTextGenerator", _gen_factory)
@@ -794,7 +794,7 @@ async def test_async_main_rate_limited_incomplete(
             ),
         ),
     ]
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", lambda _s: _Client())
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.close_gigachat_client", _close)
 
@@ -1122,7 +1122,7 @@ async def test_async_main_model_list_warning_continues(
     async def _close(_client: object) -> None:
         return None
 
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", lambda _s: _Client())
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.close_gigachat_client", _close)
     monkeypatch.setattr(
@@ -1146,7 +1146,7 @@ async def test_async_main_list_models_maps_provider_error(
     async def _close(_client: object) -> None:
         return None
 
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", lambda _s: _Client())
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.close_gigachat_client", _close)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: [_soften_case()])
@@ -1329,7 +1329,7 @@ async def test_dry_run_makes_no_network(
 
     with respx.mock(assert_all_called=False) as router:
         router.route(host="ngw.devices.sberbank.ru").respond(500)
-        monkeypatch.setattr("svoi_pravila.benchmarks.llm.Settings", make_settings)
+        monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
         monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", _forbid_client)
         monkeypatch.setattr(
             "svoi_pravila.benchmarks.llm.load_cases",
@@ -1356,7 +1356,7 @@ async def test_dry_run_makes_no_network(
 
 @pytest.mark.unit
 def test_max_tokens_required_for_live_run(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: [_soften_case()])
     with pytest.raises(SystemExit, match="max-tokens"):
         asyncio.run(async_main(_cli_args(max_tokens=None, models=["GigaChat-2"], ops=["soften"])))
@@ -1399,7 +1399,7 @@ async def test_async_main_budget_incomplete(
     async def _close(_client: object) -> None:
         return None
 
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", lambda _s: _Client())
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.close_gigachat_client", _close)
     monkeypatch.setattr(
@@ -1513,7 +1513,7 @@ async def test_rate_limit_capture_feeds_incomplete_out(
     def _client_factory(_settings: Settings) -> GigaChat:
         return _real_gigachat(monkeypatch, proxy_mode=proxy_mode)
 
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", _client_factory)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: [_soften_case()])
     respx.post(url__regex=_CHAT_URL_RE).mock(

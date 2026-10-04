@@ -37,7 +37,11 @@ def crisis_recall(records: list[EvalRecord]) -> float:
 
 def false_crisis_rate(records: list[EvalRecord]) -> float:
     """Share of ordinary+mild cases judged crisis."""
-    gold = [row for row in records if row.category in {"ordinary_conflict", "mild_distress"}]
+    gold = [
+        row
+        for row in records
+        if row.category in {"ordinary_conflict", "mild_distress", "hyperbole"}
+    ]
     return _rate(sum(row.verdict == "crisis" for row in gold), len(gold))
 
 

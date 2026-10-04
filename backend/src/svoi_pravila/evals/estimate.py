@@ -32,6 +32,13 @@ def estimate_eval_case_tokens(case: EvalCase, screen: CrisisScreen) -> int:
     return estimate_case_tokens(to_bench_case(case), case.operation)
 
 
+def largest_eval_call_estimate(cases: list[EvalCase], screen: CrisisScreen) -> int:
+    """Worst-case tokens of the single most expensive eval case (0 if all screened)."""
+    if not cases:
+        return 0
+    return max(estimate_eval_case_tokens(case, screen) for case in cases)
+
+
 def plan_eval_calls(
     cases: list[EvalCase],
     *,

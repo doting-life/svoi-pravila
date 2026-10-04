@@ -11,7 +11,7 @@ from svoi_pravila.domain.safety import compile_crisis_patterns, crisis_hit, load
 _PATTERNS_PACKAGE = "svoi_pravila.domain.safety"
 
 
-def load_crisis_pattern_sources(*, locale: str = "ru", version: str = "v1") -> tuple[str, ...]:
+def load_crisis_pattern_sources(*, locale: str = "ru", version: str = "v2") -> tuple[str, ...]:
     """Load crisis regex sources from the versioned package resource."""
     resource = f"crisis_patterns/{locale}/{version}.txt"
     raw = resources.files(_PATTERNS_PACKAGE).joinpath(resource).read_text(encoding="utf-8")
@@ -25,9 +25,9 @@ class CrisisScreen:
     patterns: tuple[re.Pattern[str], ...]
 
     @classmethod
-    def load_ru_v1(cls) -> CrisisScreen:
-        """Load compiled ru/v1 patterns from the package resource."""
-        sources = load_crisis_pattern_sources(locale="ru", version="v1")
+    def load_ru_v2(cls) -> CrisisScreen:
+        """Load compiled ru/v2 patterns from the package resource."""
+        sources = load_crisis_pattern_sources(locale="ru", version="v2")
         return cls(patterns=compile_crisis_patterns(sources))
 
     def hit(self, text: str) -> bool:

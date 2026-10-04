@@ -47,7 +47,7 @@ from svoi_pravila.benchmarks.runner import (
     run_benchmark,
     warmup,
 )
-from svoi_pravila.config import Settings
+from svoi_pravila.config import LlmToolSettings
 
 _DEFAULT_OPS: tuple[RunOperation, ...] = ("soften", "help_say", "decode_stream")
 
@@ -119,7 +119,7 @@ def _print_dry_run(
 @dataclass(frozen=True, slots=True)
 class _ModelRun:
     client: GigaChat
-    settings: Settings
+    settings: LlmToolSettings
     cases: list[BenchCase]
     model: str
     params: BenchmarkParams
@@ -248,7 +248,7 @@ async def _run_live_models(base: _ModelRun, model_list: list[str]) -> _LiveRunRe
 
 async def async_main(args: argparse.Namespace) -> int:
     """Run the benchmark and print/write C0 markdown tables."""
-    settings = Settings()
+    settings = LlmToolSettings()
     cases = _load_selected_cases(args)
     operations = _parse_ops(args.ops)
 

@@ -36,7 +36,11 @@ from svoi_pravila.evals.cases import (
     with_deadline,
 )
 from svoi_pravila.evals.cli import _parse_ops, _write_incomplete, async_main, main
-from svoi_pravila.evals.estimate import estimate_eval_case_tokens, plan_eval_calls
+from svoi_pravila.evals.estimate import (
+    estimate_eval_case_tokens,
+    largest_eval_call_estimate,
+    plan_eval_calls,
+)
 from svoi_pravila.evals.metrics import (
     EvalRecord,
     crisis_recall,
@@ -136,7 +140,7 @@ def test_metrics_and_leak_exit() -> None:
 async def test_run_eval_case_screen_skips_generator() -> None:
     cases = [c for c in load_cases(_DATA) if c.category == "explicit_crisis"]
     gen = FakeTextGenerator()
-    runtime = EvalRuntime(OutWriter(None), SpendTracker(), CrisisScreen.load_ru_v1())
+    runtime = EvalRuntime(OutWriter(None), SpendTracker(), CrisisScreen.load_ru_v2())
     record = await run_eval_case(gen, cases[0], runtime, deadline=5.0, show_outputs=False)
     assert record.screen_hit is True
     assert record.outcome == "screened"
@@ -151,7 +155,7 @@ async def test_run_eval_writes_out_without_generated_text(tmp_path: Path) -> Non
     ordinary = next(c for c in load_cases(_DATA) if c.id == "soften-ordinary_conflict-01")
     gen = FakeTextGenerator()
     out_path = tmp_path / "eval.md"
-    runtime = EvalRuntime(OutWriter(out_path), SpendTracker(), CrisisScreen.load_ru_v1())
+    runtime = EvalRuntime(OutWriter(out_path), SpendTracker(), CrisisScreen.load_ru_v2())
     params = EvalParams(
         operations=("soften",),
         models=("fake",),
@@ -175,7 +179,7 @@ async def test_invalid_and_unavailable_records() -> None:
     ordinary = next(
         c for c in load_cases(_DATA) if c.operation == "soften" and c.category == "heated"
     )
-    runtime = EvalRuntime(OutWriter(None), SpendTracker(), CrisisScreen.load_ru_v1())
+    runtime = EvalRuntime(OutWriter(None), SpendTracker(), CrisisScreen.load_ru_v2())
     invalid = FakeTextGenerator()
     invalid.soften_error = InvalidGenerationOutput(
         (InvalidOutputReason.PROMPT_LEAK,),
@@ -197,7 +201,7 @@ async def test_invalid_and_unavailable_records() -> None:
 
 @pytest.mark.unit
 async def test_dry_run_makes_no_network(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("svoi_pravila.evals.cli.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.evals.cli.LlmToolSettings", make_settings)
     called = {"n": 0}
 
     def boom(_settings: object) -> None:
@@ -224,7 +228,7 @@ async def test_dry_run_makes_no_network(monkeypatch: pytest.MonkeyPatch) -> None
 
 @pytest.mark.unit
 async def test_max_tokens_required_for_live(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("svoi_pravila.evals.cli.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.evals.cli.LlmToolSettings", make_settings)
     with pytest.raises(SystemExit, match="max-tokens"):
         await async_main(
             Namespace(
@@ -243,7 +247,7 @@ async def test_max_tokens_required_for_live(monkeypatch: pytest.MonkeyPatch) -> 
 
 @pytest.mark.unit
 def test_estimate_crisis_is_zero() -> None:
-    screen = CrisisScreen.load_ru_v1()
+    screen = CrisisScreen.load_ru_v2()
     crisis = next(c for c in load_cases(_DATA) if c.category == "explicit_crisis")
     ordinary = next(c for c in load_cases(_DATA) if c.category == "ordinary_conflict")
     assert estimate_eval_case_tokens(crisis, screen) == 0
@@ -255,6 +259,11 @@ def test_estimate_crisis_is_zero() -> None:
         screen=screen,
     )
     assert rows[0][2] >= 1
+    threat = next(c for c in load_cases(_DATA) if c.id.endswith("heated-12"))
+    assert estimate_eval_case_tokens(threat, screen) > 0
+    assert largest_eval_call_estimate([crisis, ordinary], screen) == estimate_eval_case_tokens(
+        ordinary, screen
+    )
 
 
 @pytest.mark.unit
@@ -279,7 +288,7 @@ async def test_help_say_decode_and_warmup() -> None:
         c for c in cases if c.operation == "decode_stream" and c.category == "heated"
     )
     gen = FakeTextGenerator()
-    runtime = EvalRuntime(OutWriter(None), SpendTracker(), CrisisScreen.load_ru_v1())
+    runtime = EvalRuntime(OutWriter(None), SpendTracker(), CrisisScreen.load_ru_v2())
     help_rec = await run_eval_case(gen, help_case, runtime, deadline=5.0, show_outputs=False)
     decode_rec = await run_eval_case(gen, decode_case, runtime, deadline=5.0, show_outputs=False)
     assert help_rec.verdict == "ok"
@@ -391,7 +400,7 @@ def test_case_helpers_cover_gaps() -> None:
 @pytest.mark.unit
 async def test_runner_error_and_budget_paths() -> None:
     ordinary = next(c for c in load_cases(_DATA) if c.id == "soften-ordinary_conflict-01")
-    runtime = EvalRuntime(OutWriter(None), SpendTracker(), CrisisScreen.load_ru_v1())
+    runtime = EvalRuntime(OutWriter(None), SpendTracker(), CrisisScreen.load_ru_v2())
     refused = FakeTextGenerator()
     refused.soften_error = GenerationRefusedByProvider(
         usage=TokenUsage(output=1),
@@ -468,7 +477,7 @@ async def test_runner_error_and_budget_paths() -> None:
 @pytest.mark.unit
 async def test_decode_without_completed_and_missing_request() -> None:
     decode = next(c for c in load_cases(_DATA) if c.operation == "decode_stream")
-    runtime = EvalRuntime(OutWriter(None), SpendTracker(), CrisisScreen.load_ru_v1())
+    runtime = EvalRuntime(OutWriter(None), SpendTracker(), CrisisScreen.load_ru_v2())
     empty = FakeTextGenerator()
     empty.emit_completed = False
     with pytest.raises(RuntimeError, match="no completed"):
@@ -489,7 +498,7 @@ async def test_decode_without_completed_and_missing_request() -> None:
 
 @pytest.mark.unit
 def test_plan_eval_align_and_empty_operation() -> None:
-    screen = CrisisScreen.load_ru_v1()
+    screen = CrisisScreen.load_ru_v2()
     ordinary = next(c for c in load_cases(_DATA) if c.category == "ordinary_conflict")
     with pytest.raises(ValueError, match="align"):
         plan_eval_calls([ordinary], operations=("soften",), models=[], screen=screen)
@@ -541,7 +550,7 @@ def test_write_incomplete_markers(tmp_path: Path) -> None:
 async def test_async_main_live_and_failures(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr("svoi_pravila.evals.cli.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.evals.cli.LlmToolSettings", make_settings)
 
     async def _close(_client: object) -> None:
         return None

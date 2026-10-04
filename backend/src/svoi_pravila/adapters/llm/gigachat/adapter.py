@@ -51,7 +51,7 @@ from svoi_pravila.application.ports.generation import (
     SoftenResult,
     TokenUsage,
 )
-from svoi_pravila.config import Settings
+from svoi_pravila.config import GigaChatRuntimeSettings
 
 
 def _deadline_at(deadline_seconds: float) -> float:
@@ -112,7 +112,7 @@ def _timeout_unavailable(state: AttemptState) -> GenerationUnavailable:
 class GigaChatTextGenerator:
     """TextGenerator backed by the official GigaChat async SDK."""
 
-    def __init__(self, client: GigaChat, settings: Settings) -> None:
+    def __init__(self, client: GigaChat, settings: GigaChatRuntimeSettings) -> None:
         self._client = client
         self._settings = settings
 

@@ -10,6 +10,7 @@ from pydantic import SecretStr, ValidationError
 from svoi_pravila.config import (
     DatabaseSettings,
     Environment,
+    LlmToolSettings,
     LogLevel,
     Settings,
     TelegramUpdatesMode,
@@ -322,3 +323,30 @@ def test_test_infra_settings_loads_db_and_valkey(monkeypatch: pytest.MonkeyPatch
     monkeypatch.delenv("SP_TELEGRAM_BOT_TOKEN", raising=False)
     loaded = InfraEnvSettings()
     assert loaded.valkey_url.get_secret_value().startswith("redis://")
+
+
+@pytest.mark.unit
+def test_llm_tool_settings_loads_without_telegram(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SP_GIGACHAT_CREDENTIALS", "test-credentials")
+    monkeypatch.setenv("SP_GIGACHAT_SCOPE", "PERS")
+    monkeypatch.setenv("SP_GIGACHAT_CA_BUNDLE_FILE", str(_CERT))
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_SOFTEN", "GigaChat-3-Lightning")
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_HELP_SAY", "GigaChat-3-Lightning")
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_DECODE", "GigaChat-2-Pro")
+    monkeypatch.setenv("SP_TELEGRAM_UPDATES_MODE", "polling")
+    monkeypatch.delenv("SP_TELEGRAM_BOT_TOKEN", raising=False)
+    loaded = LlmToolSettings()
+    assert loaded.gigachat_model_soften == "GigaChat-3-Lightning"
+    assert loaded.gigachat_scope.value == "PERS"
+
+
+@pytest.mark.unit
+def test_llm_tool_settings_requires_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SP_GIGACHAT_CREDENTIALS", raising=False)
+    monkeypatch.setenv("SP_GIGACHAT_SCOPE", "PERS")
+    monkeypatch.setenv("SP_GIGACHAT_CA_BUNDLE_FILE", str(_CERT))
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_SOFTEN", "GigaChat-2")
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_HELP_SAY", "GigaChat-2")
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_DECODE", "GigaChat-2")
+    with pytest.raises(ValidationError):
+        LlmToolSettings()

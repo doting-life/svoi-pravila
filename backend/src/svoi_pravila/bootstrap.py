@@ -104,7 +104,7 @@ def create_application(settings: Settings) -> FastAPI:
     generator = GigaChatTextGenerator(gigachat, settings)
     sink = UnitOfWorkUsageEventSink(uow_factory)
     pseudonymizer = HmacPseudonymizer(settings.pseudonym_pepper_bytes())
-    crisis_screen = CrisisScreen.load_ru_v1()
+    crisis_screen = CrisisScreen.load_ru_v2()
 
     lifecycle = None
     extra_routers: tuple[APIRouter, ...] = ()

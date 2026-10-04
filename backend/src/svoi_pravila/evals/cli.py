@@ -16,9 +16,9 @@ from svoi_pravila.benchmarks.runner import (
     SpendTracker,
     TokenBudgetExceededError,
 )
-from svoi_pravila.config import Settings
+from svoi_pravila.config import LlmToolSettings
 from svoi_pravila.evals.cases import OPERATIONS, EvalCase, RunOperation, filter_cases, load_cases
-from svoi_pravila.evals.estimate import plan_eval_calls
+from svoi_pravila.evals.estimate import largest_eval_call_estimate, plan_eval_calls
 from svoi_pravila.evals.metrics import EvalRecord, format_metrics
 from svoi_pravila.evals.runner import (
     EvalParams,
@@ -48,7 +48,9 @@ def _parse_ops(raw: list[str] | None) -> tuple[RunOperation, ...]:
     return tuple(dict.fromkeys(ordered))
 
 
-def models_for_operations(settings: Settings, operations: tuple[RunOperation, ...]) -> list[str]:
+def models_for_operations(
+    settings: LlmToolSettings, operations: tuple[RunOperation, ...]
+) -> list[str]:
     """Configured model per operation (Lightning soften/help_say, 2-Pro decode)."""
     mapping = {
         "soften": settings.gigachat_model_soften,
@@ -78,12 +80,14 @@ def _print_dry_run(
         total_tokens += tokens
     print(f"Total planned calls: {total_calls}")
     print(f"Total estimated billable tokens: {total_tokens}")
+    largest = largest_eval_call_estimate(cases, screen)
+    print(f"Largest single-call worst-case estimate: {largest}")
 
 
 async def async_main(args: argparse.Namespace) -> int:
     """Run the safety eval and print/write C0 metrics."""
-    settings = Settings()
-    screen = CrisisScreen.load_ru_v1()
+    settings = LlmToolSettings()
+    screen = CrisisScreen.load_ru_v2()
     cases = filter_cases(
         load_cases(Path(args.data)),
         smoke=bool(args.smoke),

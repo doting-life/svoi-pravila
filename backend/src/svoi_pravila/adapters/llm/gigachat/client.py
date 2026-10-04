@@ -6,15 +6,15 @@ import ssl
 
 from gigachat import GigaChat
 
-from svoi_pravila.config import Settings
+from svoi_pravila.config import GigaChatRuntimeSettings
 
 
-def _ssl_context(settings: Settings) -> ssl.SSLContext:
+def _ssl_context(settings: GigaChatRuntimeSettings) -> ssl.SSLContext:
     """Build a verifying SSL context rooted at the configured НУЦ CA bundle."""
     return ssl.create_default_context(cafile=str(settings.gigachat_ca_bundle_file.resolve()))
 
 
-def create_gigachat_client(settings: Settings) -> GigaChat:
+def create_gigachat_client(settings: GigaChatRuntimeSettings) -> GigaChat:
     """Create one async-capable GigaChat client from application Settings.
 
     All SDK parameters are passed explicitly. TLS verification is always on.

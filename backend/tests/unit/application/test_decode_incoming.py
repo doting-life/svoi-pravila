@@ -68,6 +68,7 @@ from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
 from tests.fakes.usage_sink import FailingUsageEventSink, RecordingUsageEventSink
 from tests.unit.application.conftest import AppWorld
+from tests.unit.domain.test_crisis_screen import THREAT_AND_HYPERBOLE_NEGATIVES
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,7 +99,7 @@ def _ports(
             monotonic=world.clock,
             ids=world.ids,
             pseudonymizer=FakePseudonymizer(),
-            crisis_screen=CrisisScreen.load_ru_v1(),
+            crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=chosen.deadline_seconds,
         )
     )
@@ -524,3 +525,18 @@ async def test_decode_crisis_screen_skips_quota_lock_and_generator(world: AppWor
     assert event.model is None
     assert event.attempts == 0
     assert event.billable_tokens == 0
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("phrase", THREAT_AND_HYPERBOLE_NEGATIVES)
+async def test_decode_threat_and_hyperbole_still_calls_generator(
+    world: AppWorld, phrase: str
+) -> None:
+    await world.ensure_granted_user(109)
+    generator = FakeTextGenerator()
+    use_case, sink, _guard = _ports(world, _DecodeFakes(generator=generator))
+    events = await _drain(use_case, 109, phrase)
+    assert any(isinstance(event, DecodeCompleted) for event in events)
+    assert generator.decode_stream_calls
+    assert isinstance(sink, RecordingUsageEventSink)
+    assert sink.events[0].outcome is not UsageOutcome.SCREENED

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,6 +20,8 @@ logger = structlog.get_logger(__name__)
 
 ALLOWED_UPDATES = ("message", "callback_query", "inline_query", "chosen_inline_result")
 
+ExtraTasks = Callable[[], set[asyncio.Task[Any]]]
+
 
 @dataclass(frozen=True, slots=True)
 class TelegramRuntimeConfig:
@@ -31,6 +33,7 @@ class TelegramRuntimeConfig:
     webhook_secret_token: str | None
     shutdown_grace_seconds: float
     inline_queries: InlineQueryCoordinator
+    extra_tasks: ExtraTasks | None = None
 
 
 class TelegramLifecycle:
@@ -51,6 +54,7 @@ class TelegramLifecycle:
         self._webhook_secret_token = config.webhook_secret_token
         self._shutdown_grace_seconds = config.shutdown_grace_seconds
         self._inline_queries = config.inline_queries
+        self._extra_tasks = config.extra_tasks
         self._polling_task: asyncio.Task[None] | None = None
         self._update_tasks: set[asyncio.Task[None]] = set()
         self._accepting = True
@@ -128,7 +132,8 @@ class TelegramLifecycle:
                 await self._polling_task
             self._polling_task = None
 
-        pending = list(self._update_tasks | self._inline_queries.tasks)
+        extras = set(self._extra_tasks()) if self._extra_tasks is not None else set()
+        pending = list(self._update_tasks | self._inline_queries.tasks | extras)
         if pending:
             done, still_pending = await asyncio.wait(
                 pending,

@@ -310,6 +310,7 @@ def test_rate_limit_and_lifecycle_defaults() -> None:
     assert settings.inline_deadline_seconds == 8.0
     assert settings.inline_debounce_ms == 600
     assert settings.inline_cache_seconds == 30
+    assert settings.inline_reuse_max_entries == 10_000
     assert settings.prepared_result_ttl_seconds == 600
 
 

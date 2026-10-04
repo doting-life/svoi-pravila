@@ -46,7 +46,17 @@ from svoi_pravila.adapters.channels.telegram.localization import (
     render_help,
     render_refuse_manipulation,
 )
+from svoi_pravila.application.errors import (
+    GenerationRefusedByProvider,
+    GenerationUnavailable,
+    InlineComposeFailed,
+    InvalidGenerationOutput,
+    InvalidOutputReason,
+    ScenarioQuotaExceeded,
+    UnavailableKind,
+)
 from svoi_pravila.application.inline_result_ref import encode_inline_result_ref
+from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
 from svoi_pravila.application.ports.generation import (
     GenerationMeta,
     HelpSayResult,
@@ -1028,3 +1038,183 @@ async def test_inline_description_prefixes_applied_rule_date() -> None:
     content = article.input_message_content
     assert isinstance(content, InputTextMessageContent)
     assert content.message_text == "variant body"
+
+
+@pytest.mark.unit
+async def test_inline_answered_log_on_ok(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    catalog = FakeConsentCatalog()
+    uow = InMemoryUnitOfWorkFactory()
+    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, debounce_seconds=0.0))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 60, catalog)
+    await lifecycle.dispatcher.feed_update(bot, _inline(100, 60, "long enough draft"))
+    await _await_inline(deps)
+    answered = [e for e in capture_log_events() if e.get("event") == "inline_answered"]
+    assert len(answered) == 1
+    event = answered[0]
+    assert event["scenario"] == "soften"
+    assert event["outcome"] == "ok"
+    assert event["reuse"] == "miss"
+    assert isinstance(event["answer_latency_ms"], int)
+    assert event["answer_latency_ms"] >= 0
+    assert "query" not in event
+    assert "draft" not in event
+
+
+@pytest.mark.unit
+async def test_inline_answered_absent_when_stale(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    catalog = FakeConsentCatalog()
+    uow = InMemoryUnitOfWorkFactory()
+    block = asyncio.Event()
+    generator = FakeTextGenerator()
+    generator.soften_block = block
+    deps = make_telegram_deps(
+        TelegramTestDeps(
+            uow=uow,
+            catalog=catalog,
+            generator=generator,
+            debounce_seconds=0.0,
+        )
+    )
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 61, catalog)
+    await lifecycle.dispatcher.feed_update(bot, _inline(200, 61, "first long draft"))
+    await generator.soften_started.wait()
+    await lifecycle.dispatcher.feed_update(bot, _inline(201, 61, "second long draft"))
+    block.set()
+    await _await_inline(deps)
+    answered = [e for e in capture_log_events() if e.get("event") == "inline_answered"]
+    # Only the current (second) answer is sent; stale first logs nothing new.
+    assert len(answered) == 1
+    assert answered[0]["outcome"] == "ok"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("cause", "expected_outcome", "reuse"),
+    [
+        (
+            InvalidGenerationOutput(
+                (InvalidOutputReason.VARIANT_COUNT,),
+                usage=TokenUsage(),
+                attempts=1,
+                model="fake",
+                prompt_version="soften@v1",
+            ),
+            "invalid_output",
+            InlineReuseStatus.MISS,
+        ),
+        (
+            GenerationRefusedByProvider(
+                usage=TokenUsage(),
+                attempts=1,
+                model="fake",
+                prompt_version="soften@v1",
+            ),
+            "refused",
+            InlineReuseStatus.JOIN,
+        ),
+        (
+            GenerationUnavailable(
+                UnavailableKind.TIMEOUT,
+                usage=TokenUsage(),
+                attempts=1,
+                model="fake",
+                prompt_version="soften@v1",
+            ),
+            "timeout",
+            InlineReuseStatus.MISS,
+        ),
+        (
+            GenerationUnavailable(
+                UnavailableKind.RATE_LIMITED,
+                usage=TokenUsage(),
+                attempts=1,
+                model="fake",
+                prompt_version="soften@v1",
+            ),
+            "rate_limited",
+            InlineReuseStatus.HIT,
+        ),
+        (
+            ScenarioQuotaExceeded(),
+            "empty",
+            InlineReuseStatus.MISS,
+        ),
+    ],
+)
+async def test_inline_answered_maps_compose_failed_outcomes(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+    cause: object,
+    expected_outcome: str,
+    reuse: InlineReuseStatus,
+) -> None:
+    catalog = FakeConsentCatalog()
+    uow = InMemoryUnitOfWorkFactory()
+    base = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, debounce_seconds=0.0))
+
+    class _FailingCompose(InlineCompose):
+        def __init__(self, wrapped: InlineCompose) -> None:
+            super().__init__(wrapped._ports)
+
+        async def execute(self, command: InlineComposeCommand) -> InlineComposeResult:
+            _ = command
+            assert isinstance(
+                cause,
+                (
+                    InvalidGenerationOutput,
+                    GenerationRefusedByProvider,
+                    GenerationUnavailable,
+                    ScenarioQuotaExceeded,
+                ),
+            )
+            raise InlineComposeFailed(cause, reuse=reuse)
+
+    deps = replace(base, inline_compose=_FailingCompose(base.inline_compose))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 62, catalog)
+    await lifecycle.dispatcher.feed_update(bot, _inline(210, 62, "long enough draft"))
+    await _await_inline(deps)
+    answered = [e for e in capture_log_events() if e.get("event") == "inline_answered"]
+    assert len(answered) == 1
+    assert answered[0]["outcome"] == expected_outcome
+    assert answered[0]["reuse"] == reuse.value
+
+
+@pytest.mark.unit
+async def test_inline_answered_maps_bare_quota_exceeded(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    catalog = FakeConsentCatalog()
+    uow = InMemoryUnitOfWorkFactory()
+    base = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, debounce_seconds=0.0))
+
+    class _QuotaCompose(InlineCompose):
+        def __init__(self, wrapped: InlineCompose) -> None:
+            super().__init__(wrapped._ports)
+
+        async def execute(self, command: InlineComposeCommand) -> InlineComposeResult:
+            _ = command
+            raise ScenarioQuotaExceeded()
+
+    deps = replace(base, inline_compose=_QuotaCompose(base.inline_compose))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 63, catalog)
+    await lifecycle.dispatcher.feed_update(bot, _inline(220, 63, "long enough draft"))
+    await _await_inline(deps)
+    answered = [e for e in capture_log_events() if e.get("event") == "inline_answered"]
+    assert len(answered) == 1
+    assert answered[0]["outcome"] == "empty"
+    assert answered[0]["reuse"] == "none"

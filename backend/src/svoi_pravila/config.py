@@ -216,6 +216,7 @@ class Settings(BaseSettings):
     inline_deadline_seconds: float = Field(default=8.0, gt=0, le=30)
     inline_debounce_ms: int = Field(default=600, ge=0, le=5_000)
     inline_cache_seconds: int = Field(default=30, ge=0, le=300)
+    inline_reuse_max_entries: int = Field(default=10_000, ge=1, le=1_000_000)
     prepared_result_ttl_seconds: int = Field(default=600, ge=1, le=600)
     dialog_ttl_seconds: int = Field(default=600, ge=1, le=86_400)
     display_timezone: str = Field(default="Europe/Moscow")

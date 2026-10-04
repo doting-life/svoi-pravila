@@ -13,6 +13,7 @@ from svoi_pravila.adapters.channels.telegram.handlers.onboarding import build_ro
 from svoi_pravila.adapters.channels.telegram.handlers.rights import build_rights_router
 from svoi_pravila.adapters.channels.telegram.handlers.rules import build_rules_router
 from svoi_pravila.adapters.channels.telegram.lifecycle import (
+    ExtraTasks,
     TelegramLifecycle,
     TelegramRuntimeConfig,
 )
@@ -30,6 +31,7 @@ def build_telegram_lifecycle(
     deps: TelegramDeps,
     *,
     bot: Bot | None = None,
+    extra_tasks: ExtraTasks | None = None,
 ) -> TelegramLifecycle:
     """Wire the dispatcher, middlewares, handlers, and lifecycle controller."""
     if settings.telegram_updates_mode is TelegramUpdatesMode.DISABLED:
@@ -79,5 +81,6 @@ def build_telegram_lifecycle(
             webhook_secret_token=webhook_secret,
             shutdown_grace_seconds=settings.telegram_shutdown_grace_seconds,
             inline_queries=deps.inline_queries,
+            extra_tasks=extra_tasks,
         ),
     )

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+from dataclasses import dataclass
+from enum import StrEnum
 
 import structlog
 from aiogram import Bot, Router
@@ -24,6 +26,7 @@ from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
     GenerationUnavailable,
     IncomingTextTooLong,
+    InlineComposeFailed,
     InlineQueryTooShort,
     InvalidGenerationOutput,
     InvalidInlineResultRef,
@@ -32,9 +35,14 @@ from svoi_pravila.application.errors import (
     ScenarioQuotaExceeded,
 )
 from svoi_pravila.application.inline_result_ref import encode_inline_result_ref
+from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
 from svoi_pravila.application.ports.generation import AppliedRuleView, SafetyVerdict, Variant
+from svoi_pravila.application.ports.monotonic import MonotonicClock
 from svoi_pravila.application.prepared_ref import is_prepared_ref
-from svoi_pravila.application.use_cases.inline_compose import InlineComposeCommand
+from svoi_pravila.application.use_cases.inline_compose import (
+    InlineComposeCommand,
+    InlineComposeResult,
+)
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoiceCommand
 from svoi_pravila.domain.enums import UsageScenario
 from svoi_pravila.domain.ids import TelegramUserId
@@ -43,6 +51,33 @@ _PREVIEW_MAX = 256
 _PREPARED_PURPOSE = "prepared"
 
 logger = structlog.get_logger(__name__)
+
+
+class InlineAnsweredOutcome(StrEnum):
+    """C0 vocabulary for ``inline_answered.outcome``."""
+
+    OK = "ok"
+    SCREENED = "screened"
+    EMPTY = "empty"
+    INVALID_OUTPUT = "invalid_output"
+    REFUSED = "refused"
+    TIMEOUT = "timeout"
+    RATE_LIMITED = "rate_limited"
+    AUTH = "auth"
+    SERVER = "server"
+    NETWORK = "network"
+    TELEGRAM_API = "telegram_api"
+
+
+@dataclass(frozen=True, slots=True)
+class _AnsweredLog:
+    """C0 fields for ``inline_answered``."""
+
+    started: float
+    monotonic: MonotonicClock
+    scenario: UsageScenario | None
+    outcome: InlineAnsweredOutcome
+    reuse: str
 
 
 def build_inline_router() -> Router:
@@ -80,60 +115,180 @@ def build_inline_router() -> Router:
 
 async def _answer_composed(query: InlineQuery, bot: Bot, tg_deps: TelegramDeps) -> None:
     user_id = query.from_user.id
+    started = tg_deps.monotonic.monotonic()
     try:
         result = await tg_deps.inline_compose.execute(
             InlineComposeCommand(TelegramUserId(user_id), query.query)
         )
-    except (NotFound, AccessNotGranted):
-        if tg_deps.inline_queries.is_current_task(user_id):
-            await _answer_empty(query, bot, tg_deps, onboard=True)
-        return
     except (
+        NotFound,
+        AccessNotGranted,
         InlineQueryTooShort,
         IncomingTextTooLong,
         ScenarioQuotaExceeded,
-        InvalidGenerationOutput,
-        GenerationRefusedByProvider,
-        GenerationUnavailable,
-    ):
-        if tg_deps.inline_queries.is_current_task(user_id):
-            await _answer_empty(query, bot, tg_deps, onboard=False)
+        InlineComposeFailed,
+    ) as exc:
+        await _answer_compose_error(query, bot, tg_deps, started=started, error=exc)
         return
     if not tg_deps.inline_queries.is_current_task(user_id):
         return
+    await _answer_compose_result(query, bot, tg_deps, started=started, result=result)
+
+
+async def _answer_compose_error(
+    query: InlineQuery,
+    bot: Bot,
+    tg_deps: TelegramDeps,
+    *,
+    started: float,
+    error: (
+        NotFound
+        | AccessNotGranted
+        | InlineQueryTooShort
+        | IncomingTextTooLong
+        | ScenarioQuotaExceeded
+        | InlineComposeFailed
+    ),
+) -> None:
+    user_id = query.from_user.id
+    if not tg_deps.inline_queries.is_current_task(user_id):
+        return
+    onboard = isinstance(error, (NotFound, AccessNotGranted))
+    telegram_ok = await _answer_empty(query, bot, tg_deps, onboard=onboard)
+    outcome = _error_outcome(error, telegram_ok=telegram_ok)
+    _log_answered(
+        _AnsweredLog(
+            started=started,
+            monotonic=tg_deps.monotonic,
+            scenario=None,
+            outcome=outcome,
+            reuse=_reuse_from_error(error),
+        )
+    )
+
+
+def _error_outcome(
+    error: (
+        NotFound
+        | AccessNotGranted
+        | InlineQueryTooShort
+        | IncomingTextTooLong
+        | ScenarioQuotaExceeded
+        | InlineComposeFailed
+    ),
+    *,
+    telegram_ok: bool,
+) -> InlineAnsweredOutcome:
+    if not telegram_ok:
+        return InlineAnsweredOutcome.TELEGRAM_API
+    cause = error.cause if isinstance(error, InlineComposeFailed) else error
+    if isinstance(cause, InvalidGenerationOutput):
+        return InlineAnsweredOutcome.INVALID_OUTPUT
+    if isinstance(cause, GenerationRefusedByProvider):
+        return InlineAnsweredOutcome.REFUSED
+    if isinstance(cause, GenerationUnavailable):
+        return InlineAnsweredOutcome(cause.kind.value)
+    return InlineAnsweredOutcome.EMPTY
+
+
+async def _answer_compose_result(
+    query: InlineQuery,
+    bot: Bot,
+    tg_deps: TelegramDeps,
+    *,
+    started: float,
+    result: InlineComposeResult,
+) -> None:
+    reuse = _reuse_label(result.reuse)
     if result.safety is SafetyVerdict.CRISIS:
-        await _answer_empty(
+        telegram_ok = await _answer_empty(
             query,
             bot,
             tg_deps,
             onboard=False,
             deep_link=(tg_deps.strings.inline_button_need_support, "support"),
         )
-        return
-    if result.safety is SafetyVerdict.REFUSE_MANIPULATION:
-        await _answer_empty(
+        outcome = (
+            InlineAnsweredOutcome.TELEGRAM_API
+            if not telegram_ok
+            else InlineAnsweredOutcome.SCREENED
+        )
+    elif result.safety is SafetyVerdict.REFUSE_MANIPULATION:
+        telegram_ok = await _answer_empty(
             query,
             bot,
             tg_deps,
             onboard=False,
             deep_link=(tg_deps.strings.inline_button_why_no_variants, "why"),
         )
-        return
-    articles = _articles(
-        tg_deps,
-        result.scenario,
-        result.variants,
-        applied_rules=result.applied_rules,
+        outcome = (
+            InlineAnsweredOutcome.TELEGRAM_API if not telegram_ok else InlineAnsweredOutcome.EMPTY
+        )
+    else:
+        articles = _articles(
+            tg_deps,
+            result.scenario,
+            result.variants,
+            applied_rules=result.applied_rules,
+        )
+        if not articles:
+            telegram_ok = await _answer_empty(query, bot, tg_deps, onboard=False)
+            outcome = (
+                InlineAnsweredOutcome.TELEGRAM_API
+                if not telegram_ok
+                else InlineAnsweredOutcome.EMPTY
+            )
+        else:
+            telegram_ok = await _send_inline_answer(
+                bot,
+                inline_query_id=query.id,
+                results=articles,
+                cache_time=tg_deps.inline_cache_seconds,
+            )
+            outcome = (
+                InlineAnsweredOutcome.TELEGRAM_API if not telegram_ok else InlineAnsweredOutcome.OK
+            )
+    _log_answered(
+        _AnsweredLog(
+            started=started,
+            monotonic=tg_deps.monotonic,
+            scenario=result.scenario,
+            outcome=outcome,
+            reuse=reuse,
+        )
     )
-    if not articles:
-        await _answer_empty(query, bot, tg_deps, onboard=False)
-        return
-    await _send_inline_answer(
-        bot,
-        inline_query_id=query.id,
-        results=articles,
-        cache_time=tg_deps.inline_cache_seconds,
-    )
+
+
+def _reuse_label(status: InlineReuseStatus | None) -> str:
+    return "none" if status is None else status.value
+
+
+def _reuse_from_error(
+    error: (
+        NotFound
+        | AccessNotGranted
+        | InlineQueryTooShort
+        | IncomingTextTooLong
+        | ScenarioQuotaExceeded
+        | InlineComposeFailed
+    ),
+) -> str:
+    if isinstance(error, InlineComposeFailed):
+        return error.reuse.value
+    return "none"
+
+
+def _log_answered(fields: _AnsweredLog) -> None:
+    ended = fields.monotonic.monotonic()
+    latency_ms = max(0, int((ended - fields.started) * 1000))
+    payload: dict[str, object] = {
+        "outcome": fields.outcome.value,
+        "reuse": fields.reuse,
+        "answer_latency_ms": latency_ms,
+    }
+    if fields.scenario is not None:
+        payload["scenario"] = fields.scenario.value
+    logger.info("inline_answered", **payload)
 
 
 async def _answer_prepared(query: InlineQuery, bot: Bot, tg_deps: TelegramDeps) -> None:
@@ -203,14 +358,14 @@ async def _answer_empty(
     *,
     onboard: bool,
     deep_link: tuple[str, str] | None = None,
-) -> None:
+) -> bool:
     if deep_link is None:
         if onboard:
             deep_link = (tg_deps.strings.inline_button_finish_setup, "start")
         else:
             deep_link = (tg_deps.strings.inline_button_how_to, "help")
     button_text, start_parameter = deep_link
-    await _send_inline_answer(
+    return await _send_inline_answer(
         bot,
         inline_query_id=query.id,
         results=[],
@@ -226,7 +381,7 @@ async def _send_inline_answer(
     results: list[InlineQueryResultUnion],
     cache_time: int,
     button: InlineQueryResultsButton | None = None,
-) -> None:
+) -> bool:
     failed_class: str | None = None
     try:
         await bot.answer_inline_query(
@@ -240,3 +395,5 @@ async def _send_inline_answer(
         failed_class = type(exc).__name__
     if failed_class is not None:
         logger.error("inline_answer_failed", exception_class=failed_class)
+        return False
+    return True

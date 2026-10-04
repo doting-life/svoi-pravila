@@ -260,7 +260,9 @@ async def run_eval(
     records: list[EvalRecord] = []
     fail_fast: FailFastUnavailableError | None = None
     budget_error: TokenBudgetExceededError | None = None
-    selected = [case for case in cases if case.operation in params.operations]
+    selected: list[EvalCase] = []
+    for operation in params.operations:
+        selected.extend(case for case in cases if case.operation == operation)
     try:
         for case in selected:
             _ensure_budget(

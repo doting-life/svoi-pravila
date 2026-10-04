@@ -34,7 +34,6 @@ class InvalidOutputReason(StrEnum):
     LENGTH = "length"
     ANALYSIS_TOO_LONG = "analysis_too_long"
     HYPOTHESIS_COUNT = "hypothesis_count"
-    NON_OK_WITH_PAYLOAD = "non_ok_with_payload"
     BOUNDARY_COLLISION = "boundary_collision"
     PROMPT_LEAK = "prompt_leak"
 

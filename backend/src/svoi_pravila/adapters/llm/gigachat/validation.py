@@ -6,6 +6,8 @@ import math
 import re
 from dataclasses import dataclass
 
+import structlog
+
 from svoi_pravila.adapters.llm.gigachat.schemas import DecodeOut, VariantOut
 from svoi_pravila.application.errors import InvalidGenerationOutput, InvalidOutputReason
 from svoi_pravila.application.ports.generation import (
@@ -28,6 +30,8 @@ MAX_VARIANTS = 3
 # payload is never truncated by max_tokens.
 CHARS_PER_TOKEN = 3
 JSON_OVERHEAD_TOKENS = 128
+
+logger = structlog.get_logger(__name__)
 
 
 def output_token_cap(max_chars: int) -> int:
@@ -57,6 +61,7 @@ class VariantValidation:
     attempts: int
     model: str
     prompt_version: str
+    operation: str
 
 
 def invalid(
@@ -130,7 +135,11 @@ def validate_variants(
 
     if safety is not SafetyVerdict.OK:
         if variants_raw:
-            raise fail(InvalidOutputReason.NON_OK_WITH_PAYLOAD)
+            logger.info(
+                "non_ok_payload_dropped",
+                operation=spec.operation,
+                verdict=safety.value,
+            )
         return (), tuple(spec.applied), safety
 
     if not (spec.min_variants <= len(variants_raw) <= spec.max_variants):
@@ -177,6 +186,7 @@ def to_decode_result(parsed: DecodeOut, meta: GenerationMeta, *, rule_count: int
             attempts=attempts,
             model=meta.model,
             prompt_version=meta.prompt_version,
+            operation="decode_stream",
         ),
     )
 
@@ -199,8 +209,21 @@ def to_decode_result(parsed: DecodeOut, meta: GenerationMeta, *, rule_count: int
             hyp_reason = text_reason(hyp)
             if hyp_reason is not None:
                 raise fail(hyp_reason)
-    elif parsed.hypotheses or parsed.underlying_request.strip():
-        raise fail(InvalidOutputReason.NON_OK_WITH_PAYLOAD)
+    if not ok:
+        if parsed.hypotheses or parsed.underlying_request.strip():
+            logger.info(
+                "non_ok_payload_dropped",
+                operation="decode_stream",
+                verdict=safety.value,
+            )
+        return DecodeResult(
+            hypotheses=(),
+            underlying_request="",
+            variants=variants,
+            applied_rule_indexes=indexes,
+            safety=safety,
+            meta=meta,
+        )
     return DecodeResult(
         hypotheses=tuple(parsed.hypotheses),
         underlying_request=parsed.underlying_request,

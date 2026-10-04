@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -27,6 +27,7 @@ from aiogram.types import (
     User,
 )
 from tests.factories import make_settings
+from tests.fakes.clock import FakeClock
 from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.prepared import FakePreparedResults
@@ -678,7 +679,7 @@ async def test_prepared_ref_unknown_id_empty_help() -> None:
 async def test_inline_quota_and_long_preview() -> None:
     catalog = FakeConsentCatalog()
     uow = InMemoryUnitOfWorkFactory()
-    long_text = ("please stay calm " * 8).strip()
+    long_text = ("please stay calm " * 20).strip()
     generator = FakeTextGenerator(
         soften_result=SoftenResult(
             variants=(
@@ -706,7 +707,10 @@ async def test_inline_quota_and_long_preview() -> None:
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
     article = answers[-1].results[0]
     assert isinstance(article, InlineQueryResultArticle)
-    assert len(article.description or "") == 64
+    assert len(article.description or "") == 256
+    content = article.input_message_content
+    assert isinstance(content, InputTextMessageContent)
+    assert content.message_text == long_text
     quota_deps = make_telegram_deps(
         TelegramTestDeps(uow=uow, catalog=catalog, inline_quota_limit=0)
     )
@@ -908,3 +912,119 @@ async def test_inline_crisis_and_refuse_buttons() -> None:
     assert refuse_answers[-1].button is not None
     assert refuse_answers[-1].button.text == refuse_deps.strings.inline_button_why_no_variants
     assert refuse_answers[-1].button.start_parameter == "why"
+
+
+@pytest.mark.unit
+async def test_inline_description_prefixes_applied_rule_date() -> None:
+    uow = InMemoryUnitOfWorkFactory()
+    catalog = FakeConsentCatalog()
+    clock = FakeClock(start=datetime(2026, 10, 3, 12, tzinfo=UTC))
+    generator = FakeTextGenerator(
+        soften_result=SoftenResult(
+            variants=(Variant(text="variant body", firmness=Firmness.GENTLE),),
+            applied_rule_indexes=(0,),
+            safety=SafetyVerdict.OK,
+            meta=GenerationMeta(
+                model="fake",
+                prompt_version="soften@v1",
+                latency_ms=1,
+                attempts=1,
+                usage=TokenUsage(),
+            ),
+        )
+    )
+    deps = make_telegram_deps(
+        TelegramTestDeps(uow=uow, catalog=catalog, clock=clock, generator=generator)
+    )
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 42, catalog)
+    await lifecycle.dispatcher.feed_update(
+        bot,
+        Update(
+            update_id=1,
+            callback_query=CallbackQuery(
+                id="1",
+                from_user=User(id=42, is_bot=False, first_name="A"),
+                chat_instance="x",
+                data="ct:n",
+                message=Message(
+                    message_id=1,
+                    date=_NOW,
+                    chat=Chat(id=42, type="private"),
+                    from_user=User(id=42, is_bot=False, first_name="A"),
+                    text="p",
+                ),
+            ),
+        ),
+    )
+    await lifecycle.dispatcher.feed_update(
+        bot,
+        Update(
+            update_id=2,
+            callback_query=CallbackQuery(
+                id="2",
+                from_user=User(id=42, is_bot=False, first_name="A"),
+                chat_instance="x",
+                data="ct:rel:friend",
+                message=Message(
+                    message_id=1,
+                    date=_NOW,
+                    chat=Chat(id=42, type="private"),
+                    from_user=User(id=42, is_bot=False, first_name="A"),
+                    text="p",
+                ),
+            ),
+        ),
+    )
+    await lifecycle.dispatcher.feed_update(bot, _text_update(3, 42, "Sam"))
+    await lifecycle.dispatcher.feed_update(
+        bot,
+        Update(
+            update_id=4,
+            callback_query=CallbackQuery(
+                id="4",
+                from_user=User(id=42, is_bot=False, first_name="A"),
+                chat_instance="x",
+                data="ru:n",
+                message=Message(
+                    message_id=1,
+                    date=_NOW,
+                    chat=Chat(id=42, type="private"),
+                    from_user=User(id=42, is_bot=False, first_name="A"),
+                    text="p",
+                ),
+            ),
+        ),
+    )
+    await lifecycle.dispatcher.feed_update(
+        bot,
+        Update(
+            update_id=5,
+            callback_query=CallbackQuery(
+                id="5",
+                from_user=User(id=42, is_bot=False, first_name="A"),
+                chat_instance="x",
+                data="ru:cat:other",
+                message=Message(
+                    message_id=1,
+                    date=_NOW,
+                    chat=Chat(id=42, type="private"),
+                    from_user=User(id=42, is_bot=False, first_name="A"),
+                    text="p",
+                ),
+            ),
+        ),
+    )
+    await lifecycle.dispatcher.feed_update(bot, _text_update(6, 42, "не повышать голос"))
+    clock.advance(timedelta(days=1))
+    await lifecycle.dispatcher.feed_update(bot, _inline(7, 42, "long enough draft"))
+    await _await_inline(deps)
+    answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
+    article = answers[-1].results[0]
+    assert isinstance(article, InlineQueryResultArticle)
+    assert (article.description or "").startswith("С учётом правила от 3 октября")
+    content = article.input_message_content
+    assert isinstance(content, InputTextMessageContent)
+    assert content.message_text == "variant body"

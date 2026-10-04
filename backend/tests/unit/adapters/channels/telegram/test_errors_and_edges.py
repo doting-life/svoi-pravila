@@ -32,6 +32,7 @@ from tests.fakes.telegram_session import FakeTelegramSession
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.errors import telegram_error_handler
 from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
+from svoi_pravila.adapters.channels.telegram.handlers import helpers as handler_helpers
 from svoi_pravila.adapters.channels.telegram.handlers import onboarding as onboarding_handlers
 from svoi_pravila.adapters.channels.telegram.keyboards import consent_keyboard
 from svoi_pravila.adapters.channels.telegram.lifecycle import (
@@ -546,9 +547,9 @@ async def test_onboarding_handler_edges() -> None:
         chat_instance="x",
         data="age:n",
     )
-    assert onboarding_handlers._callback_chat_id(callback_no_msg) is None
-    await onboarding_handlers._send_current_step(bot, callback_no_msg, deps, 55)
-    await onboarding_handlers._clear_callback_keyboard(bot, callback_no_msg)
+    assert handler_helpers.callback_chat_id(callback_no_msg) is None
+    await handler_helpers.send_current_step(bot, callback_no_msg, deps, 55)
+    await handler_helpers.clear_callback_keyboard(bot, callback_no_msg)
 
     callback_with_msg = CallbackQuery(
         id="56",
@@ -570,7 +571,7 @@ async def test_onboarding_handler_edges() -> None:
         )
     )
     object.__setattr__(bot, "edit_message_reply_markup", failing_edit)
-    await onboarding_handlers._clear_callback_keyboard(bot, callback_with_msg)
+    await handler_helpers.clear_callback_keyboard(bot, callback_with_msg)
 
     # Restore edit for subsequent feed_update calls.
     delattr(bot, "edit_message_reply_markup")

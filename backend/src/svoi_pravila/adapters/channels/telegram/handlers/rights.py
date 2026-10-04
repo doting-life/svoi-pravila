@@ -9,9 +9,10 @@ from aiogram.filters import Command
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
-from svoi_pravila.adapters.channels.telegram.handlers.onboarding import (
-    _clear_callback_keyboard,
-    _send_current_step,
+from svoi_pravila.adapters.channels.telegram.handlers.helpers import (
+    callback_chat_id,
+    clear_callback_keyboard,
+    send_current_step,
 )
 from svoi_pravila.adapters.channels.telegram.keyboards import confirm_keyboard
 from svoi_pravila.application.errors import OpenRuleLimitReached
@@ -72,10 +73,10 @@ def build_rights_router() -> Router:
 
     @router.callback_query(F.data.startswith("cf:"))
     async def confirm_callback(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> None:
-        await _clear_callback_keyboard(bot, callback)
+        await clear_callback_keyboard(bot, callback)
         await callback.answer()
         parsed = _parse_confirm(callback.data)
-        chat_id = _chat_id(callback)
+        chat_id = callback_chat_id(callback)
         if parsed is None:
             if chat_id is not None:
                 await bot.send_message(chat_id, tg_deps.strings.rights_confirm_rejected)
@@ -94,7 +95,7 @@ def build_rights_router() -> Router:
         telegram_id = TelegramUserId(callback.from_user.id)
         if action == _ACTION_REVOKE:
             await tg_deps.revoke_all_consents.execute(RevokeAllConsentsCommand(telegram_id))
-            await _send_current_step(bot, callback, tg_deps, callback.from_user.id)
+            await send_current_step(bot, callback, tg_deps, callback.from_user.id)
             return
         if action == _ACTION_DELETE:
             try:
@@ -108,9 +109,9 @@ def build_rights_router() -> Router:
 
     @router.callback_query(F.data.startswith("cx:"))
     async def cancel_callback(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> None:
-        await _clear_callback_keyboard(bot, callback)
+        await clear_callback_keyboard(bot, callback)
         await callback.answer()
-        chat_id = _chat_id(callback)
+        chat_id = callback_chat_id(callback)
         if chat_id is not None:
             await bot.send_message(chat_id, tg_deps.strings.rights_cancelled)
 
@@ -145,10 +146,3 @@ def _parse_confirm(data: str | None) -> tuple[str, str] | None:
     if len(token) != _TOKEN_HEX_LEN or any(ch not in _HEX_ALPHABET for ch in token):
         return None
     return action, token
-
-
-def _chat_id(callback: CallbackQuery) -> int | None:
-    message = callback.message
-    if isinstance(message, Message):
-        return message.chat.id
-    return None

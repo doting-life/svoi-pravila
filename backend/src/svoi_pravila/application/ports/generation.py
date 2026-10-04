@@ -49,6 +49,15 @@ class RuleContext:
 
 
 @dataclass(frozen=True, slots=True)
+class AppliedRuleView:
+    """Rule context selected by validated ``applied_rule_indexes``."""
+
+    category: RuleCategory
+    text: str
+    effective_since: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class SoftenRequest:
     """Input for softening a draft message."""
 
@@ -178,6 +187,7 @@ class DecodeCompleted:
 
     analysis: str
     result: DecodeResult
+    applied_rules: tuple[AppliedRuleView, ...] = ()
 
 
 DecodeEvent = AnalysisChunk | DecodeCompleted

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from svoi_pravila.application.applied_rules import applied_rule_views
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
@@ -19,6 +20,7 @@ from svoi_pravila.application.ports.clock import Clock
 from svoi_pravila.application.ports.consent_catalog import ConsentCatalog
 from svoi_pravila.application.ports.generation import (
     BOUNDED_TEXT_MAX,
+    AppliedRuleView,
     HelpSayIntent,
     HelpSayRequest,
     HelpSayResult,
@@ -67,6 +69,7 @@ class InlineComposeResult:
     scenario: UsageScenario
     variants: tuple[Variant, ...]
     safety: SafetyVerdict
+    applied_rules: tuple[AppliedRuleView, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +139,7 @@ class InlineCompose:
                 scenario=scenario,
                 variants=(),
                 safety=SafetyVerdict.CRISIS,
+                applied_rules=(),
             )
         quota_pseudonym = self._ports.pseudonymizer.pseudonymize(_QUOTA_PURPOSE, user_key)
         decision = await self._ports.quota.check(quota_pseudonym)
@@ -176,6 +180,7 @@ class InlineCompose:
             scenario=scenario,
             variants=generated.variants,
             safety=generated.safety,
+            applied_rules=applied_rule_views(rules, generated.applied_rule_indexes),
         )
 
     async def _load_context(

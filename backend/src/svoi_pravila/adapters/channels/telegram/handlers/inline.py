@@ -16,11 +16,9 @@ from aiogram.types import (
     InputTextMessageContent,
 )
 
+from svoi_pravila.adapters.channels.telegram.dates import format_display_date
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
-from svoi_pravila.adapters.channels.telegram.localization import (
-    TelegramStrings,
-    firmness_label,
-)
+from svoi_pravila.adapters.channels.telegram.localization import firmness_label
 from svoi_pravila.application.errors import (
     AccessNotGranted,
     GenerationRefusedByProvider,
@@ -34,14 +32,14 @@ from svoi_pravila.application.errors import (
     ScenarioQuotaExceeded,
 )
 from svoi_pravila.application.inline_result_ref import encode_inline_result_ref
-from svoi_pravila.application.ports.generation import SafetyVerdict, Variant
+from svoi_pravila.application.ports.generation import AppliedRuleView, SafetyVerdict, Variant
 from svoi_pravila.application.prepared_ref import is_prepared_ref
 from svoi_pravila.application.use_cases.inline_compose import InlineComposeCommand
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoiceCommand
 from svoi_pravila.domain.enums import UsageScenario
 from svoi_pravila.domain.ids import TelegramUserId
 
-_PREVIEW_MAX = 64
+_PREVIEW_MAX = 256
 _PREPARED_PURPOSE = "prepared"
 
 logger = structlog.get_logger(__name__)
@@ -121,7 +119,12 @@ async def _answer_composed(query: InlineQuery, bot: Bot, tg_deps: TelegramDeps) 
             deep_link=(tg_deps.strings.inline_button_why_no_variants, "why"),
         )
         return
-    articles = _articles(tg_deps.strings, result.scenario, result.variants)
+    articles = _articles(
+        tg_deps,
+        result.scenario,
+        result.variants,
+        applied_rules=result.applied_rules,
+    )
     if not articles:
         await _answer_empty(query, bot, tg_deps, onboard=False)
         return
@@ -141,7 +144,7 @@ async def _answer_prepared(query: InlineQuery, bot: Bot, tg_deps: TelegramDeps) 
         await _answer_empty(query, bot, tg_deps, onboard=False)
         return
     articles = _articles(
-        tg_deps.strings,
+        tg_deps,
         UsageScenario.DECODE,
         (Variant(text=variant.text, firmness=variant.firmness),),
     )
@@ -154,19 +157,29 @@ async def _answer_prepared(query: InlineQuery, bot: Bot, tg_deps: TelegramDeps) 
 
 
 def _articles(
-    strings: TelegramStrings,
+    tg_deps: TelegramDeps,
     scenario: UsageScenario,
     variants: tuple[Variant, ...],
+    applied_rules: tuple[AppliedRuleView, ...] = (),
 ) -> list[InlineQueryResultUnion]:
     articles: list[InlineQueryResultUnion] = []
+    prefix = ""
+    if applied_rules:
+        date = format_display_date(
+            applied_rules[0].effective_since,
+            tg_deps.clock.now(),
+            tg_deps.display_timezone,
+        )
+        prefix = tg_deps.strings.inline_rule_cited_prefix.format(date=date)
     for variant in variants:
         if not variant.text:
             continue
+        description = variant.text if not prefix else f"{prefix} {variant.text}"
         articles.append(
             InlineQueryResultArticle(
                 id=encode_inline_result_ref(scenario, variant.firmness),
-                title=firmness_label(strings, variant.firmness),
-                description=_preview(variant.text),
+                title=firmness_label(tg_deps.strings, variant.firmness),
+                description=_preview(description),
                 input_message_content=InputTextMessageContent(
                     message_text=variant.text,
                     parse_mode=None,

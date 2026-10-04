@@ -8,7 +8,7 @@ import uuid
 from redis.asyncio import Redis
 
 from svoi_pravila.application.ports.dialog_state import DialogRecord, DialogStep
-from svoi_pravila.domain.enums import RelationshipKind
+from svoi_pravila.domain.enums import RelationshipKind, RuleCategory
 from svoi_pravila.domain.ids import ContactId
 
 
@@ -57,6 +57,8 @@ def serialize_dialog_record(record: DialogRecord) -> str:
         payload["contact_id"] = str(record.contact_id)
     if record.relationship is not None:
         payload["relationship"] = record.relationship.value
+    if record.category is not None:
+        payload["category"] = record.category.value
     return json.dumps(payload, separators=(",", ":"))
 
 
@@ -87,7 +89,20 @@ def parse_dialog_record(raw: str) -> DialogRecord:
         except ValueError as exc:
             msg = "dialog relationship is invalid"
             raise ValueError(msg) from exc
-    return DialogRecord(step=step, contact_id=contact_id, relationship=relationship)
+    category_raw = payload.get("category")
+    category: RuleCategory | None = None
+    if category_raw is not None:
+        try:
+            category = RuleCategory(str(category_raw))
+        except ValueError as exc:
+            msg = "dialog category is invalid"
+            raise ValueError(msg) from exc
+    return DialogRecord(
+        step=step,
+        contact_id=contact_id,
+        relationship=relationship,
+        category=category,
+    )
 
 
 def _parse_step(raw: object) -> DialogStep:
@@ -95,5 +110,7 @@ def _parse_step(raw: object) -> DialogStep:
         return "awaiting_label"
     if raw == "awaiting_rename":
         return "awaiting_rename"
+    if raw == "awaiting_rule_text":
+        return "awaiting_rule_text"
     msg = f"unknown dialog step {raw!r}"
     raise ValueError(msg)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import sys
+from zoneinfo import ZoneInfo
 
 import uvicorn
 from aiogram.types import Update
@@ -42,6 +43,7 @@ from svoi_pravila.api.telegram_webhook import (
 )
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
+from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.create_contact import CreateContact
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
@@ -53,6 +55,8 @@ from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserBy
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose, InlineComposePorts
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
+from svoi_pravila.application.use_cases.list_rules import ListRules
+from svoi_pravila.application.use_cases.propose_rule import ProposeRule
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoice
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
@@ -184,11 +188,15 @@ def create_application(settings: Settings) -> FastAPI:
             list_contacts=ListContacts(uow_factory, catalog),
             rename_contact=RenameContact(uow_factory, catalog),
             set_active_contact=SetActiveContact(uow_factory, catalog),
+            propose_rule=ProposeRule(uow_factory, catalog, ids, clock),
+            list_rules=ListRules(uow_factory, catalog),
+            archive_rule=ArchiveRule(uow_factory, catalog, clock),
             dialog_state=ValkeyDialogState(
                 valkey,
                 ttl_seconds=settings.dialog_ttl_seconds,
             ),
             clock=clock,
+            display_timezone=ZoneInfo(settings.display_timezone),
             deduplicator=ValkeyUpdateDeduplicator(
                 valkey,
                 ttl_seconds=settings.telegram_dedup_ttl_seconds,

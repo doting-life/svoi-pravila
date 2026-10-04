@@ -515,6 +515,7 @@ async def test_decode_crisis_screen_skips_quota_lock_and_generator(world: AppWor
     assert isinstance(events[0], DecodeCompleted)
     assert events[0].result.safety is SafetyVerdict.CRISIS
     assert events[0].result.variants == ()
+    assert events[0].applied_rules == ()
     assert generator.decode_stream_calls == []
     assert quota.check_count() == 0
     assert guard.acquire_calls == []
@@ -540,3 +541,59 @@ async def test_decode_threat_and_hyperbole_still_calls_generator(
     assert generator.decode_stream_calls
     assert isinstance(sink, RecordingUsageEventSink)
     assert sink.events[0].outcome is not UsageOutcome.SCREENED
+
+
+@pytest.mark.unit
+async def test_decode_maps_applied_rule_indexes(world: AppWorld) -> None:
+    user = await world.ensure_granted_user(220)
+    contact = (
+        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+            CreateContactCommand(user.id, ContactLabel("Sam"), RelationshipKind.FRIEND)
+        )
+    ).contact
+    await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        ProposeRuleCommand(
+            user.id,
+            contact.id,
+            RuleCategory.OTHER,
+            RuleText("не повышать голос"),
+            shared=False,
+        )
+    )
+    await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        ProposeRuleCommand(
+            user.id,
+            contact.id,
+            RuleCategory.TABOO_TOPIC,
+            RuleText("не шутить про работу"),
+            shared=False,
+        )
+    )
+    generator = FakeTextGenerator(
+        decode_result=DecodeResult(
+            hypotheses=("h",),
+            underlying_request="u",
+            variants=(Variant(text="g", firmness=Firmness.GENTLE),),
+            applied_rule_indexes=(0, 9, 1),
+            safety=SafetyVerdict.OK,
+            meta=GenerationMeta(
+                model="m",
+                prompt_version="p",
+                latency_ms=1,
+                attempts=1,
+                usage=TokenUsage(),
+            ),
+        )
+    )
+    use_case, sink, _g = _ports(world, _DecodeFakes(generator=generator))
+    events = await _drain(use_case, 220, "incoming please")
+    completed = events[-1]
+    assert isinstance(completed, DecodeCompleted)
+    assert tuple(view.text for view in completed.applied_rules) == (
+        "не повышать голос",
+        "не шутить про работу",
+    )
+    assert isinstance(sink, RecordingUsageEventSink)
+    blob = " ".join(str(event) for event in sink.events)
+    assert "не повышать голос" not in blob
+    assert "не шутить про работу" not in blob

@@ -29,21 +29,25 @@ from svoi_pravila.application.ports.generation import (
     TokenUsage,
     Variant,
 )
+from svoi_pravila.application.use_cases.create_contact import CreateContact, CreateContactCommand
 from svoi_pravila.application.use_cases.ensure_user import EnsureUser, EnsureUserCommand
 from svoi_pravila.application.use_cases.inline_compose import (
     InlineCompose,
     InlineComposeCommand,
     InlineComposePorts,
 )
+from svoi_pravila.application.use_cases.propose_rule import ProposeRule, ProposeRuleCommand
 from svoi_pravila.domain.enums import (
     Firmness,
     RelationshipKind,
+    RuleCategory,
     UsageEventKind,
     UsageOutcome,
     UsageScenario,
     UsageSurface,
 )
 from svoi_pravila.domain.ids import TelegramUserId
+from svoi_pravila.domain.text import ContactLabel, RuleText
 from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
 from tests.fakes.usage_sink import FailingUsageEventSink, RecordingUsageEventSink
@@ -260,6 +264,7 @@ async def test_inline_compose_crisis_screen_skips_quota_and_generator(world: App
         InlineComposeCommand(TelegramUserId(100), "я не хочу жить больше")
     )
     assert result.safety is SafetyVerdict.CRISIS
+    assert result.applied_rules == ()
     assert result.variants == ()
     assert result.scenario is UsageScenario.SOFTEN
     assert generator.soften_calls == []
@@ -345,3 +350,41 @@ async def test_inline_threat_and_hyperbole_still_calls_generator(
     assert generator.soften_calls
     assert isinstance(sink, RecordingUsageEventSink)
     assert sink.events[0].outcome is not UsageOutcome.SCREENED
+
+
+@pytest.mark.unit
+async def test_inline_compose_maps_applied_rule_indexes(world: AppWorld) -> None:
+    user = await world.ensure_granted_user(130)
+    contact = (
+        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+            CreateContactCommand(user.id, ContactLabel("Sam"), RelationshipKind.FRIEND)
+        )
+    ).contact
+    await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        ProposeRuleCommand(
+            user.id,
+            contact.id,
+            RuleCategory.OTHER,
+            RuleText("не повышать голос"),
+            shared=False,
+        )
+    )
+    generator = FakeTextGenerator(
+        soften_result=SoftenResult(
+            variants=(Variant(text="a", firmness=Firmness.GENTLE),),
+            applied_rule_indexes=(0, 4),
+            safety=SafetyVerdict.OK,
+            meta=GenerationMeta(
+                model="fake",
+                prompt_version="soften@v1",
+                latency_ms=1,
+                attempts=1,
+                usage=TokenUsage(input=1, output=1),
+            ),
+        )
+    )
+    use_case, sink = _ports(world, _Fakes(generator=generator))
+    result = await use_case.execute(InlineComposeCommand(TelegramUserId(130), "long enough"))
+    assert tuple(view.text for view in result.applied_rules) == ("не повышать голос",)
+    assert isinstance(sink, RecordingUsageEventSink)
+    assert "не повышать голос" not in str(sink.events[0])

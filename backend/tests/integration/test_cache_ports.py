@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from urllib.parse import urlsplit, urlunsplit
+from uuid import UUID
 
 import pytest
 from redis.asyncio import Redis
@@ -21,7 +22,8 @@ from svoi_pravila.application.ports.dialog_state import DialogRecord
 from svoi_pravila.application.ports.prepared_results import PreparedVariant
 from svoi_pravila.application.prepared_ref import PREPARED_REF_LENGTH
 from svoi_pravila.config import Settings
-from svoi_pravila.domain.enums import Firmness, RelationshipKind
+from svoi_pravila.domain.enums import Firmness, RelationshipKind, RuleCategory
+from svoi_pravila.domain.ids import ContactId
 from tests.factories import make_settings
 
 
@@ -143,7 +145,19 @@ async def test_dialog_state_round_trip_and_ttl(valkey_db15: Redis) -> None:
     assert value is not None
     payload = json.loads(value)
     assert "label" not in payload
-    assert set(payload) <= {"step", "contact_id", "relationship"}
+    assert set(payload) <= {"step", "contact_id", "relationship", "category"}
+    rule_record = DialogRecord(
+        step="awaiting_rule_text",
+        contact_id=ContactId(UUID(int=4)),
+        category=RuleCategory.OTHER,
+    )
+    await store.set("pseudo-rule", rule_record)
+    rule_value = await valkey_db15.get("tg:dialog:pseudo-rule")
+    assert rule_value is not None
+    rule_payload = json.loads(rule_value)
+    assert set(rule_payload) <= {"step", "contact_id", "relationship", "category"}
+    assert "text" not in rule_payload
+    await store.clear("pseudo-rule")
     ttl = await valkey_db15.ttl(keys[0])
     assert 1 <= ttl <= 600
     await store.clear("pseudo-dialog")

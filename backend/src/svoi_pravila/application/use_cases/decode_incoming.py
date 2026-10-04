@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator, AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
+from svoi_pravila.application.applied_rules import applied_rule_views
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
@@ -155,13 +156,17 @@ class DecodeIncoming:
                         first_chunk_at = self._ports.monotonic.monotonic()
                     yield event
                 else:
-                    yield event
+                    completed = replace(
+                        event,
+                        applied_rules=applied_rule_views(rules, event.result.applied_rule_indexes),
+                    )
+                    yield completed
                     await self._persist(
                         self._event_from_completed(
                             user_key=user_key,
                             started=started,
                             first_chunk_at=first_chunk_at,
-                            completed=event,
+                            completed=completed,
                         )
                     )
         except (

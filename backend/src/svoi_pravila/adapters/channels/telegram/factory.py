@@ -11,6 +11,7 @@ from svoi_pravila.adapters.channels.telegram.handlers.decode import build_decode
 from svoi_pravila.adapters.channels.telegram.handlers.inline import build_inline_router
 from svoi_pravila.adapters.channels.telegram.handlers.onboarding import build_router
 from svoi_pravila.adapters.channels.telegram.handlers.rights import build_rights_router
+from svoi_pravila.adapters.channels.telegram.handlers.rules import build_rules_router
 from svoi_pravila.adapters.channels.telegram.lifecycle import (
     TelegramLifecycle,
     TelegramRuntimeConfig,
@@ -48,6 +49,7 @@ def build_telegram_lifecycle(
     dispatcher.include_router(build_rights_router())
     dispatcher.include_router(build_router())
     dispatcher.include_router(build_contacts_router())
+    dispatcher.include_router(build_rules_router())
     dispatcher.include_router(build_decode_router())
     dispatcher.include_router(build_inline_router())
     dispatcher.errors.register(telegram_error_handler)

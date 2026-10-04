@@ -8,6 +8,7 @@ import re
 from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, Self
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -217,6 +218,18 @@ class Settings(BaseSettings):
     inline_cache_seconds: int = Field(default=30, ge=0, le=300)
     prepared_result_ttl_seconds: int = Field(default=600, ge=1, le=600)
     dialog_ttl_seconds: int = Field(default=600, ge=1, le=86_400)
+    display_timezone: str = Field(default="Europe/Moscow")
+
+    @field_validator("display_timezone")
+    @classmethod
+    def display_timezone_must_be_iana(cls, value: str) -> str:
+        """Reject names that are not IANA time zones."""
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            msg = "display_timezone must be a valid IANA time zone"
+            raise ValueError(msg) from exc
+        return value
 
     @field_validator("database_url")
     @classmethod

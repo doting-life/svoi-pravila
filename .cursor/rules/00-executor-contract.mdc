@@ -40,6 +40,7 @@ Ask one concrete question per blocker and describe the options you see.
 - Work on branch `task/NNNN-slug` from up-to-date `master` (the default branch).
 - Never discard, stash, reset, clean or overwrite changes you did not make (`git checkout -- …`, `git restore`, `git reset --hard`, `git stash`, `git clean`). If the working tree contains changes outside your task, stop and report BLOCKED.
 - The CTO commits CTO-owned documents directly to `master` as `docs(cto): …` commits; merge `master` into your task branch when the prompt says so.
+- Squash-merging an ACCEPTed task branch into `master` and pushing are done only when the owner explicitly instructs you to, and only after the CTO verdict is ACCEPT and CI is green. Keep CTO-owned paths exactly as on `master` when resolving conflicts. Never force-push `master`.
 - Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`, `build:`, `ci:`). Small, coherent commits.
 
 ## Report — your final chat reply

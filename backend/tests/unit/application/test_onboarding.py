@@ -231,6 +231,9 @@ async def test_accept_age_conflict_then_found(world: AppWorld) -> None:
         async def update(self, user: User) -> None:
             await self._inner.update(user)
 
+        async def delete(self, user_id: UserId) -> None:
+            await self._inner.delete(user_id)
+
     racing = _ConflictFactory(world.uow_factory)
     result = await AcceptAgeConfirmation(racing, world.ids, world.clock).execute(
         AcceptAgeConfirmationCommand(TelegramUserId(90))
@@ -286,6 +289,9 @@ async def test_accept_age_conflict_without_winner(world: AppWorld) -> None:
             raise ConflictError()
 
         async def update(self, user: User) -> None:
+            return None
+
+        async def delete(self, user_id: UserId) -> None:
             return None
 
     with pytest.raises(NotFound):

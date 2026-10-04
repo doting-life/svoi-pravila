@@ -47,6 +47,31 @@ def consent_keyboard(
     )
 
 
+def confirm_keyboard(
+    strings: TelegramStrings,
+    *,
+    action: str,
+    token: str,
+) -> InlineKeyboardMarkup:
+    """Confirm / cancel buttons; callback_data stays within 64 bytes."""
+    yes = f"cf:{action}:{token}"
+    no = f"cx:{action}"
+    if (
+        len(yes.encode("utf-8")) > _CALLBACK_DATA_MAX_BYTES
+        or len(no.encode("utf-8")) > _CALLBACK_DATA_MAX_BYTES
+    ):
+        msg = "rights callback_data exceeds 64 bytes"
+        raise ValueError(msg)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=strings.rights_confirm, callback_data=yes),
+                InlineKeyboardButton(text=strings.rights_cancel, callback_data=no),
+            ]
+        ]
+    )
+
+
 def copy_text_markup(
     strings: TelegramStrings,
     text: str,

@@ -168,3 +168,6 @@ class _HideUserUsers:
 
     async def update(self, user: User) -> None:
         await self._inner.update(user)
+
+    async def delete(self, user_id: UserId) -> None:
+        await self._inner.delete(user_id)

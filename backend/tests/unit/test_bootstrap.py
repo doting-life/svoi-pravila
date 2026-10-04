@@ -25,6 +25,14 @@ class _FakeEngine:
 class _FakeValkey:
     """Stand-in Valkey client for bootstrap wiring tests."""
 
+    def register_script(self, script: str) -> object:
+        async def _run(*, keys: list[str], args: list[str]) -> int:
+            _ = keys, args
+            return 0
+
+        _ = script
+        return _run
+
 
 def _patch_infrastructure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(

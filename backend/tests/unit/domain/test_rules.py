@@ -207,4 +207,83 @@ class RuleMachine(RuleBasedStateMachine):
         assert _reconstruct(self.rule) == self.rule
 
 
+@pytest.mark.unit
+def test_rehome_authored_to_contact_copies_remaining_revisions() -> None:
+    contact = ContactId(UUID(int=20))
+    pair_rule = Rule.propose(
+        rule_id=RuleId(UUID(int=10)),
+        scope=PairScope(pair_id=PairId(UUID(int=30))),
+        category=RuleCategory.OTHER,
+        approvers=frozenset({OWNER, PARTNER}),
+        author_id=OWNER,
+        text=RuleText("owner text"),
+        now=NOW,
+    )
+    pair_rule = pair_rule.approve(PARTNER, NOW)
+    pair_rule = pair_rule.propose_edit(
+        PARTNER, RuleText("partner edit"), NOW + timedelta(seconds=1)
+    )
+    copied = Rule.rehome_authored_to_contact(
+        pair_rule,
+        remaining_id=PARTNER,
+        contact_id=contact,
+        new_id=RuleId(UUID(int=99)),
+    )
+    assert copied is not None
+    assert copied.status is RuleStatus.ACTIVE
+    assert copied.scope == ContactScope(contact_id=contact)
+    assert copied.revisions[0].text.value == "partner edit"
+    assert copied.approvers == frozenset({PARTNER})
+    missing = Rule.rehome_authored_to_contact(
+        pair_rule,
+        remaining_id=STRANGER,
+        contact_id=contact,
+        new_id=RuleId(UUID(int=100)),
+    )
+    assert missing is None
+
+
+@pytest.mark.unit
+def test_rehome_rejected_and_archived() -> None:
+    contact = ContactId(UUID(int=21))
+    rejected = Rule.propose(
+        rule_id=RuleId(UUID(int=11)),
+        scope=PairScope(pair_id=PairId(UUID(int=31))),
+        category=RuleCategory.OTHER,
+        approvers=frozenset({OWNER, PARTNER}),
+        author_id=OWNER,
+        text=RuleText("pending"),
+        now=NOW,
+    )
+    rejected = rejected.reject_pending(PARTNER, NOW)
+    copied_rejected = Rule.rehome_authored_to_contact(
+        rejected,
+        remaining_id=OWNER,
+        contact_id=contact,
+        new_id=RuleId(UUID(int=101)),
+    )
+    assert copied_rejected is not None
+    assert copied_rejected.status is RuleStatus.ACTIVE
+
+    active = Rule.propose(
+        rule_id=RuleId(UUID(int=12)),
+        scope=PairScope(pair_id=PairId(UUID(int=32))),
+        category=RuleCategory.OTHER,
+        approvers=frozenset({OWNER, PARTNER}),
+        author_id=OWNER,
+        text=RuleText("shared"),
+        now=NOW,
+    )
+    active = active.approve(PARTNER, NOW)
+    archived = active.archive(OWNER, NOW)
+    copied_archived = Rule.rehome_authored_to_contact(
+        archived,
+        remaining_id=OWNER,
+        contact_id=contact,
+        new_id=RuleId(UUID(int=102)),
+    )
+    assert copied_archived is not None
+    assert copied_archived.status is RuleStatus.ARCHIVED
+
+
 TestRuleMachine = pytest.mark.unit(RuleMachine.TestCase)

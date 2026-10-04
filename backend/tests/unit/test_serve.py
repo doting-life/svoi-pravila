@@ -44,6 +44,10 @@ def test_load_settings_reads_process_environment(monkeypatch: pytest.MonkeyPatch
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     )
     monkeypatch.setenv("SP_TELEGRAM_UPDATES_MODE", "disabled")
+    monkeypatch.delenv("SP_TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("SP_TELEGRAM_WEBHOOK_BASE_URL", raising=False)
+    monkeypatch.delenv("SP_TELEGRAM_WEBHOOK_PATH_SECRET", raising=False)
+    monkeypatch.delenv("SP_TELEGRAM_WEBHOOK_SECRET_TOKEN", raising=False)
     settings = load_settings()
     assert settings.environment is Environment.TEST
     assert settings.forwarded_allow_ips == "127.0.0.1"

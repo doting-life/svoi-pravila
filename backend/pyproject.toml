@@ -27,6 +27,7 @@ dependencies = [
 svoi-pravila-api = "svoi_pravila.bootstrap:serve"
 svoi-pravila-healthcheck = "svoi_pravila.bootstrap:healthcheck"
 svoi-pravila-bench-llm = "svoi_pravila.benchmarks.llm:main"
+svoi-pravila-eval = "svoi_pravila.evals.cli:main"
 
 [dependency-groups]
 dev = [
@@ -54,6 +55,8 @@ packages = ["src/svoi_pravila"]
 "src/svoi_pravila/adapters/consents/personal_data/v1.txt" = "svoi_pravila/adapters/consents/personal_data/v1.txt"
 "src/svoi_pravila/adapters/consents/special_category/v1.txt" = "svoi_pravila/adapters/consents/special_category/v1.txt"
 "src/svoi_pravila/adapters/channels/telegram/localization/ru.json" = "svoi_pravila/adapters/channels/telegram/localization/ru.json"
+"src/svoi_pravila/domain/safety/crisis_patterns/ru/v2.txt" = "svoi_pravila/domain/safety/crisis_patterns/ru/v2.txt"
+"src/svoi_pravila/domain/safety/support_resources/ru/v1.txt" = "svoi_pravila/domain/safety/support_resources/ru/v1.txt"
 
 [tool.hatch.build.targets.sdist]
 include = ["src/svoi_pravila"]
@@ -75,6 +78,7 @@ select = [
 "src/svoi_pravila/domain/rules.py" = ["PLR0913"]
 "src/svoi_pravila/domain/pair.py" = ["PLR2004"]
 "src/svoi_pravila/benchmarks/**" = ["T201"]
+"src/svoi_pravila/evals/**" = ["T201"]
 [tool.mypy]
 python_version = "3.13"
 strict = true
@@ -118,7 +122,7 @@ include_external_packages = true
 name = "Layers"
 type = "layers"
 layers = [
-    "svoi_pravila.bootstrap | svoi_pravila.benchmarks",
+    "svoi_pravila.bootstrap : svoi_pravila.benchmarks : svoi_pravila.evals",
     "svoi_pravila.api | svoi_pravila.adapters",
     "svoi_pravila.application",
     "svoi_pravila.domain",

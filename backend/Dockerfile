@@ -33,6 +33,7 @@ COPY migrations ./migrations
 COPY alembic.ini ./
 COPY certs ./certs
 COPY benchmarks ./benchmarks
+COPY evals ./evals
 
 USER app
 

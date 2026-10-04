@@ -39,6 +39,7 @@ from svoi_pravila.api.telegram_webhook import (
     TelegramWebhookBindings,
     build_telegram_webhook_router,
 )
+from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
@@ -103,6 +104,7 @@ def create_application(settings: Settings) -> FastAPI:
     generator = GigaChatTextGenerator(gigachat, settings)
     sink = UnitOfWorkUsageEventSink(uow_factory)
     pseudonymizer = HmacPseudonymizer(settings.pseudonym_pepper_bytes())
+    crisis_screen = CrisisScreen.load_ru_v2()
 
     lifecycle = None
     extra_routers: tuple[APIRouter, ...] = ()
@@ -125,6 +127,7 @@ def create_application(settings: Settings) -> FastAPI:
                 monotonic=monotonic,
                 ids=ids,
                 pseudonymizer=pseudonymizer,
+                crisis_screen=crisis_screen,
                 deadline_seconds=settings.decode_deadline_seconds,
             )
         )
@@ -144,6 +147,7 @@ def create_application(settings: Settings) -> FastAPI:
                 monotonic=monotonic,
                 ids=ids,
                 pseudonymizer=pseudonymizer,
+                crisis_screen=crisis_screen,
                 min_chars=settings.inline_min_chars,
                 deadline_seconds=settings.inline_deadline_seconds,
                 intent_prefixes=help_say_intent_prefixes(strings),

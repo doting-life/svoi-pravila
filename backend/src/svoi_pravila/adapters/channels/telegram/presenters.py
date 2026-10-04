@@ -9,7 +9,11 @@ from svoi_pravila.adapters.channels.telegram.keyboards import (
     consent_keyboard,
     variant_reply_markup,
 )
-from svoi_pravila.adapters.channels.telegram.localization import TelegramStrings
+from svoi_pravila.adapters.channels.telegram.localization import (
+    TelegramStrings,
+    render_crisis_message,
+    render_refuse_manipulation,
+)
 from svoi_pravila.application.ports.generation import DecodeCompleted, SafetyVerdict
 from svoi_pravila.application.use_cases.get_onboarding_step import (
     OnboardingStep,
@@ -68,9 +72,9 @@ def render_decode_completed(
     """Final decode messages: analysis, hypotheses, then one message per variant."""
     result = completed.result
     if result.safety is SafetyVerdict.CRISIS:
-        return ((strings.decode_crisis[:TELEGRAM_MESSAGE_MAX], None),)
+        return ((render_crisis_message(strings)[:TELEGRAM_MESSAGE_MAX], None),)
     if result.safety is SafetyVerdict.REFUSE_MANIPULATION:
-        return ((strings.decode_refuse_manipulation[:TELEGRAM_MESSAGE_MAX], None),)
+        return ((render_refuse_manipulation(strings)[:TELEGRAM_MESSAGE_MAX], None),)
     messages: list[tuple[str, InlineKeyboardMarkup | None]] = []
     if completed.analysis:
         messages.append((completed.analysis[:TELEGRAM_MESSAGE_MAX], None))

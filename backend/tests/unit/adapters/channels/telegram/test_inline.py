@@ -41,7 +41,9 @@ from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifec
 from svoi_pravila.adapters.channels.telegram.lifecycle import ALLOWED_UPDATES, TelegramLifecycle
 from svoi_pravila.adapters.channels.telegram.localization import (
     help_say_intent_prefixes,
+    render_crisis_message,
     render_help,
+    render_refuse_manipulation,
 )
 from svoi_pravila.application.inline_result_ref import encode_inline_result_ref
 from svoi_pravila.application.ports.generation import (
@@ -843,3 +845,66 @@ async def test_empty_answer_telegram_rejection_is_logged(
     await lifecycle.dispatcher.feed_update(bot, _inline(190, 36, "long enough draft"))
     await _await_inline(deps)
     assert any(e.get("event") == "inline_answer_failed" for e in capture_log_events())
+
+
+@pytest.mark.unit
+async def test_start_support_and_why_deep_links() -> None:
+    catalog = FakeConsentCatalog()
+    deps = make_telegram_deps(TelegramTestDeps(catalog=catalog))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await lifecycle.dispatcher.feed_update(bot, _text_update(1, 40, "/start support"))
+    await lifecycle.dispatcher.feed_update(bot, _text_update(2, 40, "/start why"))
+    bodies = [req.text for req in session.requests if isinstance(req, SendMessage)]
+    assert render_crisis_message(deps.strings) in bodies
+    assert render_refuse_manipulation(deps.strings) in bodies
+    assert "112" in render_crisis_message(deps.strings)
+
+
+@pytest.mark.unit
+async def test_inline_crisis_and_refuse_buttons() -> None:
+    catalog = FakeConsentCatalog()
+    uow = InMemoryUnitOfWorkFactory()
+    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 41, catalog)
+    await lifecycle.dispatcher.feed_update(bot, _inline(10, 41, "я не хочу жить сегодня"))
+    await _await_inline(deps)
+    answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
+    assert answers[-1].results == []
+    assert answers[-1].button is not None
+    assert answers[-1].button.text == deps.strings.inline_button_need_support
+    assert answers[-1].button.start_parameter == "support"
+
+    refuse_gen = FakeTextGenerator(
+        soften_result=SoftenResult(
+            variants=(),
+            applied_rule_indexes=(),
+            safety=SafetyVerdict.REFUSE_MANIPULATION,
+            meta=GenerationMeta(
+                model="fake",
+                prompt_version="soften@v1",
+                latency_ms=1,
+                attempts=1,
+                usage=TokenUsage(),
+            ),
+        )
+    )
+    refuse_deps = make_telegram_deps(
+        TelegramTestDeps(uow=uow, catalog=catalog, generator=refuse_gen)
+    )
+    refuse_session = FakeTelegramSession()
+    refuse_bot = Bot(token="1:TEST", session=refuse_session)
+    refuse_life = build_telegram_lifecycle(_settings(), refuse_deps, bot=refuse_bot)
+    await refuse_life.dispatcher.feed_update(
+        refuse_bot, _inline(11, 41, "please leave quietly now")
+    )
+    await _await_inline(refuse_deps)
+    refuse_answers = [req for req in refuse_session.requests if isinstance(req, AnswerInlineQuery)]
+    assert refuse_answers[-1].results == []
+    assert refuse_answers[-1].button is not None
+    assert refuse_answers[-1].button.text == refuse_deps.strings.inline_button_why_no_variants
+    assert refuse_answers[-1].button.start_parameter == "why"

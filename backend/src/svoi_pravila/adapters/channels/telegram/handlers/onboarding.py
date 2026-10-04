@@ -9,7 +9,11 @@ from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
-from svoi_pravila.adapters.channels.telegram.localization import render_help
+from svoi_pravila.adapters.channels.telegram.localization import (
+    render_crisis_message,
+    render_help,
+    render_refuse_manipulation,
+)
 from svoi_pravila.adapters.channels.telegram.presenters import render_step
 from svoi_pravila.application.use_cases.accept_age_confirmation import (
     AcceptAgeConfirmationCommand,
@@ -41,6 +45,12 @@ def build_router() -> Router:
             return
         if command.args == "help":
             await message.answer(render_help(tg_deps.strings))
+            return
+        if command.args == "support":
+            await message.answer(render_crisis_message(tg_deps.strings))
+            return
+        if command.args == "why":
+            await message.answer(render_refuse_manipulation(tg_deps.strings))
             return
         await render_current_step(message, tg_deps, message.from_user.id)
 

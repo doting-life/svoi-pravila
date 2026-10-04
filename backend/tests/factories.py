@@ -34,6 +34,10 @@ def make_settings(**overrides: object) -> Settings:
         "gigachat_timeout_seconds": 5.0,
         "gigachat_max_retries": 0,
         "telegram_updates_mode": TelegramUpdatesMode.DISABLED,
+        "telegram_bot_token": None,
+        "telegram_webhook_base_url": None,
+        "telegram_webhook_path_secret": None,
+        "telegram_webhook_secret_token": None,
         "pseudonym_pepper": _TEST_PEPPER,
     }
     values.update(overrides)

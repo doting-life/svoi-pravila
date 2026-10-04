@@ -7,7 +7,7 @@ import binascii
 import re
 from enum import StrEnum
 from pathlib import Path
-from typing import Self
+from typing import Protocol, Self
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -79,6 +79,64 @@ def _validate_valkey_url(value: SecretStr) -> SecretStr:
         msg = "valkey_url must start with redis:// or rediss://"
         raise ValueError(msg)
     return value
+
+
+def _validate_ca_bundle(value: Path) -> Path:
+    if not value.is_file():
+        msg = f"gigachat_ca_bundle_file does not exist: {value}"
+        raise ValueError(msg)
+    return value
+
+
+def _require_nonempty_secret(value: SecretStr, name: str) -> SecretStr:
+    if not value.get_secret_value().strip():
+        msg = f"{name} must not be empty"
+        raise ValueError(msg)
+    return value
+
+
+def _secret_is_blank(value: SecretStr | None) -> bool:
+    return value is None or not value.get_secret_value().strip()
+
+
+class GigaChatRuntimeSettings(Protocol):
+    """GigaChat fields required by the SDK client and text generator."""
+
+    gigachat_credentials: SecretStr
+    gigachat_scope: GigaChatScope
+    gigachat_ca_bundle_file: Path
+    gigachat_model_soften: str
+    gigachat_model_help_say: str
+    gigachat_model_decode: str
+    gigachat_timeout_seconds: float
+    gigachat_max_retries: int
+
+
+class LlmToolSettings(BaseSettings):
+    """Bench/eval process settings: GigaChat only."""
+
+    model_config = _SETTINGS_CONFIG
+
+    gigachat_credentials: SecretStr
+    gigachat_scope: GigaChatScope
+    gigachat_ca_bundle_file: Path
+    gigachat_model_soften: str = Field(min_length=1)
+    gigachat_model_help_say: str = Field(min_length=1)
+    gigachat_model_decode: str = Field(min_length=1)
+    gigachat_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    gigachat_max_retries: int = Field(default=1, ge=0, le=2)
+
+    @field_validator("gigachat_credentials")
+    @classmethod
+    def gigachat_credentials_must_not_be_empty(cls, value: SecretStr) -> SecretStr:
+        """Reject empty GigaChat authorization keys."""
+        return _require_nonempty_secret(value, "gigachat_credentials")
+
+    @field_validator("gigachat_ca_bundle_file")
+    @classmethod
+    def gigachat_ca_bundle_must_exist(cls, value: Path) -> Path:
+        """Reject missing CA bundle files."""
+        return _validate_ca_bundle(value)
 
 
 class DatabaseSettings(BaseSettings):
@@ -175,6 +233,7 @@ class Settings(BaseSettings):
     @classmethod
     def data_kek_must_be_32_bytes_base64(cls, value: SecretStr) -> SecretStr:
         """Reject KEK values that are not base64 of exactly 32 bytes."""
+        _require_nonempty_secret(value, "data_kek")
         raw = value.get_secret_value()
         try:
             decoded = base64.b64decode(raw, validate=True)
@@ -195,19 +254,23 @@ class Settings(BaseSettings):
             raise ValueError(msg)
         return value
 
+    @field_validator("gigachat_credentials")
+    @classmethod
+    def gigachat_credentials_must_not_be_empty(cls, value: SecretStr) -> SecretStr:
+        """Reject empty GigaChat authorization keys."""
+        return _require_nonempty_secret(value, "gigachat_credentials")
+
     @field_validator("gigachat_ca_bundle_file")
     @classmethod
     def gigachat_ca_bundle_must_exist(cls, value: Path) -> Path:
         """Reject missing CA bundle files."""
-        if not value.is_file():
-            msg = f"gigachat_ca_bundle_file does not exist: {value}"
-            raise ValueError(msg)
-        return value
+        return _validate_ca_bundle(value)
 
     @field_validator("pseudonym_pepper")
     @classmethod
     def pseudonym_pepper_must_be_strong_base64(cls, value: SecretStr) -> SecretStr:
         """Reject pepper values that are not base64 of at least 32 bytes."""
+        _require_nonempty_secret(value, "pseudonym_pepper")
         raw = value.get_secret_value()
         try:
             decoded = base64.b64decode(raw, validate=True)
@@ -257,9 +320,7 @@ class Settings(BaseSettings):
             raise ValueError(msg)
 
         token = self.telegram_bot_token
-        if mode is not TelegramUpdatesMode.DISABLED and (
-            token is None or not token.get_secret_value()
-        ):
+        if mode is not TelegramUpdatesMode.DISABLED and _secret_is_blank(token):
             msg = "telegram_bot_token is required unless telegram_updates_mode=disabled"
             raise ValueError(msg)
 
@@ -269,7 +330,11 @@ class Settings(BaseSettings):
             self.telegram_webhook_secret_token,
         )
         webhook_present = any(
-            field is not None and (not isinstance(field, SecretStr) or field.get_secret_value())
+            field is not None
+            and (
+                (isinstance(field, SecretStr) and not _secret_is_blank(field))
+                or (isinstance(field, str) and field.strip())
+            )
             for field in webhook_fields
         )
 
@@ -290,8 +355,8 @@ class Settings(BaseSettings):
             raise ValueError(msg)
 
         path_secret = self.telegram_webhook_path_secret
-        if path_secret is None:
-            msg = "telegram_webhook_path_secret is required in webhook mode"
+        if path_secret is None or _secret_is_blank(path_secret):
+            msg = "telegram_webhook_path_secret must not be empty"
             raise ValueError(msg)
         path_raw = path_secret.get_secret_value()
         if len(path_raw) < _WEBHOOK_PATH_SECRET_MIN or _URL_SAFE_RE.fullmatch(path_raw) is None:
@@ -302,8 +367,8 @@ class Settings(BaseSettings):
             raise ValueError(msg)
 
         secret_token = self.telegram_webhook_secret_token
-        if secret_token is None:
-            msg = "telegram_webhook_secret_token is required in webhook mode"
+        if secret_token is None or _secret_is_blank(secret_token):
+            msg = "telegram_webhook_secret_token must not be empty"
             raise ValueError(msg)
         token_raw = secret_token.get_secret_value()
         if _WEBHOOK_SECRET_TOKEN_RE.fullmatch(token_raw) is None:

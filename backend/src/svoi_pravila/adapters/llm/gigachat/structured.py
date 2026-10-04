@@ -29,6 +29,11 @@ from svoi_pravila.adapters.llm.gigachat.mapping import (
     raise_for_finish_reason,
 )
 from svoi_pravila.adapters.llm.gigachat.prepared import PreparedMessages
+from svoi_pravila.adapters.llm.gigachat.prompt_leak import (
+    collect_text_fields,
+    prompt_leak_reason,
+    system_prompt_windows,
+)
 from svoi_pravila.adapters.llm.gigachat.validation import invalid, last_reason
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
@@ -212,6 +217,12 @@ async def _build_result[ModelT: BaseModel, ResultT](
     attempt: int,
 ) -> ResultT:
     parsed = await _run_attempt(params, state, attempt=attempt)
+    leak = prompt_leak_reason(
+        collect_text_fields(parsed.model_dump()),
+        windows=system_prompt_windows(params.prepared.system),
+    )
+    if leak is not None:
+        _record_retryable_invalid(state, leak, attempt=attempt)
     try:
         return build(parsed, _meta_from_state(params, state))
     except InvalidGenerationOutput as exc:

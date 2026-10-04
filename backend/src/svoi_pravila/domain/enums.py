@@ -58,12 +58,13 @@ class UsageSurface(StrEnum):
 
 
 class UsageOutcome(StrEnum):
-    """C0 outcome of a generation attempt that reached the provider."""
+    """C0 outcome of a generation attempt or a pre-LLM crisis screen."""
 
     OK = "ok"
     INVALID_OUTPUT = "invalid_output"
     REFUSED = "refused"
     UNAVAILABLE = "unavailable"
+    SCREENED = "screened"
 
 
 class UsageEventKind(StrEnum):

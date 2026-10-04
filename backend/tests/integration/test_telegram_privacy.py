@@ -33,6 +33,7 @@ from svoi_pravila.adapters.persistence.usage_sink import UnitOfWorkUsageEventSin
 from svoi_pravila.adapters.system.clock import SystemClock
 from svoi_pravila.adapters.system.ids import Uuid7IdGenerator
 from svoi_pravila.adapters.system.monotonic import SystemMonotonicClock
+from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.ports.generation import (
     DecodeResult,
     GenerationMeta,
@@ -152,6 +153,7 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             monotonic=monotonic,
             ids=ids,
             pseudonymizer=pepper,
+            crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
         )
     )
@@ -168,6 +170,7 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             monotonic=monotonic,
             ids=ids,
             pseudonymizer=pepper,
+            crisis_screen=CrisisScreen.load_ru_v2(),
             min_chars=8,
             deadline_seconds=8.0,
             intent_prefixes=help_say_intent_prefixes(strings),

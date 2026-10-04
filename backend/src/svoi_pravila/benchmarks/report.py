@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import TYPE_CHECKING
 
-from svoi_pravila.config import Settings
+from svoi_pravila.config import GigaChatRuntimeSettings
 
 if TYPE_CHECKING:
     from svoi_pravila.benchmarks.runner import CallRecord
@@ -46,7 +46,7 @@ def price_for(model: str) -> float:
     return price
 
 
-def default_models(settings: Settings) -> list[str]:
+def default_models(settings: GigaChatRuntimeSettings) -> list[str]:
     """Unique models from settings, soften then help_say then decode."""
     return list(
         dict.fromkeys(
@@ -208,10 +208,20 @@ def decode_stream_report_header() -> str:
     )
 
 
-def format_report(rows: list[str], *, incomplete: bool) -> str:
+def format_report(
+    rows: list[str],
+    *,
+    incomplete: bool,
+    incomplete_reason: str | None = None,
+) -> str:
     """Join table sections with an optional INCOMPLETE banner."""
     parts: list[str] = []
     if incomplete:
-        parts.append("**INCOMPLETE** — stopped after first `rate_limited`")
+        if incomplete_reason == "auth":
+            parts.append("**INCOMPLETE** — auth failed")
+        elif incomplete_reason == "token_budget":
+            parts.append("**INCOMPLETE** — token budget reached")
+        else:
+            parts.append("**INCOMPLETE** — stopped after first `rate_limited`")
     parts.extend(rows)
     return "\n".join(parts)

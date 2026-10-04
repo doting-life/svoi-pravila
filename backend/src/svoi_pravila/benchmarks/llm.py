@@ -39,15 +39,16 @@ from svoi_pravila.benchmarks.report import (
     standard_report_header,
 )
 from svoi_pravila.benchmarks.runner import (
+    AuthFailedError,
     BenchmarkParams,
     BenchmarkRuntime,
-    RateLimitedError,
+    FailFastUnavailableError,
     SpendTracker,
     TokenBudgetExceededError,
     run_benchmark,
     warmup,
 )
-from svoi_pravila.config import Settings
+from svoi_pravila.config import LlmToolSettings
 
 _DEFAULT_OPS: tuple[RunOperation, ...] = ("soften", "help_say", "decode_stream")
 
@@ -119,7 +120,7 @@ def _print_dry_run(
 @dataclass(frozen=True, slots=True)
 class _ModelRun:
     client: GigaChat
-    settings: Settings
+    settings: LlmToolSettings
     cases: list[BenchCase]
     model: str
     params: BenchmarkParams
@@ -130,7 +131,7 @@ class _ModelRun:
 
 async def _run_model(
     run: _ModelRun,
-) -> tuple[list[str], bool, RateLimitedError | None, TokenBudgetExceededError | None]:
+) -> tuple[list[str], bool, FailFastUnavailableError | None, TokenBudgetExceededError | None]:
     run_settings = run.settings.model_copy(
         update={
             "gigachat_model_soften": run.model,
@@ -146,7 +147,7 @@ async def _run_model(
             run.params,
             BenchmarkRuntime(run.out, run.spend, run.rate_limits),
         )
-    except RateLimitedError as exc:
+    except FailFastUnavailableError as exc:
         operation = next(
             (op for op in run.params.operations if cases_for_operation(run.cases, op)),
             run.params.operations[0],
@@ -192,20 +193,25 @@ def _load_selected_cases(args: argparse.Namespace) -> list[BenchCase]:
 class _LiveRunResult:
     rows: list[str]
     incomplete: bool
-    rate_error: RateLimitedError | None
+    rate_error: FailFastUnavailableError | None
     budget_error: TokenBudgetExceededError | None
     spend: SpendTracker
 
 
 def _finish_report(out: OutWriter, result: _LiveRunResult) -> int:
+    reason: str | None = None
     if result.incomplete and result.budget_error is not None:
         out.write_incomplete(token_budget=(result.budget_error.spent, result.budget_error.limit))
+        reason = "token_budget"
     elif result.incomplete and result.rate_error is not None:
+        auth_failed = isinstance(result.rate_error, AuthFailedError)
         out.write_incomplete(
             http_status=result.rate_error.http_status,
             rate_limit_headers=result.rate_error.rate_limit_headers,
+            auth_failed=auth_failed,
         )
-    print(format_report(result.rows, incomplete=result.incomplete))
+        reason = "auth" if auth_failed else "rate_limited"
+    print(format_report(result.rows, incomplete=result.incomplete, incomplete_reason=reason))
     print(
         f"Spent billable tokens: {result.spend.spent_billable} "
         f"(warmup_billable={result.spend.warmup_billable})"
@@ -248,7 +254,7 @@ async def _run_live_models(base: _ModelRun, model_list: list[str]) -> _LiveRunRe
 
 async def async_main(args: argparse.Namespace) -> int:
     """Run the benchmark and print/write C0 markdown tables."""
-    settings = Settings()
+    settings = LlmToolSettings()
     cases = _load_selected_cases(args)
     operations = _parse_ops(args.ops)
 

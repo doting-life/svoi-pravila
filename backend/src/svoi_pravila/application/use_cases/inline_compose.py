@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
     GenerationUnavailable,
@@ -81,6 +82,7 @@ class InlineComposePorts:
     monotonic: MonotonicClock
     ids: IdGenerator
     pseudonymizer: Pseudonymizer
+    crisis_screen: CrisisScreen
     min_chars: int
     deadline_seconds: float
     intent_prefixes: tuple[tuple[str, HelpSayIntent], ...]
@@ -93,8 +95,8 @@ class _UsageDraft:
     user_key: str
     started: float
     outcome: UsageOutcome
-    model: str
-    prompt_version: str
+    model: str | None
+    prompt_version: str | None
     latency_ms: int
     attempts: int
     usage: TokenUsage
@@ -128,6 +130,13 @@ class InlineCompose:
                 raise InlineQueryTooShort()
             scenario = UsageScenario.HELP_SAY
             draft = remainder
+        if self._ports.crisis_screen.hit(draft):
+            await self._persist(self._event_from_screened(user_key, scenario))
+            return InlineComposeResult(
+                scenario=scenario,
+                variants=(),
+                safety=SafetyVerdict.CRISIS,
+            )
         quota_pseudonym = self._ports.pseudonymizer.pseudonymize(_QUOTA_PURPOSE, user_key)
         decision = await self._ports.quota.check(quota_pseudonym)
         if not decision.allowed:
@@ -195,7 +204,11 @@ class InlineCompose:
             safety=draft.safety,
             model=draft.model,
             prompt_version=draft.prompt_version,
-            latency_ms=draft.latency_ms if draft.outcome is UsageOutcome.OK else measured,
+            latency_ms=(
+                draft.latency_ms
+                if draft.outcome in {UsageOutcome.OK, UsageOutcome.SCREENED}
+                else measured
+            ),
             ttfc_ms=None,
             attempts=draft.attempts,
             input_tokens=draft.usage.input,
@@ -203,6 +216,23 @@ class InlineCompose:
             billable_tokens=draft.usage.billable,
             event_kind=UsageEventKind.GENERATION,
             variant_firmness=None,
+        )
+
+    def _event_from_screened(self, user_key: str, scenario: UsageScenario) -> UsageEvent:
+        return self._base_event(
+            _UsageDraft(
+                user_key=user_key,
+                started=self._ports.monotonic.monotonic(),
+                outcome=UsageOutcome.SCREENED,
+                model=None,
+                prompt_version=None,
+                latency_ms=0,
+                attempts=0,
+                usage=TokenUsage(),
+                unavailable_kind=None,
+                safety=SafetyVerdict.CRISIS.value,
+                scenario=scenario,
+            )
         )
 
     def _event_from_ok(

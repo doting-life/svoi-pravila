@@ -34,7 +34,7 @@ from svoi_pravila.application.errors import (
     ScenarioQuotaExceeded,
 )
 from svoi_pravila.application.inline_result_ref import encode_inline_result_ref
-from svoi_pravila.application.ports.generation import Variant
+from svoi_pravila.application.ports.generation import SafetyVerdict, Variant
 from svoi_pravila.application.prepared_ref import is_prepared_ref
 from svoi_pravila.application.use_cases.inline_compose import InlineComposeCommand
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoiceCommand
@@ -102,6 +102,24 @@ async def _answer_composed(query: InlineQuery, bot: Bot, tg_deps: TelegramDeps) 
             await _answer_empty(query, bot, tg_deps, onboard=False)
         return
     if not tg_deps.inline_queries.is_current_task(user_id):
+        return
+    if result.safety is SafetyVerdict.CRISIS:
+        await _answer_empty(
+            query,
+            bot,
+            tg_deps,
+            onboard=False,
+            deep_link=(tg_deps.strings.inline_button_need_support, "support"),
+        )
+        return
+    if result.safety is SafetyVerdict.REFUSE_MANIPULATION:
+        await _answer_empty(
+            query,
+            bot,
+            tg_deps,
+            onboard=False,
+            deep_link=(tg_deps.strings.inline_button_why_no_variants, "why"),
+        )
         return
     articles = _articles(tg_deps.strings, result.scenario, result.variants)
     if not articles:
@@ -171,19 +189,20 @@ async def _answer_empty(
     tg_deps: TelegramDeps,
     *,
     onboard: bool,
+    deep_link: tuple[str, str] | None = None,
 ) -> None:
-    if onboard:
-        text = tg_deps.strings.inline_button_finish_setup
-        start_parameter = "start"
-    else:
-        text = tg_deps.strings.inline_button_how_to
-        start_parameter = "help"
+    if deep_link is None:
+        if onboard:
+            deep_link = (tg_deps.strings.inline_button_finish_setup, "start")
+        else:
+            deep_link = (tg_deps.strings.inline_button_how_to, "help")
+    button_text, start_parameter = deep_link
     await _send_inline_answer(
         bot,
         inline_query_id=query.id,
         results=[],
         cache_time=tg_deps.inline_cache_seconds,
-        button=InlineQueryResultsButton(text=text, start_parameter=start_parameter),
+        button=InlineQueryResultsButton(text=button_text, start_parameter=start_parameter),
     )
 
 

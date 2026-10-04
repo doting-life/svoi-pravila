@@ -42,7 +42,7 @@ services:
     image: svoi-pravila-api:local
     restart: "no"
     env_file:
-      - .env
+      - ${ENV_FILE:-.env}
     environment:
       SP_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       SP_VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379/0
@@ -71,7 +71,7 @@ services:
     image: svoi-pravila-api:local
     restart: unless-stopped
     env_file:
-      - .env
+      - ${ENV_FILE:-.env}
     environment:
       SP_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       SP_VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379/0

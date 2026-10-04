@@ -99,6 +99,22 @@ def test_ensure_dev_env_never_overwrites_bot_token(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
+def test_ensure_dev_env_writes_only_requested_path(tmp_path: Path) -> None:
+    mod = _load_ensure_dev_env()
+    example = tmp_path / ".env.example"
+    example.write_text(
+        "SP_DATA_KEK=\nSP_DATA_KEK_ID=local-1\nSP_PSEUDONYM_PEPPER=\n"
+        "SP_TELEGRAM_UPDATES_MODE=polling\nSP_TELEGRAM_BOT_TOKEN=\n",
+        encoding="utf-8",
+    )
+    sibling = tmp_path / ".env"
+    target = tmp_path / "fresh.env"
+    mod.main(env_path=target, example_path=example)
+    assert target.exists()
+    assert not sibling.exists()
+
+
+@pytest.mark.unit
 def test_ensure_dev_env_generates_webhook_secrets_only_in_webhook_mode(tmp_path: Path) -> None:
     mod = _load_ensure_dev_env()
     example = tmp_path / ".env.example"

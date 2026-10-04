@@ -10,6 +10,7 @@ from pydantic import SecretStr, ValidationError
 from svoi_pravila.config import (
     DatabaseSettings,
     Environment,
+    LlmToolSettings,
     LogLevel,
     Settings,
     TelegramUpdatesMode,
@@ -101,6 +102,10 @@ def _set_base_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SP_GIGACHAT_MAX_RETRIES", "0")
     monkeypatch.setenv("SP_PSEUDONYM_PEPPER", _PEPPER)
     monkeypatch.setenv("SP_TELEGRAM_UPDATES_MODE", "disabled")
+    monkeypatch.delenv("SP_TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("SP_TELEGRAM_WEBHOOK_BASE_URL", raising=False)
+    monkeypatch.delenv("SP_TELEGRAM_WEBHOOK_PATH_SECRET", raising=False)
+    monkeypatch.delenv("SP_TELEGRAM_WEBHOOK_SECRET_TOKEN", raising=False)
 
 
 @pytest.mark.unit
@@ -322,3 +327,107 @@ def test_test_infra_settings_loads_db_and_valkey(monkeypatch: pytest.MonkeyPatch
     monkeypatch.delenv("SP_TELEGRAM_BOT_TOKEN", raising=False)
     loaded = InfraEnvSettings()
     assert loaded.valkey_url.get_secret_value().startswith("redis://")
+
+
+@pytest.mark.unit
+def test_llm_tool_settings_loads_without_telegram(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SP_GIGACHAT_CREDENTIALS", "test-credentials")
+    monkeypatch.setenv("SP_GIGACHAT_SCOPE", "PERS")
+    monkeypatch.setenv("SP_GIGACHAT_CA_BUNDLE_FILE", str(_CERT))
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_SOFTEN", "GigaChat-3-Lightning")
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_HELP_SAY", "GigaChat-3-Lightning")
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_DECODE", "GigaChat-2-Pro")
+    monkeypatch.setenv("SP_TELEGRAM_UPDATES_MODE", "polling")
+    monkeypatch.delenv("SP_TELEGRAM_BOT_TOKEN", raising=False)
+    loaded = LlmToolSettings()
+    assert loaded.gigachat_model_soften == "GigaChat-3-Lightning"
+    assert loaded.gigachat_scope.value == "PERS"
+
+
+@pytest.mark.unit
+def test_llm_tool_settings_requires_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SP_GIGACHAT_CREDENTIALS", raising=False)
+    monkeypatch.setenv("SP_GIGACHAT_SCOPE", "PERS")
+    monkeypatch.setenv("SP_GIGACHAT_CA_BUNDLE_FILE", str(_CERT))
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_SOFTEN", "GigaChat-2")
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_HELP_SAY", "GigaChat-2")
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_DECODE", "GigaChat-2")
+    with pytest.raises(ValidationError):
+        LlmToolSettings()
+
+
+def _llm_tool_values(**overrides: object) -> dict[str, object]:
+    values: dict[str, object] = {
+        "gigachat_credentials": "test-credentials",
+        "gigachat_scope": "PERS",
+        "gigachat_ca_bundle_file": _CERT,
+        "gigachat_model_soften": "GigaChat-2",
+        "gigachat_model_help_say": "GigaChat-2",
+        "gigachat_model_decode": "GigaChat-2",
+    }
+    values.update(overrides)
+    return values
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_llm_tool_settings_rejects_blank_credentials(blank: str) -> None:
+    with pytest.raises(ValidationError, match="gigachat_credentials must not be empty"):
+        LlmToolSettings.model_validate(_llm_tool_values(gigachat_credentials=blank))
+
+
+@pytest.mark.unit
+def test_llm_tool_settings_accepts_nonempty_credentials() -> None:
+    loaded = LlmToolSettings.model_validate(_llm_tool_values())
+    assert loaded.gigachat_credentials.get_secret_value() == "test-credentials"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("field", "blank", "message"),
+    [
+        ("gigachat_credentials", "", "gigachat_credentials must not be empty"),
+        ("gigachat_credentials", "   ", "gigachat_credentials must not be empty"),
+        ("data_kek", "", "data_kek must not be empty"),
+        ("data_kek", "   ", "data_kek must not be empty"),
+        ("pseudonym_pepper", "", "pseudonym_pepper must not be empty"),
+        ("pseudonym_pepper", "   ", "pseudonym_pepper must not be empty"),
+    ],
+)
+def test_settings_rejects_blank_required_secrets(field: str, blank: str, message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        make_settings(**{field: blank})
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_bot_token_rejects_whitespace_when_required(blank: str) -> None:
+    with pytest.raises(ValidationError, match="telegram_bot_token"):
+        make_settings(
+            environment=Environment.LOCAL,
+            telegram_updates_mode=TelegramUpdatesMode.POLLING,
+            telegram_bot_token=SecretStr(blank),
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_webhook_secrets_reject_blank(blank: str) -> None:
+    with pytest.raises(ValidationError, match="telegram_webhook_path_secret must not be empty"):
+        make_settings(
+            environment=Environment.LOCAL,
+            telegram_updates_mode=TelegramUpdatesMode.WEBHOOK,
+            telegram_bot_token=_TOKEN,
+            telegram_webhook_base_url="https://example.example",
+            telegram_webhook_path_secret=SecretStr(blank),
+            telegram_webhook_secret_token=_SECRET_TOKEN,
+        )
+    with pytest.raises(ValidationError, match="telegram_webhook_secret_token must not be empty"):
+        make_settings(
+            environment=Environment.LOCAL,
+            telegram_updates_mode=TelegramUpdatesMode.WEBHOOK,
+            telegram_bot_token=_TOKEN,
+            telegram_webhook_base_url="https://example.example",
+            telegram_webhook_path_secret=_PATH_SECRET,
+            telegram_webhook_secret_token=SecretStr(blank),
+        )

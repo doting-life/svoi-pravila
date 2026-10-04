@@ -58,6 +58,7 @@ class FakeTextGenerator:
         self.decode_result = decode_result
         self.stream_chunks = stream_chunks
         self.stream_error = stream_error
+        self.emit_completed = True
         self.soften_error: (
             GenerationRefusedByProvider | InvalidGenerationOutput | GenerationUnavailable | None
         ) = None
@@ -127,6 +128,8 @@ class FakeTextGenerator:
             yield AnalysisChunk(text=chunk)
         if self.stream_error is not None:
             raise self.stream_error
+        if not self.emit_completed:
+            return
         result = self._decode_result(request)
         yield DecodeCompleted(analysis="".join(self.stream_chunks) or "analysis", result=result)
 

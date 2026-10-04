@@ -10,6 +10,7 @@ from svoi_pravila.adapters.channels.telegram.localization import (
     help_say_intent_prefixes,
     load_ru_strings,
 )
+from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
 from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
@@ -82,6 +83,7 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             monotonic=clock,
             ids=ids,
             pseudonymizer=pseudonymizer,
+            crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=chosen.deadline_seconds,
         )
     )
@@ -96,6 +98,7 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             monotonic=clock,
             ids=ids,
             pseudonymizer=pseudonymizer,
+            crisis_screen=CrisisScreen.load_ru_v2(),
             min_chars=chosen.inline_min_chars,
             deadline_seconds=chosen.inline_deadline_seconds,
             intent_prefixes=help_say_intent_prefixes(strings),

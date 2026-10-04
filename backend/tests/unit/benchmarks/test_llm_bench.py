@@ -79,6 +79,7 @@ from svoi_pravila.benchmarks.report import (
     standard_report_header,
 )
 from svoi_pravila.benchmarks.runner import (
+    AuthFailedError,
     BenchmarkParams,
     BenchmarkRuntime,
     CallRecord,
@@ -260,6 +261,10 @@ def test_format_report_incomplete() -> None:
     body = format_report(["| row |"], incomplete=True)
     assert "INCOMPLETE" in body
     assert "rate_limited" in body
+    auth = format_report(["| row |"], incomplete=True, incomplete_reason="auth")
+    assert "auth failed" in auth
+    budget = format_report(["| row |"], incomplete=True, incomplete_reason="token_budget")
+    assert "token budget reached" in budget
 
 
 @pytest.mark.unit
@@ -407,6 +412,35 @@ async def test_run_case_rate_limited_stops() -> None:
 
 
 @pytest.mark.unit
+async def test_run_case_auth_stops() -> None:
+    soften = BenchCase(
+        id="s1",
+        operation="soften",
+        expected_safety="ok",
+        soften=SoftenRequest(
+            draft="черновик",
+            rules=(),
+            relationship=RelationshipKind.FRIEND,
+            deadline_seconds=1.0,
+        ),
+    )
+
+    class AuthFail(FakeTextGenerator):
+        async def soften(self, request: SoftenRequest) -> SoftenResult:
+            raise GenerationUnavailable(
+                UnavailableKind.AUTH,
+                usage=TokenUsage(),
+                attempts=1,
+                model="m",
+                prompt_version="p",
+            )
+
+    with pytest.raises(AuthFailedError) as exc_info:
+        await run_case(AuthFail(), soften, _opts("soften"))
+    assert exc_info.value.record.unavailable_kind == "auth"
+
+
+@pytest.mark.unit
 def test_cli_show_outputs_off_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, object] = {}
 
@@ -516,7 +550,7 @@ async def test_async_main_list_models(
     def _client_factory(_settings: object) -> _Client:
         return _Client()
 
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
     monkeypatch.setattr(
         "svoi_pravila.benchmarks.llm.create_gigachat_client",
         _client_factory,
@@ -731,7 +765,7 @@ async def test_async_main_runs_models(
             ),
         ),
     ]
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", _client_factory)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.close_gigachat_client", _close)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.GigaChatTextGenerator", _gen_factory)
@@ -794,7 +828,7 @@ async def test_async_main_rate_limited_incomplete(
             ),
         ),
     ]
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", lambda _s: _Client())
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.close_gigachat_client", _close)
 
@@ -818,6 +852,67 @@ async def test_async_main_rate_limited_incomplete(
     assert "INCOMPLETE" in written
     assert "soften" in written
     assert "http_status:" not in written
+
+
+@pytest.mark.unit
+async def test_async_main_auth_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    class _Client:
+        async def aget_models(self) -> object:
+            return SimpleNamespace(data=[])
+
+    async def _close(_client: object) -> None:
+        return None
+
+    class AuthGen(FakeTextGenerator):
+        async def soften(self, request: SoftenRequest) -> SoftenResult:
+            raise GenerationUnavailable(
+                UnavailableKind.AUTH,
+                usage=TokenUsage(),
+                attempts=1,
+                model="m",
+                prompt_version="p",
+            )
+
+    cases = [
+        BenchCase(
+            id="s1",
+            operation="soften",
+            expected_safety="ok",
+            soften=SoftenRequest(
+                draft="черновик",
+                rules=(),
+                relationship=RelationshipKind.FRIEND,
+                deadline_seconds=1.0,
+            ),
+        ),
+    ]
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", lambda _s: _Client())
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.close_gigachat_client", _close)
+
+    def _auth_factory(_c: object, _s: object) -> AuthGen:
+        return AuthGen()
+
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.GigaChatTextGenerator", _auth_factory)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: cases)
+    out_path = tmp_path / "auth.md"
+    code = await async_main(
+        _cli_args(
+            models=["GigaChat-2"],
+            ops=["soften"],
+            out=str(out_path),
+        )
+    )
+    assert code == 1
+    captured = capsys.readouterr().out
+    assert "auth failed" in captured
+    written = out_path.read_text(encoding="utf-8")
+    assert "auth failed" in written
+    assert "soften" in written
 
 
 @pytest.mark.unit
@@ -1122,7 +1217,7 @@ async def test_async_main_model_list_warning_continues(
     async def _close(_client: object) -> None:
         return None
 
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", lambda _s: _Client())
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.close_gigachat_client", _close)
     monkeypatch.setattr(
@@ -1146,7 +1241,7 @@ async def test_async_main_list_models_maps_provider_error(
     async def _close(_client: object) -> None:
         return None
 
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", lambda _s: _Client())
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.close_gigachat_client", _close)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: [_soften_case()])
@@ -1169,6 +1264,7 @@ def test_out_writer_header_once_and_none_path(tmp_path: Path) -> None:
         rate_limit_headers=(("retry-after", "1"), ("x-ratelimit-remaining", "0")),
     )
     writer.write_incomplete(token_budget=(10, 20))
+    writer.write_incomplete(auth_failed=True)
     text = path.read_text(encoding="utf-8")
     assert text.count("HEADER") == 1
     assert "| row |" in text
@@ -1177,6 +1273,7 @@ def test_out_writer_header_once_and_none_path(tmp_path: Path) -> None:
     assert "header retry-after: 1" in text
     assert "header x-ratelimit-remaining: 0" in text
     assert "token budget reached (spent 10 of 20)" in text
+    assert "auth failed" in text
     assert "reasons: (none)" in text
     noop = OutWriter(None)
     noop.write_header_once("H")
@@ -1329,7 +1426,7 @@ async def test_dry_run_makes_no_network(
 
     with respx.mock(assert_all_called=False) as router:
         router.route(host="ngw.devices.sberbank.ru").respond(500)
-        monkeypatch.setattr("svoi_pravila.benchmarks.llm.Settings", make_settings)
+        monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
         monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", _forbid_client)
         monkeypatch.setattr(
             "svoi_pravila.benchmarks.llm.load_cases",
@@ -1356,7 +1453,7 @@ async def test_dry_run_makes_no_network(
 
 @pytest.mark.unit
 def test_max_tokens_required_for_live_run(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: [_soften_case()])
     with pytest.raises(SystemExit, match="max-tokens"):
         asyncio.run(async_main(_cli_args(max_tokens=None, models=["GigaChat-2"], ops=["soften"])))
@@ -1399,7 +1496,7 @@ async def test_async_main_budget_incomplete(
     async def _close(_client: object) -> None:
         return None
 
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", lambda _s: _Client())
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.close_gigachat_client", _close)
     monkeypatch.setattr(
@@ -1513,7 +1610,7 @@ async def test_rate_limit_capture_feeds_incomplete_out(
     def _client_factory(_settings: Settings) -> GigaChat:
         return _real_gigachat(monkeypatch, proxy_mode=proxy_mode)
 
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.Settings", make_settings)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", _client_factory)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: [_soften_case()])
     respx.post(url__regex=_CHAT_URL_RE).mock(

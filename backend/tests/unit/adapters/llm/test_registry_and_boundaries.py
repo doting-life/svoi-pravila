@@ -19,13 +19,15 @@ def test_render_system_prompt_ok() -> None:
 
 
 @pytest.mark.unit
-def test_render_help_say_v2_prompt() -> None:
-    template, version = load_prompt("help_say", "v3")
-    assert version == "help_say@v3"
+def test_render_help_say_v4_prompt() -> None:
+    template, version = load_prompt("help_say", "v4")
+    assert version == "help_say@v4"
     rendered = render_system_prompt(template, boundary_marker="SPBOUND_HELP")
     assert "SPBOUND_HELP" in rendered
     assert "{{BOUNDARY_MARKER}}" not in rendered
     assert "refuse_manipulation" in template
+    assert "прибью за такое" in template
+    assert "насилие, суицид, самоповреждение" not in template
 
 
 @pytest.mark.unit

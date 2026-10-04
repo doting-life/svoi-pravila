@@ -62,3 +62,29 @@ async def test_usage_sink_maps_sqlalchemy_error_and_logs_without_payload(
     assert events[0]["error_type"] == "IntegrityError"
     dumped = json.dumps(events)
     assert marker not in dumped
+
+
+@pytest.mark.unit
+async def test_usage_sink_maps_oserror_and_timeout() -> None:
+    event = UsageEvent(
+        id=UsageEventId(UUID(int=82)),
+        occurred_at=datetime(2026, 1, 1, tzinfo=UTC),
+        user_pseudonym="cd" * 32,
+        scenario=UsageScenario.DECODE,
+        surface=UsageSurface.DM,
+        outcome=UsageOutcome.OK,
+        unavailable_kind=None,
+        safety="ok",
+        model="m",
+        prompt_version="p",
+        latency_ms=1,
+        ttfc_ms=None,
+        attempts=1,
+        input_tokens=0,
+        output_tokens=0,
+        billable_tokens=0,
+    )
+    with pytest.raises(UsageEventWriteFailed):
+        await UnitOfWorkUsageEventSink(_FailingUowFactory(OSError("down"))).record(event)
+    with pytest.raises(UsageEventWriteFailed):
+        await UnitOfWorkUsageEventSink(_FailingUowFactory(TimeoutError())).record(event)

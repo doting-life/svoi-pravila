@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 
-import asyncpg
 import structlog
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
@@ -29,7 +28,7 @@ class DatabaseProbe:
             await asyncio.wait_for(self._select_one(), timeout=timeout_seconds)
         except TimeoutError as exc:
             return self._failed(exc, reason="timeout")
-        except (OSError, SQLAlchemyError, asyncpg.PostgresError) as exc:
+        except (OSError, SQLAlchemyError) as exc:
             return self._failed(exc)
         return ProbeCheckResult(ready=True, reason="ok")
 

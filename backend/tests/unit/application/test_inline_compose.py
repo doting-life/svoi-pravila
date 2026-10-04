@@ -16,6 +16,7 @@ from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
     GenerationUnavailable,
     IncomingTextTooLong,
+    InlineComposeFailed,
     InlineQueryTooShort,
     InvalidGenerationOutput,
     InvalidOutputReason,
@@ -23,6 +24,7 @@ from svoi_pravila.application.errors import (
     ScenarioQuotaExceeded,
     UnavailableKind,
 )
+from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
 from svoi_pravila.application.ports.generation import (
     BOUNDED_TEXT_MAX,
     GenerationMeta,
@@ -36,8 +38,8 @@ from svoi_pravila.application.ports.generation import (
 from svoi_pravila.application.ports.inline_result_reuse import (
     InlineResultReuse,
     InlineReuseResolution,
-    InlineReuseStatus,
     ProduceInlineReuse,
+    ReuseFailed,
 )
 from svoi_pravila.application.use_cases.create_contact import CreateContact, CreateContactCommand
 from svoi_pravila.application.use_cases.delete_my_account import (
@@ -214,8 +216,10 @@ async def test_inline_compose_quota_before_generation(world: AppWorld) -> None:
     use_case, sink, _reuse = _ports(
         world, _Fakes(generator=generator, quota=FakeRateLimiter(limit=0))
     )
-    with pytest.raises(ScenarioQuotaExceeded):
+    with pytest.raises(InlineComposeFailed) as quota_info:
         await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
+    assert isinstance(quota_info.value.cause, ScenarioQuotaExceeded)
+    assert quota_info.value.reuse is InlineReuseStatus.MISS
     assert generator.soften_calls == []
     assert isinstance(sink, RecordingUsageEventSink)
     assert sink.events == []
@@ -232,8 +236,10 @@ async def test_inline_compose_records_errors_and_swallows_sink_failure(world: Ap
         prompt_version="soften@v1",
     )
     use_case, sink, _reuse = _ports(world, _Fakes(generator=refused))
-    with pytest.raises(GenerationRefusedByProvider):
+    with pytest.raises(InlineComposeFailed) as refused_info:
         await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
+    assert isinstance(refused_info.value.cause, GenerationRefusedByProvider)
+    assert refused_info.value.reuse is InlineReuseStatus.MISS
     assert isinstance(sink, RecordingUsageEventSink)
     assert sink.events[0].outcome is UsageOutcome.REFUSED
 
@@ -246,8 +252,10 @@ async def test_inline_compose_records_errors_and_swallows_sink_failure(world: Ap
         prompt_version="soften@v1",
     )
     use_case, sink, _reuse = _ports(world, _Fakes(generator=unavailable))
-    with pytest.raises(GenerationUnavailable):
+    with pytest.raises(InlineComposeFailed) as unavailable_info:
         await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
+    assert isinstance(unavailable_info.value.cause, GenerationUnavailable)
+    assert unavailable_info.value.reuse is InlineReuseStatus.MISS
     assert isinstance(sink, RecordingUsageEventSink)
     assert sink.events[0].outcome is UsageOutcome.UNAVAILABLE
 
@@ -260,8 +268,10 @@ async def test_inline_compose_records_errors_and_swallows_sink_failure(world: Ap
         prompt_version="soften@v1",
     )
     use_case, sink, _reuse = _ports(world, _Fakes(generator=invalid, sink=FailingUsageEventSink()))
-    with pytest.raises(InvalidGenerationOutput):
+    with pytest.raises(InlineComposeFailed) as invalid_info:
         await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
+    assert isinstance(invalid_info.value.cause, InvalidGenerationOutput)
+    assert invalid_info.value.reuse is InlineReuseStatus.MISS
 
 
 @pytest.mark.unit
@@ -565,10 +575,16 @@ async def test_inline_compose_reuse_error_to_joiners_not_stored(world: AppWorld)
     )
     await asyncio.sleep(0)
     gate.set()
-    with pytest.raises(GenerationUnavailable):
+    with pytest.raises(InlineComposeFailed) as first_info:
         await t1
-    with pytest.raises(GenerationUnavailable):
+    with pytest.raises(InlineComposeFailed) as second_info:
         await t2
+    assert isinstance(first_info.value.cause, GenerationUnavailable)
+    assert isinstance(second_info.value.cause, GenerationUnavailable)
+    assert {first_info.value.reuse, second_info.value.reuse} == {
+        InlineReuseStatus.MISS,
+        InlineReuseStatus.JOIN,
+    }
     assert generator.call_count == 1
     generator.soften_error = None
     generator.soften_block = None
@@ -605,19 +621,6 @@ async def test_inline_compose_waiter_cancel_keeps_shared_generation(world: AppWo
     assert generator.call_count == 1
 
 
-class _BrokenReuse:
-    """Reuse stub that violates the value/error invariant."""
-
-    async def resolve(
-        self, key: str, user_key: str, produce: ProduceInlineReuse
-    ) -> InlineReuseResolution:
-        _ = key, user_key, produce
-        return InlineReuseResolution(status=InlineReuseStatus.MISS, value=None, error=None)
-
-    def forget(self, user_key: str) -> None:
-        _ = user_key
-
-
 class _OddErrorReuse:
     """Reuse stub that returns an unexpected application error type."""
 
@@ -625,31 +628,18 @@ class _OddErrorReuse:
         self, key: str, user_key: str, produce: ProduceInlineReuse
     ) -> InlineReuseResolution:
         _ = key, user_key, produce
-        return InlineReuseResolution(
-            status=InlineReuseStatus.MISS,
-            value=None,
-            error=ApplicationError("unexpected"),
-        )
+        return ReuseFailed(status=InlineReuseStatus.MISS, error=ApplicationError("unexpected"))
 
     def forget(self, user_key: str) -> None:
         _ = user_key
 
 
 @pytest.mark.unit
-async def test_inline_compose_rejects_broken_reuse_resolution(world: AppWorld) -> None:
-    await world.ensure_granted_user(100)
-    use_case, _sink, _ = _ports(world, _Fakes(reuse=_BrokenReuse()))
-    with pytest.raises(RuntimeError, match="missing value"):
-        await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
-
-
-@pytest.mark.unit
-async def test_inline_compose_propagates_unexpected_reuse_error(world: AppWorld) -> None:
+async def test_inline_compose_rejects_unexpected_reuse_error(world: AppWorld) -> None:
     await world.ensure_granted_user(100)
     use_case, _sink, _ = _ports(world, _Fakes(reuse=_OddErrorReuse()))
-    with pytest.raises(ApplicationError, match="unexpected") as exc_info:
+    with pytest.raises(TypeError, match="unexpected reuse produce error"):
         await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
-    assert exc_info.value.reuse is InlineReuseStatus.MISS
 
 
 @pytest.mark.unit

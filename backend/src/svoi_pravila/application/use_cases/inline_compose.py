@@ -11,14 +11,16 @@ from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
     GenerationUnavailable,
     IncomingTextTooLong,
+    InlineComposeFailed,
+    InlineProduceError,
     InlineQueryTooShort,
     InvalidGenerationOutput,
-    InvalidOutputReason,
     NotFound,
     ScenarioQuotaExceeded,
     UsageEventWriteFailed,
 )
 from svoi_pravila.application.inline_reuse_key import InlineReuseKeyMaterial, inline_reuse_key
+from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
 from svoi_pravila.application.inline_text import normalize_inline_text
 from svoi_pravila.application.ports.clock import Clock
 from svoi_pravila.application.ports.consent_catalog import ConsentCatalog
@@ -39,8 +41,8 @@ from svoi_pravila.application.ports.generation import (
 from svoi_pravila.application.ports.id_generator import IdGenerator
 from svoi_pravila.application.ports.inline_result_reuse import (
     InlineResultReuse,
-    InlineReuseStatus,
     InlineReuseValue,
+    ReuseFailed,
 )
 from svoi_pravila.application.ports.monotonic import MonotonicClock
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
@@ -167,11 +169,11 @@ class InlineCompose:
             return await self._produce(material)
 
         resolution = await self._ports.reuse.resolve(key, user_key, produce)
-        if resolution.error is not None:
-            raise _error_with_reuse(resolution.error, resolution.status)
-        if resolution.value is None:
-            msg = "inline reuse resolution missing value and error"
-            raise RuntimeError(msg)
+        if isinstance(resolution, ReuseFailed):
+            raise InlineComposeFailed(
+                _as_produce_error(resolution.error),
+                reuse=resolution.status,
+            ) from resolution.error
         return InlineComposeResult(
             scenario=resolution.value.scenario,
             variants=resolution.value.variants,
@@ -368,35 +370,16 @@ def _match_prefix(
     return None
 
 
-def _error_with_reuse(error: ApplicationError, status: InlineReuseStatus) -> ApplicationError:
-    """Return a fresh typed error carrying this waiter's reuse status."""
-    if isinstance(error, GenerationUnavailable):
-        clone: ApplicationError = GenerationUnavailable(
-            error.kind,
-            usage=error.usage,
-            attempts=error.attempts,
-            model=error.model,
-            prompt_version=error.prompt_version,
-        )
-    elif isinstance(error, GenerationRefusedByProvider):
-        clone = GenerationRefusedByProvider(
-            usage=error.usage,
-            attempts=error.attempts,
-            model=error.model,
-            prompt_version=error.prompt_version,
-        )
-    elif isinstance(error, InvalidGenerationOutput):
-        reasons: tuple[InvalidOutputReason, ...] = error.reasons
-        clone = InvalidGenerationOutput(
-            reasons,
-            usage=error.usage,
-            attempts=error.attempts,
-            model=error.model,
-            prompt_version=error.prompt_version,
-        )
-    elif isinstance(error, ScenarioQuotaExceeded):
-        clone = ScenarioQuotaExceeded()
-    else:
-        clone = error
-    clone.reuse = status
-    return clone
+def _as_produce_error(error: ApplicationError) -> InlineProduceError:
+    if isinstance(
+        error,
+        (
+            ScenarioQuotaExceeded,
+            GenerationUnavailable,
+            GenerationRefusedByProvider,
+            InvalidGenerationOutput,
+        ),
+    ):
+        return error
+    msg = f"unexpected reuse produce error: {type(error).__name__}"
+    raise TypeError(msg) from error

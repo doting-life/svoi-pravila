@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import dataclass
+from enum import StrEnum
 
 import structlog
 from aiogram import Bot, Router
@@ -22,17 +23,20 @@ from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.localization import firmness_label
 from svoi_pravila.application.errors import (
     AccessNotGranted,
-    ApplicationError,
     GenerationRefusedByProvider,
     GenerationUnavailable,
+    IncomingTextTooLong,
+    InlineComposeFailed,
+    InlineQueryTooShort,
     InvalidGenerationOutput,
     InvalidInlineResultRef,
     NotFound,
     PreparedResultUnavailable,
+    ScenarioQuotaExceeded,
 )
 from svoi_pravila.application.inline_result_ref import encode_inline_result_ref
+from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
 from svoi_pravila.application.ports.generation import AppliedRuleView, SafetyVerdict, Variant
-from svoi_pravila.application.ports.inline_result_reuse import InlineReuseStatus
 from svoi_pravila.application.ports.monotonic import MonotonicClock
 from svoi_pravila.application.prepared_ref import is_prepared_ref
 from svoi_pravila.application.use_cases.inline_compose import (
@@ -49,6 +53,22 @@ _PREPARED_PURPOSE = "prepared"
 logger = structlog.get_logger(__name__)
 
 
+class InlineAnsweredOutcome(StrEnum):
+    """C0 vocabulary for ``inline_answered.outcome``."""
+
+    OK = "ok"
+    SCREENED = "screened"
+    EMPTY = "empty"
+    INVALID_OUTPUT = "invalid_output"
+    REFUSED = "refused"
+    TIMEOUT = "timeout"
+    RATE_LIMITED = "rate_limited"
+    AUTH = "auth"
+    SERVER = "server"
+    NETWORK = "network"
+    TELEGRAM_API = "telegram_api"
+
+
 @dataclass(frozen=True, slots=True)
 class _AnsweredLog:
     """C0 fields for ``inline_answered``."""
@@ -56,7 +76,7 @@ class _AnsweredLog:
     started: float
     monotonic: MonotonicClock
     scenario: UsageScenario | None
-    outcome: str
+    outcome: InlineAnsweredOutcome
     reuse: str
 
 
@@ -100,7 +120,14 @@ async def _answer_composed(query: InlineQuery, bot: Bot, tg_deps: TelegramDeps) 
         result = await tg_deps.inline_compose.execute(
             InlineComposeCommand(TelegramUserId(user_id), query.query)
         )
-    except ApplicationError as exc:
+    except (
+        NotFound,
+        AccessNotGranted,
+        InlineQueryTooShort,
+        IncomingTextTooLong,
+        ScenarioQuotaExceeded,
+        InlineComposeFailed,
+    ) as exc:
         await _answer_compose_error(query, bot, tg_deps, started=started, error=exc)
         return
     if not tg_deps.inline_queries.is_current_task(user_id):
@@ -114,7 +141,14 @@ async def _answer_compose_error(
     tg_deps: TelegramDeps,
     *,
     started: float,
-    error: ApplicationError,
+    error: (
+        NotFound
+        | AccessNotGranted
+        | InlineQueryTooShort
+        | IncomingTextTooLong
+        | ScenarioQuotaExceeded
+        | InlineComposeFailed
+    ),
 ) -> None:
     user_id = query.from_user.id
     if not tg_deps.inline_queries.is_current_task(user_id):
@@ -133,16 +167,28 @@ async def _answer_compose_error(
     )
 
 
-def _error_outcome(error: ApplicationError, *, telegram_ok: bool) -> str:
+def _error_outcome(
+    error: (
+        NotFound
+        | AccessNotGranted
+        | InlineQueryTooShort
+        | IncomingTextTooLong
+        | ScenarioQuotaExceeded
+        | InlineComposeFailed
+    ),
+    *,
+    telegram_ok: bool,
+) -> InlineAnsweredOutcome:
     if not telegram_ok:
-        return "telegram_api"
-    if isinstance(error, InvalidGenerationOutput):
-        return "invalid_output"
-    if isinstance(error, GenerationRefusedByProvider):
-        return "refused"
-    if isinstance(error, GenerationUnavailable):
-        return error.kind.value
-    return "empty"
+        return InlineAnsweredOutcome.TELEGRAM_API
+    cause = error.cause if isinstance(error, InlineComposeFailed) else error
+    if isinstance(cause, InvalidGenerationOutput):
+        return InlineAnsweredOutcome.INVALID_OUTPUT
+    if isinstance(cause, GenerationRefusedByProvider):
+        return InlineAnsweredOutcome.REFUSED
+    if isinstance(cause, GenerationUnavailable):
+        return InlineAnsweredOutcome(cause.kind.value)
+    return InlineAnsweredOutcome.EMPTY
 
 
 async def _answer_compose_result(
@@ -162,7 +208,11 @@ async def _answer_compose_result(
             onboard=False,
             deep_link=(tg_deps.strings.inline_button_need_support, "support"),
         )
-        outcome = "telegram_api" if not telegram_ok else "screened"
+        outcome = (
+            InlineAnsweredOutcome.TELEGRAM_API
+            if not telegram_ok
+            else InlineAnsweredOutcome.SCREENED
+        )
     elif result.safety is SafetyVerdict.REFUSE_MANIPULATION:
         telegram_ok = await _answer_empty(
             query,
@@ -171,7 +221,9 @@ async def _answer_compose_result(
             onboard=False,
             deep_link=(tg_deps.strings.inline_button_why_no_variants, "why"),
         )
-        outcome = "telegram_api" if not telegram_ok else "empty"
+        outcome = (
+            InlineAnsweredOutcome.TELEGRAM_API if not telegram_ok else InlineAnsweredOutcome.EMPTY
+        )
     else:
         articles = _articles(
             tg_deps,
@@ -181,7 +233,11 @@ async def _answer_compose_result(
         )
         if not articles:
             telegram_ok = await _answer_empty(query, bot, tg_deps, onboard=False)
-            outcome = "telegram_api" if not telegram_ok else "empty"
+            outcome = (
+                InlineAnsweredOutcome.TELEGRAM_API
+                if not telegram_ok
+                else InlineAnsweredOutcome.EMPTY
+            )
         else:
             telegram_ok = await _send_inline_answer(
                 bot,
@@ -189,7 +245,9 @@ async def _answer_compose_result(
                 results=articles,
                 cache_time=tg_deps.inline_cache_seconds,
             )
-            outcome = "telegram_api" if not telegram_ok else "ok"
+            outcome = (
+                InlineAnsweredOutcome.TELEGRAM_API if not telegram_ok else InlineAnsweredOutcome.OK
+            )
     _log_answered(
         _AnsweredLog(
             started=started,
@@ -205,10 +263,18 @@ def _reuse_label(status: InlineReuseStatus | None) -> str:
     return "none" if status is None else status.value
 
 
-def _reuse_from_error(exc: BaseException) -> str:
-    status = getattr(exc, "reuse", None)
-    if isinstance(status, InlineReuseStatus):
-        return status.value
+def _reuse_from_error(
+    error: (
+        NotFound
+        | AccessNotGranted
+        | InlineQueryTooShort
+        | IncomingTextTooLong
+        | ScenarioQuotaExceeded
+        | InlineComposeFailed
+    ),
+) -> str:
+    if isinstance(error, InlineComposeFailed):
+        return error.reuse.value
     return "none"
 
 
@@ -216,7 +282,7 @@ def _log_answered(fields: _AnsweredLog) -> None:
     ended = fields.monotonic.monotonic()
     latency_ms = max(0, int((ended - fields.started) * 1000))
     payload: dict[str, object] = {
-        "outcome": fields.outcome,
+        "outcome": fields.outcome.value,
         "reuse": fields.reuse,
         "answer_latency_ms": latency_ms,
     }

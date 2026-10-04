@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
+from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
 from svoi_pravila.application.ports.generation import TokenUsage
 from svoi_pravila.domain.access import AccessStatus
 
@@ -40,12 +41,6 @@ class InvalidOutputReason(StrEnum):
 
 class ApplicationError(Exception):
     """Base class for application errors."""
-
-    reuse: object | None
-
-    def __init__(self, *args: object) -> None:
-        super().__init__(*args)
-        self.reuse = None
 
 
 class NotFound(ApplicationError):
@@ -171,3 +166,20 @@ class InvalidGenerationOutput(ApplicationError):
         self.model = model
         self.prompt_version = prompt_version
         super().__init__("invalid generation output")
+
+
+InlineProduceError = (
+    ScenarioQuotaExceeded
+    | GenerationUnavailable
+    | GenerationRefusedByProvider
+    | InvalidGenerationOutput
+)
+
+
+class InlineComposeFailed(ApplicationError):
+    """Produce failed for one inline waiter; wraps the typed cause."""
+
+    def __init__(self, cause: InlineProduceError, *, reuse: InlineReuseStatus) -> None:
+        self.cause = cause
+        self.reuse = reuse
+        super().__init__("inline compose failed")

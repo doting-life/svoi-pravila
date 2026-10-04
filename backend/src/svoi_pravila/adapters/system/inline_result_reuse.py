@@ -3,20 +3,42 @@
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 from svoi_pravila.application.errors import ApplicationError
+from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
 from svoi_pravila.application.ports.generation import SafetyVerdict
 from svoi_pravila.application.ports.inline_result_reuse import (
-    InlineReuseResolution,
-    InlineReuseStatus,
     InlineReuseValue,
     ProduceInlineReuse,
+    ReuseFailed,
+    ReuseSucceeded,
 )
 from svoi_pravila.application.ports.monotonic import MonotonicClock
 
 _MAX_PER_USER = 4
+
+
+class CancelHandle(Protocol):
+    """Handle returned by ``call_later`` that can cancel the callback."""
+
+    def cancel(self) -> object:
+        """Cancel the scheduled callback if it has not run."""
+        ...
+
+
+CallLater = Callable[[float, Callable[[], None]], CancelHandle]
+
+
+@dataclass(frozen=True, slots=True)
+class InlineReuseStats:
+    """C0 counts for in-process reuse state (no keys or text)."""
+
+    entries: int
+    users: int
+    flights: int
 
 
 @dataclass(slots=True)
@@ -24,13 +46,21 @@ class _Entry:
     value: InlineReuseValue
     stored_at: float
     user_key: str
+    timer: CancelHandle | None = None
 
     def __repr__(self) -> str:
         return f"_Entry(stored_at={self.stored_at!r}, user_key_len={len(self.user_key)})"
 
 
+@dataclass(slots=True)
+class _Flight:
+    task: asyncio.Task[InlineReuseValue]
+    user_key: str
+    store: bool = True
+
+
 class InProcessInlineResultReuse:
-    """Process-memory reuse with TTL, global and per-user bounds, and joiners."""
+    """Process-memory reuse with TTL timers, bounds, and joiners."""
 
     def __init__(
         self,
@@ -39,6 +69,7 @@ class InProcessInlineResultReuse:
         ttl_seconds: float,
         max_entries: int,
         max_per_user: int = _MAX_PER_USER,
+        call_later: CallLater | None = None,
     ) -> None:
         if max_entries < 1:
             msg = "max_entries must be >= 1"
@@ -50,17 +81,26 @@ class InProcessInlineResultReuse:
         self._ttl_seconds = ttl_seconds
         self._max_entries = max_entries
         self._max_per_user = max_per_user
+        self._call_later = call_later
         self._entries: dict[str, _Entry] = {}
-        self._user_order: dict[str, list[str]] = defaultdict(list)
-        self._forget_gen: dict[str, int] = defaultdict(int)
-        self._flights: dict[str, asyncio.Task[InlineReuseValue]] = {}
+        self._user_order: dict[str, list[str]] = {}
+        self._flights: dict[str, _Flight] = {}
         self._tasks: set[asyncio.Task[InlineReuseValue]] = set()
+        self._expire_tasks: set[asyncio.Task[None]] = set()
         self._lock = asyncio.Lock()
 
     @property
     def tasks(self) -> set[asyncio.Task[InlineReuseValue]]:
         """In-flight produce tasks for shutdown draining."""
         return self._tasks
+
+    def stats(self) -> InlineReuseStats:
+        """Return C0 counts of entries, distinct users, and in-flight produces."""
+        return InlineReuseStats(
+            entries=len(self._entries),
+            users=len(self._user_order),
+            flights=len(self._flights),
+        )
 
     def __repr__(self) -> str:
         return (
@@ -72,38 +112,35 @@ class InProcessInlineResultReuse:
         )
 
     def forget(self, user_key: str) -> None:
-        """Drop stored entries for ``user_key`` and invalidate in-flight stores."""
-        self._forget_gen[user_key] = self._forget_gen[user_key] + 1
+        """Drop stored entries for ``user_key`` and mark in-flight produces no-store."""
         for key in list(self._user_order.get(user_key, ())):
-            self._entries.pop(key, None)
+            self._evict_key(key)
         self._user_order.pop(user_key, None)
+        for flight in self._flights.values():
+            if flight.user_key == user_key:
+                flight.store = False
 
     async def resolve(
         self,
         key: str,
         user_key: str,
         produce: ProduceInlineReuse,
-    ) -> InlineReuseResolution:
+    ) -> ReuseSucceeded | ReuseFailed:
         """Hit a fresh OK entry, join an in-flight produce, or run ``produce``."""
         async with self._lock:
             hit = self._lookup(key)
             if hit is not None:
-                return InlineReuseResolution(
-                    status=InlineReuseStatus.HIT,
-                    value=hit,
-                    error=None,
-                )
+                return ReuseSucceeded(status=InlineReuseStatus.HIT, value=hit)
             existing = self._flights.get(key)
             if existing is not None:
-                task = existing
+                task = existing.task
                 status = InlineReuseStatus.JOIN
             else:
-                forget_gen = self._forget_gen[user_key]
                 task = asyncio.create_task(
-                    self._run_produce(key, user_key, forget_gen, produce),
+                    self._run_produce(key, user_key, produce),
                     name="inline-reuse-produce",
                 )
-                self._flights[key] = task
+                self._flights[key] = _Flight(task=task, user_key=user_key, store=True)
                 self._tasks.add(task)
                 task.add_done_callback(self._on_task_done)
                 status = InlineReuseStatus.MISS
@@ -111,8 +148,8 @@ class InProcessInlineResultReuse:
         try:
             value = await self._await_flight(task)
         except ApplicationError as exc:
-            return InlineReuseResolution(status=status, value=None, error=exc)
-        return InlineReuseResolution(status=status, value=value, error=None)
+            return ReuseFailed(status=status, error=exc)
+        return ReuseSucceeded(status=status, value=value)
 
     async def _await_flight(self, task: asyncio.Task[InlineReuseValue]) -> InlineReuseValue:
         """Await ``task`` without linking waiter cancellation to the shared produce."""
@@ -139,7 +176,6 @@ class InProcessInlineResultReuse:
         self,
         key: str,
         user_key: str,
-        forget_gen: int,
         produce: ProduceInlineReuse,
     ) -> InlineReuseValue:
         value: InlineReuseValue | None = None
@@ -148,13 +184,12 @@ class InProcessInlineResultReuse:
             return value
         finally:
             async with self._lock:
-                if self._flights.get(key) is asyncio.current_task():
+                flight = self._flights.get(key)
+                should_store = False
+                if flight is not None and flight.task is asyncio.current_task():
+                    should_store = flight.store
                     del self._flights[key]
-                if (
-                    value is not None
-                    and value.safety is SafetyVerdict.OK
-                    and self._forget_gen[user_key] == forget_gen
-                ):
+                if value is not None and value.safety is SafetyVerdict.OK and should_store:
                     self._store(key, user_key, value)
 
     def _on_task_done(self, task: asyncio.Task[InlineReuseValue]) -> None:
@@ -174,13 +209,38 @@ class InProcessInlineResultReuse:
         if key in self._entries:
             self._evict_key(key)
         now = self._monotonic.monotonic()
-        self._entries[key] = _Entry(value=value, stored_at=now, user_key=user_key)
-        self._user_order[user_key].append(key)
-        while len(self._user_order[user_key]) > self._max_per_user:
-            oldest = self._user_order[user_key][0]
-            self._evict_key(oldest)
+        timer = self._schedule_expiry(key)
+        self._entries[key] = _Entry(value=value, stored_at=now, user_key=user_key, timer=timer)
+        order = self._user_order.get(user_key)
+        if order is None:
+            order = []
+            self._user_order[user_key] = order
+        order.append(key)
+        while len(order) > self._max_per_user:
+            self._evict_key(order[0])
         while len(self._entries) > self._max_entries:
             self._evict_oldest_global()
+
+    def _schedule_expiry(self, key: str) -> CancelHandle:
+        def _callback() -> None:
+            self._expire(key)
+
+        if self._call_later is not None:
+            return self._call_later(self._ttl_seconds, _callback)
+        return asyncio.get_running_loop().call_later(self._ttl_seconds, _callback)
+
+    def _expire(self, key: str) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        task = loop.create_task(self._expire_locked(key), name="inline-reuse-expire")
+        self._expire_tasks.add(task)
+        task.add_done_callback(self._expire_tasks.discard)
+
+    async def _expire_locked(self, key: str) -> None:
+        async with self._lock:
+            self._evict_key(key)
 
     def _evict_oldest_global(self) -> None:
         if not self._entries:
@@ -192,6 +252,9 @@ class InProcessInlineResultReuse:
         entry = self._entries.pop(key, None)
         if entry is None:
             return
+        if entry.timer is not None:
+            entry.timer.cancel()
+            entry.timer = None
         order = self._user_order.get(entry.user_key)
         if order is None:
             return

@@ -4,20 +4,21 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Protocol
 
 from svoi_pravila.application.errors import ApplicationError
+from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
 from svoi_pravila.application.ports.generation import AppliedRuleView, SafetyVerdict, Variant
 from svoi_pravila.domain.enums import UsageScenario
 
-
-class InlineReuseStatus(StrEnum):
-    """How a reuse lookup resolved for this waiter."""
-
-    HIT = "hit"
-    JOIN = "join"
-    MISS = "miss"
+__all__ = [
+    "InlineResultReuse",
+    "InlineReuseStatus",
+    "InlineReuseValue",
+    "ProduceInlineReuse",
+    "ReuseFailed",
+    "ReuseSucceeded",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,13 +32,22 @@ class InlineReuseValue:
 
 
 @dataclass(frozen=True, slots=True)
-class InlineReuseResolution:
-    """Outcome of ``resolve``; the port never raises application errors."""
+class ReuseSucceeded:
+    """Successful reuse resolution (hit, join, or miss with a value)."""
 
     status: InlineReuseStatus
-    value: InlineReuseValue | None
-    error: ApplicationError | None
+    value: InlineReuseValue
 
+
+@dataclass(frozen=True, slots=True)
+class ReuseFailed:
+    """Failed reuse resolution (join or miss with a typed produce error)."""
+
+    status: InlineReuseStatus
+    error: ApplicationError
+
+
+InlineReuseResolution = ReuseSucceeded | ReuseFailed
 
 ProduceInlineReuse = Callable[[], Awaitable[InlineReuseValue]]
 
@@ -54,4 +64,4 @@ class InlineResultReuse(Protocol):
         """Return a hit, join an in-flight produce, or run ``produce`` on miss."""
 
     def forget(self, user_key: str) -> None:
-        """Drop stored entries for ``user_key``; later completions must not store."""
+        """Drop stored entries for ``user_key``; mark in-flight produces no-store."""

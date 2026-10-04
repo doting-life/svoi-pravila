@@ -4,7 +4,7 @@
 
 ## Текущее
 - Дата: 2026-10-03 · Спринт 0 (Фундамент)
-- Активная задача: **0005-e — бюджет токенов в бенчмарке, исправление метрик, модели по умолчанию** · ветка `task/0005-llm-gigachat` · **без живых вызовов**
+- Активная задача: **0005-f — потолок вывода в запросах, точный учёт токенов, чистка мёртвых веток** · ветка `task/0005-llm-gigachat` · **без живых вызовов**; после ACCEPT — мерж 0005 и задача 0006
 - Модели (ADR-0006 ред. 1.2): «Смягчить», «Помоги сказать» — GigaChat-3-Lightning; «Расшифровать» — GigaChat-2-Pro
 - Правило с 04.10 (владелец): ключ разработки жёстко ограничен по токенам; живые вызовы — только с бюджетом в промпте (`60-live-provider-budget`)
 - Риск: лимиты GigaChat (429) на личном ключе мешают полным прогонам — владелец проверяет остаток и лимиты в кабинете
@@ -33,7 +33,8 @@
 | 0005-b | Trustworthy benchmark, model selection, prompt iteration | `task/0005-llm-gigachat` | проверен 03.10 | BLOCKED (decode) + CHANGES REQUIRED: протокол decode_stream не допускает повтора; неразрешённые per-file ignores (с 0005); 4xx → `server` |
 | 0005-c | Two-phase decode, suppression cleanup, final benchmark | `task/0005-llm-gigachat` | проверен 03.10 | BLOCKED (429) + CHANGES REQUIRED: `except Exception`-диспетчеры, недостижимый код, `Any`/`cast`, токены повторов теряются, ветки фазы A не покрыты |
 | 0005-d | Error-path cleanup, token accounting, final benchmark | `task/0005-llm-gigachat` | проверен 04.10 | код принят; BLOCKED ложный — ошибка метрики «первая попытка» для двухфазного вызова; ~310 тыс. токенов на прогоны |
-| 0005-e | Token budget guard, metric fixes, decode surface removal, model defaults | `task/0005-llm-gigachat` | выдан | — |
+| 0005-e | Token budget guard, metric fixes, decode surface removal, model defaults | `task/0005-llm-gigachat` | проверен 04.10 | CHANGES REQUIRED (мелкие): нет `max_tokens` в запросах, необязательный учёт в ошибках, HTTP-детали в слое application, регресс покрытия 100 % → мёртвые ветки; 0 токенов |
+| 0005-f | Output caps, strict accounting, dead-branch cleanup | `task/0005-llm-gigachat` | выдан | — |
 
 ## Решения
 | № | Решение | Статус |

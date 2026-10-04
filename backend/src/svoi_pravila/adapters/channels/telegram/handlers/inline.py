@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import contextlib
 
+import structlog
 from aiogram import Bot, Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.types import (
     ChosenInlineResult,
     InlineQuery,
@@ -41,6 +43,8 @@ from svoi_pravila.domain.ids import TelegramUserId
 
 _PREVIEW_MAX = 64
 _PREPARED_PURPOSE = "prepared"
+
+logger = structlog.get_logger(__name__)
 
 
 def build_inline_router() -> Router:
@@ -103,10 +107,10 @@ async def _answer_composed(query: InlineQuery, bot: Bot, tg_deps: TelegramDeps) 
     if not articles:
         await _answer_empty(query, bot, tg_deps, onboard=False)
         return
-    await bot.answer_inline_query(
+    await _send_inline_answer(
+        bot,
         inline_query_id=query.id,
         results=articles,
-        is_personal=True,
         cache_time=tg_deps.inline_cache_seconds,
     )
 
@@ -123,10 +127,10 @@ async def _answer_prepared(query: InlineQuery, bot: Bot, tg_deps: TelegramDeps) 
         UsageScenario.DECODE,
         (Variant(text=variant.text, firmness=variant.firmness),),
     )
-    await bot.answer_inline_query(
+    await _send_inline_answer(
+        bot,
         inline_query_id=query.id,
         results=articles,
-        is_personal=True,
         cache_time=tg_deps.inline_cache_seconds,
     )
 
@@ -174,10 +178,33 @@ async def _answer_empty(
     else:
         text = tg_deps.strings.inline_button_how_to
         start_parameter = "help"
-    await bot.answer_inline_query(
+    await _send_inline_answer(
+        bot,
         inline_query_id=query.id,
         results=[],
-        is_personal=True,
         cache_time=tg_deps.inline_cache_seconds,
         button=InlineQueryResultsButton(text=text, start_parameter=start_parameter),
     )
+
+
+async def _send_inline_answer(
+    bot: Bot,
+    *,
+    inline_query_id: str,
+    results: list[InlineQueryResultUnion],
+    cache_time: int,
+    button: InlineQueryResultsButton | None = None,
+) -> None:
+    failed_class: str | None = None
+    try:
+        await bot.answer_inline_query(
+            inline_query_id=inline_query_id,
+            results=results,
+            is_personal=True,
+            cache_time=cache_time,
+            button=button,
+        )
+    except TelegramAPIError as exc:
+        failed_class = type(exc).__name__
+    if failed_class is not None:
+        logger.error("inline_answer_failed", exception_class=failed_class)

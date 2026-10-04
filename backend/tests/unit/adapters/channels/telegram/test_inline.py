@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import AnswerInlineQuery, SendMessage
 from aiogram.types import (
     CallbackQuery,
@@ -44,6 +48,7 @@ from svoi_pravila.application.ports.generation import (
     GenerationMeta,
     HelpSayResult,
     SafetyVerdict,
+    SoftenRequest,
     SoftenResult,
     TokenUsage,
     Variant,
@@ -141,6 +146,13 @@ async def _await_inline(deps: TelegramDeps) -> None:
     pending = [task for task in deps.inline_queries.tasks if not task.done()]
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
+
+
+def _query_too_old() -> TelegramBadRequest:
+    return TelegramBadRequest(
+        method=AnswerInlineQuery(inline_query_id="expired", results=[]),
+        message="query is too old",
+    )
 
 
 @pytest.mark.unit
@@ -272,7 +284,9 @@ async def test_prepared_token_answers_without_generation() -> None:
 
 
 @pytest.mark.unit
-async def test_inline_debounce_cancels_before_provider() -> None:
+async def test_inline_debounce_cancels_before_provider(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
     catalog = FakeConsentCatalog()
     uow = InMemoryUnitOfWorkFactory()
     sleeper = GateSleeper()
@@ -299,6 +313,7 @@ async def test_inline_debounce_cancels_before_provider() -> None:
     await lifecycle.shutdown()
     assert len(generator.soften_calls) == 1
     assert generator.soften_calls[0].draft == "second draft here"
+    assert [e for e in capture_log_events() if e.get("event") == "inline_task_failed"] == []
 
 
 @pytest.mark.unit
@@ -702,3 +717,129 @@ async def test_inline_quota_and_long_preview() -> None:
     assert quota_answers[-1].results == []
     assert quota_answers[-1].button is not None
     assert quota_answers[-1].button.start_parameter == "help"
+
+
+class _BoomThenOk(FakeTextGenerator):
+    async def soften(self, request: SoftenRequest) -> SoftenResult:
+        self.soften_calls.append(request)
+        self.soften_started.set()
+        if self.soften_block is not None:
+            await self.soften_block.wait()
+        if len(self.soften_calls) == 1:
+            raise RuntimeError("provider exploded")
+        return SoftenResult(
+            variants=(Variant(text="recovered", firmness=Firmness.BALANCED),),
+            applied_rule_indexes=(),
+            safety=SafetyVerdict.OK,
+            meta=GenerationMeta(
+                model="fake",
+                prompt_version="soften@v1",
+                latency_ms=1,
+                attempts=1,
+                usage=TokenUsage(),
+            ),
+        )
+
+
+@pytest.mark.unit
+async def test_in_flight_failure_does_not_drop_latest_query(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    catalog = FakeConsentCatalog()
+    uow = InMemoryUnitOfWorkFactory()
+    block = asyncio.Event()
+    generator = _BoomThenOk()
+    generator.soften_block = block
+    sink = RecordingUsageEventSink()
+    deps = make_telegram_deps(
+        TelegramTestDeps(
+            uow=uow,
+            catalog=catalog,
+            generator=generator,
+            sink=sink,
+            debounce_seconds=0.0,
+        )
+    )
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    loop = asyncio.get_running_loop()
+    stray: list[str] = []
+
+    def _handler(_loop: asyncio.AbstractEventLoop, context: dict[str, Any]) -> None:
+        stray.append(str(context.get("message", "")))
+
+    previous = loop.get_exception_handler()
+    loop.set_exception_handler(_handler)
+    try:
+        await _onboard(bot, lifecycle, 33, catalog)
+        await lifecycle.dispatcher.feed_update(bot, _inline(160, 33, "first failing draft"))
+        await generator.soften_started.wait()
+        await lifecycle.dispatcher.feed_update(bot, _inline(161, 33, "second surviving draft"))
+        await asyncio.sleep(0)
+        block.set()
+        await _await_inline(deps)
+    finally:
+        loop.set_exception_handler(previous)
+    answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
+    assert [item.inline_query_id for item in answers] == ["161"]
+    failed = [e for e in capture_log_events() if e.get("event") == "inline_task_failed"]
+    assert len(failed) == 1
+    assert failed[0].get("exception_class") == "RuntimeError"
+    assert all("never retrieved" not in message.lower() for message in stray)
+
+
+@pytest.mark.unit
+async def test_composed_answer_telegram_rejection_keeps_usage(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    catalog = FakeConsentCatalog()
+    uow = InMemoryUnitOfWorkFactory()
+    sink = RecordingUsageEventSink()
+    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, sink=sink))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    object.__setattr__(bot, "answer_inline_query", AsyncMock(side_effect=_query_too_old()))
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 34, catalog)
+    await lifecycle.dispatcher.feed_update(bot, _inline(170, 34, "long enough draft"))
+    await _await_inline(deps)
+    generations = [event for event in sink.events if event.event_kind is UsageEventKind.GENERATION]
+    assert len(generations) == 1
+    assert any(e.get("event") == "inline_answer_failed" for e in capture_log_events())
+
+
+@pytest.mark.unit
+async def test_prepared_answer_telegram_rejection_keeps_ref(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    catalog = FakeConsentCatalog()
+    uow = InMemoryUnitOfWorkFactory()
+    prepared = FakePreparedResults()
+    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, prepared=prepared))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    object.__setattr__(bot, "answer_inline_query", AsyncMock(side_effect=_query_too_old()))
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 35, catalog)
+    token = await prepared.store(
+        deps.pseudonymizer.pseudonymize("prepared", "35"),
+        PreparedVariant(firmness=Firmness.GENTLE, text="keep-me"),
+    )
+    await lifecycle.dispatcher.feed_update(bot, _inline(180, 35, token))
+    assert token in prepared.items
+    assert any(e.get("event") == "inline_answer_failed" for e in capture_log_events())
+
+
+@pytest.mark.unit
+async def test_empty_answer_telegram_rejection_is_logged(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    deps = make_telegram_deps()
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    object.__setattr__(bot, "answer_inline_query", AsyncMock(side_effect=_query_too_old()))
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await lifecycle.dispatcher.feed_update(bot, _inline(190, 36, "long enough draft"))
+    await _await_inline(deps)
+    assert any(e.get("event") == "inline_answer_failed" for e in capture_log_events())

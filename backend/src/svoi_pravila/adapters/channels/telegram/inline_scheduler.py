@@ -79,7 +79,7 @@ class InlineQueryCoordinator:
         task = asyncio.create_task(self._run(job), name="telegram-inline")
         self._slots[user_id] = _Slot(seq=seq, task=task)
         self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        task.add_done_callback(self._on_task_done)
 
     def is_current_task(self, user_id: int) -> bool:
         """True when the caller is the latest scheduled task for ``user_id``."""
@@ -91,6 +91,14 @@ class InlineQueryCoordinator:
         slot = self._slots.get(job.user_id)
         return slot is not None and slot.seq == job.seq
 
+    def _on_task_done(self, task: asyncio.Task[None]) -> None:
+        self._tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error("inline_task_failed", exception_class=type(exc).__name__)
+
     async def _run(self, job: _Job) -> None:
         try:
             await self._sleeper.sleep(self._debounce_seconds)
@@ -100,7 +108,7 @@ class InlineQueryCoordinator:
                 flying = self._in_flight.get(job.user_id)
                 slot = self._slots.get(job.user_id)
                 if slot is not None and flying is not None and flying is not slot.task:
-                    await flying
+                    await asyncio.wait({flying})
             finally:
                 self._waiting.discard(marker)
             if not self._still_latest(job):

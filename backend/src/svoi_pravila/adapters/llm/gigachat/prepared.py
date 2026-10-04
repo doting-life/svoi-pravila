@@ -57,7 +57,7 @@ def prepare_help_say(request: HelpSayRequest) -> PreparedMessages:
             rules=request.rules,
         )
     )
-    template, prompt_version = load_prompt_template("help_say", "v3")
+    template, prompt_version = load_prompt_template("help_say", "v4")
     system = render_system_prompt(template, boundary_marker=marker)
     user = wrap_untrusted_payload(
         marker,

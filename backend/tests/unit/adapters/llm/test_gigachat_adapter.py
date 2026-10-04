@@ -743,7 +743,7 @@ async def test_help_say_and_decode_valid() -> None:
             deadline_seconds=5.0,
         )
     )
-    assert help_result.meta.prompt_version == "help_say@v3"
+    assert help_result.meta.prompt_version == "help_say@v4"
     decode_result = await _decode_via_stream(
         _FakeAche(stream_parts=["valid analysis"], create_results=[_decode_payload()]),
         incoming="incoming text",

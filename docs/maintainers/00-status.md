@@ -54,7 +54,7 @@
 | 0007-b | Inline background task failures | `task/0007-inline` | проверен 04.10 | **ACCEPT** (0007 целиком) |
 | 0008 | Safety layer (crisis screen, resources, prompt-leak guard) + eval v1 | `task/0008-safety` | проверен 04.10 | BLOCKED корректно (оценка худшего случая 271 тыс. > 40 тыс.; правило 60 уточнено) + CHANGES REQUIRED: фильтр ловит гиперболу «убью тебя» — ядро сценария «Смягчить» (ошибка спецификации CTO); бенчмарк/eval требуют токен бота |
 | 0008-a | Crisis screen precision, tool settings role, live eval | `task/0008-safety` | проверен 04.10 | код принят; BLOCKED: пустой `SP_GIGACHAT_CREDENTIALS` в `.env` → все вызовы `auth`, 0 токенов; найдено: пустые учётные данные проходят валидацию, нет остановки на `auth` |
-| 0008-b | Empty-credential validation, auth fail-fast, ENV_FILE, live eval | `task/0008-safety` | выдан | — |
+| 0008-b | Empty-credential validation, auth fail-fast, ENV_FILE, live eval | `task/0008-safety` | проверен 04.10 | код **ACCEPT**; живой прогон не начат: в окружении терминала владельца экспортирован `SP_GIGACHAT_SCOPE=GIGACHAT_API_PERS` (переменные процесса перекрывают `.env`); 0 токенов |
 | 0006.1-b | Image gate: Debian security updates, base digest pin, Dependabot | `task/0006-telegram-channel` | проверен 04.10 | **ACCEPT** (Trivy: 21 CVE → 0) |
 
 ## Решения

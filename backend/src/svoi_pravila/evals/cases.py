@@ -27,6 +27,7 @@ EvalCategory = Literal[
     "manipulation",
     "incoming_manipulation",
     "prompt_injection",
+    "coercive_threat",
 ]
 ExpectedVerdict = Literal["ok", "crisis", "refuse_manipulation"]
 OPERATIONS: tuple[RunOperation, ...] = ("soften", "help_say", "decode_stream")
@@ -39,7 +40,15 @@ CATEGORIES: tuple[EvalCategory, ...] = (
     "manipulation",
     "incoming_manipulation",
     "prompt_injection",
+    "coercive_threat",
 )
+EXPECTED_VERDICTS: tuple[ExpectedVerdict, ...] = ("ok", "crisis", "refuse_manipulation")
+_CATEGORY_RUN_RANK: dict[EvalCategory, int] = {
+    "hyperbole": 0,
+    "manipulation": 1,
+    "incoming_manipulation": 1,
+    "coercive_threat": 2,
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +58,7 @@ class EvalCase:
     id: str
     operation: RunOperation
     category: EvalCategory
-    expected: ExpectedVerdict
+    expected: frozenset[ExpectedVerdict]
     smoke: bool = False
     soften: SoftenRequest | None = None
     help_say: HelpSayRequest | None = None
@@ -105,10 +114,7 @@ def parse_case(raw: object) -> EvalCase:
     if category not in CATEGORIES:
         msg = f"unknown category {category!r}"
         raise ValueError(msg)
-    expected = raw.get("expected")
-    if expected not in ("ok", "crisis", "refuse_manipulation"):
-        msg = f"expected must be a safety verdict, got {expected!r}"
-        raise ValueError(msg)
+    expected = parse_expected(raw.get("expected"))
     relationship = RelationshipKind(str(raw.get("relationship", "other")))
     rules = _rules(raw.get("rules"))
     smoke = bool(raw.get("smoke", False))
@@ -171,6 +177,48 @@ def load_cases(path: Path) -> list[EvalCase]:
         msg = f"{path}: dataset is empty"
         raise ValueError(msg)
     return cases
+
+
+def parse_expected(raw: object) -> frozenset[ExpectedVerdict]:
+    """Accept one verdict or a non-empty list of allowed verdicts."""
+    if isinstance(raw, str):
+        items: list[object] = [raw]
+    elif isinstance(raw, list):
+        items = raw
+    else:
+        msg = f"expected must be a safety verdict, got {raw!r}"
+        raise TypeError(msg)
+    parsed: set[ExpectedVerdict] = set()
+    for item in items:
+        if item not in EXPECTED_VERDICTS:
+            msg = f"expected must be a safety verdict, got {item!r}"
+            raise ValueError(msg)
+        parsed.add(item)
+    if not parsed:
+        msg = "expected must be a safety verdict, got empty list"
+        raise ValueError(msg)
+    return frozenset(parsed)
+
+
+def format_expected(expected: frozenset[ExpectedVerdict]) -> str:
+    """Stable display for one or more accepted verdicts."""
+    return "|".join(sorted(expected))
+
+
+def category_run_rank(category: EvalCategory) -> int:
+    """Cheap/decisive categories first within an operation."""
+    return _CATEGORY_RUN_RANK.get(category, 3)
+
+
+def order_cases_for_run(
+    cases: list[EvalCase], operations: tuple[RunOperation, ...]
+) -> list[EvalCase]:
+    """Group by the requested operations, then by category run rank."""
+    selected: list[EvalCase] = []
+    for operation in operations:
+        op_cases = [case for case in cases if case.operation == operation]
+        selected.extend(sorted(op_cases, key=lambda case: category_run_rank(case.category)))
+    return selected
 
 
 def cases_for_operation(cases: list[EvalCase], operation: RunOperation) -> list[EvalCase]:

@@ -25,7 +25,13 @@ from svoi_pravila.benchmarks.runner import (
     TokenBudgetExceededError,
     _ensure_budget,
 )
-from svoi_pravila.evals.cases import EvalCase, RunOperation, with_deadline
+from svoi_pravila.evals.cases import (
+    EvalCase,
+    RunOperation,
+    format_expected,
+    order_cases_for_run,
+    with_deadline,
+)
 from svoi_pravila.evals.estimate import estimate_eval_case_tokens
 from svoi_pravila.evals.metrics import EvalRecord, format_metrics, leak_count
 
@@ -194,8 +200,9 @@ def write_eval_out(out: OutWriter, records: list[EvalRecord]) -> None:
     for row in records:
         reasons = ",".join(row.reasons) if row.reasons else ""
         verdict = row.verdict or ""
+        expected_cell = format_expected(row.expected)
         line = (
-            f"| {row.case_id} | {row.operation} | {row.category} | {row.expected} | "
+            f"| {row.case_id} | {row.operation} | {row.category} | {expected_cell} | "
             f"{row.outcome} | {verdict} | {str(row.screen_hit).lower()} | {reasons} | "
             f"{row.billable_tokens} |"
         )
@@ -219,12 +226,9 @@ async def warmup_eval(
     for model, operation in zip(params.models, params.operations, strict=True):
         if model in warmed:
             continue
+        ordered = order_cases_for_run(cases, (operation,))
         live = next(
-            (
-                case
-                for case in cases
-                if case.operation == operation and not runtime.screen.hit(case.screen_text())
-            ),
+            (case for case in ordered if not runtime.screen.hit(case.screen_text())),
             None,
         )
         if live is None:
@@ -260,9 +264,7 @@ async def run_eval(
     records: list[EvalRecord] = []
     fail_fast: FailFastUnavailableError | None = None
     budget_error: TokenBudgetExceededError | None = None
-    selected: list[EvalCase] = []
-    for operation in params.operations:
-        selected.extend(case for case in cases if case.operation == operation)
+    selected = order_cases_for_run(cases, params.operations)
     try:
         for case in selected:
             _ensure_budget(

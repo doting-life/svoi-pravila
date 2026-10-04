@@ -39,22 +39,42 @@ def raise_for_finish_reason(
     *,
     usage: TokenUsage,
     attempts: int,
+    model: str,
+    prompt_version: str,
 ) -> None:
     """Translate provider finish_reason into an application error when needed."""
     if finish_reason == "blacklist":
-        raise GenerationRefusedByProvider(usage=usage, attempts=attempts)
+        raise GenerationRefusedByProvider(
+            usage=usage,
+            attempts=attempts,
+            model=model,
+            prompt_version=prompt_version,
+        )
     if finish_reason == "length":
         raise InvalidGenerationOutput(
             (InvalidOutputReason.LENGTH,),
             usage=usage,
             attempts=attempts,
+            model=model,
+            prompt_version=prompt_version,
         )
 
 
 def _unavailable(
-    kind: UnavailableKind, *, usage: TokenUsage, attempts: int
+    kind: UnavailableKind,
+    *,
+    usage: TokenUsage,
+    attempts: int,
+    model: str,
+    prompt_version: str,
 ) -> GenerationUnavailable:
-    return GenerationUnavailable(kind, usage=usage, attempts=attempts)
+    return GenerationUnavailable(
+        kind,
+        usage=usage,
+        attempts=attempts,
+        model=model,
+        prompt_version=prompt_version,
+    )
 
 
 def _kind_for_response_error(exc: ResponseError) -> UnavailableKind | None:
@@ -74,6 +94,8 @@ def map_provider_exception(
     *,
     usage: TokenUsage,
     attempts: int,
+    model: str,
+    prompt_version: str,
 ) -> GenerationUnavailable:
     """Return GenerationUnavailable for a known HTTP/provider exception.
 
@@ -96,7 +118,13 @@ def map_provider_exception(
         kind = UnavailableKind.NETWORK
     else:
         raise exc
-    return _unavailable(kind, usage=usage, attempts=attempts)
+    return _unavailable(
+        kind,
+        usage=usage,
+        attempts=attempts,
+        model=model,
+        prompt_version=prompt_version,
+    )
 
 
 def usage_tokens(usage: ChatUsage | None) -> tuple[int, int]:

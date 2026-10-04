@@ -329,3 +329,56 @@ class InviteRow(Base):
     @classmethod
     def __mapper_args__(cls) -> dict[str, object]:
         return {"version_id_col": cls.__table__.c.version}
+
+
+class UsageEventRow(Base):
+    """C0 usage-event persistence row."""
+
+    __tablename__ = "usage_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    user_pseudonym: Mapped[str] = mapped_column(String(64), nullable=False)
+    scenario: Mapped[str] = mapped_column(Text(), nullable=False)
+    surface: Mapped[str] = mapped_column(Text(), nullable=False)
+    outcome: Mapped[str] = mapped_column(Text(), nullable=False)
+    unavailable_kind: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    safety: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    model: Mapped[str] = mapped_column(Text(), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(Text(), nullable=False)
+    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    ttfc_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    billable_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "user_pseudonym ~ '^[0-9a-f]{64}$'",
+            name="user_pseudonym_hex",
+        ),
+        CheckConstraint(
+            "scenario IN ('decode', 'soften', 'help_say')",
+            name="usage_scenario",
+        ),
+        CheckConstraint(
+            "surface IN ('dm', 'inline', 'miniapp')",
+            name="usage_surface",
+        ),
+        CheckConstraint(
+            "outcome IN ('ok', 'invalid_output', 'refused', 'unavailable')",
+            name="usage_outcome",
+        ),
+        CheckConstraint("attempts >= 1", name="usage_attempts"),
+        CheckConstraint("latency_ms >= 0", name="usage_latency"),
+        CheckConstraint("input_tokens >= 0", name="usage_input_tokens"),
+        CheckConstraint("output_tokens >= 0", name="usage_output_tokens"),
+        CheckConstraint("billable_tokens >= 0", name="usage_billable_tokens"),
+        Index("ix_usage_events_occurred_at", "occurred_at"),
+        Index(
+            "ix_usage_events_user_pseudonym_occurred_at",
+            "user_pseudonym",
+            "occurred_at",
+        ),
+    )

@@ -75,12 +75,30 @@ def _parse_completion[ModelT: BaseModel](
 ) -> ModelT:
     usage = token_usage_from_state(state)
     attempts = state.attempts
-    raise_for_finish_reason(completion.finish_reason, usage=usage, attempts=attempts)
+    raise_for_finish_reason(
+        completion.finish_reason,
+        usage=usage,
+        attempts=attempts,
+        model=state.model,
+        prompt_version=state.prompt_version,
+    )
     if not completion.messages and completion.finish_reason is None:
-        raise invalid(InvalidOutputReason.EMPTY_MESSAGE, usage=usage, attempts=attempts)
+        raise invalid(
+            InvalidOutputReason.EMPTY_MESSAGE,
+            usage=usage,
+            attempts=attempts,
+            model=state.model,
+            prompt_version=state.prompt_version,
+        )
     raw = _assistant_text(completion)
     if not raw:
-        raise invalid(InvalidOutputReason.EMPTY_MESSAGE, usage=usage, attempts=attempts)
+        raise invalid(
+            InvalidOutputReason.EMPTY_MESSAGE,
+            usage=usage,
+            attempts=attempts,
+            model=state.model,
+            prompt_version=state.prompt_version,
+        )
     data = json.loads(raw)
     return response_format.model_validate(data)
 
@@ -105,6 +123,8 @@ def _reraise_refused(state: AttemptState) -> NoReturn:
     raise GenerationRefusedByProvider(
         usage=token_usage_from_state(state),
         attempts=state.attempts,
+        model=state.model,
+        prompt_version=state.prompt_version,
     ) from None
 
 
@@ -114,6 +134,8 @@ def _reraise_unavailable(state: AttemptState, kind: UnavailableKind) -> NoReturn
         kind,
         usage=token_usage_from_state(state),
         attempts=state.attempts,
+        model=state.model,
+        prompt_version=state.prompt_version,
     ) from None
 
 
@@ -176,6 +198,8 @@ async def _run_attempt[ModelT: BaseModel](
             exc,
             usage=token_usage_from_state(state),
             attempts=state.attempts,
+            model=state.model,
+            prompt_version=state.prompt_version,
         )
         _reraise_unavailable(state, mapped.kind)
 

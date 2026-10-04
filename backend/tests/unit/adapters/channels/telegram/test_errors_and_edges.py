@@ -24,12 +24,9 @@ from aiogram.types import (
     User,
 )
 from tests.factories import make_settings
-from tests.fakes.clock import FakeClock
-from tests.fakes.consent_catalog import FakeConsentCatalog
-from tests.fakes.ids import FakeIdGenerator
-from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter, FakeUpdateDeduplicator
+from tests.fakes.rate_limit import FakeRateLimiter
+from tests.fakes.telegram_deps import make_telegram_deps
 from tests.fakes.telegram_session import FakeTelegramSession
-from tests.fakes.uow import InMemoryUnitOfWorkFactory
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.errors import telegram_error_handler
@@ -47,15 +44,10 @@ from svoi_pravila.adapters.channels.telegram.middlewares.private_chat import (
 )
 from svoi_pravila.adapters.channels.telegram.middlewares.rate_limit import RateLimitMiddleware
 from svoi_pravila.adapters.channels.telegram.presenters import render_step
-from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
-from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocument
 from svoi_pravila.application.use_cases.get_onboarding_step import (
-    GetOnboardingStep,
     OnboardingStep,
     OnboardingStepKind,
 )
-from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
-from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
 from svoi_pravila.domain.enums import ConsentKind
 
@@ -63,21 +55,7 @@ _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def _deps() -> TelegramDeps:
-    uow = InMemoryUnitOfWorkFactory()
-    catalog = FakeConsentCatalog()
-    clock = FakeClock()
-    ids = FakeIdGenerator()
-    return TelegramDeps(
-        strings=load_ru_strings(),
-        get_onboarding_step=GetOnboardingStep(uow, catalog),
-        get_user_by_telegram_id=GetUserByTelegramId(uow),
-        accept_age=AcceptAgeConfirmation(uow, ids, clock),
-        grant_consent=GrantConsent(uow, catalog, ids, clock),
-        get_consent_document=GetConsentDocument(catalog),
-        deduplicator=FakeUpdateDeduplicator(),
-        rate_limiter=FakeRateLimiter(),
-        pseudonymizer=FakePseudonymizer(),
-    )
+    return make_telegram_deps()
 
 
 @pytest.mark.unit
@@ -388,9 +366,12 @@ async def test_middlewares_edge_updates() -> None:
         accept_age=deps.accept_age,
         grant_consent=deps.grant_consent,
         get_consent_document=deps.get_consent_document,
+        decode_incoming=deps.decode_incoming,
         deduplicator=deps.deduplicator,
         rate_limiter=FakeRateLimiter(limit=0),
         pseudonymizer=deps.pseudonymizer,
+        monotonic=deps.monotonic,
+        draft_min_interval_ms=deps.draft_min_interval_ms,
     )
     data["tg_deps"] = limited_deps
     assert await RateLimitMiddleware()(handler, callback_no_message, data) is None

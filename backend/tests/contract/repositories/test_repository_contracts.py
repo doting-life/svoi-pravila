@@ -11,7 +11,15 @@ from svoi_pravila.application.errors import ConflictError
 from svoi_pravila.application.ports.unit_of_work import UnitOfWork, UnitOfWorkFactory
 from svoi_pravila.domain.consent import Consent
 from svoi_pravila.domain.contact import Contact
-from svoi_pravila.domain.enums import ConsentKind, RelationshipKind, RuleCategory, RuleStatus
+from svoi_pravila.domain.enums import (
+    ConsentKind,
+    RelationshipKind,
+    RuleCategory,
+    RuleStatus,
+    UsageOutcome,
+    UsageScenario,
+    UsageSurface,
+)
 from svoi_pravila.domain.ids import (
     ConsentId,
     ContactId,
@@ -19,12 +27,14 @@ from svoi_pravila.domain.ids import (
     PairId,
     RuleId,
     TelegramUserId,
+    UsageEventId,
     UserId,
 )
 from svoi_pravila.domain.invite import Invite, InviteTokenHash
 from svoi_pravila.domain.pair import Pair
 from svoi_pravila.domain.rules import ContactScope, Rule
 from svoi_pravila.domain.text import ContactLabel, RuleText, Sha256Hex
+from svoi_pravila.domain.usage import UsageEvent
 from svoi_pravila.domain.user import User
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -232,3 +242,33 @@ async def test_contact_pair_rule_invite_repos(uow_factory: UnitOfWorkFactory) ->
         assert stored_invite is not None
         assert stored_invite.accepted_by == partner
         assert (await uow.consents.list_for_user(owner))[0].revoked_at == NOW
+
+
+@pytest.mark.unit
+async def test_usage_event_repo_roundtrip(uow_factory: UnitOfWorkFactory) -> None:
+    event = UsageEvent(
+        id=UsageEventId(UUID(int=70)),
+        occurred_at=NOW,
+        user_pseudonym="ab" * 32,
+        scenario=UsageScenario.DECODE,
+        surface=UsageSurface.DM,
+        outcome=UsageOutcome.OK,
+        unavailable_kind=None,
+        safety="ok",
+        model="fake",
+        prompt_version="decode@v1",
+        latency_ms=12,
+        ttfc_ms=3,
+        attempts=1,
+        input_tokens=4,
+        output_tokens=5,
+        billable_tokens=9,
+    )
+    async with uow_factory() as uow:
+        await uow.usage_events.add(event)
+        await uow.commit()
+    async with uow_factory() as uow:
+        loaded = await uow.usage_events.get(event.id)
+        assert loaded == event
+        missing = await uow.usage_events.get(UsageEventId(UUID(int=71)))
+        assert missing is None

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
 
 from svoi_pravila.adapters.channels.telegram.localization import TelegramStrings
 from svoi_pravila.domain.enums import ConsentKind
@@ -42,6 +42,27 @@ def consent_keyboard(
             [
                 InlineKeyboardButton(text=strings.consent_button_yes, callback_data=yes),
                 InlineKeyboardButton(text=strings.consent_button_no, callback_data=no),
+            ]
+        ]
+    )
+
+
+def copy_text_markup(
+    strings: TelegramStrings,
+    text: str,
+    *,
+    copy_max: int,
+) -> InlineKeyboardMarkup | None:
+    """«Копировать» when ``text`` is within the Bot API copy_text length."""
+    if not text or len(text) > copy_max:
+        return None
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=strings.decode_copy,
+                    copy_text=CopyTextButton(text=text),
+                )
             ]
         ]
     )

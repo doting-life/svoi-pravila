@@ -67,6 +67,8 @@ def _combine_invalid(
         exc.reasons,
         usage=phase_a_usage + exc.usage,
         attempts=phase_a_attempts + exc.attempts,
+        model=exc.model,
+        prompt_version=exc.prompt_version,
     )
 
 
@@ -78,6 +80,8 @@ def _combine_refused(
     return GenerationRefusedByProvider(
         usage=phase_a_usage + exc.usage,
         attempts=phase_a_attempts + exc.attempts,
+        model=exc.model,
+        prompt_version=exc.prompt_version,
     )
 
 
@@ -90,6 +94,8 @@ def _combine_unavailable(
         exc.kind,
         usage=phase_a_usage + exc.usage,
         attempts=phase_a_attempts + exc.attempts,
+        model=exc.model,
+        prompt_version=exc.prompt_version,
     )
 
 
@@ -98,6 +104,8 @@ def _timeout_unavailable(state: AttemptState) -> GenerationUnavailable:
         UnavailableKind.TIMEOUT,
         usage=token_usage_from_state(state),
         attempts=state.attempts,
+        model=state.model,
+        prompt_version=state.prompt_version,
     )
 
 
@@ -126,7 +134,11 @@ class GigaChatTextGenerator:
 
     async def soften(self, request: SoftenRequest) -> SoftenResult:
         prepared = self.prepare_soften(request)
-        state = AttemptState(started=time.perf_counter())
+        state = AttemptState(
+            started=time.perf_counter(),
+            model=self._settings.gigachat_model_soften,
+            prompt_version=prepared.prompt_version,
+        )
 
         def build(parsed: SoftenOut, meta: GenerationMeta) -> SoftenResult:
             variants, indexes, safety = validate_variants(
@@ -138,9 +150,11 @@ class GigaChatTextGenerator:
                     min_variants=2,
                     max_variants=3,
                     require_all_firmness=False,
+                    usage=meta.usage,
+                    attempts=meta.attempts,
+                    model=meta.model,
+                    prompt_version=meta.prompt_version,
                 ),
-                usage=meta.usage,
-                attempts=meta.attempts,
             )
             return SoftenResult(
                 variants=variants,
@@ -168,7 +182,11 @@ class GigaChatTextGenerator:
 
     async def help_say(self, request: HelpSayRequest) -> HelpSayResult:
         prepared = self.prepare_help_say(request)
-        state = AttemptState(started=time.perf_counter())
+        state = AttemptState(
+            started=time.perf_counter(),
+            model=self._settings.gigachat_model_help_say,
+            prompt_version=prepared.prompt_version,
+        )
 
         def build(parsed: HelpSayOut, meta: GenerationMeta) -> HelpSayResult:
             variants, indexes, safety = validate_variants(
@@ -180,9 +198,11 @@ class GigaChatTextGenerator:
                     min_variants=2,
                     max_variants=3,
                     require_all_firmness=False,
+                    usage=meta.usage,
+                    attempts=meta.attempts,
+                    model=meta.model,
+                    prompt_version=meta.prompt_version,
                 ),
-                usage=meta.usage,
-                attempts=meta.attempts,
             )
             return HelpSayResult(
                 variants=variants,
@@ -238,15 +258,22 @@ class GigaChatTextGenerator:
         model = self._settings.gigachat_model_decode
         started = time.perf_counter()
         analysis_prepared = self.prepare_decode_analysis(request)
+        decode_prompt_version = self.prepare_decode(request, analysis="").prompt_version
+        composite_prompt = f"{analysis_prepared.prompt_version}+{decode_prompt_version}"
         phase = AnalysisPhase(
             AnalysisStreamParams(
                 client=self._client,
                 model=model,
                 prepared=analysis_prepared,
                 started=started,
+                prompt_version=composite_prompt,
             )
         )
-        phase_b_state = AttemptState(started=started)
+        phase_b_state = AttemptState(
+            started=started,
+            model=model,
+            prompt_version=composite_prompt,
+        )
         try:
             async with asyncio.timeout_at(_deadline_at(request.deadline_seconds)):
                 async for chunk in phase.stream():

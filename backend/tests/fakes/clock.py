@@ -15,6 +15,10 @@ class FakeClock:
         """Return the current fake time."""
         return self._now
 
+    def monotonic(self) -> float:
+        """Return seconds since the fake epoch (deterministic TTFC)."""
+        return self._now.timestamp()
+
     def advance(self, delta: timedelta) -> None:
         """Advance the clock by ``delta``."""
         self._now = self._now + delta

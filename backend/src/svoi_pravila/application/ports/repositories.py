@@ -6,10 +6,19 @@ from typing import Protocol
 
 from svoi_pravila.domain.consent import Consent
 from svoi_pravila.domain.contact import Contact
-from svoi_pravila.domain.ids import ContactId, InviteId, PairId, RuleId, TelegramUserId, UserId
+from svoi_pravila.domain.ids import (
+    ContactId,
+    InviteId,
+    PairId,
+    RuleId,
+    TelegramUserId,
+    UsageEventId,
+    UserId,
+)
 from svoi_pravila.domain.invite import Invite, InviteTokenHash
 from svoi_pravila.domain.pair import Pair
 from svoi_pravila.domain.rules import Rule, RuleScope
+from svoi_pravila.domain.usage import UsageEvent
 from svoi_pravila.domain.user import User
 
 
@@ -139,4 +148,16 @@ class InviteRepository(Protocol):
 
     async def update(self, invite: Invite) -> None:
         """Persist an updated invite."""
+        ...
+
+
+class UsageEventRepository(Protocol):
+    """Persistence for C0 usage events."""
+
+    async def add(self, event: UsageEvent) -> None:
+        """Insert a usage event."""
+        ...
+
+    async def get(self, event_id: UsageEventId) -> UsageEvent | None:
+        """Return the event by id or None."""
         ...

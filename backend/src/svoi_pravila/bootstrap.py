@@ -10,6 +10,7 @@ from aiogram.types import Update
 from fastapi import APIRouter, FastAPI
 
 from svoi_pravila.adapters.cache.client import close_client, create_client
+from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
 from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
 from svoi_pravila.adapters.cache.probe import ValkeyProbe
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
@@ -17,12 +18,15 @@ from svoi_pravila.adapters.channels.telegram import build_telegram_lifecycle
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
 from svoi_pravila.adapters.consents import PackageConsentCatalog
+from svoi_pravila.adapters.llm.gigachat.adapter import GigaChatTextGenerator
 from svoi_pravila.adapters.llm.gigachat.client import close_gigachat_client, create_gigachat_client
 from svoi_pravila.adapters.persistence.engine import create_engine, dispose_engine
 from svoi_pravila.adapters.persistence.probe import DatabaseProbe
 from svoi_pravila.adapters.persistence.uow import SqlAlchemyUnitOfWorkFactory
+from svoi_pravila.adapters.persistence.usage_sink import UnitOfWorkUsageEventSink
 from svoi_pravila.adapters.system.clock import SystemClock
 from svoi_pravila.adapters.system.ids import Uuid7IdGenerator
+from svoi_pravila.adapters.system.monotonic import SystemMonotonicClock
 from svoi_pravila.api.app import AppLifecycleHooks, create_app
 from svoi_pravila.api.telegram_webhook import (
     TelegramWebhookBindings,
@@ -30,6 +34,7 @@ from svoi_pravila.api.telegram_webhook import (
 )
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
+from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
 from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocument
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
@@ -80,13 +85,37 @@ def create_application(settings: Settings) -> FastAPI:
         kek_id=settings.data_kek_id,
     )
     clock = SystemClock()
+    monotonic = SystemMonotonicClock()
     ids = Uuid7IdGenerator()
     catalog = PackageConsentCatalog()
+    generator = GigaChatTextGenerator(gigachat, settings)
+    sink = UnitOfWorkUsageEventSink(uow_factory)
+    pseudonymizer = HmacPseudonymizer(settings.pseudonym_pepper_bytes())
 
     lifecycle = None
     extra_routers: tuple[APIRouter, ...] = ()
     if settings.telegram_updates_mode is not TelegramUpdatesMode.DISABLED:
         strings = load_ru_strings()
+        decode_incoming = DecodeIncoming(
+            DecodeIncomingPorts(
+                uow_factory=uow_factory,
+                catalog=catalog,
+                generator=generator,
+                guard=ValkeyConcurrencyGuard(valkey),
+                quota=ValkeyRateLimiter(
+                    valkey,
+                    limit=settings.decode_per_hour,
+                    window_seconds=3600,
+                    key_prefix="tg:decode:quota",
+                ),
+                sink=sink,
+                clock=clock,
+                monotonic=monotonic,
+                ids=ids,
+                pseudonymizer=pseudonymizer,
+                deadline_seconds=settings.decode_deadline_seconds,
+            )
+        )
         deps = TelegramDeps(
             strings=strings,
             get_onboarding_step=GetOnboardingStep(uow_factory, catalog),
@@ -94,15 +123,20 @@ def create_application(settings: Settings) -> FastAPI:
             accept_age=AcceptAgeConfirmation(uow_factory, ids, clock),
             grant_consent=GrantConsent(uow_factory, catalog, ids, clock),
             get_consent_document=GetConsentDocument(catalog),
+            decode_incoming=decode_incoming,
             deduplicator=ValkeyUpdateDeduplicator(
                 valkey,
                 ttl_seconds=settings.telegram_dedup_ttl_seconds,
             ),
             rate_limiter=ValkeyRateLimiter(
                 valkey,
-                limit_per_minute=settings.telegram_rate_limit_per_minute,
+                limit=settings.telegram_rate_limit_per_minute,
+                window_seconds=60,
+                key_prefix="tg:rl",
             ),
-            pseudonymizer=HmacPseudonymizer(settings.pseudonym_pepper_bytes()),
+            pseudonymizer=pseudonymizer,
+            monotonic=monotonic,
+            draft_min_interval_ms=settings.telegram_draft_min_interval_ms,
         )
         lifecycle = build_telegram_lifecycle(settings, deps)
         if settings.telegram_updates_mode is TelegramUpdatesMode.WEBHOOK:

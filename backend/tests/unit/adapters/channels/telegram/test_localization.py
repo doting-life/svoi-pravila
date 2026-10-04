@@ -15,6 +15,7 @@ def test_load_ru_strings_succeeds() -> None:
     strings = load_ru_strings()
     assert strings.age_button_yes
     assert strings.help_body
+    assert strings.decode_copy
 
 
 @pytest.mark.unit

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -9,30 +10,50 @@ from typing import Any
 
 import pytest
 from aiogram import Bot
-from aiogram.types import Chat, Message, Update, User
+from aiogram.types import CallbackQuery, Chat, Message, MessageOriginUser, Update, User
 from tests.factories import make_settings
-from tests.fakes.clock import FakeClock
 from tests.fakes.consent_catalog import FakeConsentCatalog
-from tests.fakes.ids import FakeIdGenerator
-from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter, FakeUpdateDeduplicator
+from tests.fakes.generation import FakeTextGenerator
+from tests.fakes.telegram_deps import TelegramTestDeps, make_telegram_deps
 from tests.fakes.telegram_session import FakeTelegramSession
 from tests.fakes.uow import InMemoryUnitOfWorkFactory
+from tests.fakes.usage_sink import RecordingUsageEventSink
 
-from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
-from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
-from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
-from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocument
-from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
-from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
-from svoi_pravila.application.use_cases.grant_consent import GrantConsent
+from svoi_pravila.application.ports.generation import (
+    DecodeResult,
+    Firmness,
+    GenerationMeta,
+    SafetyVerdict,
+    TokenUsage,
+    Variant,
+)
 from svoi_pravila.config import Environment, TelegramUpdatesMode
+from svoi_pravila.domain.enums import ConsentKind
 
 _SENTINEL_TEXT = "SENTINEL_TEXT_PRIVACY_0006"
 _SENTINEL_FIRST = "SENTINEL_FIRST_PRIVACY_0006"
 _SENTINEL_LAST = "SENTINEL_LAST_PRIVACY_0006"
 _SENTINEL_USER = "sentinel_user_privacy_0006"
 _SENTINEL_ID = 9876543210123
+_SENTINEL_ANALYSIS = "SENTINEL_ANALYSIS_PRIVACY_0006"
+_SENTINEL_HYP = "SENTINEL_HYPOTHESIS_PRIVACY_0006"
+_SENTINEL_VARIANT = "SENTINEL_VARIANT_PRIVACY_0006"
+_NOW = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def _assert_no_markers(blob: str) -> None:
+    for marker in (
+        _SENTINEL_TEXT,
+        _SENTINEL_FIRST,
+        _SENTINEL_LAST,
+        _SENTINEL_USER,
+        str(_SENTINEL_ID),
+        _SENTINEL_ANALYSIS,
+        _SENTINEL_HYP,
+        _SENTINEL_VARIANT,
+    ):
+        assert marker not in blob
 
 
 @pytest.mark.unit
@@ -44,18 +65,26 @@ async def test_privacy_canary_no_sentinel_in_logs(
 
     uow = InMemoryUnitOfWorkFactory()
     catalog = FakeConsentCatalog()
-    clock = FakeClock()
-    ids = FakeIdGenerator()
-    deps = TelegramDeps(
-        strings=load_ru_strings(),
-        get_onboarding_step=GetOnboardingStep(uow, catalog),
-        get_user_by_telegram_id=GetUserByTelegramId(uow),
-        accept_age=AcceptAgeConfirmation(uow, ids, clock),
-        grant_consent=GrantConsent(uow, catalog, ids, clock),
-        get_consent_document=GetConsentDocument(catalog),
-        deduplicator=FakeUpdateDeduplicator(),
-        rate_limiter=FakeRateLimiter(),
-        pseudonymizer=FakePseudonymizer(),
+    sink = RecordingUsageEventSink()
+    generator = FakeTextGenerator(
+        stream_chunks=(_SENTINEL_ANALYSIS,),
+        decode_result=DecodeResult(
+            hypotheses=(_SENTINEL_HYP,),
+            underlying_request=_SENTINEL_TEXT,
+            variants=(Variant(text=_SENTINEL_VARIANT, firmness=Firmness.GENTLE),),
+            applied_rule_indexes=(),
+            safety=SafetyVerdict.OK,
+            meta=GenerationMeta(
+                model="fake",
+                prompt_version="decode@v1",
+                latency_ms=1,
+                attempts=1,
+                usage=TokenUsage(),
+            ),
+        ),
+    )
+    deps = make_telegram_deps(
+        TelegramTestDeps(uow=uow, catalog=catalog, generator=generator, sink=sink)
     )
     session = FakeTelegramSession()
     settings = make_settings(
@@ -65,30 +94,93 @@ async def test_privacy_canary_no_sentinel_in_logs(
     )
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(settings, deps, bot=bot)
-    update = Update(
-        update_id=55,
-        message=Message(
-            message_id=1,
-            date=datetime(2026, 1, 1, tzinfo=UTC),
-            chat=Chat(id=_SENTINEL_ID, type="private"),
-            from_user=User(
-                id=_SENTINEL_ID,
-                is_bot=False,
-                first_name=_SENTINEL_FIRST,
-                last_name=_SENTINEL_LAST,
-                username=_SENTINEL_USER,
+    origin = User(
+        id=_SENTINEL_ID,
+        is_bot=False,
+        first_name=_SENTINEL_FIRST,
+        last_name=_SENTINEL_LAST,
+        username=_SENTINEL_USER,
+    )
+    await lifecycle.dispatcher.feed_update(
+        bot,
+        Update(
+            update_id=55,
+            message=Message(
+                message_id=1,
+                date=_NOW,
+                chat=Chat(id=_SENTINEL_ID, type="private"),
+                from_user=origin,
+                text="/start",
             ),
-            text=_SENTINEL_TEXT,
         ),
     )
-    await lifecycle.dispatcher.feed_update(bot, update)
-
-    blob = "\n".join(str(event) for event in capture_log_events())
-    for marker in (
-        _SENTINEL_TEXT,
-        _SENTINEL_FIRST,
-        _SENTINEL_LAST,
-        _SENTINEL_USER,
-        str(_SENTINEL_ID),
+    await lifecycle.dispatcher.feed_update(
+        bot,
+        Update(
+            update_id=56,
+            callback_query=CallbackQuery(
+                id="age",
+                from_user=origin,
+                chat_instance="x",
+                data="age:y",
+                message=Message(
+                    message_id=1,
+                    date=_NOW,
+                    chat=Chat(id=_SENTINEL_ID, type="private"),
+                    from_user=origin,
+                    text="age",
+                ),
+            ),
+        ),
+    )
+    pd = catalog.current_requirement().for_kind(ConsentKind.PERSONAL_DATA).version
+    sc = catalog.current_requirement().for_kind(ConsentKind.SPECIAL_CATEGORY).version
+    for update_id, data in (
+        (57, f"cg:personal_data:{pd}:y"),
+        (58, f"cg:special_category:{sc}:y"),
     ):
-        assert marker not in blob
+        await lifecycle.dispatcher.feed_update(
+            bot,
+            Update(
+                update_id=update_id,
+                callback_query=CallbackQuery(
+                    id=str(update_id),
+                    from_user=origin,
+                    chat_instance="x",
+                    data=data,
+                    message=Message(
+                        message_id=1,
+                        date=_NOW,
+                        chat=Chat(id=_SENTINEL_ID, type="private"),
+                        from_user=origin,
+                        text="c",
+                    ),
+                ),
+            ),
+        )
+    await lifecycle.dispatcher.feed_update(
+        bot,
+        Update(
+            update_id=59,
+            message=Message(
+                message_id=2,
+                date=_NOW,
+                chat=Chat(id=_SENTINEL_ID, type="private"),
+                from_user=origin,
+                text=_SENTINEL_TEXT,
+                forward_origin=MessageOriginUser(date=_NOW, sender_user=origin),
+            ),
+        ),
+    )
+
+    events = capture_log_events()
+    blob = json.dumps(events) + "\n".join(str(event) for event in events)
+    _assert_no_markers(blob)
+    assert len(sink.events) == 1
+    recorded = sink.events[0]
+    assert recorded.user_pseudonym != str(_SENTINEL_ID)
+    assert recorded.scenario.value == "decode"
+    assert recorded.surface.value == "dm"
+    assert _SENTINEL_TEXT not in recorded.model
+    assert _SENTINEL_TEXT not in recorded.prompt_version
+    assert generator.decode_stream_calls[0].incoming == _SENTINEL_TEXT

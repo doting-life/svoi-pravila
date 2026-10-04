@@ -48,8 +48,9 @@ async def test_database_probe_logs_error_type_without_exception_message(
 ) -> None:
     marker = f"CANARY-{uuid.uuid4()}"
     probe = DatabaseProbe(cast(AsyncEngine, _FailingEngine(f"dsn contains {marker}")))
-    with pytest.raises(ConnectionError):
-        await probe.check()
+    result = await probe.check(1.0)
+    assert result.ready is False
+    assert result.reason == "ConnectionError"
 
     events = [
         event for event in capture_log_events() if event.get("event") == "readiness_probe_failed"
@@ -66,8 +67,9 @@ async def test_valkey_probe_logs_error_type_without_exception_message(
 ) -> None:
     marker = f"CANARY-{uuid.uuid4()}"
     probe = ValkeyProbe(cast(Redis, _FailingValkey(f"url contains {marker}")))
-    with pytest.raises(ConnectionError):
-        await probe.check()
+    result = await probe.check(1.0)
+    assert result.ready is False
+    assert result.reason == "ConnectionError"
 
     events = [
         event for event in capture_log_events() if event.get("event") == "readiness_probe_failed"

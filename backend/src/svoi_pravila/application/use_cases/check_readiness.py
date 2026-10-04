@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
-from svoi_pravila.application.ports.readiness import ReadinessProbe
+from svoi_pravila.application.ports.readiness import ProbeCheckResult, ReadinessProbe
 
 
 class ProbeOutcome(StrEnum):
@@ -42,21 +42,24 @@ class CheckReadiness:
         self._timeout_seconds = timeout_seconds
 
     async def execute(self) -> ReadinessResult:
-        """Return overall readiness and per-probe outcomes; never raise probe errors."""
+        """Return overall readiness and per-probe outcomes."""
         if not self._probes:
             return ReadinessResult(ready=True, probes=())
 
         statuses = await asyncio.gather(
-            *(self._run_probe(probe) for probe in self._probes),
+            *(self._status(probe) for probe in self._probes),
         )
         ready = all(status.status is ProbeOutcome.OK for status in statuses)
         return ReadinessResult(ready=ready, probes=tuple(statuses))
 
-    async def _run_probe(self, probe: ReadinessProbe) -> ProbeStatus:
-        try:
-            await asyncio.wait_for(probe.check(), timeout=self._timeout_seconds)
-        except TimeoutError:
-            return ProbeStatus(name=probe.name, status=ProbeOutcome.TIMEOUT)
-        except Exception:
-            return ProbeStatus(name=probe.name, status=ProbeOutcome.FAILED)
-        return ProbeStatus(name=probe.name, status=ProbeOutcome.OK)
+    async def _status(self, probe: ReadinessProbe) -> ProbeStatus:
+        result = await probe.check(self._timeout_seconds)
+        return ProbeStatus(name=probe.name, status=_outcome(result))
+
+
+def _outcome(result: ProbeCheckResult) -> ProbeOutcome:
+    if result.ready:
+        return ProbeOutcome.OK
+    if result.reason == "timeout":
+        return ProbeOutcome.TIMEOUT
+    return ProbeOutcome.FAILED

@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+from svoi_pravila.application.errors import (
+    GenerationRefusedByProvider,
+    GenerationUnavailable,
+    InvalidGenerationOutput,
+)
 from svoi_pravila.application.ports.generation import (
     AnalysisChunk,
     DecodeCompleted,
@@ -43,11 +48,15 @@ class FakeTextGenerator:
         help_say_result: HelpSayResult | None = None,
         decode_result: DecodeResult | None = None,
         stream_chunks: tuple[str, ...] = (),
+        stream_error: (
+            GenerationRefusedByProvider | InvalidGenerationOutput | GenerationUnavailable | None
+        ) = None,
     ) -> None:
         self.soften_result = soften_result
         self.help_say_result = help_say_result
         self.decode_result = decode_result
         self.stream_chunks = stream_chunks
+        self.stream_error = stream_error
         self.soften_calls: list[SoftenRequest] = []
         self.help_say_calls: list[HelpSayRequest] = []
         self.decode_stream_calls: list[DecodeRequest] = []
@@ -100,6 +109,8 @@ class FakeTextGenerator:
         self.decode_stream_calls.append(request)
         for chunk in self.stream_chunks:
             yield AnalysisChunk(text=chunk)
+        if self.stream_error is not None:
+            raise self.stream_error
         result = self._decode_result(request)
         yield DecodeCompleted(analysis="".join(self.stream_chunks) or "analysis", result=result)
 

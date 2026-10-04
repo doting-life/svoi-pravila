@@ -10,14 +10,14 @@ from typing import Protocol
 
 from svoi_pravila.domain.enums import RelationshipKind, RuleCategory
 
-_TEXT_MIN = 1
-_TEXT_MAX = 4000
+BOUNDED_TEXT_MIN = 1
+BOUNDED_TEXT_MAX = 4000
 
 
 def _validate_bounded_text(name: str, value: str) -> None:
     length = len(value)
-    if length < _TEXT_MIN or length > _TEXT_MAX:
-        msg = f"{name} length must be between {_TEXT_MIN} and {_TEXT_MAX}"
+    if length < BOUNDED_TEXT_MIN or length > BOUNDED_TEXT_MAX:
+        msg = f"{name} length must be between {BOUNDED_TEXT_MIN} and {BOUNDED_TEXT_MAX}"
         raise ValueError(msg)
 
 

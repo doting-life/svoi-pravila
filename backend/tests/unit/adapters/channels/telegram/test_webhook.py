@@ -16,29 +16,19 @@ from aiogram.types import Update
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from tests.factories import make_settings
-from tests.fakes.clock import FakeClock
-from tests.fakes.consent_catalog import FakeConsentCatalog
-from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.probes import OkProbe
-from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter, FakeUpdateDeduplicator
+from tests.fakes.telegram_deps import make_telegram_deps
 from tests.fakes.telegram_session import FakeTelegramSession
-from tests.fakes.uow import InMemoryUnitOfWorkFactory
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
 from svoi_pravila.adapters.channels.telegram.lifecycle import TelegramLifecycle
-from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
 from svoi_pravila.api.app import AppLifecycleHooks, create_app
 from svoi_pravila.api.telegram_webhook import (
     TelegramWebhookBindings,
     build_telegram_webhook_router,
 )
-from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
-from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocument
-from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
-from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
-from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.config import Environment, TelegramUpdatesMode
 
 _PATH = "p" * 32
@@ -84,21 +74,7 @@ class _BlockingSession(BaseSession):
 
 
 def _deps() -> TelegramDeps:
-    uow = InMemoryUnitOfWorkFactory()
-    catalog = FakeConsentCatalog()
-    clock = FakeClock()
-    ids = FakeIdGenerator()
-    return TelegramDeps(
-        strings=load_ru_strings(),
-        get_onboarding_step=GetOnboardingStep(uow, catalog),
-        get_user_by_telegram_id=GetUserByTelegramId(uow),
-        accept_age=AcceptAgeConfirmation(uow, ids, clock),
-        grant_consent=GrantConsent(uow, catalog, ids, clock),
-        get_consent_document=GetConsentDocument(catalog),
-        deduplicator=FakeUpdateDeduplicator(),
-        rate_limiter=FakeRateLimiter(),
-        pseudonymizer=FakePseudonymizer(),
-    )
+    return make_telegram_deps()
 
 
 def _lifecycle(session: BaseSession | None = None) -> TelegramLifecycle:

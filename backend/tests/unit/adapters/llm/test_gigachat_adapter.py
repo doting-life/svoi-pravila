@@ -807,9 +807,11 @@ def test_validate_variants_defensive_branches() -> None:
                 min_variants=0,
                 max_variants=0,
                 require_all_firmness=False,
+                usage=TokenUsage(),
+                attempts=1,
+                model="m",
+                prompt_version="p",
             ),
-            usage=TokenUsage(),
-            attempts=1,
         )
     with pytest.raises(InvalidGenerationOutput):
         validate_variants(
@@ -821,9 +823,11 @@ def test_validate_variants_defensive_branches() -> None:
                 min_variants=0,
                 max_variants=3,
                 require_all_firmness=False,
+                usage=TokenUsage(),
+                attempts=1,
+                model="m",
+                prompt_version="p",
             ),
-            usage=TokenUsage(),
-            attempts=1,
         )
     bad_item = VariantOut.model_construct(
         text="ok",
@@ -839,9 +843,11 @@ def test_validate_variants_defensive_branches() -> None:
                 min_variants=1,
                 max_variants=1,
                 require_all_firmness=False,
+                usage=TokenUsage(),
+                attempts=1,
+                model="m",
+                prompt_version="p",
             ),
-            usage=TokenUsage(),
-            attempts=1,
         )
     with pytest.raises(InvalidGenerationOutput):
         validate_variants(
@@ -856,9 +862,11 @@ def test_validate_variants_defensive_branches() -> None:
                 min_variants=2,
                 max_variants=2,
                 require_all_firmness=True,
+                usage=TokenUsage(),
+                attempts=1,
+                model="m",
+                prompt_version="p",
             ),
-            usage=TokenUsage(),
-            attempts=1,
         )
 
 
@@ -1012,7 +1020,13 @@ async def test_json_decode_retries_then_fails() -> None:
 @pytest.mark.unit
 async def test_generation_unavailable_from_parse() -> None:
     ache = _FakeAche(
-        error=GenerationUnavailable(UnavailableKind.NETWORK, usage=TokenUsage(), attempts=0)
+        error=GenerationUnavailable(
+            UnavailableKind.NETWORK,
+            usage=TokenUsage(),
+            attempts=0,
+            model="m",
+            prompt_version="p",
+        )
     )
     with pytest.raises(GenerationUnavailable):
         await _generator(ache).soften(
@@ -1104,29 +1118,27 @@ def test_text_reasons_empty_long_and_fence() -> None:
         min_variants=1,
         max_variants=1,
         require_all_firmness=False,
+        usage=TokenUsage(),
+        attempts=1,
+        model="m",
+        prompt_version="p",
     )
     with pytest.raises(InvalidGenerationOutput) as empty:
         validate_variants(
             [VariantOut.model_construct(text="", firmness=FirmnessOut.GENTLE)],
             single,
-            usage=TokenUsage(),
-            attempts=1,
         )
     assert empty.value.reasons == (InvalidOutputReason.EMPTY_TEXT,)
     with pytest.raises(InvalidGenerationOutput) as long_text:
         validate_variants(
             [VariantOut.model_construct(text="x" * 1001, firmness=FirmnessOut.GENTLE)],
             single,
-            usage=TokenUsage(),
-            attempts=1,
         )
     assert long_text.value.reasons == (InvalidOutputReason.TEXT_TOO_LONG,)
     with pytest.raises(InvalidGenerationOutput) as fence:
         validate_variants(
             [VariantOut(text="see ```here```", firmness=FirmnessOut.GENTLE)],
             single,
-            usage=TokenUsage(),
-            attempts=1,
         )
     assert fence.value.reasons == (InvalidOutputReason.MARKUP_FENCE,)
 
@@ -1137,6 +1149,8 @@ def test_last_reason_returns_latest_attempt() -> None:
         (InvalidOutputReason.EMPTY_TEXT, InvalidOutputReason.URL_IN_TEXT),
         usage=TokenUsage(),
         attempts=2,
+        model="m",
+        prompt_version="p",
     )
     assert last_reason(exc) is InvalidOutputReason.URL_IN_TEXT
 
@@ -1254,7 +1268,13 @@ async def test_decode_stream_phase_a_unavailable_kinds() -> None:
 @pytest.mark.unit
 async def test_decode_stream_phase_a_unavailable_direct() -> None:
     ache = _FakeAche(
-        stream_error=GenerationUnavailable(UnavailableKind.NETWORK, usage=TokenUsage(), attempts=0)
+        stream_error=GenerationUnavailable(
+            UnavailableKind.NETWORK,
+            usage=TokenUsage(),
+            attempts=0,
+            model="m",
+            prompt_version="p",
+        )
     )
     with pytest.raises(GenerationUnavailable) as exc_info:
         await _collect_decode_stream(ache)

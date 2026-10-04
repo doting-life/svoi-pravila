@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 from aiogram import Bot
 from aiogram.types import CallbackQuery, Chat, Message, Update, User
+from redis.asyncio import Redis
 from sqlalchemy import MetaData, String, Text, select, text
 from sqlalchemy.dialects.postgresql import BYTEA
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
@@ -17,11 +20,13 @@ from svoi_pravila.adapters.cache.client import close_client, create_client
 from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
 from svoi_pravila.adapters.cache.confirmation_tokens import ValkeyConfirmationTokens
 from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
+from svoi_pravila.adapters.cache.dialog_state import ValkeyDialogState
 from svoi_pravila.adapters.cache.prepared_results import ValkeyPreparedResults
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
 from svoi_pravila.adapters.channels.telegram.inline_scheduler import InlineQueryCoordinator
+from svoi_pravila.adapters.channels.telegram.lifecycle import TelegramLifecycle
 from svoi_pravila.adapters.channels.telegram.localization import (
     help_say_intent_prefixes,
     load_ru_strings,
@@ -42,6 +47,7 @@ from svoi_pravila.application.ports.generation import (
     Variant,
 )
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
+from svoi_pravila.application.use_cases.create_contact import CreateContact
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
 from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
 from svoi_pravila.application.use_cases.export_my_data import ExportMyData
@@ -50,11 +56,15 @@ from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboarding
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose, InlineComposePorts
+from svoi_pravila.application.use_cases.list_contacts import ListContacts
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoice
+from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
+from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
 from svoi_pravila.crypto import HmacPseudonymizer
 from svoi_pravila.domain.enums import ConsentKind, Firmness
+from svoi_pravila.domain.ids import TelegramUserId
 from tests.factories import make_settings
 from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.telegram_session import FakeTelegramSession
@@ -192,6 +202,11 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
         delete_my_account=DeleteMyAccount(uow_factory, ids, pepper, clock),
         export_my_data=ExportMyData(uow_factory, clock),
         confirmation_tokens=ValkeyConfirmationTokens(valkey),
+        create_contact=CreateContact(uow_factory, catalog, ids, clock),
+        list_contacts=ListContacts(uow_factory, catalog),
+        rename_contact=RenameContact(uow_factory, catalog),
+        set_active_contact=SetActiveContact(uow_factory, catalog),
+        dialog_state=ValkeyDialogState(valkey, ttl_seconds=600),
         clock=clock,
         deduplicator=ValkeyUpdateDeduplicator(valkey, ttl_seconds=60),
         rate_limiter=ValkeyRateLimiter(valkey, limit=30, window_seconds=60, key_prefix="tg:rl"),
@@ -353,5 +368,194 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             for marker in markers:
                 assert marker.encode("utf-8") not in raw
 
+    await valkey.flushdb()
+    await close_client(valkey)
+
+
+_LABEL_SENTINEL = "SENTINEL_CONTACT_LABEL_0009_INT"
+_LABEL_USER_ID = 5550009
+
+
+def _contact_privacy_lifecycle(
+    settings: Settings,
+    uow_factory: SqlAlchemyUnitOfWorkFactory,
+    valkey: Redis,
+) -> tuple[TelegramLifecycle, Bot, PackageConsentCatalog, FakeTextGenerator]:
+    catalog = PackageConsentCatalog()
+    clock = SystemClock()
+    monotonic = SystemMonotonicClock()
+    ids = Uuid7IdGenerator()
+    pepper = HmacPseudonymizer(settings.pseudonym_pepper_bytes())
+    strings = load_ru_strings()
+    sink = UnitOfWorkUsageEventSink(uow_factory)
+    generator = FakeTextGenerator()
+    decode = DecodeIncoming(
+        DecodeIncomingPorts(
+            uow_factory=uow_factory,
+            catalog=catalog,
+            generator=generator,
+            guard=ValkeyConcurrencyGuard(valkey),
+            quota=ValkeyRateLimiter(
+                valkey, limit=20, window_seconds=3600, key_prefix="tg:decode:quota"
+            ),
+            sink=sink,
+            clock=clock,
+            monotonic=monotonic,
+            ids=ids,
+            pseudonymizer=pepper,
+            crisis_screen=CrisisScreen.load_ru_v2(),
+            deadline_seconds=45.0,
+        )
+    )
+    compose = InlineCompose(
+        InlineComposePorts(
+            uow_factory=uow_factory,
+            catalog=catalog,
+            generator=generator,
+            quota=ValkeyRateLimiter(
+                valkey, limit=30, window_seconds=3600, key_prefix="tg:inline:quota"
+            ),
+            sink=sink,
+            clock=clock,
+            monotonic=monotonic,
+            ids=ids,
+            pseudonymizer=pepper,
+            crisis_screen=CrisisScreen.load_ru_v2(),
+            min_chars=8,
+            deadline_seconds=8.0,
+            intent_prefixes=help_say_intent_prefixes(strings),
+        )
+    )
+    deps = TelegramDeps(
+        strings=strings,
+        get_onboarding_step=GetOnboardingStep(uow_factory, catalog),
+        get_user_by_telegram_id=GetUserByTelegramId(uow_factory),
+        accept_age=AcceptAgeConfirmation(uow_factory, ids, clock),
+        grant_consent=GrantConsent(uow_factory, catalog, ids, clock),
+        get_consent_document=GetConsentDocument(catalog),
+        decode_incoming=decode,
+        inline_compose=compose,
+        record_inline_choice=RecordInlineChoice(sink, clock, ids, pepper),
+        prepared_results=ValkeyPreparedResults(valkey, ttl_seconds=600),
+        inline_queries=InlineQueryCoordinator(AsyncioSleeper(), debounce_seconds=0.0),
+        revoke_all_consents=RevokeAllConsents(uow_factory, clock),
+        delete_my_account=DeleteMyAccount(uow_factory, ids, pepper, clock),
+        export_my_data=ExportMyData(uow_factory, clock),
+        confirmation_tokens=ValkeyConfirmationTokens(valkey),
+        create_contact=CreateContact(uow_factory, catalog, ids, clock),
+        list_contacts=ListContacts(uow_factory, catalog),
+        rename_contact=RenameContact(uow_factory, catalog),
+        set_active_contact=SetActiveContact(uow_factory, catalog),
+        dialog_state=ValkeyDialogState(valkey, ttl_seconds=600),
+        clock=clock,
+        deduplicator=ValkeyUpdateDeduplicator(valkey, ttl_seconds=60),
+        rate_limiter=ValkeyRateLimiter(valkey, limit=30, window_seconds=60, key_prefix="tg:rl"),
+        pseudonymizer=pepper,
+        monotonic=monotonic,
+        draft_min_interval_ms=50,
+        inline_cache_seconds=30,
+    )
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(
+        make_settings(
+            environment=Environment.LOCAL,
+            telegram_updates_mode=TelegramUpdatesMode.POLLING,
+            telegram_bot_token="1:TEST",
+            database_url=settings.database_url.get_secret_value(),
+            valkey_url=settings.valkey_url.get_secret_value(),
+            pseudonym_pepper=settings.pseudonym_pepper.get_secret_value(),
+        ),
+        deps,
+        bot=bot,
+    )
+    return lifecycle, bot, catalog, generator
+
+
+@pytest.mark.integration
+async def test_contact_label_sentinel_only_as_ciphertext(
+    settings: Settings,
+    engine: AsyncEngine,
+    uow_factory_postgres: SqlAlchemyUnitOfWorkFactory,
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    uow_factory = uow_factory_postgres
+    valkey = create_client(
+        make_settings(
+            database_url=settings.database_url.get_secret_value(),
+            valkey_url=_db15_url(settings.valkey_url.get_secret_value()),
+        )
+    )
+    await valkey.flushdb()
+    lifecycle, bot, catalog, generator = _contact_privacy_lifecycle(settings, uow_factory, valkey)
+    uid = _LABEL_USER_ID
+
+    def _msg(update_id: int, text: str) -> Update:
+        return Update(
+            update_id=update_id,
+            message=Message(
+                message_id=update_id,
+                date=_NOW,
+                chat=Chat(id=uid, type="private"),
+                from_user=User(id=uid, is_bot=False, first_name="A"),
+                text=text,
+            ),
+        )
+
+    def _cb(update_id: int, data: str) -> Update:
+        return Update(
+            update_id=update_id,
+            callback_query=CallbackQuery(
+                id=str(update_id),
+                from_user=User(id=uid, is_bot=False, first_name="A"),
+                chat_instance="x",
+                data=data,
+                message=Message(
+                    message_id=1,
+                    date=_NOW,
+                    chat=Chat(id=uid, type="private"),
+                    from_user=User(id=uid, is_bot=False, first_name="A"),
+                    text="p",
+                ),
+            ),
+        )
+
+    await lifecycle.dispatcher.feed_update(bot, _msg(1, "/start"))
+    await lifecycle.dispatcher.feed_update(bot, _cb(2, "age:y"))
+    pd = catalog.current_document(ConsentKind.PERSONAL_DATA)
+    sc = catalog.current_document(ConsentKind.SPECIAL_CATEGORY)
+    await lifecycle.dispatcher.feed_update(bot, _cb(3, f"cg:personal_data:{pd.version}:y"))
+    await lifecycle.dispatcher.feed_update(bot, _cb(4, f"cg:special_category:{sc.version}:y"))
+    await lifecycle.dispatcher.feed_update(bot, _cb(5, "ct:n"))
+    await lifecycle.dispatcher.feed_update(bot, _cb(6, "ct:rel:friend"))
+    keys_during = [key async for key in valkey.scan_iter(match="tg:dialog:*")]
+    for key in keys_during:
+        value = await valkey.get(key)
+        rendered = "" if value is None else str(value)
+        assert _LABEL_SENTINEL not in key
+        assert _LABEL_SENTINEL not in rendered
+    await lifecycle.dispatcher.feed_update(bot, _msg(7, _LABEL_SENTINEL))
+    assert generator.decode_stream_calls == []
+    async with engine.connect() as conn:
+        count = (await conn.execute(text("SELECT count(*) FROM usage_events"))).scalar_one()
+        assert count == 0
+        await _assert_no_markers_in_text_columns(conn, (_LABEL_SENTINEL,))
+        cipher_rows = (await conn.execute(text("SELECT label_ciphertext FROM contacts"))).all()
+        assert cipher_rows
+        assert all(_LABEL_SENTINEL.encode() not in bytes(row[0]) for row in cipher_rows)
+    async with uow_factory() as uow:
+        user = await uow.users.get_by_telegram_id(TelegramUserId(uid))
+        assert user is not None
+        contacts = await uow.contacts.list_for_owner(user.id)
+        assert len(contacts) == 1
+        assert contacts[0].label.value == _LABEL_SENTINEL
+    keys = [key async for key in valkey.scan_iter(match="*")]
+    for key in keys:
+        assert _LABEL_SENTINEL not in str(key)
+        value = await valkey.get(key)
+        rendered = "" if value is None else str(value)
+        assert _LABEL_SENTINEL not in rendered
+    blob = " ".join(str(event) for event in capture_log_events())
+    assert _LABEL_SENTINEL not in blob
     await valkey.flushdb()
     await close_client(valkey)

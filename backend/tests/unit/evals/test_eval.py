@@ -33,6 +33,7 @@ from svoi_pravila.evals.cases import (
     cases_for_operation,
     filter_cases,
     load_cases,
+    order_cases_for_run,
     parse_case,
     with_deadline,
 )
@@ -51,6 +52,8 @@ from svoi_pravila.evals.metrics import (
     incoming_manipulation_schema_validity,
     leak_count,
     manipulation_refusal_rate,
+    schema_validity,
+    verdict_matches,
 )
 from svoi_pravila.evals.runner import (
     EvalParams,
@@ -70,7 +73,7 @@ def _record(**overrides: object) -> EvalRecord:
         case_id="x",
         operation="soften",
         category="ordinary_conflict",
-        expected="ok",
+        expected=frozenset({"ok"}),
         outcome="ok",
         verdict="ok",
         screen_hit=False,
@@ -80,6 +83,11 @@ def _record(**overrides: object) -> EvalRecord:
     )
     payload: dict[str, Any] = asdict(base)
     payload.update(overrides)
+    raw_expected = payload["expected"]
+    if isinstance(raw_expected, str):
+        payload["expected"] = frozenset({raw_expected})
+    elif isinstance(raw_expected, set):
+        payload["expected"] = frozenset(raw_expected)
     return EvalRecord(**payload)
 
 
@@ -98,8 +106,21 @@ def test_eval_dataset_shape() -> None:
     assert len(smoke) == 16
     incoming = [c for c in cases if c.category == "incoming_manipulation"]
     assert incoming
-    assert all(c.operation == "decode_stream" and c.expected == "ok" for c in incoming)
-    assert all(c.expected == "refuse_manipulation" for c in cases if c.category == "manipulation")
+    assert all(c.operation == "decode_stream" and c.expected == frozenset({"ok"}) for c in incoming)
+    assert all(
+        c.expected == frozenset({"refuse_manipulation"})
+        for c in cases
+        if c.category == "manipulation"
+    )
+    coercive = [c for c in cases if c.id.endswith("heated-12")]
+    assert {c.id for c in coercive} == {
+        "soften-heated-12",
+        "help_say-heated-12",
+        "decode_stream-heated-12",
+    }
+    assert all(c.category == "coercive_threat" for c in coercive)
+    accepted = frozenset({"crisis", "refuse_manipulation"})
+    assert all(c.expected == accepted for c in coercive)
     with pytest.raises(ValueError, match="unknown case ids"):
         filter_cases(cases, case_ids=("nope",))
 
@@ -158,7 +179,7 @@ def test_metrics_and_leak_exit() -> None:
         _record(category="hyperbole", verdict="ok"),
     ]
     assert crisis_recall(records) == 0.5
-    assert false_crisis_rate(records) == pytest.approx(1 / 4)
+    assert false_crisis_rate(records) == pytest.approx(1 / 6)
     assert manipulation_refusal_rate(records) == 1.0
     assert false_refusal_rate(records) == pytest.approx(1 / 5)
     assert incoming_manipulation_schema_validity(records) == 0.5
@@ -167,6 +188,30 @@ def test_metrics_and_leak_exit() -> None:
     rendered = format_metrics(records)
     assert "crisis_recall" in rendered
     assert "incoming_manipulation_schema_validity: 0.500" in rendered
+    dual = _record(
+        category="coercive_threat",
+        expected=frozenset({"crisis", "refuse_manipulation"}),
+        verdict="crisis",
+    )
+    assert verdict_matches(dual)
+    assert not verdict_matches(_record(verdict="crisis", expected=frozenset({"ok"})))
+
+
+@pytest.mark.unit
+def test_empty_rates_print_na() -> None:
+    empty = format_metrics([])
+    assert "crisis_recall: n/a" in empty
+    assert "false_crisis: n/a" in empty
+    assert "manipulation_refusal: n/a" in empty
+    assert "false_refusal: n/a" in empty
+    assert "schema_validity: n/a" in empty
+    assert "incoming_manipulation_schema_validity: n/a" in empty
+    assert "per_operation_validity: (none)" in empty
+    assert schema_validity([]) is None
+    ordinary = [_record(category="ordinary_conflict", verdict="ok")]
+    rendered = format_metrics(ordinary)
+    assert "incoming_manipulation_schema_validity: n/a" in rendered
+    assert incoming_manipulation_schema_validity(ordinary) is None
 
 
 @pytest.mark.unit
@@ -208,7 +253,7 @@ async def test_run_eval_writes_out_without_generated_text(tmp_path: Path) -> Non
 
 
 @pytest.mark.unit
-async def test_run_eval_groups_by_ops_then_dataset_order() -> None:
+async def test_run_eval_groups_by_ops_then_category_priority() -> None:
     cases = load_cases(_DATA)
     hyperbole = next(c for c in cases if c.id == "soften-hyperbole-19")
     decode = next(c for c in cases if c.id == "decode_stream-ordinary_conflict-01")
@@ -230,6 +275,19 @@ async def test_run_eval_groups_by_ops_then_dataset_order() -> None:
     assert rate_error is None
     assert budget_error is None
     assert [row.case_id for row in records] == [hyperbole.id, decode.id]
+    shuffled = [
+        next(c for c in cases if c.id == "soften-ordinary_conflict-01"),
+        next(c for c in cases if c.id == "soften-heated-12"),
+        next(c for c in cases if c.id == "soften-manipulation-13"),
+        next(c for c in cases if c.id == "soften-hyperbole-19"),
+    ]
+    ordered = order_cases_for_run(shuffled, ("soften",))
+    assert [c.id for c in ordered] == [
+        "soften-hyperbole-19",
+        "soften-manipulation-13",
+        "soften-heated-12",
+        "soften-ordinary_conflict-01",
+    ]
 
 
 @pytest.mark.unit
@@ -319,9 +377,7 @@ def test_estimate_crisis_is_zero() -> None:
     assert rows[0][2] >= 1
     threat = next(c for c in load_cases(_DATA) if c.id.endswith("heated-12"))
     assert estimate_eval_case_tokens(threat, screen) > 0
-    assert largest_eval_call_estimate([crisis, ordinary], screen) == estimate_eval_case_tokens(
-        ordinary, screen
-    )
+    assert largest_eval_call_estimate([], screen) == 0
 
 
 @pytest.mark.unit
@@ -380,6 +436,24 @@ def test_parse_and_load_case_errors(tmp_path: Path) -> None:
                 "operation": "soften",
                 "category": "heated",
                 "expected": "nope",
+            }
+        )
+    with pytest.raises(ValueError, match="expected must be"):
+        parse_case(
+            {
+                "id": "a",
+                "operation": "soften",
+                "category": "heated",
+                "expected": [],
+            }
+        )
+    with pytest.raises(TypeError, match="expected must be"):
+        parse_case(
+            {
+                "id": "a",
+                "operation": "soften",
+                "category": "heated",
+                "expected": 1,
             }
         )
     with pytest.raises(TypeError, match="rules must be a list"):
@@ -443,7 +517,7 @@ def test_case_helpers_cover_gaps() -> None:
         id="bare",
         operation="soften",
         category="heated",
-        expected="ok",
+        expected=frozenset({"ok"}),
     )
     with pytest.raises(ValueError, match="no request payload"):
         empty.screen_text()
@@ -562,7 +636,7 @@ async def test_decode_without_completed_and_missing_request() -> None:
         id="bare",
         operation="decode_stream",
         category="heated",
-        expected="ok",
+        expected=frozenset({"ok"}),
         soften=ordinary.soften,
     )
     with pytest.raises(ValueError, match="missing request"):

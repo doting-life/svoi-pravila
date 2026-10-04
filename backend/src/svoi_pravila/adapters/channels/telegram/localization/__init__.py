@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from importlib import resources
 
 from svoi_pravila.application.ports.generation import HelpSayIntent
-from svoi_pravila.domain.enums import Firmness
+from svoi_pravila.domain.enums import Firmness, RelationshipKind
 from svoi_pravila.domain.safety import load_data_lines
 
 
@@ -58,6 +58,24 @@ class TelegramStrings:
     commands_export: str
     commands_revoke: str
     commands_delete: str
+    commands_contacts: str
+    commands_cancel: str
+    contacts_header: str
+    contacts_empty: str
+    contacts_active_mark: str
+    contacts_make_active: str
+    contacts_rename: str
+    contacts_add: str
+    contacts_label_prompt: str
+    contacts_rename_prompt: str
+    contacts_cancelled: str
+    contacts_invalid_label: str
+    contacts_limit: str
+    contacts_relationship_partner: str
+    contacts_relationship_family: str
+    contacts_relationship_friend: str
+    contacts_relationship_work: str
+    contacts_relationship_other: str
     rights_revoke_explain: str
     rights_delete_explain: str
     rights_confirm: str
@@ -113,6 +131,24 @@ _KEYS: dict[str, str] = {
     "commands.export": "commands_export",
     "commands.revoke": "commands_revoke",
     "commands.delete": "commands_delete",
+    "commands.contacts": "commands_contacts",
+    "commands.cancel": "commands_cancel",
+    "contacts.header": "contacts_header",
+    "contacts.empty": "contacts_empty",
+    "contacts.active_mark": "contacts_active_mark",
+    "contacts.make_active": "contacts_make_active",
+    "contacts.rename": "contacts_rename",
+    "contacts.add": "contacts_add",
+    "contacts.label_prompt": "contacts_label_prompt",
+    "contacts.rename_prompt": "contacts_rename_prompt",
+    "contacts.cancelled": "contacts_cancelled",
+    "contacts.invalid_label": "contacts_invalid_label",
+    "contacts.limit": "contacts_limit",
+    "contacts.relationship.partner": "contacts_relationship_partner",
+    "contacts.relationship.family": "contacts_relationship_family",
+    "contacts.relationship.friend": "contacts_relationship_friend",
+    "contacts.relationship.work": "contacts_relationship_work",
+    "contacts.relationship.other": "contacts_relationship_other",
     "rights.revoke_explain": "rights_revoke_explain",
     "rights.delete_explain": "rights_delete_explain",
     "rights.confirm": "rights_confirm",
@@ -157,6 +193,19 @@ def render_help(strings: TelegramStrings) -> str:
     """DM decode help plus inline prefixes taken from the catalog."""
     prefixes = "\n".join(prefix for prefix, _intent in help_say_intent_prefixes(strings))
     return f"{strings.help_body}\n\n{strings.help_inline}\n{prefixes}"
+
+
+def relationship_label(strings: TelegramStrings, kind: RelationshipKind) -> str:
+    """Catalog label for a relationship kind."""
+    if kind is RelationshipKind.PARTNER:
+        return strings.contacts_relationship_partner
+    if kind is RelationshipKind.FAMILY:
+        return strings.contacts_relationship_family
+    if kind is RelationshipKind.FRIEND:
+        return strings.contacts_relationship_friend
+    if kind is RelationshipKind.WORK:
+        return strings.contacts_relationship_work
+    return strings.contacts_relationship_other
 
 
 def firmness_label(strings: TelegramStrings, firmness: Firmness) -> str:

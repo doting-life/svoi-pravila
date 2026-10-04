@@ -7,6 +7,7 @@ from aiogram.types import InlineKeyboardMarkup
 from svoi_pravila.adapters.channels.telegram.keyboards import (
     age_keyboard,
     consent_keyboard,
+    contacts_keyboard,
     variant_reply_markup,
 )
 from svoi_pravila.adapters.channels.telegram.localization import (
@@ -20,6 +21,8 @@ from svoi_pravila.application.use_cases.get_onboarding_step import (
     OnboardingStepKind,
 )
 from svoi_pravila.domain.consent_document import ConsentDocument
+from svoi_pravila.domain.contact import Contact
+from svoi_pravila.domain.ids import ContactId
 
 TELEGRAM_MESSAGE_MAX = 4096
 
@@ -101,3 +104,23 @@ def render_decode_completed(
             )
         )
     return tuple(messages)
+
+
+def render_contacts_list(
+    strings: TelegramStrings,
+    contacts: tuple[Contact, ...],
+    active_contact_id: ContactId | None,
+) -> tuple[str, InlineKeyboardMarkup]:
+    """Contact labels for display only, plus action keyboard (ids in callbacks)."""
+    if not contacts:
+        text = f"{strings.contacts_header}\n{strings.contacts_empty}"
+    else:
+        lines = [strings.contacts_header]
+        for contact in contacts:
+            if contact.id == active_contact_id:
+                lines.append(f"{contact.label.value} — {strings.contacts_active_mark}")
+            else:
+                lines.append(contact.label.value)
+        text = "\n".join(lines)
+    keyboard = contacts_keyboard(strings, tuple(contact.id for contact in contacts))
+    return text, keyboard

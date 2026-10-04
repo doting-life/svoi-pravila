@@ -13,6 +13,7 @@ from svoi_pravila.adapters.cache.client import close_client, create_client
 from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
 from svoi_pravila.adapters.cache.confirmation_tokens import ValkeyConfirmationTokens
 from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
+from svoi_pravila.adapters.cache.dialog_state import ValkeyDialogState
 from svoi_pravila.adapters.cache.prepared_results import ValkeyPreparedResults
 from svoi_pravila.adapters.cache.probe import ValkeyProbe
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
@@ -42,6 +43,7 @@ from svoi_pravila.api.telegram_webhook import (
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
+from svoi_pravila.application.use_cases.create_contact import CreateContact
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
 from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
 from svoi_pravila.application.use_cases.export_my_data import ExportMyData
@@ -50,8 +52,11 @@ from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboarding
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose, InlineComposePorts
+from svoi_pravila.application.use_cases.list_contacts import ListContacts
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoice
+from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
+from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from svoi_pravila.config import (
     DatabaseSettings,
     Settings,
@@ -175,6 +180,14 @@ def create_application(settings: Settings) -> FastAPI:
             delete_my_account=DeleteMyAccount(uow_factory, ids, pseudonymizer, clock),
             export_my_data=ExportMyData(uow_factory, clock),
             confirmation_tokens=ValkeyConfirmationTokens(valkey),
+            create_contact=CreateContact(uow_factory, catalog, ids, clock),
+            list_contacts=ListContacts(uow_factory, catalog),
+            rename_contact=RenameContact(uow_factory, catalog),
+            set_active_contact=SetActiveContact(uow_factory, catalog),
+            dialog_state=ValkeyDialogState(
+                valkey,
+                ttl_seconds=settings.dialog_ttl_seconds,
+            ),
             clock=clock,
             deduplicator=ValkeyUpdateDeduplicator(
                 valkey,

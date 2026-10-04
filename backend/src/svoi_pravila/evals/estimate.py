@@ -7,12 +7,12 @@ from collections.abc import Sequence
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.benchmarks.cases import BenchCase, ExpectedSafety
 from svoi_pravila.benchmarks.estimate import estimate_case_tokens
-from svoi_pravila.evals.cases import EvalCase, RunOperation
+from svoi_pravila.evals.cases import EvalCase, RunOperation, order_cases_for_run
 
 
 def to_bench_case(case: EvalCase) -> BenchCase:
     """Adapt an eval case to the benchmark estimator (expected_safety is unused)."""
-    expected: ExpectedSafety = "crisis" if case.expected == "crisis" else "ok"
+    expected: ExpectedSafety = "crisis" if case.expected == frozenset({"crisis"}) else "ok"
     jsonl_op = "decode" if case.operation == "decode_stream" else case.operation
     return BenchCase(
         id=case.id,
@@ -56,7 +56,7 @@ def plan_eval_calls(
     rows: list[tuple[str, RunOperation, int, int]] = []
     warmed: set[str] = set()
     for model, operation in zip(models, operations, strict=True):
-        op_cases = [case for case in cases if case.operation == operation]
+        op_cases = order_cases_for_run(cases, (operation,))
         if not op_cases:
             continue
         measured = sum(estimate_eval_case_tokens(case, screen) for case in op_cases)

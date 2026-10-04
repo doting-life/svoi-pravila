@@ -18,6 +18,9 @@ def test_load_ru_strings_succeeds() -> None:
     strings = load_ru_strings()
     assert strings.age_button_yes
     assert strings.help_body
+    assert "/contacts" in strings.help_body
+    assert "/cancel" in strings.help_body
+    assert "/contacts" in strings.done_commands
     assert strings.decode_copy
     assert strings.decode_insert
     assert strings.inline_prefix_decline

@@ -4,7 +4,7 @@
 
 ## Текущее
 - Дата: 2026-10-04 · Спринт 0 (Фундамент)
-- Активная задача: **0010-a — доработка повторного использования inline** (срок хранения в памяти, утечка идентификаторов, типы ошибок) · ветка `task/0010-inline-opt` · GigaChat 0 токенов
+- Активная задача: **0010-b — ошибки генерации как значения, синхронное истечение** · ветка `task/0010-inline-opt` · GigaChat 0 токенов
 - В `master`: 0009.2 (`16037df`, squash #10)
 - В `master`: 0009.1 (`18ba3f1`, squash #9)
 - Расход GigaChat на eval 0008-b…d: ≈ 68 000 токенов (30 618 + 26 965 + 8 585 + разминки)
@@ -65,7 +65,8 @@
 | 0009.2 | Rules via bot, applied-rule citation | `task/0009-2-rules` | проверен 04.10 | **CHANGES** → 0009.2-a: кнопки «Архивировать» неотличимы, список > 4096 символов падает, диалог застревает после лимита/недоступного контакта (то же в `/contacts`), устаревшая кнопка архива → общая ошибка, приватные импорты между обработчиками |
 | 0009.2-a | /rules fixes, shared handler helpers | `task/0009-2-rules` | проверен 04.10 | **ACCEPT** (730 тестов, 99,25 %) |
 | 0010 | Inline optimization: result reuse, normalization, answer latency | `task/0010-inline-opt` | проверен 04.10 | **CHANGES** → 0010-a: истёкшие результаты (C2) остаются в памяти без трафика, telegram id удалённых пользователей хранятся вечно (`_forget_gen`), `ApplicationError.reuse` и клоны ошибок, недопустимое состояние резолюции, широкий `except ApplicationError` в обработчике |
-| 0010-a | Reuse retention, typed failures | `task/0010-inline-opt` | выдан | — |
+| 0010-a | Reuse retention, typed failures | `task/0010-inline-opt` | проверен 04.10 | **CHANGES** → 0010-b: строгий срок и ограниченное состояние — приняты; осталась дыра в типах (`ReuseFailed.error: ApplicationError` + проверка `TypeError` и тест на невозможный случай), недостижимая ветка без цикла событий, лишние блокировка и задача при истечении |
+| 0010-b | Produce errors as values, synchronous expiry | `task/0010-inline-opt` | выдан | — |
 | 0006.1-b | Image gate: Debian security updates, base digest pin, Dependabot | `task/0006-telegram-channel` | проверен 04.10 | **ACCEPT** (Trivy: 21 CVE → 0) |
 
 ## Решения

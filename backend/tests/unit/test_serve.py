@@ -39,6 +39,11 @@ def test_load_settings_reads_process_environment(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("SP_GIGACHAT_MODEL_DECODE", "GigaChat-2")
     monkeypatch.setenv("SP_GIGACHAT_TIMEOUT_SECONDS", "5")
     monkeypatch.setenv("SP_GIGACHAT_MAX_RETRIES", "0")
+    monkeypatch.setenv(
+        "SP_PSEUDONYM_PEPPER",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    )
+    monkeypatch.setenv("SP_TELEGRAM_UPDATES_MODE", "disabled")
     settings = load_settings()
     assert settings.environment is Environment.TEST
     assert settings.forwarded_allow_ips == "127.0.0.1"

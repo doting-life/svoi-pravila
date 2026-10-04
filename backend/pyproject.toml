@@ -20,6 +20,7 @@ dependencies = [
     "cryptography==50.0.2",
     "uuid-utils==1.0.0",
     "gigachat==0.2.3",
+    "aiogram==3.31.0",
 ]
 
 [project.scripts]
@@ -50,6 +51,9 @@ packages = ["src/svoi_pravila"]
 "src/svoi_pravila/adapters/llm/prompts/help_say/v1.md" = "svoi_pravila/adapters/llm/prompts/help_say/v1.md"
 "src/svoi_pravila/adapters/llm/prompts/decode/v3.md" = "svoi_pravila/adapters/llm/prompts/decode/v3.md"
 "src/svoi_pravila/adapters/llm/prompts/decode_analysis/v1.md" = "svoi_pravila/adapters/llm/prompts/decode_analysis/v1.md"
+"src/svoi_pravila/adapters/consents/personal_data/v1.md" = "svoi_pravila/adapters/consents/personal_data/v1.md"
+"src/svoi_pravila/adapters/consents/special_category/v1.md" = "svoi_pravila/adapters/consents/special_category/v1.md"
+"src/svoi_pravila/adapters/channels/telegram/localization/ru.json" = "svoi_pravila/adapters/channels/telegram/localization/ru.json"
 
 [tool.hatch.build.targets.sdist]
 include = ["src/svoi_pravila"]
@@ -66,12 +70,14 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "PLR2004", "DTZ001", "RUF001", "TRY003", "S105", "S106"]
+"tests/**" = ["S101", "PLR2004", "DTZ001", "RUF001", "TRY003", "S105", "S106", "FBT001", "FBT002", "FBT003", "S608"]
 "src/svoi_pravila/application/errors.py" = ["N818"]
 "src/svoi_pravila/domain/rules.py" = ["PLR0913"]
 "src/svoi_pravila/domain/pair.py" = ["PLR2004"]
 "src/svoi_pravila/benchmarks/**" = ["T201"]
-
+"src/svoi_pravila/adapters/channels/telegram/lifecycle.py" = ["PLR0913"]
+"src/svoi_pravila/api/app.py" = ["PLR0913"]
+"src/svoi_pravila/api/telegram_webhook.py" = ["PLR0911"]
 [tool.mypy]
 python_version = "3.13"
 strict = true
@@ -139,6 +145,17 @@ modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "Channels are independent of other adapters"
+type = "independence"
+modules = [
+    "svoi_pravila.adapters.channels",
+    "svoi_pravila.adapters.persistence",
+    "svoi_pravila.adapters.cache",
+    "svoi_pravila.adapters.llm",
+    "svoi_pravila.adapters.consents",
+]
+
+[[tool.importlinter.contracts]]
 name = "Application forbidden imports"
 type = "forbidden"
 source_modules = [
@@ -159,6 +176,7 @@ forbidden_modules = [
     "alembic",
     "gigachat",
     "httpx",
+    "aiogram",
 ]
 
 [[tool.importlinter.contracts]]
@@ -188,6 +206,7 @@ forbidden_modules = [
     "uvicorn",
     "hypothesis",
     "pytest",
+    "aiogram",
 ]
 
 [[tool.importlinter.contracts]]

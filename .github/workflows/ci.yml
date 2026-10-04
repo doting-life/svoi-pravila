@@ -30,6 +30,8 @@ env:
   SP_GIGACHAT_MODEL_DECODE: GigaChat-2
   SP_GIGACHAT_TIMEOUT_SECONDS: "5"
   SP_GIGACHAT_MAX_RETRIES: "0"
+  SP_TELEGRAM_UPDATES_MODE: disabled
+  SP_PSEUDONYM_PEPPER: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 
 jobs:
   backend:
@@ -140,6 +142,9 @@ jobs:
 
   stack-smoke:
     runs-on: ubuntu-latest
+    env:
+      SP_ENVIRONMENT: test
+      SP_TELEGRAM_UPDATES_MODE: disabled
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -151,7 +156,23 @@ jobs:
           enable-cache: true
 
       - name: Materialize .env
-        run: make dev-env
+        run: |
+          make dev-env
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path(".env")
+          text = path.read_text()
+          for key, value in (
+              ("SP_ENVIRONMENT", "test"),
+              ("SP_TELEGRAM_UPDATES_MODE", "disabled"),
+          ):
+              import re
+              if re.search(rf"^{key}=", text, flags=re.M):
+                  text = re.sub(rf"^{key}=.*$", f"{key}={value}", text, count=1, flags=re.M)
+              else:
+                  text = text.rstrip() + f"\n{key}={value}\n"
+          path.write_text(text)
+          PY
 
       - name: Start local stack
         run: make up

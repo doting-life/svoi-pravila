@@ -73,6 +73,7 @@ from svoi_pravila.domain.ids import TelegramUserId
 from svoi_pravila.domain.rules import ContactScope
 from tests.factories import make_settings
 from tests.fakes.generation import FakeTextGenerator
+from tests.fakes.inline_reuse import make_inline_reuse
 from tests.fakes.telegram_session import FakeTelegramSession
 
 _SENTINEL_TEXT = "SENTINEL_TEXT_PRIVACY_0006_INT"
@@ -214,6 +215,7 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             deadline_seconds=45.0,
         )
     )
+    reuse = make_inline_reuse(monotonic, ttl_seconds=30.0)
     compose = InlineCompose(
         InlineComposePorts(
             uow_factory=uow_factory,
@@ -228,6 +230,7 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             ids=ids,
             pseudonymizer=pepper,
             crisis_screen=CrisisScreen.load_ru_v2(),
+            reuse=reuse,
             min_chars=8,
             deadline_seconds=8.0,
             intent_prefixes=help_say_intent_prefixes(strings),
@@ -245,8 +248,8 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
         record_inline_choice=RecordInlineChoice(sink, clock, ids, pepper),
         prepared_results=ValkeyPreparedResults(valkey, ttl_seconds=600),
         inline_queries=InlineQueryCoordinator(AsyncioSleeper(), debounce_seconds=0.0),
-        revoke_all_consents=RevokeAllConsents(uow_factory, clock),
-        delete_my_account=DeleteMyAccount(uow_factory, ids, pepper, clock),
+        revoke_all_consents=RevokeAllConsents(uow_factory, clock, reuse),
+        delete_my_account=DeleteMyAccount(uow_factory, ids, pepper, clock, reuse),
         export_my_data=ExportMyData(uow_factory, clock),
         confirmation_tokens=ValkeyConfirmationTokens(valkey),
         create_contact=CreateContact(uow_factory, catalog, ids, clock),
@@ -458,6 +461,7 @@ def _contact_privacy_lifecycle(
             deadline_seconds=45.0,
         )
     )
+    reuse = make_inline_reuse(monotonic, ttl_seconds=30.0)
     compose = InlineCompose(
         InlineComposePorts(
             uow_factory=uow_factory,
@@ -472,6 +476,7 @@ def _contact_privacy_lifecycle(
             ids=ids,
             pseudonymizer=pepper,
             crisis_screen=CrisisScreen.load_ru_v2(),
+            reuse=reuse,
             min_chars=8,
             deadline_seconds=8.0,
             intent_prefixes=help_say_intent_prefixes(strings),
@@ -489,8 +494,8 @@ def _contact_privacy_lifecycle(
         record_inline_choice=RecordInlineChoice(sink, clock, ids, pepper),
         prepared_results=ValkeyPreparedResults(valkey, ttl_seconds=600),
         inline_queries=InlineQueryCoordinator(AsyncioSleeper(), debounce_seconds=0.0),
-        revoke_all_consents=RevokeAllConsents(uow_factory, clock),
-        delete_my_account=DeleteMyAccount(uow_factory, ids, pepper, clock),
+        revoke_all_consents=RevokeAllConsents(uow_factory, clock, reuse),
+        delete_my_account=DeleteMyAccount(uow_factory, ids, pepper, clock, reuse),
         export_my_data=ExportMyData(uow_factory, clock),
         confirmation_tokens=ValkeyConfirmationTokens(valkey),
         create_contact=CreateContact(uow_factory, catalog, ids, clock),

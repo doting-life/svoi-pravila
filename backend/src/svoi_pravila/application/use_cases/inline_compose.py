@@ -7,15 +7,19 @@ from dataclasses import dataclass
 from svoi_pravila.application.applied_rules import applied_rule_views
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.errors import (
+    ApplicationError,
     GenerationRefusedByProvider,
     GenerationUnavailable,
     IncomingTextTooLong,
     InlineQueryTooShort,
     InvalidGenerationOutput,
+    InvalidOutputReason,
     NotFound,
     ScenarioQuotaExceeded,
     UsageEventWriteFailed,
 )
+from svoi_pravila.application.inline_reuse_key import InlineReuseKeyMaterial, inline_reuse_key
+from svoi_pravila.application.inline_text import normalize_inline_text
 from svoi_pravila.application.ports.clock import Clock
 from svoi_pravila.application.ports.consent_catalog import ConsentCatalog
 from svoi_pravila.application.ports.generation import (
@@ -33,6 +37,11 @@ from svoi_pravila.application.ports.generation import (
     Variant,
 )
 from svoi_pravila.application.ports.id_generator import IdGenerator
+from svoi_pravila.application.ports.inline_result_reuse import (
+    InlineResultReuse,
+    InlineReuseStatus,
+    InlineReuseValue,
+)
 from svoi_pravila.application.ports.monotonic import MonotonicClock
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.rate_limiter import RateLimiter
@@ -70,6 +79,7 @@ class InlineComposeResult:
     variants: tuple[Variant, ...]
     safety: SafetyVerdict
     applied_rules: tuple[AppliedRuleView, ...] = ()
+    reuse: InlineReuseStatus | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,6 +96,7 @@ class InlineComposePorts:
     ids: IdGenerator
     pseudonymizer: Pseudonymizer
     crisis_screen: CrisisScreen
+    reuse: InlineResultReuse
     min_chars: int
     deadline_seconds: float
     intent_prefixes: tuple[tuple[str, HelpSayIntent], ...]
@@ -118,21 +129,21 @@ class InlineCompose:
         """Return variants or raise a typed error. Never streams."""
         user_key = str(command.telegram_user_id.value)
         relationship, rules = await self._load_context(command.telegram_user_id)
-        stripped = command.query.strip()
-        if len(stripped) > BOUNDED_TEXT_MAX:
+        normalized = normalize_inline_text(command.query)
+        if len(normalized) > BOUNDED_TEXT_MAX:
             raise IncomingTextTooLong()
-        if len(stripped) < self._ports.min_chars:
+        if len(normalized) < self._ports.min_chars:
             raise InlineQueryTooShort()
-        matched = _match_prefix(stripped, self._ports.intent_prefixes)
+        matched = _match_prefix(normalized, self._ports.intent_prefixes)
         scenario = UsageScenario.SOFTEN
-        draft = stripped
+        draft = normalized
         intent: HelpSayIntent | None = None
         if matched is not None:
             intent, remainder = matched
-            if len(remainder) < self._ports.min_chars:
+            draft = normalize_inline_text(remainder)
+            if len(draft) < self._ports.min_chars:
                 raise InlineQueryTooShort()
             scenario = UsageScenario.HELP_SAY
-            draft = remainder
         if self._ports.crisis_screen.hit(draft):
             await self._persist(self._event_from_screened(user_key, scenario))
             return InlineComposeResult(
@@ -140,47 +151,84 @@ class InlineCompose:
                 variants=(),
                 safety=SafetyVerdict.CRISIS,
                 applied_rules=(),
+                reuse=None,
             )
-        quota_pseudonym = self._ports.pseudonymizer.pseudonymize(_QUOTA_PURPOSE, user_key)
+        material = InlineReuseKeyMaterial(
+            user_key=user_key,
+            scenario=scenario,
+            intent=intent,
+            draft=draft,
+            relationship=relationship,
+            rules=rules,
+        )
+        key = inline_reuse_key(material)
+
+        async def produce() -> InlineReuseValue:
+            return await self._produce(material)
+
+        resolution = await self._ports.reuse.resolve(key, user_key, produce)
+        if resolution.error is not None:
+            raise _error_with_reuse(resolution.error, resolution.status)
+        if resolution.value is None:
+            msg = "inline reuse resolution missing value and error"
+            raise RuntimeError(msg)
+        return InlineComposeResult(
+            scenario=resolution.value.scenario,
+            variants=resolution.value.variants,
+            safety=resolution.value.safety,
+            applied_rules=resolution.value.applied_rules,
+            reuse=resolution.status,
+        )
+
+    async def _produce(self, material: InlineReuseKeyMaterial) -> InlineReuseValue:
+        quota_pseudonym = self._ports.pseudonymizer.pseudonymize(_QUOTA_PURPOSE, material.user_key)
         decision = await self._ports.quota.check(quota_pseudonym)
         if not decision.allowed:
             raise ScenarioQuotaExceeded()
         started = self._ports.monotonic.monotonic()
         try:
-            if intent is not None:
+            if material.intent is not None:
                 generated: SoftenResult | HelpSayResult = await self._ports.generator.help_say(
                     HelpSayRequest(
-                        intent=intent,
-                        details=draft,
-                        rules=rules,
-                        relationship=relationship,
+                        intent=material.intent,
+                        details=material.draft,
+                        rules=material.rules,
+                        relationship=material.relationship,
                         deadline_seconds=self._ports.deadline_seconds,
                     )
                 )
             else:
                 generated = await self._ports.generator.soften(
                     SoftenRequest(
-                        draft=draft,
-                        rules=rules,
-                        relationship=relationship,
+                        draft=material.draft,
+                        rules=material.rules,
+                        relationship=material.relationship,
                         deadline_seconds=self._ports.deadline_seconds,
                     )
                 )
         except GenerationUnavailable as exc:
-            await self._persist(self._event_from_error(user_key, started, scenario, exc))
+            await self._persist(
+                self._event_from_error(material.user_key, started, material.scenario, exc)
+            )
             raise
         except GenerationRefusedByProvider as exc:
-            await self._persist(self._event_from_error(user_key, started, scenario, exc))
+            await self._persist(
+                self._event_from_error(material.user_key, started, material.scenario, exc)
+            )
             raise
         except InvalidGenerationOutput as exc:
-            await self._persist(self._event_from_error(user_key, started, scenario, exc))
+            await self._persist(
+                self._event_from_error(material.user_key, started, material.scenario, exc)
+            )
             raise
-        await self._persist(self._event_from_ok(user_key, started, scenario, generated))
-        return InlineComposeResult(
-            scenario=scenario,
+        await self._persist(
+            self._event_from_ok(material.user_key, started, material.scenario, generated)
+        )
+        return InlineReuseValue(
+            scenario=material.scenario,
             variants=generated.variants,
             safety=generated.safety,
-            applied_rules=applied_rule_views(rules, generated.applied_rule_indexes),
+            applied_rules=applied_rule_views(material.rules, generated.applied_rule_indexes),
         )
 
     async def _load_context(
@@ -318,3 +366,37 @@ def _match_prefix(
             remainder = query[len(prefix.strip()) :].strip()
             return intent, remainder
     return None
+
+
+def _error_with_reuse(error: ApplicationError, status: InlineReuseStatus) -> ApplicationError:
+    """Return a fresh typed error carrying this waiter's reuse status."""
+    if isinstance(error, GenerationUnavailable):
+        clone: ApplicationError = GenerationUnavailable(
+            error.kind,
+            usage=error.usage,
+            attempts=error.attempts,
+            model=error.model,
+            prompt_version=error.prompt_version,
+        )
+    elif isinstance(error, GenerationRefusedByProvider):
+        clone = GenerationRefusedByProvider(
+            usage=error.usage,
+            attempts=error.attempts,
+            model=error.model,
+            prompt_version=error.prompt_version,
+        )
+    elif isinstance(error, InvalidGenerationOutput):
+        reasons: tuple[InvalidOutputReason, ...] = error.reasons
+        clone = InvalidGenerationOutput(
+            reasons,
+            usage=error.usage,
+            attempts=error.attempts,
+            model=error.model,
+            prompt_version=error.prompt_version,
+        )
+    elif isinstance(error, ScenarioQuotaExceeded):
+        clone = ScenarioQuotaExceeded()
+    else:
+        clone = error
+    clone.reuse = status
+    return clone

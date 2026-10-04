@@ -37,6 +37,7 @@ from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.dialog import FakeDialogState
 from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.ids import FakeIdGenerator
+from tests.fakes.inline_reuse import make_inline_reuse
 from tests.fakes.prepared import FakePreparedResults
 from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter, FakeUpdateDeduplicator
 from tests.fakes.sleeper import GateSleeper, ImmediateSleeper
@@ -97,6 +98,7 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             deadline_seconds=chosen.deadline_seconds,
         )
     )
+    reuse = make_inline_reuse(clock, ttl_seconds=float(chosen.inline_cache_seconds))
     compose = InlineCompose(
         InlineComposePorts(
             uow_factory=uow,
@@ -109,6 +111,7 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             ids=ids,
             pseudonymizer=pseudonymizer,
             crisis_screen=CrisisScreen.load_ru_v2(),
+            reuse=reuse,
             min_chars=chosen.inline_min_chars,
             deadline_seconds=chosen.inline_deadline_seconds,
             intent_prefixes=help_say_intent_prefixes(strings),
@@ -129,8 +132,8 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             chosen.sleeper or ImmediateSleeper(),
             debounce_seconds=chosen.debounce_seconds,
         ),
-        revoke_all_consents=RevokeAllConsents(uow, clock),
-        delete_my_account=DeleteMyAccount(uow, ids, pseudonymizer, clock),
+        revoke_all_consents=RevokeAllConsents(uow, clock, reuse),
+        delete_my_account=DeleteMyAccount(uow, ids, pseudonymizer, clock, reuse),
         export_my_data=ExportMyData(uow, clock),
         confirmation_tokens=chosen.confirmation or FakeConfirmationTokens(),
         create_contact=CreateContact(uow, catalog, ids, clock),

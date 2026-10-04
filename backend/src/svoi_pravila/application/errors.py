@@ -41,6 +41,12 @@ class InvalidOutputReason(StrEnum):
 class ApplicationError(Exception):
     """Base class for application errors."""
 
+    reuse: object | None
+
+    def __init__(self, *args: object) -> None:
+        super().__init__(*args)
+        self.reuse = None
+
 
 class NotFound(ApplicationError):
     """Entity not found or not visible to the actor (no existence leak)."""

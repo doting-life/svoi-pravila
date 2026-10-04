@@ -40,6 +40,7 @@ from svoi_pravila.domain.usage import UsageEvent
 from svoi_pravila.domain.user import User
 from tests.fakes.clock import FakeClock
 from tests.fakes.ids import FakeIdGenerator
+from tests.fakes.inline_reuse import make_inline_reuse
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 LEAVE_AT = NOW + timedelta(days=5)
@@ -203,9 +204,9 @@ async def test_delete_account_shreds_caller_and_rehomes_partner_rules(
         uow_factory_postgres, a_pseudo=a_pseudo, b_pseudo=b_pseudo
     )
     clock = FakeClock(LEAVE_AT)
-    result = await DeleteMyAccount(uow_factory_postgres, FakeIdGenerator(), pepper, clock).execute(
-        DeleteMyAccountCommand(alice.telegram_user_id)
-    )
+    result = await DeleteMyAccount(
+        uow_factory_postgres, FakeIdGenerator(), pepper, clock, make_inline_reuse(clock)
+    ).execute(DeleteMyAccountCommand(alice.telegram_user_id))
     assert result.found is True
     assert await _scan_has_uuid(engine, alice.id) is False
     async with engine.connect() as conn:

@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
+from svoi_pravila.adapters.channels.telegram.lifecycle import ExtraTasks
 from svoi_pravila.bootstrap import create_application
 from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
 from tests.factories import make_settings
@@ -103,12 +104,14 @@ def _patch_lifecycle_with_session(
         deps: TelegramDeps,
         *,
         bot: Bot | None = None,
+        extra_tasks: ExtraTasks | None = None,
     ) -> object:
         _ = bot
         return build_telegram_lifecycle(
             settings,
             deps,
             bot=Bot(token="1:TEST", session=session),
+            extra_tasks=extra_tasks,
         )
 
     monkeypatch.setattr("svoi_pravila.bootstrap.build_telegram_lifecycle", _build)

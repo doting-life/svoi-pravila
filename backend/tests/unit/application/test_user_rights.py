@@ -39,6 +39,7 @@ from svoi_pravila.domain.pair import Pair
 from svoi_pravila.domain.rules import MAX_OPEN_RULES_PER_SCOPE, ContactScope, PairScope
 from svoi_pravila.domain.text import ContactLabel, RuleText
 from svoi_pravila.domain.usage import UsageEvent
+from tests.fakes.inline_reuse import make_inline_reuse
 from tests.fakes.rate_limit import FakePseudonymizer
 from tests.unit.application.conftest import AppWorld
 from tests.unit.application.test_rules_and_invites import _pair_world
@@ -46,17 +47,18 @@ from tests.unit.application.test_rules_and_invites import _pair_world
 
 @pytest.mark.unit
 async def test_revoke_all_unknown_and_idempotent(world: AppWorld) -> None:
-    missing = await RevokeAllConsents(world.uow_factory, world.clock).execute(
+    reuse = make_inline_reuse(world.clock)
+    missing = await RevokeAllConsents(world.uow_factory, world.clock, reuse).execute(
         RevokeAllConsentsCommand(TelegramUserId(999001))
     )
     assert missing.found is False
     user = await world.ensure_granted_user(40)
-    first = await RevokeAllConsents(world.uow_factory, world.clock).execute(
+    first = await RevokeAllConsents(world.uow_factory, world.clock, reuse).execute(
         RevokeAllConsentsCommand(user.telegram_user_id)
     )
     assert first.found is True
     assert len(first.consents) == 2
-    second = await RevokeAllConsents(world.uow_factory, world.clock).execute(
+    second = await RevokeAllConsents(world.uow_factory, world.clock, reuse).execute(
         RevokeAllConsentsCommand(user.telegram_user_id)
     )
     assert second.found is True
@@ -301,7 +303,9 @@ async def test_delete_and_export(world: AppWorld) -> None:
     assert "together" in blob
     assert "partner only" not in blob
 
-    deleter = DeleteMyAccount(world.uow_factory, world.ids, pseudo, world.clock)
+    deleter = DeleteMyAccount(
+        world.uow_factory, world.ids, pseudo, world.clock, make_inline_reuse(world.clock)
+    )
     missing = await deleter.execute(DeleteMyAccountCommand(TelegramUserId(777)))
     assert missing.found is False
     gone = await deleter.execute(DeleteMyAccountCommand(inviter.telegram_user_id))

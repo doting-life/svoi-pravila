@@ -1028,3 +1028,60 @@ async def test_inline_description_prefixes_applied_rule_date() -> None:
     content = article.input_message_content
     assert isinstance(content, InputTextMessageContent)
     assert content.message_text == "variant body"
+
+
+@pytest.mark.unit
+async def test_inline_answered_log_on_ok(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    catalog = FakeConsentCatalog()
+    uow = InMemoryUnitOfWorkFactory()
+    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, debounce_seconds=0.0))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 60, catalog)
+    await lifecycle.dispatcher.feed_update(bot, _inline(100, 60, "long enough draft"))
+    await _await_inline(deps)
+    answered = [e for e in capture_log_events() if e.get("event") == "inline_answered"]
+    assert len(answered) == 1
+    event = answered[0]
+    assert event["scenario"] == "soften"
+    assert event["outcome"] == "ok"
+    assert event["reuse"] == "miss"
+    assert isinstance(event["answer_latency_ms"], int)
+    assert event["answer_latency_ms"] >= 0
+    assert "query" not in event
+    assert "draft" not in event
+
+
+@pytest.mark.unit
+async def test_inline_answered_absent_when_stale(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    catalog = FakeConsentCatalog()
+    uow = InMemoryUnitOfWorkFactory()
+    block = asyncio.Event()
+    generator = FakeTextGenerator()
+    generator.soften_block = block
+    deps = make_telegram_deps(
+        TelegramTestDeps(
+            uow=uow,
+            catalog=catalog,
+            generator=generator,
+            debounce_seconds=0.0,
+        )
+    )
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 61, catalog)
+    await lifecycle.dispatcher.feed_update(bot, _inline(200, 61, "first long draft"))
+    await generator.soften_started.wait()
+    await lifecycle.dispatcher.feed_update(bot, _inline(201, 61, "second long draft"))
+    block.set()
+    await _await_inline(deps)
+    answered = [e for e in capture_log_events() if e.get("event") == "inline_answered"]
+    # Only the current (second) answer is sent; stale first logs nothing new.
+    assert len(answered) == 1
+    assert answered[0]["outcome"] == "ok"

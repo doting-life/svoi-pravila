@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from svoi_pravila.application.ports.clock import Clock
+from svoi_pravila.application.ports.inline_result_reuse import InlineResultReuse
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.domain.consent import Consent
 from svoi_pravila.domain.ids import TelegramUserId
@@ -28,12 +29,19 @@ class RevokeAllConsentsResult:
 class RevokeAllConsents:
     """Revoke all unrevoked consents in one unit of work; idempotent."""
 
-    def __init__(self, uow_factory: UnitOfWorkFactory, clock: Clock) -> None:
+    def __init__(
+        self,
+        uow_factory: UnitOfWorkFactory,
+        clock: Clock,
+        reuse: InlineResultReuse,
+    ) -> None:
         self._uow_factory = uow_factory
         self._clock = clock
+        self._reuse = reuse
 
     async def execute(self, command: RevokeAllConsentsCommand) -> RevokeAllConsentsResult:
         """Revoke every live consent; no-data when the Telegram user is unknown."""
+        self._reuse.forget(str(command.telegram_user_id.value))
         async with self._uow_factory() as uow:
             user = await uow.users.get_by_telegram_id(command.telegram_user_id)
             if user is None:

@@ -52,6 +52,7 @@ test:
 	$(UV) coverage report --include='*/svoi_pravila/adapters/llm/*' --fail-under=100
 	$(UV) coverage report --include='*/svoi_pravila/adapters/channels/*' --fail-under=95
 	$(UV) coverage report --include='*/svoi_pravila/adapters/cache/*' --fail-under=95
+	$(UV) coverage report --include='*/svoi_pravila/adapters/system/inline_result_reuse.py' --fail-under=100
 	$(UV) coverage report --include='*/svoi_pravila/evals/*' --fail-under=95
 
 bench-llm:

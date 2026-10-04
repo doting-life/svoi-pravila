@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from svoi_pravila.application.ports.clock import Clock
 from svoi_pravila.application.ports.id_generator import IdGenerator
+from svoi_pravila.application.ports.inline_result_reuse import InlineResultReuse
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.use_cases._leave_pair import dissolve_pair_for_leaving_member
@@ -38,18 +39,19 @@ class DeleteMyAccount:
         ids: IdGenerator,
         pseudonymizer: Pseudonymizer,
         clock: Clock,
+        reuse: InlineResultReuse,
     ) -> None:
         self._uow_factory = uow_factory
         self._ids = ids
         self._pseudonymizer = pseudonymizer
         self._clock = clock
+        self._reuse = reuse
 
     async def execute(self, command: DeleteMyAccountCommand) -> DeleteMyAccountResult:
         """Leave pairs, delete owned data, shred DEK, delete the user row."""
-        analytics = self._pseudonymizer.pseudonymize(
-            _ANALYTICS_PURPOSE,
-            str(command.telegram_user_id.value),
-        )
+        user_key = str(command.telegram_user_id.value)
+        self._reuse.forget(user_key)
+        analytics = self._pseudonymizer.pseudonymize(_ANALYTICS_PURPOSE, user_key)
         now = self._clock.now()
         async with self._uow_factory() as uow:
             user = await uow.users.get_by_telegram_id(command.telegram_user_id)

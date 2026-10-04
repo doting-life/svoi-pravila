@@ -67,9 +67,16 @@ class FakeTextGenerator:
         ) = None
         self.soften_block: asyncio.Event | None = None
         self.soften_started = asyncio.Event()
+        self.help_say_block: asyncio.Event | None = None
+        self.help_say_started = asyncio.Event()
         self.soften_calls: list[SoftenRequest] = []
         self.help_say_calls: list[HelpSayRequest] = []
         self.decode_stream_calls: list[DecodeRequest] = []
+
+    @property
+    def call_count(self) -> int:
+        """Total soften + help_say invocations."""
+        return len(self.soften_calls) + len(self.help_say_calls)
 
     async def soften(self, request: SoftenRequest) -> SoftenResult:
         self.soften_calls.append(request)
@@ -92,6 +99,9 @@ class FakeTextGenerator:
 
     async def help_say(self, request: HelpSayRequest) -> HelpSayResult:
         self.help_say_calls.append(request)
+        self.help_say_started.set()
+        if self.help_say_block is not None:
+            await self.help_say_block.wait()
         if self.help_say_error is not None:
             raise self.help_say_error
         if self.help_say_result is not None:

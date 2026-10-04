@@ -35,6 +35,7 @@ from svoi_pravila.adapters.persistence.uow import SqlAlchemyUnitOfWorkFactory
 from svoi_pravila.adapters.persistence.usage_sink import UnitOfWorkUsageEventSink
 from svoi_pravila.adapters.system.clock import SystemClock
 from svoi_pravila.adapters.system.ids import Uuid7IdGenerator
+from svoi_pravila.adapters.system.inline_result_reuse import InProcessInlineResultReuse
 from svoi_pravila.adapters.system.monotonic import SystemMonotonicClock
 from svoi_pravila.api.app import AppLifecycleHooks, create_app
 from svoi_pravila.api.telegram_webhook import (
@@ -114,6 +115,11 @@ def create_application(settings: Settings) -> FastAPI:
     sink = UnitOfWorkUsageEventSink(uow_factory)
     pseudonymizer = HmacPseudonymizer(settings.pseudonym_pepper_bytes())
     crisis_screen = CrisisScreen.load_ru_v2()
+    inline_reuse = InProcessInlineResultReuse(
+        monotonic,
+        ttl_seconds=float(settings.inline_cache_seconds),
+        max_entries=settings.inline_reuse_max_entries,
+    )
 
     lifecycle = None
     extra_routers: tuple[APIRouter, ...] = ()
@@ -157,6 +163,7 @@ def create_application(settings: Settings) -> FastAPI:
                 ids=ids,
                 pseudonymizer=pseudonymizer,
                 crisis_screen=crisis_screen,
+                reuse=inline_reuse,
                 min_chars=settings.inline_min_chars,
                 deadline_seconds=settings.inline_deadline_seconds,
                 intent_prefixes=help_say_intent_prefixes(strings),
@@ -180,8 +187,8 @@ def create_application(settings: Settings) -> FastAPI:
                 AsyncioSleeper(),
                 debounce_seconds=settings.inline_debounce_ms / 1000.0,
             ),
-            revoke_all_consents=RevokeAllConsents(uow_factory, clock),
-            delete_my_account=DeleteMyAccount(uow_factory, ids, pseudonymizer, clock),
+            revoke_all_consents=RevokeAllConsents(uow_factory, clock, inline_reuse),
+            delete_my_account=DeleteMyAccount(uow_factory, ids, pseudonymizer, clock, inline_reuse),
             export_my_data=ExportMyData(uow_factory, clock),
             confirmation_tokens=ValkeyConfirmationTokens(valkey),
             create_contact=CreateContact(uow_factory, catalog, ids, clock),
@@ -212,7 +219,11 @@ def create_application(settings: Settings) -> FastAPI:
             draft_min_interval_ms=settings.telegram_draft_min_interval_ms,
             inline_cache_seconds=settings.inline_cache_seconds,
         )
-        lifecycle = build_telegram_lifecycle(settings, deps)
+        lifecycle = build_telegram_lifecycle(
+            settings,
+            deps,
+            extra_tasks=lambda: set(inline_reuse.tasks),
+        )
         if settings.telegram_updates_mode is TelegramUpdatesMode.WEBHOOK:
             path_secret = settings.telegram_webhook_path_secret
             secret_token = settings.telegram_webhook_secret_token

@@ -12,9 +12,10 @@ from aiogram.types import (
 from svoi_pravila.adapters.channels.telegram.localization import (
     TelegramStrings,
     relationship_label,
+    rule_category_label,
 )
-from svoi_pravila.domain.enums import ConsentKind, RelationshipKind
-from svoi_pravila.domain.ids import ContactId
+from svoi_pravila.domain.enums import ConsentKind, RelationshipKind, RuleCategory
+from svoi_pravila.domain.ids import ContactId, RuleId
 
 _CALLBACK_DATA_MAX_BYTES = 64
 
@@ -168,3 +169,51 @@ def relationship_keyboard(strings: TelegramStrings) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=relationship_label(strings, kind), callback_data=data)]
         )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def rule_category_keyboard(strings: TelegramStrings) -> InlineKeyboardMarkup:
+    """Category buttons for a new private rule."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for kind in RuleCategory:
+        data = _require_callback_bytes(f"ru:cat:{kind.value}")
+        rows.append(
+            [InlineKeyboardButton(text=rule_category_label(strings, kind), callback_data=data)]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def rules_keyboard(
+    strings: TelegramStrings,
+    rule_ids: tuple[RuleId, ...],
+) -> InlineKeyboardMarkup:
+    """Per-rule archive plus add. Callback data carries ids only."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for rule_id in rule_ids:
+        archive = _require_callback_bytes(f"ru:ar:{rule_id}")
+        rows.append([InlineKeyboardButton(text=strings.rules_archive, callback_data=archive)])
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=strings.rules_add,
+                callback_data=_require_callback_bytes("ru:n"),
+            )
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def archive_rule_confirm_keyboard(
+    strings: TelegramStrings,
+    rule_id: RuleId,
+) -> InlineKeyboardMarkup:
+    """Yes/no archive confirmation. Callback data carries the id only."""
+    yes = _require_callback_bytes(f"ru:ay:{rule_id}")
+    no = _require_callback_bytes("ru:ax")
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=strings.rights_confirm, callback_data=yes),
+                InlineKeyboardButton(text=strings.rights_cancel, callback_data=no),
+            ]
+        ]
+    )

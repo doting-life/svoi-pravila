@@ -51,7 +51,7 @@ class AwaitingDialogText(Filter):
         if message.text.startswith("/"):
             return False
         record = await tg_deps.dialog_state.get(_dialog_pseudonym(tg_deps, message.from_user.id))
-        return record is not None
+        return record is not None and record.step in {"awaiting_label", "awaiting_rename"}
 
 
 def build_contacts_router() -> Router:
@@ -174,7 +174,8 @@ async def dialog_text(message: Message, tg_deps: TelegramDeps) -> None:
     if record.step == "awaiting_label":
         await _finish_label(message, tg_deps, user, record, telegram_user_id)
         return
-    await _finish_rename(message, tg_deps, user, record, telegram_user_id)
+    if record.step == "awaiting_rename":
+        await _finish_rename(message, tg_deps, user, record, telegram_user_id)
 
 
 async def _finish_label(

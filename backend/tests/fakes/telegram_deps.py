@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.inline_scheduler import InlineQueryCoordinator
@@ -12,6 +13,7 @@ from svoi_pravila.adapters.channels.telegram.localization import (
 )
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
+from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.create_contact import CreateContact
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
 from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
@@ -22,6 +24,8 @@ from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserBy
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose, InlineComposePorts
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
+from svoi_pravila.application.use_cases.list_rules import ListRules
+from svoi_pravila.application.use_cases.propose_rule import ProposeRule
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoice
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
@@ -133,8 +137,12 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
         list_contacts=ListContacts(uow, catalog),
         rename_contact=RenameContact(uow, catalog),
         set_active_contact=SetActiveContact(uow, catalog),
+        propose_rule=ProposeRule(uow, catalog, ids, clock),
+        list_rules=ListRules(uow, catalog),
+        archive_rule=ArchiveRule(uow, catalog, clock),
         dialog_state=chosen.dialog or FakeDialogState(),
         clock=clock,
+        display_timezone=ZoneInfo("Europe/Moscow"),
         deduplicator=FakeUpdateDeduplicator(),
         rate_limiter=FakeRateLimiter(limit=chosen.rate_limit),
         pseudonymizer=pseudonymizer,

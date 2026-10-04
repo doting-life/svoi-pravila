@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo
 
 from svoi_pravila.adapters.channels.telegram.inline_scheduler import InlineQueryCoordinator
 from svoi_pravila.adapters.channels.telegram.localization import TelegramStrings
@@ -15,6 +16,7 @@ from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.rate_limiter import RateLimiter
 from svoi_pravila.application.ports.update_deduplicator import UpdateDeduplicator
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
+from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.create_contact import CreateContact
 from svoi_pravila.application.use_cases.decode_incoming import IncomingDecoder
 from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
@@ -25,6 +27,8 @@ from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserBy
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
+from svoi_pravila.application.use_cases.list_rules import ListRules
+from svoi_pravila.application.use_cases.propose_rule import ProposeRule
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoice
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
@@ -54,8 +58,12 @@ class TelegramDeps:
     list_contacts: ListContacts
     rename_contact: RenameContact
     set_active_contact: SetActiveContact
+    propose_rule: ProposeRule
+    list_rules: ListRules
+    archive_rule: ArchiveRule
     dialog_state: DialogState
     clock: Clock
+    display_timezone: ZoneInfo
     deduplicator: UpdateDeduplicator
     rate_limiter: RateLimiter
     pseudonymizer: Pseudonymizer

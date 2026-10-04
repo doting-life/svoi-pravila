@@ -48,7 +48,10 @@ from svoi_pravila.application.use_cases.create_contact import (
     CreateContactCommand,
     CreateContactResult,
 )
-from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramIdQuery
+from svoi_pravila.application.use_cases.get_user_by_telegram_id import (
+    GetUserByTelegramIdQuery,
+    GetUserByTelegramIdResult,
+)
 from svoi_pravila.application.use_cases.list_contacts import ListContactsCommand
 from svoi_pravila.application.use_cases.rename_contact import (
     RenameContact,
@@ -502,3 +505,125 @@ async def test_contacts_handlers_skip_missing_user_and_chat() -> None:
         DialogRecord(step="awaiting_rename", contact_id=ContactId(UUID(int=1))),
     )
     await lifecycle.dispatcher.feed_update(bot, _text_update(10, 509, "AfterRevoke2"))
+
+
+class _HideUser:
+    def __init__(self, inner: object) -> None:
+        self._inner = inner
+
+    async def execute(self, query: GetUserByTelegramIdQuery) -> GetUserByTelegramIdResult:
+        await cast(Any, self._inner).execute(query)
+        return GetUserByTelegramIdResult(user=None)
+
+
+class _HideAfterFirst:
+    def __init__(self, inner: object) -> None:
+        self._inner = inner
+        self._n = 0
+
+    async def execute(self, query: GetUserByTelegramIdQuery) -> GetUserByTelegramIdResult:
+        result = cast(GetUserByTelegramIdResult, await cast(Any, self._inner).execute(query))
+        self._n += 1
+        if self._n > 1:
+            return GetUserByTelegramIdResult(user=None)
+        return result
+
+
+@pytest.mark.unit
+async def test_contacts_onboarding_other_callbacks_and_inaccessible_rename() -> None:
+    uow = InMemoryUnitOfWorkFactory()
+    catalog = FakeConsentCatalog()
+    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    ident = UUID(int=1)
+    await lifecycle.dispatcher.feed_update(bot, _callback(1, 520, f"ct:a:{ident}"))
+    await lifecycle.dispatcher.feed_update(bot, _callback(2, 520, f"ct:r:{ident}"))
+    await lifecycle.dispatcher.feed_update(bot, _callback(3, 520, "ct:rel:friend"))
+    assert deps.strings.age_prompt in _sent_texts(session)
+    await _onboard(bot, lifecycle, 521, catalog)
+    await lifecycle.dispatcher.feed_update(
+        bot,
+        Update(
+            update_id=4,
+            callback_query=CallbackQuery(
+                id="4",
+                from_user=User(id=521, is_bot=False, first_name="A"),
+                chat_instance="x",
+                data=f"ct:r:{ident}",
+                message=InaccessibleMessage(
+                    chat=Chat(id=521, type="private"), message_id=1, date=0
+                ),
+            ),
+        ),
+    )
+
+
+@pytest.mark.unit
+async def test_contacts_actor_missing_after_done() -> None:
+    uow = InMemoryUnitOfWorkFactory()
+    catalog = FakeConsentCatalog()
+    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 522, catalog)
+    await lifecycle.dispatcher.feed_update(bot, _callback(10, 522, "ct:n"))
+    await lifecycle.dispatcher.feed_update(bot, _callback(11, 522, "ct:rel:friend"))
+    await lifecycle.dispatcher.feed_update(bot, _text_update(12, 522, "Sam"))
+    owner = (
+        await deps.get_user_by_telegram_id.execute(GetUserByTelegramIdQuery(TelegramUserId(522)))
+    ).user
+    assert owner is not None
+    listed = await deps.list_contacts.execute(ListContactsCommand(owner.id))
+    contact_id = listed.contacts[0].id
+    after_first = replace(
+        deps,
+        get_user_by_telegram_id=cast(Any, _HideAfterFirst(deps.get_user_by_telegram_id)),
+    )
+    lifecycle = build_telegram_lifecycle(_settings(), after_first, bot=bot)
+    await lifecycle.dispatcher.feed_update(bot, _callback(13, 522, f"ct:a:{contact_id}"))
+    hidden = replace(
+        deps, get_user_by_telegram_id=cast(Any, _HideUser(deps.get_user_by_telegram_id))
+    )
+    lifecycle = build_telegram_lifecycle(_settings(), hidden, bot=bot)
+    await lifecycle.dispatcher.feed_update(bot, _text_update(14, 522, "/contacts"))
+    assert deps.strings.age_prompt in _sent_texts(session)
+
+
+@pytest.mark.unit
+async def test_awaiting_rule_text_is_not_a_contacts_dialog() -> None:
+    uow = InMemoryUnitOfWorkFactory()
+    catalog = FakeConsentCatalog()
+    dialog = FakeDialogState()
+    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, dialog=dialog))
+    await dialog.set(
+        _dialog_key(523),
+        DialogRecord(
+            step="awaiting_rule_text",
+            contact_id=ContactId(UUID(int=1)),
+            category=None,
+        ),
+    )
+    message = Message(
+        message_id=1,
+        date=_NOW,
+        chat=Chat(id=523, type="private"),
+        from_user=User(id=523, is_bot=False, first_name="A"),
+        text="не повышать голос",
+    )
+    assert await AwaitingDialogText()(message, deps) is False
+
+
+@pytest.mark.unit
+async def test_polling_commands_include_rules() -> None:
+    deps = make_telegram_deps()
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await lifecycle.start()
+    await lifecycle.shutdown()
+    commands = next(req for req in session.requests if isinstance(req, SetMyCommands))
+    names = [item.command for item in commands.commands]
+    assert "rules" in names

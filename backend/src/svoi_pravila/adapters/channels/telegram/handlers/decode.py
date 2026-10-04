@@ -12,6 +12,7 @@ from svoi_pravila.adapters.channels.telegram.handlers.onboarding import render_c
 from svoi_pravila.adapters.channels.telegram.localization import TelegramStrings
 from svoi_pravila.adapters.channels.telegram.presenters import (
     TELEGRAM_MESSAGE_MAX,
+    render_applied_rule_citations,
     render_decode_completed,
 )
 from svoi_pravila.application.errors import (
@@ -125,6 +126,14 @@ async def _stream_decode(
                 insert_queries=insert_queries,
             ):
                 await message.answer(text, reply_markup=keyboard)
+            if event.result.safety is SafetyVerdict.OK:
+                for citation in render_applied_rule_citations(
+                    tg_deps.strings,
+                    event.applied_rules,
+                    now=tg_deps.clock.now(),
+                    tz=tg_deps.display_timezone,
+                ):
+                    await message.answer(citation)
 
 
 def _decode_error_reply(exc: ApplicationError, strings: TelegramStrings) -> str | None:

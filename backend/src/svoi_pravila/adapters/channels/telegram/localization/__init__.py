@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from importlib import resources
 
 from svoi_pravila.application.ports.generation import HelpSayIntent
-from svoi_pravila.domain.enums import Firmness, RelationshipKind
+from svoi_pravila.domain.enums import Firmness, RelationshipKind, RuleCategory
 from svoi_pravila.domain.safety import load_data_lines
 
 
@@ -59,6 +59,7 @@ class TelegramStrings:
     commands_revoke: str
     commands_delete: str
     commands_contacts: str
+    commands_rules: str
     commands_cancel: str
     contacts_header: str
     contacts_empty: str
@@ -76,6 +77,23 @@ class TelegramStrings:
     contacts_relationship_friend: str
     contacts_relationship_work: str
     contacts_relationship_other: str
+    rules_header: str
+    rules_empty: str
+    rules_no_active_contact: str
+    rules_add: str
+    rules_archive: str
+    rules_archive_confirm: str
+    rules_proposed_mark: str
+    rules_text_prompt: str
+    rules_invalid_text: str
+    rules_limit: str
+    rules_category_taboo_topic: str
+    rules_category_how_to_ask: str
+    rules_category_apology: str
+    rules_category_conflict_protocol: str
+    rules_category_other: str
+    decode_rule_cited: str
+    inline_rule_cited_prefix: str
     rights_revoke_explain: str
     rights_delete_explain: str
     rights_confirm: str
@@ -132,6 +150,7 @@ _KEYS: dict[str, str] = {
     "commands.revoke": "commands_revoke",
     "commands.delete": "commands_delete",
     "commands.contacts": "commands_contacts",
+    "commands.rules": "commands_rules",
     "commands.cancel": "commands_cancel",
     "contacts.header": "contacts_header",
     "contacts.empty": "contacts_empty",
@@ -149,6 +168,23 @@ _KEYS: dict[str, str] = {
     "contacts.relationship.friend": "contacts_relationship_friend",
     "contacts.relationship.work": "contacts_relationship_work",
     "contacts.relationship.other": "contacts_relationship_other",
+    "rules.header": "rules_header",
+    "rules.empty": "rules_empty",
+    "rules.no_active_contact": "rules_no_active_contact",
+    "rules.add": "rules_add",
+    "rules.archive": "rules_archive",
+    "rules.archive_confirm": "rules_archive_confirm",
+    "rules.proposed_mark": "rules_proposed_mark",
+    "rules.text_prompt": "rules_text_prompt",
+    "rules.invalid_text": "rules_invalid_text",
+    "rules.limit": "rules_limit",
+    "rules.category.taboo_topic": "rules_category_taboo_topic",
+    "rules.category.how_to_ask": "rules_category_how_to_ask",
+    "rules.category.apology": "rules_category_apology",
+    "rules.category.conflict_protocol": "rules_category_conflict_protocol",
+    "rules.category.other": "rules_category_other",
+    "decode.rule_cited": "decode_rule_cited",
+    "inline.rule_cited_prefix": "inline_rule_cited_prefix",
     "rights.revoke_explain": "rights_revoke_explain",
     "rights.delete_explain": "rights_delete_explain",
     "rights.confirm": "rights_confirm",
@@ -206,6 +242,19 @@ def relationship_label(strings: TelegramStrings, kind: RelationshipKind) -> str:
     if kind is RelationshipKind.WORK:
         return strings.contacts_relationship_work
     return strings.contacts_relationship_other
+
+
+def rule_category_label(strings: TelegramStrings, kind: RuleCategory) -> str:
+    """Catalog label for a rule category."""
+    if kind is RuleCategory.TABOO_TOPIC:
+        return strings.rules_category_taboo_topic
+    if kind is RuleCategory.HOW_TO_ASK:
+        return strings.rules_category_how_to_ask
+    if kind is RuleCategory.APOLOGY:
+        return strings.rules_category_apology
+    if kind is RuleCategory.CONFLICT_PROTOCOL:
+        return strings.rules_category_conflict_protocol
+    return strings.rules_category_other
 
 
 def firmness_label(strings: TelegramStrings, firmness: Firmness) -> str:

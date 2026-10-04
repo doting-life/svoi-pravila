@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import base64
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
+from zoneinfo import ZoneInfo
 
 import pytest
 from aiogram import Bot
@@ -47,6 +49,7 @@ from svoi_pravila.application.ports.generation import (
     Variant,
 )
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
+from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.create_contact import CreateContact
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
 from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
@@ -57,6 +60,8 @@ from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserBy
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose, InlineComposePorts
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
+from svoi_pravila.application.use_cases.list_rules import ListRules
+from svoi_pravila.application.use_cases.propose_rule import ProposeRule
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoice
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
@@ -65,6 +70,7 @@ from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
 from svoi_pravila.crypto import HmacPseudonymizer
 from svoi_pravila.domain.enums import ConsentKind, Firmness
 from svoi_pravila.domain.ids import TelegramUserId
+from svoi_pravila.domain.rules import ContactScope
 from tests.factories import make_settings
 from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.telegram_session import FakeTelegramSession
@@ -78,6 +84,47 @@ _SENTINEL_ANALYSIS = "SENTINEL_ANALYSIS_PRIVACY_0006_INT"
 _SENTINEL_HYP = "SENTINEL_HYPOTHESIS_PRIVACY_0006_INT"
 _SENTINEL_VARIANT = "SENTINEL_VARIANT_PRIVACY_0006_INT"
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def _uid_message(uid: int, update_id: int, text: str) -> Update:
+    return Update(
+        update_id=update_id,
+        message=Message(
+            message_id=update_id,
+            date=_NOW,
+            chat=Chat(id=uid, type="private"),
+            from_user=User(id=uid, is_bot=False, first_name="A"),
+            text=text,
+        ),
+    )
+
+
+def _uid_callback(uid: int, update_id: int, data: str) -> Update:
+    return Update(
+        update_id=update_id,
+        callback_query=CallbackQuery(
+            id=str(update_id),
+            from_user=User(id=uid, is_bot=False, first_name="A"),
+            chat_instance="x",
+            data=data,
+            message=Message(
+                message_id=1,
+                date=_NOW,
+                chat=Chat(id=uid, type="private"),
+                from_user=User(id=uid, is_bot=False, first_name="A"),
+                text="p",
+            ),
+        ),
+    )
+
+
+async def _assert_valkey_without_sentinel(valkey: Redis, sentinel: str) -> None:
+    keys = [key async for key in valkey.scan_iter(match="*")]
+    for key in keys:
+        assert sentinel not in str(key)
+        value = await valkey.get(key)
+        rendered = "" if value is None else str(value)
+        assert sentinel not in rendered
 
 
 def _db15_url(valkey_url: str) -> str:
@@ -206,8 +253,12 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
         list_contacts=ListContacts(uow_factory, catalog),
         rename_contact=RenameContact(uow_factory, catalog),
         set_active_contact=SetActiveContact(uow_factory, catalog),
+        propose_rule=ProposeRule(uow_factory, catalog, ids, clock),
+        list_rules=ListRules(uow_factory, catalog),
+        archive_rule=ArchiveRule(uow_factory, catalog, clock),
         dialog_state=ValkeyDialogState(valkey, ttl_seconds=600),
         clock=clock,
+        display_timezone=ZoneInfo("Europe/Moscow"),
         deduplicator=ValkeyUpdateDeduplicator(valkey, ttl_seconds=60),
         rate_limiter=ValkeyRateLimiter(valkey, limit=30, window_seconds=60, key_prefix="tg:rl"),
         pseudonymizer=pepper,
@@ -446,8 +497,12 @@ def _contact_privacy_lifecycle(
         list_contacts=ListContacts(uow_factory, catalog),
         rename_contact=RenameContact(uow_factory, catalog),
         set_active_contact=SetActiveContact(uow_factory, catalog),
+        propose_rule=ProposeRule(uow_factory, catalog, ids, clock),
+        list_rules=ListRules(uow_factory, catalog),
+        archive_rule=ArchiveRule(uow_factory, catalog, clock),
         dialog_state=ValkeyDialogState(valkey, ttl_seconds=600),
         clock=clock,
+        display_timezone=ZoneInfo("Europe/Moscow"),
         deduplicator=ValkeyUpdateDeduplicator(valkey, ttl_seconds=60),
         rate_limiter=ValkeyRateLimiter(valkey, limit=30, window_seconds=60, key_prefix="tg:rl"),
         pseudonymizer=pepper,
@@ -557,5 +612,70 @@ async def test_contact_label_sentinel_only_as_ciphertext(
         assert _LABEL_SENTINEL not in rendered
     blob = " ".join(str(event) for event in capture_log_events())
     assert _LABEL_SENTINEL not in blob
+    await valkey.flushdb()
+    await close_client(valkey)
+
+
+_RULE_SENTINEL = "SENTINEL_RULE_TEXT_0009_INT"
+_RULE_USER_ID = 5550010
+
+
+@pytest.mark.integration
+async def test_rule_text_sentinel_only_as_ciphertext(
+    settings: Settings,
+    engine: AsyncEngine,
+    uow_factory_postgres: SqlAlchemyUnitOfWorkFactory,
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    uow_factory = uow_factory_postgres
+    valkey = create_client(
+        make_settings(
+            database_url=settings.database_url.get_secret_value(),
+            valkey_url=_db15_url(settings.valkey_url.get_secret_value()),
+        )
+    )
+    await valkey.flushdb()
+    lifecycle, bot, catalog, generator = _contact_privacy_lifecycle(settings, uow_factory, valkey)
+    uid = _RULE_USER_ID
+    await lifecycle.dispatcher.feed_update(bot, _uid_message(uid, 1, "/start"))
+    await lifecycle.dispatcher.feed_update(bot, _uid_callback(uid, 2, "age:y"))
+    pd = catalog.current_document(ConsentKind.PERSONAL_DATA)
+    sc = catalog.current_document(ConsentKind.SPECIAL_CATEGORY)
+    await lifecycle.dispatcher.feed_update(
+        bot, _uid_callback(uid, 3, f"cg:personal_data:{pd.version}:y")
+    )
+    await lifecycle.dispatcher.feed_update(
+        bot, _uid_callback(uid, 4, f"cg:special_category:{sc.version}:y")
+    )
+    await lifecycle.dispatcher.feed_update(bot, _uid_callback(uid, 5, "ct:n"))
+    await lifecycle.dispatcher.feed_update(bot, _uid_callback(uid, 6, "ct:rel:friend"))
+    await lifecycle.dispatcher.feed_update(bot, _uid_message(uid, 7, "Sam"))
+    await lifecycle.dispatcher.feed_update(bot, _uid_callback(uid, 8, "ru:n"))
+    await lifecycle.dispatcher.feed_update(bot, _uid_callback(uid, 9, "ru:cat:other"))
+    dialog_keys = [key async for key in valkey.scan_iter(match="tg:dialog:*")]
+    for key in dialog_keys:
+        value = await valkey.get(key)
+        raw = "" if value is None else (value if isinstance(value, str) else value.decode())
+        assert _RULE_SENTINEL not in key and _RULE_SENTINEL not in raw
+        payload = json.loads(raw) if raw else {}
+        assert set(payload) <= {"step", "contact_id", "relationship", "category"}
+    await lifecycle.dispatcher.feed_update(bot, _uid_message(uid, 10, _RULE_SENTINEL))
+    assert generator.decode_stream_calls == []
+    async with engine.connect() as conn:
+        count = (await conn.execute(text("SELECT count(*) FROM usage_events"))).scalar_one()
+        assert count == 0
+        await _assert_no_markers_in_text_columns(conn, (_RULE_SENTINEL,))
+        cipher_rows = (await conn.execute(text("SELECT text_ciphertext FROM rule_revisions"))).all()
+        assert cipher_rows
+        assert all(_RULE_SENTINEL.encode() not in bytes(row[0]) for row in cipher_rows)
+    async with uow_factory() as uow:
+        user = await uow.users.get_by_telegram_id(TelegramUserId(uid))
+        assert user is not None
+        contacts = await uow.contacts.list_for_owner(user.id)
+        rules = await uow.rules.list_for_scope(ContactScope(contact_id=contacts[0].id))
+        assert rules[0].revisions[-1].text.value == _RULE_SENTINEL
+    await _assert_valkey_without_sentinel(valkey, _RULE_SENTINEL)
+    blob = " ".join(str(event) for event in capture_log_events())
+    assert _RULE_SENTINEL not in blob
     await valkey.flushdb()
     await close_client(valkey)

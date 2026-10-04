@@ -100,7 +100,7 @@ def build_router() -> Router:
         await tg_deps.grant_consent.execute(GrantConsentCommand(lookup.user.id, kind, version))
         await _send_current_step(bot, callback, tg_deps, callback.from_user.id)
 
-    @router.callback_query(~F.data.startswith("ct:"))
+    @router.callback_query(~F.data.startswith("ct:") & ~F.data.startswith("ru:"))
     async def any_callback_while_onboarding(
         callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot
     ) -> None:

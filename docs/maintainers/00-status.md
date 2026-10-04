@@ -4,7 +4,7 @@
 
 ## Текущее
 - Дата: 2026-10-03 · Спринт 0 (Фундамент)
-- Активная задача: **0007-a — исправления inline** · ветка `task/0007-inline` · GigaChat 0 токенов
+- Активная задача: **0007-b — сбои фоновых inline-задач** · ветка `task/0007-inline` · GigaChat 0 токенов
 - Живая проверка «Расшифровать» (≤ 3 разбора, ≤ 15 000 токенов) — владелец, на `master` после мержа 0006.2
 - В `master`: 0005 (`4818b1b`), 0006.1 (`b031a29`, CI полностью зелёный, включая `image`). Репозиторий `doting-life/svoi-pravila`
 - В `master` также 0006.2 (`c07bc0a`). Dependabot удалён (решение владельца 04.10); Cursor мержит и пушит по поручению владельца после ACCEPT
@@ -48,7 +48,8 @@
 | 0006.3 | User rights: /revoke, /delete (crypto-shredding, D-7), /export | `task/0006-3-user-rights` | проверен 04.10 | CHANGES REQUIRED: перенесённым правилам задним числом ставится дата вступления = дата предложения (ложная цитата «вы договорились…») |
 | 0006.3-a | Rehomed rule effective dates | `task/0006-3-user-rights` | проверен 04.10 | **ACCEPT** (0006.3 и 0006 целиком) |
 | 0007 | Inline soften/help-say, debounce, prepared results, chosen_inline_result | `task/0007-inline` | проверен 04.10 | CHANGES REQUIRED: не протестированы отбрасывание устаревших результатов и отказ prepared-токена; обход линтера `"p" + "_"`; тестовый метод в боевом коде; параллельные генерации одного пользователя |
-| 0007-a | Inline review fixes | `task/0007-inline` | выдан | — |
+| 0007-a | Inline review fixes | `task/0007-inline` | проверен 04.10 | CHANGES REQUIRED: ожидающий запрос падает вместе с упавшей генерацией (`await flying`); ошибки Telegram при ответе (истёкший запрос) и сбои фоновых задач не обрабатываются и не логируются |
+| 0007-b | Inline background task failures | `task/0007-inline` | выдан | — |
 | 0006.1-b | Image gate: Debian security updates, base digest pin, Dependabot | `task/0006-telegram-channel` | проверен 04.10 | **ACCEPT** (Trivy: 21 CVE → 0) |
 
 ## Решения

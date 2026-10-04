@@ -77,12 +77,15 @@ async def test_access_flow(world: AppWorld) -> None:
     await ConfirmAge(world.uow_factory, world.clock).execute(ConfirmAgeCommand(user.id))
 
     for kind in ConsentKind:
+        version = world.catalog.current_requirement().for_kind(kind).version
         first = await GrantConsent(
             world.uow_factory, world.catalog, world.ids, world.clock
-        ).execute(GrantConsentCommand(user.id, kind))
+        ).execute(GrantConsentCommand(user.id, kind, version))
         second = await GrantConsent(
             world.uow_factory, world.catalog, world.ids, world.clock
-        ).execute(GrantConsentCommand(user.id, kind))
+        ).execute(GrantConsentCommand(user.id, kind, version))
+        assert first.consent is not None
+        assert second.consent is not None
         assert first.consent.id == second.consent.id
 
     granted = (
@@ -165,8 +168,9 @@ async def test_confirm_age_and_grant_consent_missing_user(world: AppWorld) -> No
     with pytest.raises(NotFound):
         await ConfirmAge(world.uow_factory, world.clock).execute(ConfirmAgeCommand(missing))
     with pytest.raises(NotFound):
+        version = world.catalog.current_requirement().for_kind(ConsentKind.PERSONAL_DATA).version
         await GrantConsent(world.uow_factory, world.catalog, world.ids, world.clock).execute(
-            GrantConsentCommand(missing, ConsentKind.PERSONAL_DATA)
+            GrantConsentCommand(missing, ConsentKind.PERSONAL_DATA, version)
         )
 
 
@@ -185,8 +189,8 @@ async def test_grant_consent_after_requirement_bump(world: AppWorld) -> None:
     world.catalog.set_requirement(
         AccessRequirement.from_kinds(
             {
-                ConsentKind.PERSONAL_DATA: ConsentText("pd-v2", Sha256Hex("d" * 64)),
-                ConsentKind.SPECIAL_CATEGORY: ConsentText("sc-v1", Sha256Hex("b" * 64)),
+                ConsentKind.PERSONAL_DATA: ConsentText("2", Sha256Hex("d" * 64)),
+                ConsentKind.SPECIAL_CATEGORY: ConsentText("1", Sha256Hex("b" * 64)),
             }
         )
     )
@@ -197,7 +201,7 @@ async def test_grant_consent_after_requirement_bump(world: AppWorld) -> None:
     ).status
     assert status.granted is False
     await GrantConsent(world.uow_factory, world.catalog, world.ids, world.clock).execute(
-        GrantConsentCommand(user.id, ConsentKind.PERSONAL_DATA)
+        GrantConsentCommand(user.id, ConsentKind.PERSONAL_DATA, "2")
     )
     after = (
         await GetAccessStatus(world.uow_factory, world.catalog).execute(
@@ -205,6 +209,23 @@ async def test_grant_consent_after_requirement_bump(world: AppWorld) -> None:
         )
     ).status
     assert after.granted is True
+
+
+@pytest.mark.unit
+async def test_grant_consent_stale_version_records_nothing(world: AppWorld) -> None:
+    user = (
+        await EnsureUser(world.uow_factory, world.ids, world.clock).execute(
+            EnsureUserCommand(TelegramUserId(6))
+        )
+    ).user
+    await ConfirmAge(world.uow_factory, world.clock).execute(ConfirmAgeCommand(user.id))
+    result = await GrantConsent(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        GrantConsentCommand(user.id, ConsentKind.PERSONAL_DATA, "outdated")
+    )
+    assert result.outcome.value == "stale_version"
+    assert result.consent is None
+    async with world.uow_factory() as uow:
+        assert await uow.consents.list_for_user(user.id) == []
 
 
 class _ConflictOnCreateFactory:

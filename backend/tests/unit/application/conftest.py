@@ -40,8 +40,9 @@ class AppWorld:
             await ConfirmAge(self.uow_factory, self.clock).execute(ConfirmAgeCommand(user.id))
         ).user
         for kind in ConsentKind:
+            version = self.catalog.current_requirement().for_kind(kind).version
             await GrantConsent(self.uow_factory, self.catalog, self.ids, self.clock).execute(
-                GrantConsentCommand(user.id, kind)
+                GrantConsentCommand(user.id, kind, version)
             )
         return user
 

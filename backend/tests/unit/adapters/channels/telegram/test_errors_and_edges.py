@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from aiogram import Bot
+from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramAPIError
-from aiogram.methods import SendMessage
+from aiogram.methods import EditMessageReplyMarkup, SendMessage
 from aiogram.types import (
     CallbackQuery,
     Chat,
@@ -35,7 +36,10 @@ from svoi_pravila.adapters.channels.telegram.errors import telegram_error_handle
 from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
 from svoi_pravila.adapters.channels.telegram.handlers import onboarding as onboarding_handlers
 from svoi_pravila.adapters.channels.telegram.keyboards import consent_keyboard
-from svoi_pravila.adapters.channels.telegram.lifecycle import TelegramLifecycle
+from svoi_pravila.adapters.channels.telegram.lifecycle import (
+    TelegramLifecycle,
+    TelegramRuntimeConfig,
+)
 from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
 from svoi_pravila.adapters.channels.telegram.middlewares.dedup import DedupMiddleware
 from svoi_pravila.adapters.channels.telegram.middlewares.private_chat import (
@@ -234,7 +238,9 @@ async def test_consent_decline_and_help_commands() -> None:
 
 
 @pytest.mark.unit
-async def test_error_handler_send_failure_and_no_chat() -> None:
+async def test_error_handler_send_failure_and_no_chat(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
     deps = _deps()
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
@@ -254,6 +260,8 @@ async def test_error_handler_send_failure_and_no_chat() -> None:
     )
     object.__setattr__(bot, "send_message", failing_send)
     assert await telegram_error_handler(event, bot, deps) is True
+    events = capture_log_events()
+    assert any(event.get("event") == "telegram_error_reply_failed" for event in events)
 
     empty = ErrorEvent(
         update=Update(
@@ -304,11 +312,13 @@ async def test_lifecycle_webhook_requires_url() -> None:
             deps,
             bot=bot,
         ).dispatcher,
-        mode=TelegramUpdatesMode.WEBHOOK,
-        strings=deps.strings,
-        webhook_url=None,
-        webhook_secret_token=None,
-        shutdown_grace_seconds=0.01,
+        config=TelegramRuntimeConfig(
+            mode=TelegramUpdatesMode.WEBHOOK,
+            strings=deps.strings,
+            webhook_url=None,
+            webhook_secret_token=None,
+            shutdown_grace_seconds=0.01,
+        ),
     )
     with pytest.raises(RuntimeError, match="webhook url"):
         await lifecycle.start()
@@ -410,8 +420,11 @@ async def test_onboarding_handler_edges() -> None:
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(settings, deps, bot=bot)
 
-    # /start without from_user is ignored
-    await lifecycle.dispatcher.feed_update(
+    # Bare dispatcher (no outer middleware) to hit handler early-returns.
+    bare = Dispatcher()
+    bare["tg_deps"] = deps
+    bare.include_router(onboarding_handlers.build_router())
+    await bare.feed_update(
         bot,
         Update(
             update_id=50,
@@ -424,7 +437,56 @@ async def test_onboarding_handler_edges() -> None:
             ),
         ),
     )
-    assert session.requests == []
+    await bare.feed_update(
+        bot,
+        Update(
+            update_id=49,
+            message=Message(
+                message_id=1,
+                date=_NOW,
+                chat=Chat(id=49, type="private"),
+                text="hi",
+            ),
+        ),
+    )
+    await bare.feed_update(
+        bot,
+        Update(
+            update_id=59,
+            callback_query=CallbackQuery(
+                id="59",
+                from_user=User(id=59, is_bot=False, first_name="A"),
+                chat_instance="x",
+                data="age:n",
+            ),
+        ),
+    )
+    await bare.feed_update(
+        bot,
+        Update(
+            update_id=70,
+            callback_query=CallbackQuery(
+                id="70",
+                from_user=User(id=70, is_bot=False, first_name="A"),
+                chat_instance="x",
+                data="cg:personal_data:1:n",
+            ),
+        ),
+    )
+    consent_handler = next(
+        handler.callback
+        for handler in onboarding_handlers.build_router().callback_query.handlers
+        if getattr(handler.callback, "__name__", "") == "consent_callback"
+    )
+    null_data = CallbackQuery(
+        id="71",
+        from_user=User(id=71, is_bot=False, first_name="A"),
+        chat_instance="x",
+        data="cg:personal_data:1:y",
+    )
+    object.__setattr__(null_data, "data", None)
+    object.__setattr__(null_data, "answer", AsyncMock())
+    await consent_handler(null_data, deps, bot)
 
     # plain text while still on AGE re-renders the age step
     await lifecycle.dispatcher.feed_update(
@@ -516,3 +578,104 @@ async def test_onboarding_handler_edges() -> None:
     )
     assert onboarding_handlers._callback_chat_id(callback_no_msg) is None
     await onboarding_handlers._send_current_step(bot, callback_no_msg, deps, 55)
+    await onboarding_handlers._clear_callback_keyboard(bot, callback_no_msg)
+
+    callback_with_msg = CallbackQuery(
+        id="56",
+        from_user=User(id=56, is_bot=False, first_name="A"),
+        chat_instance="x",
+        data="age:y",
+        message=Message(
+            message_id=1,
+            date=_NOW,
+            chat=Chat(id=56, type="private"),
+            from_user=User(id=56, is_bot=False, first_name="A"),
+            text="p",
+        ),
+    )
+    failing_edit = AsyncMock(
+        side_effect=TelegramAPIError(
+            method=EditMessageReplyMarkup(chat_id=56, message_id=1),
+            message="too old",
+        )
+    )
+    object.__setattr__(bot, "edit_message_reply_markup", failing_edit)
+    await onboarding_handlers._clear_callback_keyboard(bot, callback_with_msg)
+
+    # Restore edit for subsequent feed_update calls.
+    delattr(bot, "edit_message_reply_markup")
+
+    await lifecycle.dispatcher.feed_update(
+        bot,
+        Update(
+            update_id=58,
+            message=Message(
+                message_id=3,
+                date=_NOW,
+                chat=Chat(id=58, type="private"),
+                from_user=User(id=58, is_bot=False, first_name="A"),
+                text="/help",
+                entities=[MessageEntity(type="bot_command", offset=0, length=5)],
+            ),
+        ),
+    )
+    assert deps.strings.help_body in [str(getattr(req, "text", "")) for req in session.requests]
+
+    # Finish onboarding, then unknown callback while DONE is a no-op beyond answer.
+    await lifecycle.dispatcher.feed_update(
+        bot,
+        Update(
+            update_id=60,
+            message=Message(
+                message_id=1,
+                date=_NOW,
+                chat=Chat(id=60, type="private"),
+                from_user=User(id=60, is_bot=False, first_name="A"),
+                text="/start",
+                entities=[MessageEntity(type="bot_command", offset=0, length=6)],
+            ),
+        ),
+    )
+    await lifecycle.dispatcher.feed_update(
+        bot,
+        Update(
+            update_id=61,
+            callback_query=CallbackQuery(
+                id="61",
+                from_user=User(id=60, is_bot=False, first_name="A"),
+                chat_instance="x",
+                data="age:y",
+                message=Message(
+                    message_id=1,
+                    date=_NOW,
+                    chat=Chat(id=60, type="private"),
+                    from_user=User(id=60, is_bot=False, first_name="A"),
+                    text="p",
+                ),
+            ),
+        ),
+    )
+    for update_id, data in (
+        (62, "cg:personal_data:1:y"),
+        (63, "cg:special_category:1:y"),
+        (64, "unknown:done"),
+    ):
+        await lifecycle.dispatcher.feed_update(
+            bot,
+            Update(
+                update_id=update_id,
+                callback_query=CallbackQuery(
+                    id=str(update_id),
+                    from_user=User(id=60, is_bot=False, first_name="A"),
+                    chat_instance="x",
+                    data=data,
+                    message=Message(
+                        message_id=1,
+                        date=_NOW,
+                        chat=Chat(id=60, type="private"),
+                        from_user=User(id=60, is_bot=False, first_name="A"),
+                        text="p",
+                    ),
+                ),
+            ),
+        )

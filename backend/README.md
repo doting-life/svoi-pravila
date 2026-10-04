@@ -55,6 +55,6 @@ Local delivery uses **polling**. Webhook mode is for VPS/staging/production (tas
 4. Open the bot in Telegram and send `/start`.
 5. Confirm «Мне есть 18», then accept both consent screens.
 6. Read the completion notice (what we store / don’t store, «via @bot», commands).
-7. Send `/help` and a plain text message — both should show the help text for this build (`/start`, `/help` only).
+7. Send `/help` and a plain text message — both should show the help text (`/start`, `/help` only).
 
 Without a bot token, automated tests still cover the channel; manual smoke is skipped.

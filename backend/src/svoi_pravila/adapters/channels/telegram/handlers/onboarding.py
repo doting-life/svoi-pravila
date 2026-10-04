@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import structlog
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message
 
@@ -25,6 +27,8 @@ from svoi_pravila.application.use_cases.grant_consent import (
 from svoi_pravila.domain.enums import ConsentKind
 from svoi_pravila.domain.ids import TelegramUserId
 
+logger = structlog.get_logger(__name__)
+
 
 def build_router() -> Router:
     """Create the private-chat router for onboarding and help."""
@@ -40,8 +44,8 @@ def build_router() -> Router:
     async def help_command(message: Message, tg_deps: TelegramDeps) -> None:
         await message.answer(tg_deps.strings.help_body)
 
-    @router.message(F.text)
-    async def plain_text(message: Message, tg_deps: TelegramDeps) -> None:
+    @router.message()
+    async def any_private_message(message: Message, tg_deps: TelegramDeps) -> None:
         if message.from_user is None:
             return
         step = await tg_deps.get_onboarding_step.execute(
@@ -54,6 +58,7 @@ def build_router() -> Router:
 
     @router.callback_query(F.data == "age:y")
     async def age_yes(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> None:
+        await _clear_callback_keyboard(bot, callback)
         await tg_deps.accept_age.execute(
             AcceptAgeConfirmationCommand(TelegramUserId(callback.from_user.id))
         )
@@ -62,6 +67,7 @@ def build_router() -> Router:
 
     @router.callback_query(F.data == "age:n")
     async def age_no(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> None:
+        await _clear_callback_keyboard(bot, callback)
         await callback.answer()
         chat_id = _callback_chat_id(callback)
         if chat_id is not None:
@@ -72,6 +78,7 @@ def build_router() -> Router:
         if callback.data is None:
             return
         parsed = _parse_consent_callback(callback.data)
+        await _clear_callback_keyboard(bot, callback)
         await callback.answer()
         if parsed is None:
             return
@@ -103,6 +110,23 @@ def build_router() -> Router:
             await _send_current_step(bot, callback, tg_deps, callback.from_user.id)
 
     return router
+
+
+async def _clear_callback_keyboard(bot: Bot, callback: CallbackQuery) -> None:
+    message = callback.message
+    if not isinstance(message, Message):
+        return
+    try:
+        await bot.edit_message_reply_markup(
+            chat_id=message.chat.id,
+            message_id=message.message_id,
+            reply_markup=None,
+        )
+    except TelegramAPIError as exc:
+        logger.info(
+            "telegram_keyboard_clear_failed",
+            exception_class=type(exc).__name__,
+        )
 
 
 async def _send_current_step(

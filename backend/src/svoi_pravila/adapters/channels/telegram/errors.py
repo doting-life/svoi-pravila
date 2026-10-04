@@ -27,10 +27,16 @@ async def telegram_error_handler(event: ErrorEvent, bot: Bot, tg_deps: TelegramD
     )
     chat_id = _chat_id(event)
     if chat_id is not None:
+        reply_error_class: str | None = None
         try:
             await bot.send_message(chat_id, tg_deps.strings.error_generic)
-        except TelegramAPIError:
-            return True
+        except TelegramAPIError as exc:
+            reply_error_class = type(exc).__name__
+        if reply_error_class is not None:
+            logger.error(
+                "telegram_error_reply_failed",
+                exception_class=reply_error_class,
+            )
     return True
 
 

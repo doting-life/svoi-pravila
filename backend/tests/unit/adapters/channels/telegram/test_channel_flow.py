@@ -7,8 +7,14 @@ from datetime import UTC, datetime
 
 import pytest
 from aiogram import Bot
-from aiogram.methods import DeleteWebhook, SendMessage, SetMyCommands, SetWebhook
-from aiogram.types import CallbackQuery, Chat, Message, Update, User
+from aiogram.methods import (
+    DeleteWebhook,
+    EditMessageReplyMarkup,
+    SendMessage,
+    SetMyCommands,
+    SetWebhook,
+)
+from aiogram.types import CallbackQuery, Chat, Message, PhotoSize, Update, User
 from tests.factories import make_settings
 from tests.fakes.clock import FakeClock
 from tests.fakes.consent_catalog import FakeConsentCatalog
@@ -229,6 +235,55 @@ async def test_onboarding_accept_and_decline_paths() -> None:
     await lifecycle.dispatcher.feed_update(bot, _callback(8, 31, "cg:personal_data:999:y"))
     await lifecycle.dispatcher.feed_update(bot, _private_message(9, 31, "hello sentinel"))
     assert deps.strings.help_body in _sent_texts(session)
+
+
+@pytest.mark.unit
+async def test_non_text_message_renders_onboarding_step() -> None:
+    deps, _uow, _catalog = _world()
+    session = FakeTelegramSession()
+    settings = make_settings(
+        environment=Environment.LOCAL,
+        telegram_updates_mode=TelegramUpdatesMode.POLLING,
+        telegram_bot_token="1:TEST",
+    )
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(settings, deps, bot=bot)
+    update = Update(
+        update_id=100,
+        message=Message(
+            message_id=1,
+            date=_NOW,
+            chat=Chat(id=77, type="private"),
+            from_user=User(id=77, is_bot=False, first_name="A"),
+            photo=[
+                PhotoSize(file_id="x", file_unique_id="y", width=1, height=1),
+            ],
+        ),
+    )
+    await lifecycle.dispatcher.feed_update(bot, update)
+    assert any(isinstance(req, SendMessage) for req in session.requests)
+    assert deps.strings.age_prompt in _sent_texts(session)
+
+    await lifecycle.dispatcher.feed_update(bot, _callback(101, 77, "age:y"))
+    before = len(_sent_texts(session))
+    await lifecycle.dispatcher.feed_update(bot, _private_message(102, 77, "still onboarding"))
+    assert len(_sent_texts(session)) > before
+
+
+@pytest.mark.unit
+async def test_onboarding_clears_inline_keyboard() -> None:
+    deps, _uow, _catalog = _world()
+    session = FakeTelegramSession()
+    settings = make_settings(
+        environment=Environment.LOCAL,
+        telegram_updates_mode=TelegramUpdatesMode.POLLING,
+        telegram_bot_token="1:TEST",
+    )
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(settings, deps, bot=bot)
+    await lifecycle.dispatcher.feed_update(bot, _private_message(1, 88, "/start"))
+    await lifecycle.dispatcher.feed_update(bot, _callback(2, 88, "age:n"))
+    assert any(isinstance(req, EditMessageReplyMarkup) for req in session.requests)
 
 
 @pytest.mark.unit

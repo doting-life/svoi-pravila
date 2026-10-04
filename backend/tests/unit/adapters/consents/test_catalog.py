@@ -24,9 +24,16 @@ def test_package_consent_catalog_loads_v1() -> None:
         assert "lorem" not in document.text.lower()
         raw = (
             importlib.resources.files("svoi_pravila.adapters.consents")
-            .joinpath(kind.value, "v1.md")
+            .joinpath(kind.value, "v1.txt")
             .read_bytes()
         )
         assert document.sha256.value == hashlib.sha256(raw).hexdigest()
         assert requirement.for_kind(kind).version == document.version
         assert requirement.for_kind(kind).sha256 == document.sha256
+        assert "#" not in document.text
+        assert "/revoke" in document.text
+        assert "/delete" in document.text
+        assert "/export" in document.text
+    special = catalog.current_document(ConsentKind.SPECIAL_CATEGORY)
+    assert "GigaChat" in special.text
+    assert "ПАО Сбербанк" in special.text

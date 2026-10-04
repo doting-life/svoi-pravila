@@ -1,4 +1,4 @@
-"""Consent catalog backed by versioned package markdown resources."""
+"""Consent catalog backed by versioned package plain-text resources."""
 
 from __future__ import annotations
 
@@ -12,11 +12,11 @@ from svoi_pravila.domain.consent_document import ConsentDocument
 from svoi_pravila.domain.enums import ConsentKind
 from svoi_pravila.domain.text import Sha256Hex
 
-_VERSION_RE = re.compile(r"^v(\d+)\.md$")
+_VERSION_RE = re.compile(r"^v(\d+)\.txt$")
 
 
 class PackageConsentCatalog:
-    """Load consent texts from ``adapters.consents.<kind>.vN.md`` package data."""
+    """Load consent texts from ``adapters.consents.<kind>.vN.txt`` package data."""
 
     def current_requirement(self) -> AccessRequirement:
         """Return version+hash for every consent kind."""

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from datetime import UTC, datetime
 from urllib.parse import urlsplit, urlunsplit
 
@@ -16,10 +17,16 @@ from svoi_pravila.adapters.cache.client import close_client, create_client
 from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
 from svoi_pravila.adapters.cache.confirmation_tokens import ValkeyConfirmationTokens
 from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
+from svoi_pravila.adapters.cache.prepared_results import ValkeyPreparedResults
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
-from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
+from svoi_pravila.adapters.channels.telegram.inline_scheduler import InlineQueryCoordinator
+from svoi_pravila.adapters.channels.telegram.localization import (
+    help_say_intent_prefixes,
+    load_ru_strings,
+)
+from svoi_pravila.adapters.channels.telegram.sleeper import AsyncioSleeper
 from svoi_pravila.adapters.consents import PackageConsentCatalog
 from svoi_pravila.adapters.persistence.uow import SqlAlchemyUnitOfWorkFactory
 from svoi_pravila.adapters.persistence.usage_sink import UnitOfWorkUsageEventSink
@@ -28,7 +35,6 @@ from svoi_pravila.adapters.system.ids import Uuid7IdGenerator
 from svoi_pravila.adapters.system.monotonic import SystemMonotonicClock
 from svoi_pravila.application.ports.generation import (
     DecodeResult,
-    Firmness,
     GenerationMeta,
     SafetyVerdict,
     TokenUsage,
@@ -42,10 +48,12 @@ from svoi_pravila.application.use_cases.get_consent_document import GetConsentDo
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
+from svoi_pravila.application.use_cases.inline_compose import InlineCompose, InlineComposePorts
+from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoice
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
 from svoi_pravila.crypto import HmacPseudonymizer
-from svoi_pravila.domain.enums import ConsentKind
+from svoi_pravila.domain.enums import ConsentKind, Firmness
 from tests.factories import make_settings
 from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.telegram_session import FakeTelegramSession
@@ -112,6 +120,8 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
     monotonic = SystemMonotonicClock()
     ids = Uuid7IdGenerator()
     pepper = HmacPseudonymizer(settings.pseudonym_pepper_bytes())
+    strings = load_ru_strings()
+    sink = UnitOfWorkUsageEventSink(uow_factory)
     decode = DecodeIncoming(
         DecodeIncomingPorts(
             uow_factory=uow_factory,
@@ -137,7 +147,7 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             quota=ValkeyRateLimiter(
                 valkey, limit=20, window_seconds=3600, key_prefix="tg:decode:quota"
             ),
-            sink=UnitOfWorkUsageEventSink(uow_factory),
+            sink=sink,
             clock=clock,
             monotonic=monotonic,
             ids=ids,
@@ -145,14 +155,36 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             deadline_seconds=45.0,
         )
     )
+    compose = InlineCompose(
+        InlineComposePorts(
+            uow_factory=uow_factory,
+            catalog=catalog,
+            generator=FakeTextGenerator(),
+            quota=ValkeyRateLimiter(
+                valkey, limit=30, window_seconds=3600, key_prefix="tg:inline:quota"
+            ),
+            sink=sink,
+            clock=clock,
+            monotonic=monotonic,
+            ids=ids,
+            pseudonymizer=pepper,
+            min_chars=8,
+            deadline_seconds=8.0,
+            intent_prefixes=help_say_intent_prefixes(strings),
+        )
+    )
     deps = TelegramDeps(
-        strings=load_ru_strings(),
+        strings=strings,
         get_onboarding_step=GetOnboardingStep(uow_factory, catalog),
         get_user_by_telegram_id=GetUserByTelegramId(uow_factory),
         accept_age=AcceptAgeConfirmation(uow_factory, ids, clock),
         grant_consent=GrantConsent(uow_factory, catalog, ids, clock),
         get_consent_document=GetConsentDocument(catalog),
         decode_incoming=decode,
+        inline_compose=compose,
+        record_inline_choice=RecordInlineChoice(sink, clock, ids, pepper),
+        prepared_results=ValkeyPreparedResults(valkey, ttl_seconds=600),
+        inline_queries=InlineQueryCoordinator(AsyncioSleeper(), debounce_seconds=0.0),
         revoke_all_consents=RevokeAllConsents(uow_factory, clock),
         delete_my_account=DeleteMyAccount(uow_factory, ids, pepper, clock),
         export_my_data=ExportMyData(uow_factory, clock),
@@ -163,6 +195,7 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
         pseudonymizer=pepper,
         monotonic=monotonic,
         draft_min_interval_ms=50,
+        inline_cache_seconds=30,
     )
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
@@ -312,6 +345,10 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
         rendered = "" if value is None else str(value)
         for marker in markers:
             assert marker not in rendered
+        if str(key).startswith("tg:prepared:") and isinstance(value, str):
+            raw = base64.b64decode(value)
+            for marker in markers:
+                assert marker.encode("utf-8") not in raw
 
     await valkey.flushdb()
     await close_client(valkey)

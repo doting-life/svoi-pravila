@@ -7,6 +7,7 @@ from aiogram import Bot, Dispatcher
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.errors import telegram_error_handler
 from svoi_pravila.adapters.channels.telegram.handlers.decode import build_decode_router
+from svoi_pravila.adapters.channels.telegram.handlers.inline import build_inline_router
 from svoi_pravila.adapters.channels.telegram.handlers.onboarding import build_router
 from svoi_pravila.adapters.channels.telegram.handlers.rights import build_rights_router
 from svoi_pravila.adapters.channels.telegram.lifecycle import (
@@ -44,6 +45,7 @@ def build_telegram_lifecycle(
     dispatcher.include_router(build_rights_router())
     dispatcher.include_router(build_router())
     dispatcher.include_router(build_decode_router())
+    dispatcher.include_router(build_inline_router())
     dispatcher.errors.register(telegram_error_handler)
 
     webhook_url = None
@@ -70,5 +72,6 @@ def build_telegram_lifecycle(
             webhook_url=webhook_url,
             webhook_secret_token=webhook_secret,
             shutdown_grace_seconds=settings.telegram_shutdown_grace_seconds,
+            inline_queries=deps.inline_queries,
         ),
     )

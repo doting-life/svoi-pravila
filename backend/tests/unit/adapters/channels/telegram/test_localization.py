@@ -16,6 +16,8 @@ def test_load_ru_strings_succeeds() -> None:
     assert strings.age_button_yes
     assert strings.help_body
     assert strings.decode_copy
+    assert strings.decode_insert
+    assert strings.inline_prefix_decline
 
 
 @pytest.mark.unit

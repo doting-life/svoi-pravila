@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from svoi_pravila.adapters.channels.telegram.inline_scheduler import InlineQueryCoordinator
 from svoi_pravila.adapters.channels.telegram.localization import TelegramStrings
 from svoi_pravila.application.ports.clock import Clock
 from svoi_pravila.application.ports.confirmation_tokens import ConfirmationTokens
 from svoi_pravila.application.ports.monotonic import MonotonicClock
+from svoi_pravila.application.ports.prepared_results import PreparedResults
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.rate_limiter import RateLimiter
 from svoi_pravila.application.ports.update_deduplicator import UpdateDeduplicator
@@ -19,6 +21,8 @@ from svoi_pravila.application.use_cases.get_consent_document import GetConsentDo
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
+from svoi_pravila.application.use_cases.inline_compose import InlineCompose
+from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoice
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 
 
@@ -33,6 +37,10 @@ class TelegramDeps:
     grant_consent: GrantConsent
     get_consent_document: GetConsentDocument
     decode_incoming: IncomingDecoder
+    inline_compose: InlineCompose
+    record_inline_choice: RecordInlineChoice
+    prepared_results: PreparedResults
+    inline_queries: InlineQueryCoordinator
     revoke_all_consents: RevokeAllConsents
     delete_my_account: DeleteMyAccount
     export_my_data: ExportMyData
@@ -43,3 +51,4 @@ class TelegramDeps:
     pseudonymizer: Pseudonymizer
     monotonic: MonotonicClock
     draft_min_interval_ms: int
+    inline_cache_seconds: int

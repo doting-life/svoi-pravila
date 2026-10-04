@@ -53,7 +53,6 @@ from svoi_pravila.application.ports.generation import (
     DecodeCompleted,
     DecodeEvent,
     DecodeResult,
-    Firmness,
     GenerationMeta,
     SafetyVerdict,
     TokenUsage,
@@ -62,7 +61,7 @@ from svoi_pravila.application.ports.generation import (
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncomingCommand
 from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
 from svoi_pravila.domain.access import AccessStatus
-from svoi_pravila.domain.enums import ConsentKind
+from svoi_pravila.domain.enums import ConsentKind, Firmness
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -411,6 +410,8 @@ def test_render_decode_safety_and_copy_truncation() -> None:
         ),
     )
     assert render_decode_completed(strings, hypo_only, copy_max=256) == (("only-h", None),)
+    with pytest.raises(ValueError, match="insert_queries"):
+        render_decode_completed(strings, hypo_only, copy_max=256, insert_queries=("x",))
     underlying_only = DecodeCompleted(
         analysis="",
         result=DecodeResult(

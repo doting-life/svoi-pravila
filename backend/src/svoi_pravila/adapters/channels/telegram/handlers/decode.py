@@ -26,7 +26,8 @@ from svoi_pravila.application.errors import (
     ScenarioBusy,
     ScenarioQuotaExceeded,
 )
-from svoi_pravila.application.ports.generation import AnalysisChunk, DecodeCompleted
+from svoi_pravila.application.ports.generation import AnalysisChunk, DecodeCompleted, SafetyVerdict
+from svoi_pravila.application.ports.prepared_results import PreparedVariant
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncomingCommand
 from svoi_pravila.application.use_cases.get_onboarding_step import (
     GetOnboardingStepQuery,
@@ -116,10 +117,12 @@ async def _stream_decode(
             continue
         if isinstance(event, DecodeCompleted):
             await draft.consider(bot, tg_deps.monotonic.monotonic(), force=True)
+            insert_queries = await _store_insert_tokens(tg_deps, message.from_user.id, event)
             for text, keyboard in render_decode_completed(
                 tg_deps.strings,
                 event,
                 copy_max=_COPY_MAX,
+                insert_queries=insert_queries,
             ):
                 await message.answer(text, reply_markup=keyboard)
 
@@ -138,3 +141,28 @@ def _decode_error_reply(exc: ApplicationError, strings: TelegramStrings) -> str 
         if isinstance(exc, error_type):
             return reply
     return None
+
+
+_PREPARED_PURPOSE = "prepared"
+
+
+async def _store_insert_tokens(
+    tg_deps: TelegramDeps,
+    telegram_user_id: int,
+    completed: DecodeCompleted,
+) -> tuple[str | None, ...]:
+    result = completed.result
+    if result.safety is not SafetyVerdict.OK:
+        return tuple(None for _ in result.variants)
+    pseudonym = tg_deps.pseudonymizer.pseudonymize(_PREPARED_PURPOSE, str(telegram_user_id))
+    tokens: list[str | None] = []
+    for variant in result.variants:
+        if not variant.text:
+            tokens.append(None)
+            continue
+        token = await tg_deps.prepared_results.store(
+            pseudonym,
+            PreparedVariant(firmness=variant.firmness, text=variant.text),
+        )
+        tokens.append(token)
+    return tuple(tokens)

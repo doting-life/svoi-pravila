@@ -7,7 +7,7 @@ from aiogram.types import InlineKeyboardMarkup
 from svoi_pravila.adapters.channels.telegram.keyboards import (
     age_keyboard,
     consent_keyboard,
-    copy_text_markup,
+    variant_reply_markup,
 )
 from svoi_pravila.adapters.channels.telegram.localization import TelegramStrings
 from svoi_pravila.application.ports.generation import DecodeCompleted, SafetyVerdict
@@ -63,6 +63,7 @@ def render_decode_completed(
     completed: DecodeCompleted,
     *,
     copy_max: int,
+    insert_queries: tuple[str | None, ...] | None = None,
 ) -> tuple[tuple[str, InlineKeyboardMarkup | None], ...]:
     """Final decode messages: analysis, hypotheses, then one message per variant."""
     result = completed.result
@@ -76,13 +77,23 @@ def render_decode_completed(
     hypo_parts = [item for item in (*result.hypotheses, result.underlying_request) if item]
     if hypo_parts:
         messages.append(("\n\n".join(hypo_parts)[:TELEGRAM_MESSAGE_MAX], None))
-    for variant in result.variants:
+    inserts = insert_queries
+    if inserts is not None and len(inserts) != len(result.variants):
+        msg = "insert_queries must match variants"
+        raise ValueError(msg)
+    for index, variant in enumerate(result.variants):
         if not variant.text:
             continue
+        insert = None if inserts is None else inserts[index]
         messages.append(
             (
                 variant.text[:TELEGRAM_MESSAGE_MAX],
-                copy_text_markup(strings, variant.text, copy_max=copy_max),
+                variant_reply_markup(
+                    strings,
+                    variant.text,
+                    copy_max=copy_max,
+                    insert_query=insert,
+                ),
             )
         )
     return tuple(messages)

@@ -4,7 +4,9 @@
 
 ## Текущее
 - Дата: 2026-10-03 · Спринт 0 (Фундамент)
-- Активная задача: **0006.1 — канал Telegram, события использования, онбординг** · ветка `task/0006-telegram-channel` · **без вызовов GigaChat**; ждёт мерж 0005 и тестовый бот (владелец)
+- Активная задача: **0006.1-a — исправления канала Telegram** · ветка `task/0006-telegram-channel` · **без вызовов GigaChat**
+- 0005 влит в `master` (`4818b1b`, дерево совпадает с веткой, CTO-доки целы); удалённого репозитория нет — CI не запускался (D-10)
+- Тестовый бот создан, токен в локальном `.env` (владелец, 04.10)
 - Модели (ADR-0006 ред. 1.2): «Смягчить», «Помоги сказать» — GigaChat-3-Lightning; «Расшифровать» — GigaChat-2-Pro
 - Правило с 04.10 (владелец): ключ разработки жёстко ограничен по токенам; живые вызовы — только с бюджетом в промпте (`60-live-provider-budget`)
 - Риск: лимиты GigaChat (429) на личном ключе мешают полным прогонам — владелец проверяет остаток и лимиты в кабинете
@@ -36,7 +38,8 @@
 | 0005-e | Token budget guard, metric fixes, decode surface removal, model defaults | `task/0005-llm-gigachat` | проверен 04.10 | CHANGES REQUIRED (мелкие): нет `max_tokens` в запросах, необязательный учёт в ошибках, HTTP-детали в слое application, регресс покрытия 100 % → мёртвые ветки; 0 токенов |
 | 0005-f | Output caps, strict accounting, dead-branch cleanup | `task/0005-llm-gigachat` | проверен 04.10 | адаптер принят; CHANGES REQUIRED в бенчмарке: перехват 429/записи через подмену приватного `_transport` не работает при HTTP-прокси (тест красный у CTO), `out_writer` 93 % |
 | 0005-g | Bench HTTP observation via public httpx hooks | `task/0005-llm-gigachat` | проверен 04.10 | **ACCEPT** (0005 целиком) |
-| 0006.1 | Telegram channel foundation, usage events, onboarding | `task/0006-telegram-channel` | выдан | — |
+| 0006.1 | Telegram channel foundation, onboarding | `task/0006-telegram-channel` | проверен 04.10 | CHANGES REQUIRED: гейты красные без ручных переопределений окружения (миграции и тесты требуют токен бота); нераскрытые подавления; согласия отображаются с сырой Markdown-разметкой и не называют GigaChat |
+| 0006.1-a | Telegram channel review fixes | `task/0006-telegram-channel` | выдан | — |
 
 ## Решения
 | № | Решение | Статус |

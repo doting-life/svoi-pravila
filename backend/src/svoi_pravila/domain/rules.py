@@ -200,15 +200,17 @@ class Rule:
         remaining_id: UserId,
         contact_id: ContactId,
         new_id: RuleId,
+        now: datetime,
     ) -> Rule | None:
         """Copy remaining-member revisions onto a new private contact-scope rule.
 
         Revision numbers are re-based from 1. Approvers become ``{remaining_id}``.
-        A sole remaining approver fully approves every kept revision, so a missing
-        ``effective_since`` is filled with ``proposed_at``. ARCHIVED is preserved;
+        Already-effective revisions keep ``effective_since``. Pending revisions
+        take effect at ``now`` (the leave moment). ARCHIVED is preserved;
         other sources become ACTIVE. Returns ``None`` when the remaining member
         authored no revisions.
         """
+        require_utc(now)
         kept = [revision for revision in source.revisions if revision.author_id == remaining_id]
         if not kept:
             return None
@@ -219,7 +221,7 @@ class Rule:
                 author_id=remaining_id,
                 proposed_at=revision.proposed_at,
                 approved_by=frozenset({remaining_id}),
-                effective_since=revision.effective_since or revision.proposed_at,
+                effective_since=revision.effective_since or now,
             )
             for index, revision in enumerate(kept, start=1)
         )

@@ -154,7 +154,7 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
         get_consent_document=GetConsentDocument(catalog),
         decode_incoming=decode,
         revoke_all_consents=RevokeAllConsents(uow_factory, clock),
-        delete_my_account=DeleteMyAccount(uow_factory, ids, pepper),
+        delete_my_account=DeleteMyAccount(uow_factory, ids, pepper, clock),
         export_my_data=ExportMyData(uow_factory, clock),
         confirmation_tokens=ValkeyConfirmationTokens(valkey),
         clock=clock,

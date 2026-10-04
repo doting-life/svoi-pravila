@@ -106,7 +106,7 @@ async def test_leave_pair_rehomes_remaining_authored_rules(world: AppWorld) -> N
     await ApproveRule(world.uow_factory, world.catalog, world.clock).execute(
         ApproveRuleCommand(inviter.id, invitee_shared.rule.id)
     )
-    await LeavePair(world.uow_factory, world.ids).execute(
+    await LeavePair(world.uow_factory, world.ids, world.clock).execute(
         LeavePairCommand(inviter.id, accepted.pair.id)
     )
     async with world.uow_factory() as uow:
@@ -129,7 +129,7 @@ async def test_leave_pair_rehomes_remaining_authored_rules(world: AppWorld) -> N
 @pytest.mark.unit
 async def test_leave_pair_not_found_and_open_limit(world: AppWorld) -> None:
     with pytest.raises(NotFound):
-        await LeavePair(world.uow_factory, world.ids).execute(
+        await LeavePair(world.uow_factory, world.ids, world.clock).execute(
             LeavePairCommand(UserId(UUID(int=1)), PairId(UUID(int=2)))
         )
     inviter, invitee, _contact, accepted = await _pair_world(world)
@@ -156,7 +156,7 @@ async def test_leave_pair_not_found_and_open_limit(world: AppWorld) -> None:
             )
         )
     with pytest.raises(OpenRuleLimitReached):
-        await LeavePair(world.uow_factory, world.ids).execute(
+        await LeavePair(world.uow_factory, world.ids, world.clock).execute(
             LeavePairCommand(inviter.id, accepted.pair.id)
         )
 
@@ -174,10 +174,12 @@ async def test_leave_pair_not_member_and_missing_remaining_contact(world: AppWor
         await uow.pairs.add(pair)
         await uow.commit()
     with pytest.raises(NotFound):
-        await LeavePair(world.uow_factory, world.ids).execute(LeavePairCommand(inviter.id, pair.id))
+        await LeavePair(world.uow_factory, world.ids, world.clock).execute(
+            LeavePairCommand(inviter.id, pair.id)
+        )
     outsider = await world.ensure_granted_user(72)
     with pytest.raises(NotFound):
-        await LeavePair(world.uow_factory, world.ids).execute(
+        await LeavePair(world.uow_factory, world.ids, world.clock).execute(
             LeavePairCommand(outsider.id, pair.id)
         )
     async with world.uow_factory() as uow:
@@ -193,7 +195,9 @@ async def test_leave_pair_not_member_and_missing_remaining_contact(world: AppWor
         )
         await uow.contacts.add(contact)
         await uow.commit()
-    await LeavePair(world.uow_factory, world.ids).execute(LeavePairCommand(inviter.id, pair.id))
+    await LeavePair(world.uow_factory, world.ids, world.clock).execute(
+        LeavePairCommand(inviter.id, pair.id)
+    )
 
 
 @pytest.mark.unit
@@ -297,7 +301,7 @@ async def test_delete_and_export(world: AppWorld) -> None:
     assert "together" in blob
     assert "partner only" not in blob
 
-    deleter = DeleteMyAccount(world.uow_factory, world.ids, pseudo)
+    deleter = DeleteMyAccount(world.uow_factory, world.ids, pseudo, world.clock)
     missing = await deleter.execute(DeleteMyAccountCommand(TelegramUserId(777)))
     assert missing.found is False
     gone = await deleter.execute(DeleteMyAccountCommand(inviter.telegram_user_id))

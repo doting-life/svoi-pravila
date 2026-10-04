@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from svoi_pravila.application.ports.clock import Clock
 from svoi_pravila.application.ports.id_generator import IdGenerator
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
@@ -36,10 +37,12 @@ class DeleteMyAccount:
         uow_factory: UnitOfWorkFactory,
         ids: IdGenerator,
         pseudonymizer: Pseudonymizer,
+        clock: Clock,
     ) -> None:
         self._uow_factory = uow_factory
         self._ids = ids
         self._pseudonymizer = pseudonymizer
+        self._clock = clock
 
     async def execute(self, command: DeleteMyAccountCommand) -> DeleteMyAccountResult:
         """Leave pairs, delete owned data, shred DEK, delete the user row."""
@@ -47,6 +50,7 @@ class DeleteMyAccount:
             _ANALYTICS_PURPOSE,
             str(command.telegram_user_id.value),
         )
+        now = self._clock.now()
         async with self._uow_factory() as uow:
             user = await uow.users.get_by_telegram_id(command.telegram_user_id)
             if user is None:
@@ -57,6 +61,7 @@ class DeleteMyAccount:
                     self._ids,
                     actor_id=user.id,
                     pair=pair,
+                    now=now,
                 )
             if user.active_contact_id is not None:
                 await uow.users.update(user.clear_active_contact())

@@ -228,17 +228,20 @@ def test_rehome_authored_to_contact_copies_remaining_revisions() -> None:
         remaining_id=PARTNER,
         contact_id=contact,
         new_id=RuleId(UUID(int=99)),
+        now=NOW + timedelta(days=1),
     )
     assert copied is not None
     assert copied.status is RuleStatus.ACTIVE
     assert copied.scope == ContactScope(contact_id=contact)
     assert copied.revisions[0].text.value == "partner edit"
+    assert copied.revisions[0].effective_since == NOW + timedelta(days=1)
     assert copied.approvers == frozenset({PARTNER})
     missing = Rule.rehome_authored_to_contact(
         pair_rule,
         remaining_id=STRANGER,
         contact_id=contact,
         new_id=RuleId(UUID(int=100)),
+        now=NOW + timedelta(days=1),
     )
     assert missing is None
 
@@ -261,6 +264,7 @@ def test_rehome_rejected_and_archived() -> None:
         remaining_id=OWNER,
         contact_id=contact,
         new_id=RuleId(UUID(int=101)),
+        now=NOW + timedelta(days=1),
     )
     assert copied_rejected is not None
     assert copied_rejected.status is RuleStatus.ACTIVE
@@ -281,9 +285,79 @@ def test_rehome_rejected_and_archived() -> None:
         remaining_id=OWNER,
         contact_id=contact,
         new_id=RuleId(UUID(int=102)),
+        now=NOW + timedelta(days=1),
     )
     assert copied_archived is not None
     assert copied_archived.status is RuleStatus.ARCHIVED
+    assert copied_archived.revisions[0].effective_since == NOW
+
+
+@pytest.mark.unit
+def test_rehome_pending_takes_leave_now_effective_keeps_date() -> None:
+    contact = ContactId(UUID(int=22))
+    leave = NOW + timedelta(days=2)
+    pending = Rule.propose(
+        rule_id=RuleId(UUID(int=13)),
+        scope=PairScope(pair_id=PairId(UUID(int=33))),
+        category=RuleCategory.OTHER,
+        approvers=frozenset({OWNER, PARTNER}),
+        author_id=OWNER,
+        text=RuleText("waiting"),
+        now=NOW,
+    )
+    copied_pending = Rule.rehome_authored_to_contact(
+        pending,
+        remaining_id=OWNER,
+        contact_id=contact,
+        new_id=RuleId(UUID(int=103)),
+        now=leave,
+    )
+    assert copied_pending is not None
+    assert copied_pending.revisions[0].effective_since == leave
+    assert copied_pending.revisions[0].effective_since != pending.revisions[0].proposed_at
+
+    effective = pending.approve(PARTNER, NOW)
+    copied_effective = Rule.rehome_authored_to_contact(
+        effective,
+        remaining_id=OWNER,
+        contact_id=contact,
+        new_id=RuleId(UUID(int=104)),
+        now=leave,
+    )
+    assert copied_effective is not None
+    assert copied_effective.revisions[0].effective_since == NOW
+
+
+@pytest.mark.unit
+def test_rehome_mixed_history_preserves_order_and_dates() -> None:
+    contact = ContactId(UUID(int=23))
+    leave = NOW + timedelta(days=3)
+    edit_at = NOW + timedelta(hours=1)
+    mixed = Rule.propose(
+        rule_id=RuleId(UUID(int=14)),
+        scope=PairScope(pair_id=PairId(UUID(int=34))),
+        category=RuleCategory.OTHER,
+        approvers=frozenset({OWNER, PARTNER}),
+        author_id=OWNER,
+        text=RuleText("agreed"),
+        now=NOW,
+    )
+    mixed = mixed.approve(PARTNER, NOW)
+    mixed = mixed.propose_edit(OWNER, RuleText("pending edit"), edit_at)
+    copied = Rule.rehome_authored_to_contact(
+        mixed,
+        remaining_id=OWNER,
+        contact_id=contact,
+        new_id=RuleId(UUID(int=105)),
+        now=leave,
+    )
+    assert copied is not None
+    assert [rev.number for rev in copied.revisions] == [1, 2]
+    assert copied.revisions[0].text.value == "agreed"
+    assert copied.revisions[0].effective_since == NOW
+    assert copied.revisions[1].text.value == "pending edit"
+    assert copied.revisions[1].effective_since == leave
+    assert copied.revisions[1].proposed_at == edit_at
 
 
 TestRuleMachine = pytest.mark.unit(RuleMachine.TestCase)

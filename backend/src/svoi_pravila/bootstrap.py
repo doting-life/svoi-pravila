@@ -129,7 +129,7 @@ def create_application(settings: Settings) -> FastAPI:
             get_consent_document=GetConsentDocument(catalog),
             decode_incoming=decode_incoming,
             revoke_all_consents=RevokeAllConsents(uow_factory, clock),
-            delete_my_account=DeleteMyAccount(uow_factory, ids, pseudonymizer),
+            delete_my_account=DeleteMyAccount(uow_factory, ids, pseudonymizer, clock),
             export_my_data=ExportMyData(uow_factory, clock),
             confirmation_tokens=ValkeyConfirmationTokens(valkey),
             clock=clock,

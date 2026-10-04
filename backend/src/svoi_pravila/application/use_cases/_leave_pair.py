@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from svoi_pravila.application.errors import NotFound, OpenRuleLimitReached
 from svoi_pravila.application.ports.id_generator import IdGenerator
 from svoi_pravila.application.ports.unit_of_work import UnitOfWork
@@ -17,6 +19,7 @@ async def dissolve_pair_for_leaving_member(
     *,
     actor_id: UserId,
     pair: Pair,
+    now: datetime,
 ) -> None:
     """Rehome remaining-authored pair rules, shred pair DEK, unlink, delete pair."""
     if not pair.is_member(actor_id):
@@ -33,6 +36,7 @@ async def dissolve_pair_for_leaving_member(
             remaining_id=remaining_id,
             contact_id=remaining_contact.id,
             new_id=RuleId(ids.new_id()),
+            now=now,
         )
         if copy is not None:
             copies.append(copy)

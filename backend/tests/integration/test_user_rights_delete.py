@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -38,9 +38,11 @@ from svoi_pravila.domain.rules import ContactScope, PairScope, Rule
 from svoi_pravila.domain.text import ContactLabel, RuleText
 from svoi_pravila.domain.usage import UsageEvent
 from svoi_pravila.domain.user import User
+from tests.fakes.clock import FakeClock
 from tests.fakes.ids import FakeIdGenerator
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
+LEAVE_AT = NOW + timedelta(days=5)
 
 
 def _user(n: int) -> User:
@@ -158,6 +160,15 @@ async def _seed_delete_fixture(
         text=RuleText("bob shared rule"),
         now=NOW,
     ).approve(alice.id, NOW)
+    bob_pending = Rule.propose(
+        rule_id=RuleId(UUID(int=34)),
+        scope=PairScope(pair_id=pair.id),
+        category=RuleCategory.OTHER,
+        approvers=frozenset({alice.id, bob.id}),
+        author_id=bob.id,
+        text=RuleText("bob pending pair rule"),
+        now=NOW,
+    )
     async with uow_factory() as uow:
         await uow.users.add(alice)
         await uow.users.add(bob)
@@ -170,6 +181,7 @@ async def _seed_delete_fixture(
         await uow.rules.add(bob_private)
         await uow.rules.add(alice_shared)
         await uow.rules.add(bob_shared)
+        await uow.rules.add(bob_pending)
         await uow.usage_events.add(_usage(40, a_pseudo))
         await uow.usage_events.add(_usage(41, b_pseudo))
         await uow.commit()
@@ -190,7 +202,8 @@ async def test_delete_account_shreds_caller_and_rehomes_partner_rules(
     alice, bob, alice_contact, bob_contact, pair = await _seed_delete_fixture(
         uow_factory_postgres, a_pseudo=a_pseudo, b_pseudo=b_pseudo
     )
-    result = await DeleteMyAccount(uow_factory_postgres, FakeIdGenerator(), pepper).execute(
+    clock = FakeClock(LEAVE_AT)
+    result = await DeleteMyAccount(uow_factory_postgres, FakeIdGenerator(), pepper, clock).execute(
         DeleteMyAccountCommand(alice.telegram_user_id)
     )
     assert result.found is True
@@ -234,7 +247,13 @@ async def test_delete_account_shreds_caller_and_rehomes_partner_rules(
         assert remaining.pair_id is None
         rules = await uow.rules.list_for_scope(ContactScope(contact_id=remaining.id))
         texts = {rule.revisions[-1].text.value for rule in rules}
-        assert texts == {"bob private rule", "bob shared rule"}
+        assert texts == {"bob private rule", "bob shared rule", "bob pending pair rule"}
+        by_text = {rule.revisions[-1].text.value: rule for rule in rules}
+        pending = by_text["bob pending pair rule"]
+        assert pending.revisions[0].effective_since == clock.now()
+        assert pending.revisions[0].effective_since == LEAVE_AT
+        assert pending.revisions[0].effective_since >= LEAVE_AT
+        assert by_text["bob shared rule"].revisions[0].effective_since == NOW
         assert all(rule.status is RuleStatus.ACTIVE for rule in rules)
         assert await uow.users.get(bob.id) is not None
         assert await uow.users.get(alice.id) is None

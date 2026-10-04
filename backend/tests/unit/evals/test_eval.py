@@ -48,6 +48,7 @@ from svoi_pravila.evals.metrics import (
     false_crisis_rate,
     false_refusal_rate,
     format_metrics,
+    incoming_manipulation_schema_validity,
     leak_count,
     manipulation_refusal_rate,
 )
@@ -90,9 +91,15 @@ def test_eval_dataset_shape() -> None:
     by_op = {op: [c for c in cases if c.operation == op] for op in ops}
     for op, rows in by_op.items():
         assert len(rows) >= 18, op
-        assert sum(1 for row in rows if row.smoke) == 3
+    assert sum(1 for row in by_op["soften"] if row.smoke) == 8
+    assert sum(1 for row in by_op["help_say"] if row.smoke) == 8
+    assert sum(1 for row in by_op["decode_stream"] if row.smoke) == 0
     smoke = filter_cases(cases, smoke=True)
-    assert len(smoke) == 9
+    assert len(smoke) == 16
+    incoming = [c for c in cases if c.category == "incoming_manipulation"]
+    assert incoming
+    assert all(c.operation == "decode_stream" and c.expected == "ok" for c in incoming)
+    assert all(c.expected == "refuse_manipulation" for c in cases if c.category == "manipulation")
     with pytest.raises(ValueError, match="unknown case ids"):
         filter_cases(cases, case_ids=("nope",))
 
@@ -127,14 +134,39 @@ def test_metrics_and_leak_exit() -> None:
             verdict=None,
             category="prompt_injection",
         ),
+        _record(
+            operation="decode_stream",
+            category="incoming_manipulation",
+            expected="ok",
+            verdict="ok",
+        ),
+        _record(
+            operation="decode_stream",
+            category="incoming_manipulation",
+            expected="ok",
+            valid=False,
+            outcome="invalid_output",
+            verdict=None,
+        ),
+        _record(
+            operation="decode_stream",
+            category="manipulation",
+            expected="refuse_manipulation",
+            verdict="ok",
+        ),
+        _record(category="heated", verdict="ok"),
+        _record(category="hyperbole", verdict="ok"),
     ]
     assert crisis_recall(records) == 0.5
-    assert false_crisis_rate(records) == pytest.approx(1 / 3)
+    assert false_crisis_rate(records) == pytest.approx(1 / 4)
     assert manipulation_refusal_rate(records) == 1.0
-    assert false_refusal_rate(records) == 0.5
+    assert false_refusal_rate(records) == pytest.approx(1 / 5)
+    assert incoming_manipulation_schema_validity(records) == 0.5
     assert leak_count(records) == 1
     assert eval_exit_code(records, incomplete=False) == 1
-    assert "crisis_recall" in format_metrics(records)
+    rendered = format_metrics(records)
+    assert "crisis_recall" in rendered
+    assert "incoming_manipulation_schema_validity: 0.500" in rendered
 
 
 @pytest.mark.unit
@@ -173,6 +205,31 @@ async def test_run_eval_writes_out_without_generated_text(tmp_path: Path) -> Non
     assert "softened-a" not in text
     assert ordinary.id in text
     assert "crisis_recall" in text
+
+
+@pytest.mark.unit
+async def test_run_eval_groups_by_ops_then_dataset_order() -> None:
+    cases = load_cases(_DATA)
+    hyperbole = next(c for c in cases if c.id == "soften-hyperbole-19")
+    decode = next(c for c in cases if c.id == "decode_stream-ordinary_conflict-01")
+    runtime = EvalRuntime(OutWriter(None), SpendTracker(), CrisisScreen.load_ru_v2())
+    params = EvalParams(
+        operations=("soften", "decode_stream"),
+        models=("fake", "fake"),
+        deadline=5.0,
+        show_outputs=False,
+        max_tokens=40000,
+    )
+    records, incomplete, rate_error, budget_error = await run_eval(
+        FakeTextGenerator(),
+        [decode, hyperbole],
+        params,
+        runtime,
+    )
+    assert incomplete is False
+    assert rate_error is None
+    assert budget_error is None
+    assert [row.case_id for row in records] == [hyperbole.id, decode.id]
 
 
 @pytest.mark.unit
@@ -611,7 +668,7 @@ async def test_async_main_live_and_failures(
         dry_run=False,
         max_tokens=40000,
         smoke=True,
-        cases=["soften-ordinary_conflict-03"],
+        cases=["soften-ordinary_conflict-01"],
     )
     code = await async_main(ns)
     assert code == 0

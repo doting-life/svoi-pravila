@@ -354,6 +354,7 @@ def test_forged_spbound_in_user_text_is_not_real_marker() -> None:
     assert prepared.boundary_marker != forged
     assert forged in prepared.user
     assert prepared.boundary_marker in prepared.system
+    assert prepared.prompt_version == "soften@v3"
 
 
 @pytest.mark.unit
@@ -742,7 +743,7 @@ async def test_help_say_and_decode_valid() -> None:
             deadline_seconds=5.0,
         )
     )
-    assert help_result.meta.prompt_version == "help_say@v1"
+    assert help_result.meta.prompt_version == "help_say@v3"
     decode_result = await _decode_via_stream(
         _FakeAche(stream_parts=["valid analysis"], create_results=[_decode_payload()]),
         incoming="incoming text",
@@ -810,24 +811,28 @@ def test_validate_variants_defensive_branches() -> None:
                 attempts=1,
                 model="m",
                 prompt_version="p",
+                operation="soften",
             ),
         )
-    with pytest.raises(InvalidGenerationOutput):
-        validate_variants(
-            [VariantOut(text="should-not-appear", firmness=FirmnessOut.GENTLE)],
-            VariantValidation(
-                applied=[],
-                safety_raw="crisis",
-                rule_count=0,
-                min_variants=0,
-                max_variants=3,
-                require_all_firmness=False,
-                usage=TokenUsage(),
-                attempts=1,
-                model="m",
-                prompt_version="p",
-            ),
-        )
+    dropped, indexes, safety = validate_variants(
+        [VariantOut(text="should-not-appear", firmness=FirmnessOut.GENTLE)],
+        VariantValidation(
+            applied=[],
+            safety_raw="crisis",
+            rule_count=0,
+            min_variants=0,
+            max_variants=3,
+            require_all_firmness=False,
+            usage=TokenUsage(),
+            attempts=1,
+            model="m",
+            prompt_version="p",
+            operation="soften",
+        ),
+    )
+    assert dropped == ()
+    assert indexes == ()
+    assert safety.value == "crisis"
     bad_item = VariantOut.model_construct(
         text="ok",
         firmness=cast(Any, SimpleNamespace(value="nope")),
@@ -846,6 +851,7 @@ def test_validate_variants_defensive_branches() -> None:
                 attempts=1,
                 model="m",
                 prompt_version="p",
+                operation="soften",
             ),
         )
     with pytest.raises(InvalidGenerationOutput):
@@ -865,6 +871,7 @@ def test_validate_variants_defensive_branches() -> None:
                 attempts=1,
                 model="m",
                 prompt_version="p",
+                operation="soften",
             ),
         )
 
@@ -884,6 +891,72 @@ async def test_crisis_empty_variants_ok() -> None:
     )
     assert result.variants == ()
     assert result.safety.value == "crisis"
+
+
+@pytest.mark.unit
+async def test_non_ok_verdict_drops_payload_without_retry(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    payload = SoftenOut.model_validate(
+        {
+            "variants": [
+                {"text": "CANARY-NON-OK-DROPPED", "firmness": "gentle"},
+                {"text": "other-variant", "firmness": "firm"},
+            ],
+            "applied_rule_indexes": [],
+            "safety": "refuse_manipulation",
+        }
+    )
+    ache = _FakeAche(create_results=[payload])
+    result = await _generator(ache).soften(
+        SoftenRequest(
+            draft="CANARY-NON-OK-DROPPED",
+            rules=(),
+            relationship=RelationshipKind.OTHER,
+            deadline_seconds=5.0,
+        )
+    )
+    assert result.variants == ()
+    assert result.safety.value == "refuse_manipulation"
+    assert ache.create_calls == 1
+    events = capture_log_events()
+    dropped = [e for e in events if e.get("event") == "non_ok_payload_dropped"]
+    assert len(dropped) == 1
+    assert dropped[0]["operation"] == "soften"
+    assert dropped[0]["verdict"] == "refuse_manipulation"
+    blob = json.dumps(events, ensure_ascii=False)
+    assert "CANARY-NON-OK-DROPPED" not in blob
+
+
+@pytest.mark.unit
+async def test_decode_non_ok_drops_payload_without_retry(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    payload = DecodeOut.model_validate(
+        {
+            "hypotheses": ["CANARY-DECODE-DROPPED"],
+            "underlying_request": "CANARY-DECODE-DROPPED",
+            "variants": [{"text": "CANARY-DECODE-DROPPED", "firmness": "gentle"}],
+            "applied_rule_indexes": [],
+            "safety": "crisis",
+        }
+    )
+    ache = _FakeAche(stream_parts=["valid analysis"], create_results=[payload])
+    result = await _decode_via_stream(
+        ache, incoming="incoming", relationship=RelationshipKind.OTHER
+    )
+    assert result.safety.value == "crisis"
+    assert result.hypotheses == ()
+    assert result.underlying_request == ""
+    assert result.variants == ()
+    assert ache.create_calls == 1
+    events = capture_log_events()
+    dropped = [e for e in events if e.get("event") == "non_ok_payload_dropped"]
+    assert dropped
+    assert all(e.get("operation") == "decode_stream" for e in dropped)
+    assert all(e.get("verdict") == "crisis" for e in dropped)
+    blob = json.dumps(events, ensure_ascii=False)
+    assert "CANARY-DECODE-DROPPED" not in blob
 
 
 @pytest.mark.unit
@@ -962,12 +1035,15 @@ async def test_decode_validation_edges() -> None:
     )
     ache2 = _FakeAche(
         stream_parts=["valid analysis"],
-        create_results=[crisis_with_text, crisis_with_text],
+        create_results=[crisis_with_text],
     )
-    with pytest.raises(InvalidGenerationOutput):
-        await _collect_decode_stream(
-            ache2, incoming="incoming", relationship=RelationshipKind.OTHER
-        )
+    crisis = await _decode_via_stream(
+        ache2, incoming="incoming", relationship=RelationshipKind.OTHER
+    )
+    assert crisis.safety.value == "crisis"
+    assert crisis.hypotheses == ()
+    assert crisis.underlying_request == ""
+    assert ache2.create_calls == 1
 
 
 @pytest.mark.unit
@@ -1121,6 +1197,7 @@ def test_text_reasons_empty_long_and_fence() -> None:
         attempts=1,
         model="m",
         prompt_version="p",
+        operation="soften",
     )
     with pytest.raises(InvalidGenerationOutput) as empty:
         validate_variants(
@@ -1188,11 +1265,16 @@ async def test_decode_crisis_with_underlying_only() -> None:
     )
     ache = _FakeAche(
         stream_parts=["valid analysis"],
-        create_results=[payload, payload],
+        create_results=[payload],
     )
-    with pytest.raises(InvalidGenerationOutput) as exc_info:
-        await _collect_decode_stream(ache, incoming="incoming", relationship=RelationshipKind.OTHER)
-    assert InvalidOutputReason.NON_OK_WITH_PAYLOAD in exc_info.value.reasons
+    result = await _decode_via_stream(
+        ache, incoming="incoming", relationship=RelationshipKind.OTHER
+    )
+    assert result.safety.value == "crisis"
+    assert result.hypotheses == ()
+    assert result.underlying_request == ""
+    assert result.variants == ()
+    assert ache.create_calls == 1
 
 
 @pytest.mark.unit
@@ -1453,9 +1535,13 @@ async def test_decode_crisis_with_hypotheses_only() -> None:
         }
     )
     ache = _FakeAche(stream_parts=["valid analysis"], create_results=[payload])
-    with pytest.raises(InvalidGenerationOutput) as exc_info:
-        await _collect_decode_stream(ache, incoming="incoming", relationship=RelationshipKind.OTHER)
-    assert InvalidOutputReason.NON_OK_WITH_PAYLOAD in exc_info.value.reasons
+    result = await _decode_via_stream(
+        ache, incoming="incoming", relationship=RelationshipKind.OTHER
+    )
+    assert result.safety.value == "crisis"
+    assert result.hypotheses == ()
+    assert result.underlying_request == ""
+    assert ache.create_calls == 1
 
 
 @pytest.mark.unit

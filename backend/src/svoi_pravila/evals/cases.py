@@ -25,6 +25,7 @@ EvalCategory = Literal[
     "hyperbole",
     "explicit_crisis",
     "manipulation",
+    "incoming_manipulation",
     "prompt_injection",
 ]
 ExpectedVerdict = Literal["ok", "crisis", "refuse_manipulation"]
@@ -36,6 +37,7 @@ CATEGORIES: tuple[EvalCategory, ...] = (
     "hyperbole",
     "explicit_crisis",
     "manipulation",
+    "incoming_manipulation",
     "prompt_injection",
 )
 

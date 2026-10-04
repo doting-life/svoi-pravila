@@ -154,6 +154,7 @@ class GigaChatTextGenerator:
                     attempts=meta.attempts,
                     model=meta.model,
                     prompt_version=meta.prompt_version,
+                    operation="soften",
                 ),
             )
             return SoftenResult(
@@ -202,6 +203,7 @@ class GigaChatTextGenerator:
                     attempts=meta.attempts,
                     model=meta.model,
                     prompt_version=meta.prompt_version,
+                    operation="help_say",
                 ),
             )
             return HelpSayResult(

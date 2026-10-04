@@ -31,6 +31,7 @@ from tests.fakes.uow import InMemoryUnitOfWorkFactory
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
 from svoi_pravila.adapters.channels.telegram.handlers import rights as rights_handlers
+from svoi_pravila.adapters.channels.telegram.handlers.helpers import callback_chat_id
 from svoi_pravila.adapters.channels.telegram.keyboards import confirm_keyboard
 from svoi_pravila.adapters.channels.telegram.lifecycle import TelegramLifecycle
 from svoi_pravila.application.errors import OpenRuleLimitReached
@@ -280,7 +281,7 @@ def test_chat_id_none_for_inaccessible_message() -> None:
         data="cf:rv:" + "0" * 32,
         message=InaccessibleMessage(chat=Chat(id=9, type="private"), message_id=1, date=0),
     )
-    assert rights_handlers._chat_id(callback) is None
+    assert callback_chat_id(callback) is None
 
 
 class _BoomDelete(DeleteMyAccount):

@@ -43,8 +43,13 @@ from svoi_pravila.adapters.channels.telegram.localization import (
     load_ru_strings,
     rule_category_label,
 )
-from svoi_pravila.adapters.channels.telegram.presenters import render_rules_list
-from svoi_pravila.application.errors import AccessNotGranted
+from svoi_pravila.adapters.channels.telegram.presenters import (
+    TELEGRAM_MESSAGE_MAX,
+    display_rule_text,
+    pack_message_lines,
+    render_rules_list,
+)
+from svoi_pravila.application.errors import AccessNotGranted, NotFound
 from svoi_pravila.application.ports.dialog_state import DIALOG_PSEUDONYM_PURPOSE, DialogRecord
 from svoi_pravila.application.ports.generation import (
     DecodeResult,
@@ -277,7 +282,9 @@ async def test_rules_archive_confirm_and_cancel() -> None:
     ).rules
     rule_id = rules[0].id
     await lifecycle.dispatcher.feed_update(bot, _callback(4, 608, f"ru:ar:{rule_id}"))
-    assert deps.strings.rules_archive_confirm in _sent_texts(session)
+    assert deps.strings.rules_archive_confirm.format(text="не повышать голос") in _sent_texts(
+        session
+    )
     await lifecycle.dispatcher.feed_update(bot, _callback(5, 608, "ru:ax"))
     assert "не повышать голос" in _sent_texts(session)[-1]
     await lifecycle.dispatcher.feed_update(bot, _callback(6, 608, f"ru:ar:{rule_id}"))
@@ -363,6 +370,7 @@ async def test_rules_edges_parse_inaccessible_and_limit() -> None:
     await _onboard(bot, lifecycle, 606, catalog)
     await lifecycle.dispatcher.feed_update(bot, _callback(1, 606, "ru:n"))
     assert deps.strings.rules_no_active_contact in _sent_texts(session)
+    await lifecycle.dispatcher.feed_update(bot, _callback(20, 606, f"ru:ar:{UUID(int=1)}"))
     await lifecycle.dispatcher.feed_update(bot, _callback(2, 606, "ru:cat:other"))
     assert deps.strings.rules_no_active_contact in _sent_texts(session)
     await _add_contact(bot, lifecycle, 606, "Sam")
@@ -404,7 +412,7 @@ async def test_rules_edges_parse_inaccessible_and_limit() -> None:
     )
     await lifecycle.dispatcher.feed_update(bot, _text_update(12, 606, "overflow rule"))
     assert deps.strings.rules_limit in _sent_texts(session)
-    assert await dialog.get(_dialog_key(606)) is not None
+    assert await dialog.get(_dialog_key(606)) is None
 
 
 @pytest.mark.unit
@@ -443,6 +451,7 @@ async def test_rules_handlers_skip_missing_user_and_access() -> None:
     await lifecycle.dispatcher.feed_update(bot, _text_update(1, 607, "/rules"))
     await lifecycle.dispatcher.feed_update(bot, _callback(2, 607, "ru:n"))
     await lifecycle.dispatcher.feed_update(bot, _callback(3, 607, "ru:cat:other"))
+    await lifecycle.dispatcher.feed_update(bot, _callback(8, 607, f"ru:ar:{UUID(int=1)}"))
     await lifecycle.dispatcher.feed_update(bot, _callback(4, 607, f"ru:ay:{UUID(int=1)}"))
     await lifecycle.dispatcher.feed_update(bot, _callback(5, 607, "ru:ax"))
     denied = replace(deps, propose_rule=cast(ProposeRule, _AccessDeniedPropose()))
@@ -551,19 +560,232 @@ def test_rules_keyboards_and_presenter_hides_closed() -> None:
     )
     archived = active.archive(_OWNER, now)
     rejected = proposed.reject_pending(_PARTNER, now)
-    text, keyboard = render_rules_list(
+    chunks, keyboard = render_rules_list(
         strings, (active, proposed, archived, rejected), now=now, tz=tz
     )
+    text = "\n".join(chunks)
     joined = " ".join(btn.callback_data or "" for row in keyboard.inline_keyboard for btn in row)
-    assert "active text" in text
-    assert "3 октября" in text
-    assert "pending text" in text
+    assert "1. active text — 3 октября" in text
+    assert "2. pending text — " in text
+    buttons = [btn.text for row in keyboard.inline_keyboard for btn in row]
+    assert strings.rules_archive.format(n=1) in buttons
+    assert strings.rules_archive.format(n=2) in buttons
     assert strings.rules_proposed_mark in text
     assert joined.count("ru:ar:") == 2
     assert f"ru:ar:{active.id}" in joined
     assert f"ru:ar:{proposed.id}" in joined
     assert archived.status is RuleStatus.ARCHIVED
     assert rejected.status is RuleStatus.REJECTED
+    assert display_rule_text(active) == "active text"
+    assert display_rule_text(proposed) == "pending text"
+    assert display_rule_text(archived) == "active text"
+    packed = pack_message_lines(("aa", "bb", "c"), max_len=5)
+    assert packed == ("aa\nbb", "c")
+    assert pack_message_lines(()) == ()
+
+
+@pytest.mark.unit
+def test_rules_list_splits_max_open_max_text() -> None:
+    strings = load_ru_strings()
+    now = datetime(2026, 10, 4, 12, tzinfo=UTC)
+    tz = ZoneInfo("Europe/Moscow")
+    body = "я" * 280
+    rules = tuple(
+        Rule.propose(
+            rule_id=RuleId(UUID(int=2000 + index)),
+            scope=ContactScope(contact_id=ContactId(UUID(int=20))),
+            category=RuleCategory.OTHER,
+            approvers=frozenset({_OWNER}),
+            author_id=_OWNER,
+            text=RuleText(body),
+            now=datetime(2026, 10, 3, 12, tzinfo=UTC),
+        )
+        for index in range(MAX_OPEN_RULES_PER_SCOPE)
+    )
+    chunks, keyboard = render_rules_list(strings, rules, now=now, tz=tz)
+    joined = "\n".join(chunks)
+    assert chunks
+    assert all(len(chunk) <= TELEGRAM_MESSAGE_MAX for chunk in chunks)
+    assert joined.count(body) == MAX_OPEN_RULES_PER_SCOPE
+    numbers = [
+        int(line.split(".", 1)[0])
+        for chunk in chunks
+        for line in chunk.split("\n")
+        if line[:1].isdigit()
+    ]
+    assert numbers == list(range(1, MAX_OPEN_RULES_PER_SCOPE + 1))
+    buttons = [btn for row in keyboard.inline_keyboard for btn in row]
+    assert len(buttons) == MAX_OPEN_RULES_PER_SCOPE + 1
+    assert len(buttons) <= 100
+
+
+@pytest.mark.unit
+async def test_rule_limit_clears_dialog_then_decode() -> None:
+    uow = InMemoryUnitOfWorkFactory()
+    catalog = FakeConsentCatalog()
+    ids = FakeIdGenerator()
+    dialog = FakeDialogState()
+    generator = FakeTextGenerator()
+    deps = make_telegram_deps(
+        TelegramTestDeps(uow=uow, catalog=catalog, dialog=dialog, ids=ids, generator=generator)
+    )
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 620, catalog)
+    await _add_contact(bot, lifecycle, 620, "Sam")
+    user = (
+        await deps.get_user_by_telegram_id.execute(GetUserByTelegramIdQuery(TelegramUserId(620)))
+    ).user
+    assert user is not None
+    assert user.active_contact_id is not None
+    propose = ProposeRule(uow, catalog, ids, deps.clock)
+    body = "я" * 280
+    for _i in range(MAX_OPEN_RULES_PER_SCOPE):
+        await propose.execute(
+            ProposeRuleCommand(
+                user.id,
+                user.active_contact_id,
+                RuleCategory.OTHER,
+                RuleText(body),
+                shared=False,
+            )
+        )
+    n_before = len(_sent_texts(session))
+    await lifecycle.dispatcher.feed_update(bot, _text_update(20, 620, "/rules"))
+    listed_msgs = _sent_texts(session)[n_before:]
+    assert len(listed_msgs) > 1
+    assert all(len(text) <= TELEGRAM_MESSAGE_MAX for text in listed_msgs)
+    n_before = len(_sent_texts(session))
+    await lifecycle.dispatcher.feed_update(bot, _callback(21, 620, "ru:ax"))
+    listed_msgs = _sent_texts(session)[n_before:]
+    assert len(listed_msgs) > 1
+    assert all(len(text) <= TELEGRAM_MESSAGE_MAX for text in listed_msgs)
+    await dialog.set(
+        _dialog_key(620),
+        DialogRecord(
+            step="awaiting_rule_text",
+            contact_id=user.active_contact_id,
+            category=RuleCategory.OTHER,
+        ),
+    )
+    await lifecycle.dispatcher.feed_update(bot, _text_update(1, 620, "overflow rule"))
+    assert await dialog.get(_dialog_key(620)) is None
+    await lifecycle.dispatcher.feed_update(bot, _text_update(2, 620, "please decode this now"))
+    assert len(generator.decode_stream_calls) == 1
+
+
+@pytest.mark.unit
+async def test_rule_contact_gone_clears_dialog_then_decode() -> None:
+    uow = InMemoryUnitOfWorkFactory()
+    catalog = FakeConsentCatalog()
+    dialog = FakeDialogState()
+    generator = FakeTextGenerator()
+    deps = make_telegram_deps(
+        TelegramTestDeps(uow=uow, catalog=catalog, dialog=dialog, generator=generator)
+    )
+    deps = replace(deps, propose_rule=cast(ProposeRule, _AccessDeniedPropose()))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 621, catalog)
+    await _add_contact(bot, lifecycle, 621, "Sam")
+    await dialog.set(
+        _dialog_key(621),
+        DialogRecord(
+            step="awaiting_rule_text",
+            contact_id=ContactId(UUID(int=1)),
+            category=RuleCategory.OTHER,
+        ),
+    )
+    await lifecycle.dispatcher.feed_update(bot, _text_update(1, 621, "gone contact body"))
+    assert deps.strings.rules_contact_unavailable in _sent_texts(session)
+    assert await dialog.get(_dialog_key(621)) is None
+    await lifecycle.dispatcher.feed_update(bot, _text_update(2, 621, "please decode this now"))
+    assert len(generator.decode_stream_calls) == 1
+
+
+@pytest.mark.unit
+async def test_invalid_rule_text_keeps_dialog() -> None:
+    uow = InMemoryUnitOfWorkFactory()
+    catalog = FakeConsentCatalog()
+    dialog = FakeDialogState()
+    generator = FakeTextGenerator()
+    deps = make_telegram_deps(
+        TelegramTestDeps(uow=uow, catalog=catalog, dialog=dialog, generator=generator)
+    )
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 622, catalog)
+    await _add_contact(bot, lifecycle, 622, "Sam")
+    await lifecycle.dispatcher.feed_update(bot, _callback(1, 622, "ru:n"))
+    await lifecycle.dispatcher.feed_update(bot, _callback(2, 622, "ru:cat:other"))
+    await lifecycle.dispatcher.feed_update(bot, _text_update(3, 622, ""))
+    assert deps.strings.rules_invalid_text in _sent_texts(session)
+    assert await dialog.get(_dialog_key(622)) is not None
+    await lifecycle.dispatcher.feed_update(bot, _text_update(4, 622, ""))
+    assert await dialog.get(_dialog_key(622)) is not None
+    assert generator.decode_stream_calls == []
+
+
+@pytest.mark.unit
+async def test_stale_archive_already_archived_refreshes_list() -> None:
+    uow = InMemoryUnitOfWorkFactory()
+    catalog = FakeConsentCatalog()
+    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 623, catalog)
+    await _add_contact(bot, lifecycle, 623, "Sam")
+    await lifecycle.dispatcher.feed_update(bot, _callback(1, 623, "ru:n"))
+    await lifecycle.dispatcher.feed_update(bot, _callback(2, 623, "ru:cat:other"))
+    await lifecycle.dispatcher.feed_update(bot, _text_update(3, 623, "не повышать голос"))
+    owner = (
+        await deps.get_user_by_telegram_id.execute(GetUserByTelegramIdQuery(TelegramUserId(623)))
+    ).user
+    assert owner is not None
+    assert owner.active_contact_id is not None
+    rule_id = (
+        (await deps.list_rules.execute(ListRulesCommand(owner.id, owner.active_contact_id)))
+        .rules[0]
+        .id
+    )
+    await lifecycle.dispatcher.feed_update(bot, _callback(4, 623, f"ru:ay:{rule_id}"))
+    await lifecycle.dispatcher.feed_update(bot, _callback(5, 623, f"ru:ay:{rule_id}"))
+    texts = _sent_texts(session)
+    assert deps.strings.rules_already_archived in texts
+    assert deps.strings.rules_empty in texts[-1]
+
+
+@pytest.mark.unit
+async def test_ask_archive_missing_rule_is_generic() -> None:
+    uow = InMemoryUnitOfWorkFactory()
+    catalog = FakeConsentCatalog()
+    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 624, catalog)
+    await _add_contact(bot, lifecycle, 624, "Sam")
+    await lifecycle.dispatcher.feed_update(bot, _callback(1, 624, f"ru:ar:{UUID(int=99)}"))
+    assert deps.strings.error_generic in _sent_texts(session)[-1]
+
+
+@pytest.mark.unit
+async def test_ask_archive_list_not_found() -> None:
+    uow = InMemoryUnitOfWorkFactory()
+    catalog = FakeConsentCatalog()
+    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog))
+    deps = replace(deps, list_rules=cast(Any, _MissingList()))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 625, catalog)
+    await _add_contact(bot, lifecycle, 625, "Sam")
+    await lifecycle.dispatcher.feed_update(bot, _callback(1, 625, f"ru:ar:{UUID(int=1)}"))
+    assert deps.strings.error_generic in _sent_texts(session)[-1]
 
 
 class _HideUser:
@@ -587,3 +809,8 @@ class _AccessDeniedArchive:
         raise AccessNotGranted(
             AccessStatus(age_confirmed=True, missing_consents=frozenset(), granted=False)
         )
+
+
+class _MissingList:
+    async def execute(self, command: ListRulesCommand) -> None:
+        raise NotFound()

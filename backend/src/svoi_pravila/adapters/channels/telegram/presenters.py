@@ -134,32 +134,64 @@ def render_applied_rule_citations(
     return tuple(messages)
 
 
+def pack_message_lines(
+    lines: tuple[str, ...], *, max_len: int = TELEGRAM_MESSAGE_MAX
+) -> tuple[str, ...]:
+    """Join lines into messages that each stay within the Telegram text limit."""
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+    for line in lines:
+        extra = len(line) if not current else len(line) + 1
+        if current and current_len + extra > max_len:
+            chunks.append("\n".join(current))
+            current = [line]
+            current_len = len(line)
+        else:
+            current.append(line)
+            current_len += extra
+    if current:
+        chunks.append("\n".join(current))
+    return tuple(chunks)
+
+
+def display_rule_text(rule: Rule) -> str:
+    """Body text for list and archive confirm (never from callback data)."""
+    if rule.status is RuleStatus.ACTIVE:
+        return rule.require_effective_revision().text.value
+    pending = rule.pending_revision
+    if pending is not None:
+        return pending.text.value
+    return rule.require_effective_revision().text.value
+
+
 def render_rules_list(
     strings: TelegramStrings,
     rules: tuple[Rule, ...],
     *,
     now: datetime,
     tz: ZoneInfo,
-) -> tuple[str, InlineKeyboardMarkup]:
+) -> tuple[tuple[str, ...], InlineKeyboardMarkup]:
     """ACTIVE and PROPOSED rules only; ARCHIVED and REJECTED stay hidden."""
     visible: list[Rule] = []
     lines = [strings.rules_header]
+    number = 0
     for rule in rules:
         if rule.status is RuleStatus.ACTIVE:
-            revision = rule.effective_revision
-            if revision is None or revision.effective_since is None:
-                continue
-            date = format_display_date(revision.effective_since, now, tz)
-            lines.append(f"{revision.text.value} — {date}")
+            revision = rule.require_effective_revision()
+            date = format_display_date(revision.require_effective_since(), now, tz)
+            number += 1
+            lines.append(f"{number}. {revision.text.value} — {date}")
             visible.append(rule)
         elif rule.status is RuleStatus.PROPOSED:
             revision = rule.pending_revision or rule.revisions[-1]
-            lines.append(f"{revision.text.value} — {strings.rules_proposed_mark}")
+            number += 1
+            lines.append(f"{number}. {revision.text.value} — {strings.rules_proposed_mark}")
             visible.append(rule)
-    if len(lines) == 1:
+    if number == 0:
         lines.append(strings.rules_empty)
     keyboard = rules_keyboard(strings, tuple(rule.id for rule in visible))
-    return "\n".join(lines), keyboard
+    return pack_message_lines(tuple(lines)), keyboard
 
 
 def render_contacts_list(

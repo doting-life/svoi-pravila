@@ -2,23 +2,25 @@
 
 from __future__ import annotations
 
-import structlog
 from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandObject, CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
+from svoi_pravila.adapters.channels.telegram.handlers.helpers import (
+    callback_chat_id,
+    clear_callback_keyboard,
+    render_current_step,
+    send_current_step,
+)
 from svoi_pravila.adapters.channels.telegram.localization import (
     render_crisis_message,
     render_help,
     render_refuse_manipulation,
 )
-from svoi_pravila.adapters.channels.telegram.presenters import render_step
 from svoi_pravila.application.use_cases.accept_age_confirmation import (
     AcceptAgeConfirmationCommand,
 )
-from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocumentQuery
 from svoi_pravila.application.use_cases.get_onboarding_step import (
     GetOnboardingStepQuery,
     OnboardingStepKind,
@@ -31,8 +33,6 @@ from svoi_pravila.application.use_cases.grant_consent import (
 )
 from svoi_pravila.domain.enums import ConsentKind
 from svoi_pravila.domain.ids import TelegramUserId
-
-logger = structlog.get_logger(__name__)
 
 
 def build_router() -> Router:
@@ -60,18 +60,18 @@ def build_router() -> Router:
 
     @router.callback_query(F.data == "age:y")
     async def age_yes(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> None:
-        await _clear_callback_keyboard(bot, callback)
+        await clear_callback_keyboard(bot, callback)
         await tg_deps.accept_age.execute(
             AcceptAgeConfirmationCommand(TelegramUserId(callback.from_user.id))
         )
         await callback.answer()
-        await _send_current_step(bot, callback, tg_deps, callback.from_user.id)
+        await send_current_step(bot, callback, tg_deps, callback.from_user.id)
 
     @router.callback_query(F.data == "age:n")
     async def age_no(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> None:
-        await _clear_callback_keyboard(bot, callback)
+        await clear_callback_keyboard(bot, callback)
         await callback.answer()
-        chat_id = _callback_chat_id(callback)
+        chat_id = callback_chat_id(callback)
         if chat_id is not None:
             await bot.send_message(chat_id, tg_deps.strings.age_declined)
 
@@ -80,12 +80,12 @@ def build_router() -> Router:
         if callback.data is None:
             return
         parsed = _parse_consent_callback(callback.data)
-        await _clear_callback_keyboard(bot, callback)
+        await clear_callback_keyboard(bot, callback)
         await callback.answer()
         if parsed is None:
             return
         kind, version, accepted = parsed
-        chat_id = _callback_chat_id(callback)
+        chat_id = callback_chat_id(callback)
         if not accepted:
             if chat_id is not None:
                 await bot.send_message(chat_id, tg_deps.strings.consent_declined)
@@ -95,10 +95,10 @@ def build_router() -> Router:
             GetUserByTelegramIdQuery(TelegramUserId(callback.from_user.id))
         )
         if lookup.user is None or lookup.user.age_confirmed_at is None:
-            await _send_current_step(bot, callback, tg_deps, callback.from_user.id)
+            await send_current_step(bot, callback, tg_deps, callback.from_user.id)
             return
         await tg_deps.grant_consent.execute(GrantConsentCommand(lookup.user.id, kind, version))
-        await _send_current_step(bot, callback, tg_deps, callback.from_user.id)
+        await send_current_step(bot, callback, tg_deps, callback.from_user.id)
 
     @router.callback_query(~F.data.startswith("ct:") & ~F.data.startswith("ru:"))
     async def any_callback_while_onboarding(
@@ -109,71 +109,9 @@ def build_router() -> Router:
             GetOnboardingStepQuery(TelegramUserId(callback.from_user.id))
         )
         if step.step.kind is not OnboardingStepKind.DONE:
-            await _send_current_step(bot, callback, tg_deps, callback.from_user.id)
+            await send_current_step(bot, callback, tg_deps, callback.from_user.id)
 
     return router
-
-
-async def _clear_callback_keyboard(bot: Bot, callback: CallbackQuery) -> None:
-    message = callback.message
-    if not isinstance(message, Message):
-        return
-    try:
-        await bot.edit_message_reply_markup(
-            chat_id=message.chat.id,
-            message_id=message.message_id,
-            reply_markup=None,
-        )
-    except TelegramAPIError as exc:
-        logger.info(
-            "telegram_keyboard_clear_failed",
-            exception_class=type(exc).__name__,
-        )
-
-
-async def _send_current_step(
-    bot: Bot,
-    callback: CallbackQuery,
-    deps: TelegramDeps,
-    telegram_user_id: int,
-) -> None:
-    chat_id = _callback_chat_id(callback)
-    if chat_id is None:
-        return
-    step = await deps.get_onboarding_step.execute(
-        GetOnboardingStepQuery(TelegramUserId(telegram_user_id))
-    )
-    document = None
-    if step.step.kind is OnboardingStepKind.CONSENT and step.step.consent_kind is not None:
-        document = (
-            await deps.get_consent_document.execute(GetConsentDocumentQuery(step.step.consent_kind))
-        ).document
-    text, keyboard = render_step(deps.strings, step.step, document)
-    await bot.send_message(chat_id, text, reply_markup=keyboard)
-
-
-async def render_current_step(
-    message: Message,
-    deps: TelegramDeps,
-    telegram_user_id: int,
-) -> None:
-    step = await deps.get_onboarding_step.execute(
-        GetOnboardingStepQuery(TelegramUserId(telegram_user_id))
-    )
-    document = None
-    if step.step.kind is OnboardingStepKind.CONSENT and step.step.consent_kind is not None:
-        document = (
-            await deps.get_consent_document.execute(GetConsentDocumentQuery(step.step.consent_kind))
-        ).document
-    text, keyboard = render_step(deps.strings, step.step, document)
-    await message.answer(text, reply_markup=keyboard)
-
-
-def _callback_chat_id(callback: CallbackQuery) -> int | None:
-    message = callback.message
-    if isinstance(message, Message):
-        return message.chat.id
-    return None
 
 
 _CONSENT_CALLBACK_PARTS = 4

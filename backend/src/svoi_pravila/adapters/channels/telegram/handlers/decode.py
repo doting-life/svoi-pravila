@@ -8,7 +8,7 @@ from aiogram import Bot, Router
 from aiogram.types import Message
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
-from svoi_pravila.adapters.channels.telegram.handlers.onboarding import render_current_step
+from svoi_pravila.adapters.channels.telegram.handlers.helpers import render_current_step
 from svoi_pravila.adapters.channels.telegram.localization import TelegramStrings
 from svoi_pravila.adapters.channels.telegram.presenters import (
     TELEGRAM_MESSAGE_MAX,

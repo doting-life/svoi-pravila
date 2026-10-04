@@ -47,6 +47,13 @@ class RuleRevision:
     approved_by: frozenset[UserId]
     effective_since: datetime | None
 
+    def require_effective_since(self) -> datetime:
+        """``effective_since`` when this revision is in force."""
+        if self.effective_since is None:
+            msg = "revision is not effective"
+            raise InvalidValueError(msg)
+        return self.effective_since
+
     def __post_init__(self) -> None:
         if self.number < 1:
             msg = "revision number must be 1-based"
@@ -142,6 +149,14 @@ class Rule:
         if not effective:
             return None
         return max(effective, key=lambda r: r.number)
+
+    def require_effective_revision(self) -> RuleRevision:
+        """Effective revision of an ACTIVE rule; raises if the invariant is broken."""
+        revision = self.effective_revision
+        if revision is None:
+            msg = "ACTIVE rules must have an effective revision"
+            raise InvalidValueError(msg)
+        return revision
 
     @property
     def pending_revision(self) -> RuleRevision | None:

@@ -72,6 +72,7 @@ class TelegramStrings:
     contacts_cancelled: str
     contacts_invalid_label: str
     contacts_limit: str
+    contacts_unavailable: str
     contacts_relationship_partner: str
     contacts_relationship_family: str
     contacts_relationship_friend: str
@@ -87,6 +88,8 @@ class TelegramStrings:
     rules_text_prompt: str
     rules_invalid_text: str
     rules_limit: str
+    rules_contact_unavailable: str
+    rules_already_archived: str
     rules_category_taboo_topic: str
     rules_category_how_to_ask: str
     rules_category_apology: str
@@ -163,6 +166,7 @@ _KEYS: dict[str, str] = {
     "contacts.cancelled": "contacts_cancelled",
     "contacts.invalid_label": "contacts_invalid_label",
     "contacts.limit": "contacts_limit",
+    "contacts.unavailable": "contacts_unavailable",
     "contacts.relationship.partner": "contacts_relationship_partner",
     "contacts.relationship.family": "contacts_relationship_family",
     "contacts.relationship.friend": "contacts_relationship_friend",
@@ -178,6 +182,8 @@ _KEYS: dict[str, str] = {
     "rules.text_prompt": "rules_text_prompt",
     "rules.invalid_text": "rules_invalid_text",
     "rules.limit": "rules_limit",
+    "rules.contact_unavailable": "rules_contact_unavailable",
+    "rules.already_archived": "rules_already_archived",
     "rules.category.taboo_topic": "rules_category_taboo_topic",
     "rules.category.how_to_ask": "rules_category_how_to_ask",
     "rules.category.apology": "rules_category_apology",

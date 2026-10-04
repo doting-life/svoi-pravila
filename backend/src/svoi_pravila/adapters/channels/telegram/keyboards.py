@@ -188,9 +188,16 @@ def rules_keyboard(
 ) -> InlineKeyboardMarkup:
     """Per-rule archive plus add. Callback data carries ids only."""
     rows: list[list[InlineKeyboardButton]] = []
-    for rule_id in rule_ids:
+    for index, rule_id in enumerate(rule_ids, start=1):
         archive = _require_callback_bytes(f"ru:ar:{rule_id}")
-        rows.append([InlineKeyboardButton(text=strings.rules_archive, callback_data=archive)])
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=strings.rules_archive.format(n=index),
+                    callback_data=archive,
+                )
+            ]
+        )
     rows.append(
         [
             InlineKeyboardButton(

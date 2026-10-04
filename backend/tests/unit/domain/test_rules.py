@@ -45,6 +45,8 @@ def test_private_propose_becomes_active() -> None:
         now=NOW,
     )
     assert rule.status is RuleStatus.ACTIVE
+    assert rule.require_effective_revision().text.value == "do not joke about X"
+    assert rule.require_effective_revision().require_effective_since() == NOW
     assert _reconstruct(rule) == rule
 
 
@@ -60,6 +62,12 @@ def test_pair_propose_requires_both() -> None:
         now=NOW,
     )
     assert rule.status is RuleStatus.PROPOSED
+    with pytest.raises(InvalidValueError, match="ACTIVE rules must have an effective revision"):
+        rule.require_effective_revision()
+    pending = rule.pending_revision
+    assert pending is not None
+    with pytest.raises(InvalidValueError, match="revision is not effective"):
+        pending.require_effective_since()
     approved = rule.approve(PARTNER, NOW + timedelta(seconds=1))
     assert approved.status is RuleStatus.ACTIVE
     assert _reconstruct(approved) == approved

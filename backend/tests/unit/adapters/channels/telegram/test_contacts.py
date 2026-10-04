@@ -199,12 +199,14 @@ async def test_contacts_list_add_rename_active_and_decode_untouched() -> None:
 
 
 @pytest.mark.unit
-async def test_dialog_invalid_label_and_limit_keep_dialog() -> None:
+async def test_invalid_label_keeps_dialog() -> None:
     uow = InMemoryUnitOfWorkFactory()
     catalog = FakeConsentCatalog()
-    ids = FakeIdGenerator()
     dialog = FakeDialogState()
-    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, dialog=dialog, ids=ids))
+    generator = FakeTextGenerator()
+    deps = make_telegram_deps(
+        TelegramTestDeps(uow=uow, catalog=catalog, dialog=dialog, generator=generator)
+    )
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
@@ -214,22 +216,41 @@ async def test_dialog_invalid_label_and_limit_keep_dialog() -> None:
     await lifecycle.dispatcher.feed_update(bot, _text_update(3, 502, ""))
     assert deps.strings.contacts_invalid_label in _sent_texts(session)
     assert await dialog.get(_dialog_key(502)) is not None
-    await lifecycle.dispatcher.feed_update(bot, _text_update(4, 502, "ok-name"))
-    assert await dialog.get(_dialog_key(502)) is None
+    await lifecycle.dispatcher.feed_update(bot, _text_update(4, 502, ""))
+    assert await dialog.get(_dialog_key(502)) is not None
+    assert generator.decode_stream_calls == []
+
+
+@pytest.mark.unit
+async def test_contact_limit_clears_dialog_then_decode() -> None:
+    uow = InMemoryUnitOfWorkFactory()
+    catalog = FakeConsentCatalog()
+    ids = FakeIdGenerator()
+    dialog = FakeDialogState()
+    generator = FakeTextGenerator()
+    deps = make_telegram_deps(
+        TelegramTestDeps(uow=uow, catalog=catalog, dialog=dialog, ids=ids, generator=generator)
+    )
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 530, catalog)
     user = (
-        await deps.get_user_by_telegram_id.execute(GetUserByTelegramIdQuery(TelegramUserId(502)))
+        await deps.get_user_by_telegram_id.execute(GetUserByTelegramIdQuery(TelegramUserId(530)))
     ).user
     assert user is not None
     create = CreateContact(uow, catalog, ids, deps.clock)
-    for i in range(MAX_CONTACTS_PER_USER - 1):
+    for i in range(MAX_CONTACTS_PER_USER):
         await create.execute(
             CreateContactCommand(user.id, ContactLabel(f"n{i}"), RelationshipKind.OTHER)
         )
-    await lifecycle.dispatcher.feed_update(bot, _callback(5, 502, "ct:n"))
-    await lifecycle.dispatcher.feed_update(bot, _callback(6, 502, "ct:rel:family"))
-    await lifecycle.dispatcher.feed_update(bot, _text_update(7, 502, "overflow"))
+    await lifecycle.dispatcher.feed_update(bot, _callback(1, 530, "ct:n"))
+    await lifecycle.dispatcher.feed_update(bot, _callback(2, 530, "ct:rel:family"))
+    await lifecycle.dispatcher.feed_update(bot, _text_update(3, 530, "overflow"))
     assert deps.strings.contacts_limit in _sent_texts(session)
-    assert await dialog.get(_dialog_key(502)) is not None
+    assert await dialog.get(_dialog_key(530)) is None
+    await lifecycle.dispatcher.feed_update(bot, _text_update(4, 530, "please decode this now"))
+    assert len(generator.decode_stream_calls) == 1
 
 
 @pytest.mark.unit
@@ -288,7 +309,7 @@ async def test_contacts_requires_onboarding_and_stranger_rename() -> None:
     before = len(_sent_texts(session))
     await lifecycle.dispatcher.feed_update(bot, _text_update(8, 506, "Hijack"))
     after = _sent_texts(session)[before:]
-    assert any(deps.strings.error_generic in text for text in after), after
+    assert any(deps.strings.contacts_unavailable in text for text in after), after
 
 
 @pytest.mark.unit
@@ -370,7 +391,31 @@ class _AccessDeniedRename:
 
 
 @pytest.mark.unit
-async def test_dialog_access_not_granted_rerenders_onboarding() -> None:
+async def test_rename_not_found_clears_dialog_then_decode() -> None:
+    uow = InMemoryUnitOfWorkFactory()
+    catalog = FakeConsentCatalog()
+    dialog = FakeDialogState()
+    generator = FakeTextGenerator()
+    deps = make_telegram_deps(
+        TelegramTestDeps(uow=uow, catalog=catalog, dialog=dialog, generator=generator)
+    )
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 531, catalog)
+    await dialog.set(
+        _dialog_key(531),
+        DialogRecord(step="awaiting_rename", contact_id=ContactId(UUID(int=99))),
+    )
+    await lifecycle.dispatcher.feed_update(bot, _text_update(1, 531, "NewName"))
+    assert deps.strings.contacts_unavailable in _sent_texts(session)
+    assert await dialog.get(_dialog_key(531)) is None
+    await lifecycle.dispatcher.feed_update(bot, _text_update(2, 531, "please decode this now"))
+    assert len(generator.decode_stream_calls) == 1
+
+
+@pytest.mark.unit
+async def test_dialog_access_not_granted_clears_dialog() -> None:
     uow = InMemoryUnitOfWorkFactory()
     catalog = FakeConsentCatalog()
     dialog = FakeDialogState()
@@ -385,7 +430,8 @@ async def test_dialog_access_not_granted_rerenders_onboarding() -> None:
         DialogRecord(step="awaiting_label", relationship=RelationshipKind.FRIEND),
     )
     await lifecycle.dispatcher.feed_update(bot, _text_update(1, 510, "Alex"))
-    assert any(deps.strings.done_commands in text for text in _sent_texts(session))
+    assert deps.strings.contacts_unavailable in _sent_texts(session)
+    assert await dialog.get(_dialog_key(510)) is None
     deps = replace(deps, rename_contact=cast(RenameContact, _AccessDeniedRename()))
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
     await dialog.set(
@@ -393,7 +439,7 @@ async def test_dialog_access_not_granted_rerenders_onboarding() -> None:
         DialogRecord(step="awaiting_rename", contact_id=ContactId(UUID(int=1))),
     )
     await lifecycle.dispatcher.feed_update(bot, _text_update(2, 510, "Alex"))
-    assert any(deps.strings.done_commands in text for text in _sent_texts(session))
+    assert await dialog.get(_dialog_key(510)) is None
 
 
 @pytest.mark.unit

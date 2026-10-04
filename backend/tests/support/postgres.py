@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import os
 import secrets
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
@@ -13,7 +14,7 @@ from urllib.parse import urlparse, urlunparse
 import pytest
 from alembic import command
 from alembic.config import Config
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql.base import PGDialect
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
@@ -24,6 +25,7 @@ from svoi_pravila.adapters.persistence.models import Base
 from svoi_pravila.adapters.persistence.uow import SqlAlchemyUnitOfWorkFactory
 from svoi_pravila.bootstrap import load_settings
 from svoi_pravila.config import Settings
+from tests.factories import make_settings
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI = BACKEND_ROOT / "alembic.ini"
@@ -142,7 +144,29 @@ async def ensure_test_database_exists(settings: Settings) -> str:
 
 def isolated_settings() -> Settings:
     """Settings aimed at the dedicated test database and Valkey DB 15."""
-    settings = load_settings()
+    # Prefer full Settings when the process env is valid; otherwise assemble
+    # from the DB/Valkey/KEK/pepper variables required by integration tests.
+    try:
+        base = load_settings()
+        database_url = base.database_url.get_secret_value()
+        valkey_url = base.valkey_url.get_secret_value()
+        data_kek = base.data_kek.get_secret_value()
+        data_kek_id = base.data_kek_id
+        pepper = base.pseudonym_pepper.get_secret_value()
+    except ValidationError:
+        database_url = os.environ["SP_DATABASE_URL"]
+        valkey_url = os.environ["SP_VALKEY_URL"]
+        data_kek = os.environ["SP_DATA_KEK"]
+        data_kek_id = os.environ["SP_DATA_KEK_ID"]
+        pepper = os.environ["SP_PSEUDONYM_PEPPER"]
+
+    settings = make_settings(
+        database_url=database_url,
+        valkey_url=valkey_url,
+        data_kek=data_kek,
+        data_kek_id=data_kek_id,
+        pseudonym_pepper=pepper,
+    )
     # Run ensure off the pytest-asyncio loop (same reason as Alembic helpers).
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         database_url = pool.submit(

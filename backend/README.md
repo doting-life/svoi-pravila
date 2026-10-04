@@ -44,3 +44,17 @@ Token estimate heuristic (dry-run / pre-call budget): `ceil(rendered system+user
 `--smoke` runs only cases with `"smoke": true` (6 per operation). `--cases <id>...` selects by id.
 
 `--record-fixtures <dir>` writes sanitized HTTP fixtures via httpx event hooks. Streamed responses are buffered for the fixture file, so latency and TTFC from a recording run are **not** valid measurements.
+
+## Telegram (local)
+
+Local delivery uses **polling**. Webhook mode is for VPS/staging/production (task 0023).
+
+1. Create a test bot in BotFather; enable inline mode later (0007). Put the token only in local `.env` as `SP_TELEGRAM_BOT_TOKEN` — never commit it.
+2. Ensure `SP_TELEGRAM_UPDATES_MODE=polling`, `SP_ENVIRONMENT=local`, and run `make dev-env` so `SP_PSEUDONYM_PEPPER` is generated.
+3. Start the stack: `make up`.
+4. Open the bot in Telegram and send `/start`.
+5. Confirm «Мне есть 18», then accept both consent screens.
+6. Read the completion notice (what we store / don’t store, «via @bot», commands).
+7. Send `/help` and a plain text message — both should show the help text for this build (`/start`, `/help` only).
+
+Without a bot token, automated tests still cover the channel; manual smoke is skipped.

@@ -6,16 +6,36 @@ import http.client
 import sys
 
 import uvicorn
-from fastapi import FastAPI
+from aiogram.types import Update
+from fastapi import APIRouter, FastAPI
 
 from svoi_pravila.adapters.cache.client import close_client, create_client
+from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
 from svoi_pravila.adapters.cache.probe import ValkeyProbe
+from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
+from svoi_pravila.adapters.channels.telegram import build_telegram_lifecycle
+from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
+from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
+from svoi_pravila.adapters.consents import PackageConsentCatalog
 from svoi_pravila.adapters.llm.gigachat.client import close_gigachat_client, create_gigachat_client
 from svoi_pravila.adapters.persistence.engine import create_engine, dispose_engine
 from svoi_pravila.adapters.persistence.probe import DatabaseProbe
+from svoi_pravila.adapters.persistence.uow import SqlAlchemyUnitOfWorkFactory
+from svoi_pravila.adapters.system.clock import SystemClock
+from svoi_pravila.adapters.system.ids import Uuid7IdGenerator
 from svoi_pravila.api.app import create_app
+from svoi_pravila.api.telegram_webhook import (
+    TelegramWebhookBindings,
+    build_telegram_webhook_router,
+)
+from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
-from svoi_pravila.config import Settings
+from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocument
+from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
+from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
+from svoi_pravila.application.use_cases.grant_consent import GrantConsent
+from svoi_pravila.config import Settings, TelegramUpdatesMode
+from svoi_pravila.crypto import HmacPseudonymizer
 from svoi_pravila.observability import configure_logging
 
 _HEALTHCHECK_TIMEOUT_SECONDS = 2.0
@@ -39,6 +59,69 @@ def create_application(settings: Settings) -> FastAPI:
         timeout_seconds=settings.readiness_timeout_seconds,
     )
 
+    uow_factory = SqlAlchemyUnitOfWorkFactory(
+        engine,
+        kek=settings.data_kek_bytes(),
+        kek_id=settings.data_kek_id,
+    )
+    clock = SystemClock()
+    ids = Uuid7IdGenerator()
+    catalog = PackageConsentCatalog()
+
+    lifecycle = None
+    extra_routers: tuple[APIRouter, ...] = ()
+    if settings.telegram_updates_mode is not TelegramUpdatesMode.DISABLED:
+        strings = load_ru_strings()
+        deps = TelegramDeps(
+            strings=strings,
+            get_onboarding_step=GetOnboardingStep(uow_factory, catalog),
+            get_user_by_telegram_id=GetUserByTelegramId(uow_factory),
+            accept_age=AcceptAgeConfirmation(uow_factory, ids, clock),
+            grant_consent=GrantConsent(uow_factory, catalog, ids, clock),
+            get_consent_document=GetConsentDocument(catalog),
+            deduplicator=ValkeyUpdateDeduplicator(
+                valkey,
+                ttl_seconds=settings.telegram_dedup_ttl_seconds,
+            ),
+            rate_limiter=ValkeyRateLimiter(
+                valkey,
+                limit_per_minute=settings.telegram_rate_limit_per_minute,
+            ),
+            pseudonymizer=HmacPseudonymizer(settings.pseudonym_pepper_bytes()),
+        )
+        lifecycle = build_telegram_lifecycle(settings, deps)
+        if settings.telegram_updates_mode is TelegramUpdatesMode.WEBHOOK:
+            path_secret = settings.telegram_webhook_path_secret
+            secret_token = settings.telegram_webhook_secret_token
+            if path_secret is None or secret_token is None:
+                msg = "webhook secrets required in webhook mode"
+                raise RuntimeError(msg)
+            bound_lifecycle = lifecycle
+
+            async def _feed(update: Update) -> None:
+                await bound_lifecycle.dispatcher.feed_update(bound_lifecycle.bot, update)
+
+            extra_routers = (
+                build_telegram_webhook_router(
+                    TelegramWebhookBindings(
+                        is_accepting=lambda: bound_lifecycle.accepting,
+                        path_secret=path_secret.get_secret_value(),
+                        secret_token=secret_token.get_secret_value(),
+                        parse_bot=bound_lifecycle.bot,
+                        feed_update=_feed,
+                        schedule=bound_lifecycle.schedule_update,
+                    )
+                ),
+            )
+
+    async def on_startup() -> None:
+        if lifecycle is not None:
+            await lifecycle.start()
+
+    async def on_shutdown() -> None:
+        if lifecycle is not None:
+            await lifecycle.shutdown()
+
     async def dispose() -> None:
         await close_gigachat_client(gigachat)
         await close_client(valkey)
@@ -48,6 +131,9 @@ def create_application(settings: Settings) -> FastAPI:
         check_readiness=check_readiness,
         environment=settings.environment,
         dispose=dispose,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+        extra_routers=extra_routers,
     )
 
 

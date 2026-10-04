@@ -37,6 +37,10 @@ class FakeRateLimiter:
             first_rejection=count == self._limit + 1,
         )
 
+    def check_count(self) -> int:
+        """How many times ``check`` was called."""
+        return sum(self._counts.values())
+
 
 class FakePseudonymizer:
     """Deterministic test pseudonymizer."""

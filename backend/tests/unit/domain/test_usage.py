@@ -140,6 +140,35 @@ def test_usage_event_generation_rejects_firmness() -> None:
         replace(_event(), variant_firmness=Firmness.FIRM)
 
 
+@pytest.mark.unit
+def test_usage_event_screened_crisis_without_model() -> None:
+    event = UsageEvent(
+        id=UsageEventId(UUID(int=3)),
+        occurred_at=_NOW,
+        user_pseudonym=_PSEUDO,
+        scenario=UsageScenario.DECODE,
+        surface=UsageSurface.DM,
+        outcome=UsageOutcome.SCREENED,
+        unavailable_kind=None,
+        safety="crisis",
+        model=None,
+        prompt_version=None,
+        latency_ms=0,
+        ttfc_ms=None,
+        attempts=0,
+        input_tokens=0,
+        output_tokens=0,
+        billable_tokens=0,
+    )
+    assert event.outcome is UsageOutcome.SCREENED
+    with pytest.raises(InvalidValueError, match="safety=crisis"):
+        replace(event, safety="ok")
+    with pytest.raises(InvalidValueError, match="model"):
+        replace(event, model="x")
+    with pytest.raises(InvalidValueError, match="generation metrics"):
+        replace(event, attempts=1)
+
+
 @given(st.text(alphabet="0123456789abcdef", min_size=64, max_size=64))
 @pytest.mark.unit
 def test_usage_event_hex_pseudonym_round_trip(hex64: str) -> None:

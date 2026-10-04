@@ -9,6 +9,7 @@ from datetime import timedelta
 
 import pytest
 
+from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.errors import (
     AccessNotGranted,
     GenerationRefusedByProvider,
@@ -97,6 +98,7 @@ def _ports(
             monotonic=world.clock,
             ids=world.ids,
             pseudonymizer=FakePseudonymizer(),
+            crisis_screen=CrisisScreen.load_ru_v1(),
             deadline_seconds=chosen.deadline_seconds,
         )
     )
@@ -491,3 +493,34 @@ async def test_decode_releases_lock_on_cancellation(world: AppWorld) -> None:
     assert guard.release_calls
     assert isinstance(sink, RecordingUsageEventSink)
     assert sink.events == []
+
+
+@pytest.mark.unit
+async def test_decode_crisis_screen_skips_quota_lock_and_generator(world: AppWorld) -> None:
+    await world.ensure_granted_user(108)
+
+    class AlwaysBusy(FakeConcurrencyGuard):
+        async def acquire(self, key: str, *, ttl_seconds: int) -> str | None:
+            self.acquire_calls.append((key, ttl_seconds))
+            return None
+
+    generator = FakeTextGenerator()
+    quota = FakeRateLimiter(limit=0)
+    use_case, sink, guard = _ports(
+        world, _DecodeFakes(generator=generator, guard=AlwaysBusy(), quota=quota)
+    )
+    events = await _drain(use_case, 108, "он сказал, что не хочет жить")
+    assert len(events) == 1
+    assert isinstance(events[0], DecodeCompleted)
+    assert events[0].result.safety is SafetyVerdict.CRISIS
+    assert events[0].result.variants == ()
+    assert generator.decode_stream_calls == []
+    assert quota.check_count() == 0
+    assert guard.acquire_calls == []
+    assert isinstance(sink, RecordingUsageEventSink)
+    event = sink.events[0]
+    assert event.outcome is UsageOutcome.SCREENED
+    assert event.safety == SafetyVerdict.CRISIS.value
+    assert event.model is None
+    assert event.attempts == 0
+    assert event.billable_tokens == 0

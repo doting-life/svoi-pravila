@@ -8,6 +8,7 @@ from importlib import resources
 
 from svoi_pravila.application.ports.generation import HelpSayIntent
 from svoi_pravila.domain.enums import Firmness
+from svoi_pravila.domain.safety import load_data_lines
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +39,8 @@ class TelegramStrings:
     inline_firmness_firm: str
     inline_button_how_to: str
     inline_button_finish_setup: str
+    inline_button_need_support: str
+    inline_button_why_no_variants: str
     rate_limited: str
     error_generic: str
     decode_copy: str
@@ -91,6 +94,8 @@ _KEYS: dict[str, str] = {
     "inline.firmness.firm": "inline_firmness_firm",
     "inline.button.how_to": "inline_button_how_to",
     "inline.button.finish_setup": "inline_button_finish_setup",
+    "inline.button.need_support": "inline_button_need_support",
+    "inline.button.why_no_variants": "inline_button_why_no_variants",
     "rate_limited": "rate_limited",
     "error.generic": "error_generic",
     "decode.copy": "decode_copy",
@@ -161,3 +166,24 @@ def firmness_label(strings: TelegramStrings, firmness: Firmness) -> str:
     if firmness is Firmness.BALANCED:
         return strings.inline_firmness_balanced
     return strings.inline_firmness_firm
+
+
+def load_support_resources() -> tuple[str, ...]:
+    """Load versioned support-resource lines, skipping comments."""
+    raw = (
+        resources.files("svoi_pravila.domain.safety")
+        .joinpath("support_resources/ru/v1.txt")
+        .read_text(encoding="utf-8")
+    )
+    return load_data_lines(raw)
+
+
+def render_crisis_message(strings: TelegramStrings) -> str:
+    """Careful crisis copy plus versioned help contacts. No diagnosis or advice."""
+    resources_block = "\n".join(load_support_resources())
+    return f"{strings.decode_crisis}\n\n{resources_block}"
+
+
+def render_refuse_manipulation(strings: TelegramStrings) -> str:
+    """Careful refusal plus an offer to help say it respectfully."""
+    return strings.decode_refuse_manipulation

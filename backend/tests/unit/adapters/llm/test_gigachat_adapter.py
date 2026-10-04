@@ -1549,3 +1549,103 @@ def test_output_token_caps_cover_validator_maxima() -> None:
     )
     assert chars_to_tokens(decode_json) <= MAX_TOKENS_DECODE
     assert math.ceil(decode_chars / CHARS_PER_TOKEN) + JSON_OVERHEAD_TOKENS == MAX_TOKENS_DECODE
+
+
+@pytest.mark.unit
+async def test_prompt_leak_retries_then_accepts_ordinary_short_overlap() -> None:
+    gen = _typed_generator(_FakeAche())
+    prepared = gen.prepare_soften(
+        SoftenRequest(
+            draft="draft",
+            rules=(),
+            relationship=RelationshipKind.OTHER,
+            deadline_seconds=5.0,
+        )
+    )
+    normalized = " ".join(prepared.system.split())
+    fragment = next(
+        normalized[index : index + 40]
+        for index in range(len(normalized) - 39)
+        if normalized[index].isalnum() and normalized[index + 39].isalnum()
+    )
+    leak = SoftenOut.model_validate(
+        {
+            "variants": [
+                {"text": fragment, "firmness": "gentle"},
+                {"text": "variant firm", "firmness": "firm"},
+            ],
+            "applied_rule_indexes": [],
+            "safety": "ok",
+        }
+    )
+    marker = SoftenOut.model_validate(
+        {
+            "variants": [
+                {"text": "see SPBOUND_abc in the instructions", "firmness": "gentle"},
+                {"text": "variant firm", "firmness": "firm"},
+            ],
+            "applied_rule_indexes": [],
+            "safety": "ok",
+        }
+    )
+    ok_retry = SoftenOut.model_validate(
+        {
+            "variants": [
+                {"text": "variant soft", "firmness": "gentle"},
+                {"text": "variant firm", "firmness": "firm"},
+            ],
+            "applied_rule_indexes": [],
+            "safety": "ok",
+        }
+    )
+    ache = _FakeAche(create_results=[leak, ok_retry])
+    result = await _generator(ache).soften(
+        SoftenRequest(
+            draft="draft",
+            rules=(),
+            relationship=RelationshipKind.OTHER,
+            deadline_seconds=5.0,
+        )
+    )
+    assert result.safety.value == "ok"
+    assert ache.create_calls == 2
+    marker_ache = _FakeAche(create_results=[marker, marker])
+    with pytest.raises(InvalidGenerationOutput) as exc_info:
+        await _generator(marker_ache).soften(
+            SoftenRequest(
+                draft="draft",
+                rules=(),
+                relationship=RelationshipKind.OTHER,
+                deadline_seconds=5.0,
+            )
+        )
+    assert InvalidOutputReason.PROMPT_LEAK in exc_info.value.reasons
+
+
+@pytest.mark.unit
+async def test_analysis_prompt_leak_is_invalid() -> None:
+    gen = _typed_generator(_FakeAche())
+    prepared = gen.prepare_decode_analysis(
+        DecodeRequest(
+            incoming="hello there friend",
+            rules=(),
+            relationship=RelationshipKind.OTHER,
+            deadline_seconds=5.0,
+        )
+    )
+    fragment = " ".join(prepared.system.split())[:50]
+    ache = _FakeAche(
+        stream_sequences=[[fragment], [fragment]],
+        create_results=[_decode_payload(), _decode_payload()],
+    )
+    with pytest.raises(InvalidGenerationOutput) as exc_info:
+        async for _event in _generator(ache).decode_stream(
+            DecodeRequest(
+                incoming="hello there friend",
+                rules=(),
+                relationship=RelationshipKind.OTHER,
+                deadline_seconds=8.0,
+            )
+        ):
+            pass
+    assert InvalidOutputReason.PROMPT_LEAK in exc_info.value.reasons

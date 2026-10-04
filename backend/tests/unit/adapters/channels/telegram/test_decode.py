@@ -34,7 +34,10 @@ from svoi_pravila.adapters.channels.telegram.handlers.decode import (
 )
 from svoi_pravila.adapters.channels.telegram.keyboards import copy_text_markup
 from svoi_pravila.adapters.channels.telegram.lifecycle import TelegramLifecycle
-from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
+from svoi_pravila.adapters.channels.telegram.localization import (
+    load_ru_strings,
+    render_crisis_message,
+)
 from svoi_pravila.adapters.channels.telegram.presenters import (
     TELEGRAM_MESSAGE_MAX,
     render_decode_completed,
@@ -329,7 +332,8 @@ def test_render_decode_safety_and_copy_truncation() -> None:
         ),
     )
     rendered = render_decode_completed(strings, crisis, copy_max=256)
-    assert rendered == ((strings.decode_crisis, None),)
+    assert rendered == ((render_crisis_message(strings), None),)
+    assert "112" in rendered[0][0]
     refuse = DecodeCompleted(
         analysis="a",
         result=DecodeResult(
@@ -343,6 +347,7 @@ def test_render_decode_safety_and_copy_truncation() -> None:
     )
     rendered = render_decode_completed(strings, refuse, copy_max=256)
     assert rendered == ((strings.decode_refuse_manipulation, None),)
+    assert "уважительно" in rendered[0][0]
     ok = DecodeCompleted(
         analysis="a",
         result=DecodeResult(

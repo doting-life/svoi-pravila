@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
+from svoi_pravila.adapters.channels.telegram.localization import (
+    load_ru_strings,
+    render_crisis_message,
+)
 
 
 @pytest.mark.unit
@@ -18,6 +21,8 @@ def test_load_ru_strings_succeeds() -> None:
     assert strings.decode_copy
     assert strings.decode_insert
     assert strings.inline_prefix_decline
+    assert strings.inline_button_need_support
+    assert "112" in render_crisis_message(strings)
 
 
 @pytest.mark.unit

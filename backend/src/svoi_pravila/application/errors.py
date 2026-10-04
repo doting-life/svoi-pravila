@@ -36,6 +36,7 @@ class InvalidOutputReason(StrEnum):
     HYPOTHESIS_COUNT = "hypothesis_count"
     NON_OK_WITH_PAYLOAD = "non_ok_with_payload"
     BOUNDARY_COLLISION = "boundary_collision"
+    PROMPT_LEAK = "prompt_leak"
 
 
 class ApplicationError(Exception):

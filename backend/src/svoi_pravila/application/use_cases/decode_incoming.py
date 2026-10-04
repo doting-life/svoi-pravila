@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
 from typing import Protocol
 
+from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
     GenerationUnavailable,
@@ -27,7 +28,10 @@ from svoi_pravila.application.ports.generation import (
     DecodeCompleted,
     DecodeEvent,
     DecodeRequest,
+    DecodeResult,
+    GenerationMeta,
     RuleContext,
+    SafetyVerdict,
     TextGenerator,
     TokenUsage,
 )
@@ -76,6 +80,7 @@ class DecodeIncomingPorts:
     monotonic: MonotonicClock
     ids: IdGenerator
     pseudonymizer: Pseudonymizer
+    crisis_screen: CrisisScreen
     deadline_seconds: float
 
 
@@ -95,8 +100,8 @@ class _UsageDraft:
     started: float
     first_chunk_at: float | None
     outcome: UsageOutcome
-    model: str
-    prompt_version: str
+    model: str | None
+    prompt_version: str | None
     latency_ms: int
     attempts: int
     usage: TokenUsage
@@ -120,6 +125,11 @@ class DecodeIncoming:
 
         relationship, rules = await self._load_context(command.telegram_user_id)
         user_key = str(command.telegram_user_id.value)
+        if self._ports.crisis_screen.hit(text):
+            completed = _screened_decode_completed()
+            await self._persist(self._event_from_screened(user_key))
+            yield completed
+            return
         lock_pseudonym = self._ports.pseudonymizer.pseudonymize(_RATE_LIMIT_PURPOSE, user_key)
         lock_key = f"tg:decode:lock:{lock_pseudonym}"
         ttl = int(self._ports.deadline_seconds) + _LOCK_MARGIN_SECONDS
@@ -154,29 +164,13 @@ class DecodeIncoming:
                             completed=event,
                         )
                     )
-        except GenerationUnavailable as exc:
+        except (
+            GenerationUnavailable,
+            GenerationRefusedByProvider,
+            InvalidGenerationOutput,
+        ) as exc:
             await self._persist(
-                self._event_from_unavailable(
-                    user_key=user_key,
-                    started=started,
-                    first_chunk_at=first_chunk_at,
-                    error=exc,
-                )
-            )
-            raise
-        except GenerationRefusedByProvider as exc:
-            await self._persist(
-                self._event_from_refused(
-                    user_key=user_key,
-                    started=started,
-                    first_chunk_at=first_chunk_at,
-                    error=exc,
-                )
-            )
-            raise
-        except InvalidGenerationOutput as exc:
-            await self._persist(
-                self._event_from_invalid(
+                self._event_from_failure(
                     user_key=user_key,
                     started=started,
                     first_chunk_at=first_chunk_at,
@@ -218,12 +212,33 @@ class DecodeIncoming:
             safety=draft.safety,
             model=draft.model,
             prompt_version=draft.prompt_version,
-            latency_ms=draft.latency_ms if draft.outcome is UsageOutcome.OK else measured,
+            latency_ms=(
+                draft.latency_ms
+                if draft.outcome in {UsageOutcome.OK, UsageOutcome.SCREENED}
+                else measured
+            ),
             ttfc_ms=ttfc_ms,
             attempts=draft.attempts,
             input_tokens=draft.usage.input,
             output_tokens=draft.usage.output,
             billable_tokens=draft.usage.billable,
+        )
+
+    def _event_from_screened(self, user_key: str) -> UsageEvent:
+        return self._base_event(
+            _UsageDraft(
+                user_key=user_key,
+                started=self._ports.monotonic.monotonic(),
+                first_chunk_at=None,
+                outcome=UsageOutcome.SCREENED,
+                model=None,
+                prompt_version=None,
+                latency_ms=0,
+                attempts=0,
+                usage=TokenUsage(),
+                unavailable_kind=None,
+                safety=SafetyVerdict.CRISIS.value,
+            )
         )
 
     def _event_from_completed(
@@ -249,6 +264,35 @@ class DecodeIncoming:
                 unavailable_kind=None,
                 safety=completed.result.safety.value,
             )
+        )
+
+    def _event_from_failure(
+        self,
+        *,
+        user_key: str,
+        started: float,
+        first_chunk_at: float | None,
+        error: GenerationUnavailable | GenerationRefusedByProvider | InvalidGenerationOutput,
+    ) -> UsageEvent:
+        if isinstance(error, GenerationUnavailable):
+            return self._event_from_unavailable(
+                user_key=user_key,
+                started=started,
+                first_chunk_at=first_chunk_at,
+                error=error,
+            )
+        if isinstance(error, GenerationRefusedByProvider):
+            return self._event_from_refused(
+                user_key=user_key,
+                started=started,
+                first_chunk_at=first_chunk_at,
+                error=error,
+            )
+        return self._event_from_invalid(
+            user_key=user_key,
+            started=started,
+            first_chunk_at=first_chunk_at,
+            error=error,
         )
 
     def _event_from_unavailable(
@@ -329,3 +373,24 @@ class DecodeIncoming:
             await self._ports.sink.record(event)
         except UsageEventWriteFailed:
             return
+
+
+def _screened_decode_completed() -> DecodeCompleted:
+    """Empty decode payload for a pre-LLM crisis hit."""
+    return DecodeCompleted(
+        analysis="",
+        result=DecodeResult(
+            hypotheses=(),
+            underlying_request="",
+            variants=(),
+            applied_rule_indexes=(),
+            safety=SafetyVerdict.CRISIS,
+            meta=GenerationMeta(
+                model="",
+                prompt_version="",
+                latency_ms=0,
+                attempts=0,
+                usage=TokenUsage(),
+            ),
+        ),
+    )

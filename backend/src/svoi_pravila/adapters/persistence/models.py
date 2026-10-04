@@ -369,7 +369,7 @@ class UsageEventRow(Base):
             name="usage_surface",
         ),
         CheckConstraint(
-            "outcome IN ('ok', 'invalid_output', 'refused', 'unavailable')",
+            "outcome IN ('ok', 'invalid_output', 'refused', 'unavailable', 'screened')",
             name="usage_outcome",
         ),
         CheckConstraint(
@@ -382,7 +382,13 @@ class UsageEventRow(Base):
         ),
         CheckConstraint(
             "("
-            "event_kind = 'generation' AND model IS NOT NULL AND model <> '' "
+            "event_kind = 'generation' AND outcome = 'screened' AND safety = 'crisis' "
+            "AND model IS NULL AND prompt_version IS NULL AND attempts = 0 "
+            "AND input_tokens = 0 AND output_tokens = 0 AND billable_tokens = 0 "
+            "AND ttfc_ms IS NULL AND unavailable_kind IS NULL AND variant_firmness IS NULL"
+            ") OR ("
+            "event_kind = 'generation' AND outcome <> 'screened' "
+            "AND model IS NOT NULL AND model <> '' "
             "AND prompt_version IS NOT NULL AND prompt_version <> '' "
             "AND attempts >= 1 AND variant_firmness IS NULL"
             ") OR ("

@@ -62,3 +62,32 @@ async def test_usage_event_sink_commits_c0_row(
         assert forbidden.isdisjoint(set(columns))
         assert "event_kind" in columns
         assert "variant_firmness" in columns
+
+
+@pytest.mark.integration
+async def test_usage_event_sink_commits_screened_row(
+    uow_factory: SqlAlchemyUnitOfWorkFactory,
+) -> None:
+    event = UsageEvent(
+        id=UsageEventId(UUID(int=81)),
+        occurred_at=NOW,
+        user_pseudonym="ab" * 32,
+        scenario=UsageScenario.DECODE,
+        surface=UsageSurface.DM,
+        outcome=UsageOutcome.SCREENED,
+        unavailable_kind=None,
+        safety="crisis",
+        model=None,
+        prompt_version=None,
+        latency_ms=0,
+        ttfc_ms=None,
+        attempts=0,
+        input_tokens=0,
+        output_tokens=0,
+        billable_tokens=0,
+    )
+    await UnitOfWorkUsageEventSink(uow_factory).record(event)
+    async with uow_factory() as uow:
+        loaded = await uow.usage_events.get(event.id)
+        assert loaded == event
+        assert loaded.outcome is UsageOutcome.SCREENED

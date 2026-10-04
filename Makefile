@@ -1,6 +1,6 @@
 .PHONY: install fmt fmt-check lint typecheck imports test-unit test-integration test \
 	audit secrets migrations-check image-scan dev-env infra-up infra-down build up down \
-	logs ps bench-llm check
+	logs ps bench-llm eval-llm check
 
 BACKEND := backend
 GITLEAKS_IMAGE := zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
@@ -45,12 +45,16 @@ test:
 	$(UV) coverage report --include='*/svoi_pravila/application/*' --fail-under=100
 	$(UV) coverage report --include='*/svoi_pravila/crypto/*' --fail-under=100
 	$(UV) coverage report --include='*/svoi_pravila/adapters/persistence/*' --fail-under=95
-	$(UV) coverage report --include='*/svoi_pravila/adapters/llm/*' --fail-under=95
+	$(UV) coverage report --include='*/svoi_pravila/adapters/llm/*' --fail-under=100
 	$(UV) coverage report --include='*/svoi_pravila/adapters/channels/*' --fail-under=95
 	$(UV) coverage report --include='*/svoi_pravila/adapters/cache/*' --fail-under=95
+	$(UV) coverage report --include='*/svoi_pravila/evals/*' --fail-under=95
 
 bench-llm:
 	docker compose --profile app run --rm --entrypoint svoi-pravila-bench-llm api $(BENCH_ARGS)
+
+eval-llm:
+	docker compose --profile app run --rm --entrypoint svoi-pravila-eval api $(EVAL_ARGS)
 
 audit:
 	cd $(BACKEND) && uv export --frozen --no-dev --no-emit-project -o /tmp/svoi-pravila-requirements.txt

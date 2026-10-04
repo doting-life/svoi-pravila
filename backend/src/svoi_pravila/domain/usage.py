@@ -21,7 +21,7 @@ _HEX64 = 64
 
 @dataclass(frozen=True, slots=True)
 class UsageEvent:
-    """C0 analytics row: a generation that reached the provider, or an inline choice."""
+    """C0 analytics row: a generation, a pre-LLM crisis screen, or an inline choice."""
 
     id: UsageEventId
     occurred_at: datetime
@@ -64,6 +64,9 @@ class UsageEvent:
         self._validate_result_chosen()
 
     def _validate_generation(self) -> None:
+        if self.outcome is UsageOutcome.SCREENED:
+            self._validate_screened()
+            return
         if not self.model or not self.prompt_version:
             msg = "model and prompt_version must be non-empty"
             raise InvalidValueError(msg)
@@ -72,6 +75,25 @@ class UsageEvent:
             raise InvalidValueError(msg)
         if self.variant_firmness is not None:
             msg = "generation events must not set variant_firmness"
+            raise InvalidValueError(msg)
+
+    def _validate_screened(self) -> None:
+        if self.safety != "crisis":
+            msg = "screened events require safety=crisis"
+            raise InvalidValueError(msg)
+        if self.model is not None or self.prompt_version is not None:
+            msg = "screened events must not set model or prompt_version"
+            raise InvalidValueError(msg)
+        if (
+            self.attempts != 0
+            or self.input_tokens != 0
+            or self.output_tokens != 0
+            or self.billable_tokens != 0
+            or self.ttfc_ms is not None
+            or self.unavailable_kind is not None
+            or self.variant_firmness is not None
+        ):
+            msg = "screened events must not carry generation metrics"
             raise InvalidValueError(msg)
 
     def _validate_result_chosen(self) -> None:

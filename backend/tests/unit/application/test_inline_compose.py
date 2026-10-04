@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.errors import (
     AccessNotGranted,
     GenerationRefusedByProvider,
@@ -81,6 +82,7 @@ def _ports(
             monotonic=world.clock,
             ids=world.ids,
             pseudonymizer=FakePseudonymizer(),
+            crisis_screen=CrisisScreen.load_ru_v1(),
             min_chars=chosen.min_chars,
             deadline_seconds=8.0,
             intent_prefixes=_PREFIXES,
@@ -237,6 +239,7 @@ async def test_inline_compose_skips_blank_prefix_entries(world: AppWorld) -> Non
             monotonic=world.clock,
             ids=world.ids,
             pseudonymizer=FakePseudonymizer(),
+            crisis_screen=CrisisScreen.load_ru_v1(),
             min_chars=8,
             deadline_seconds=8.0,
             intent_prefixes=(("", HelpSayIntent.OTHER), *_PREFIXES),
@@ -244,6 +247,34 @@ async def test_inline_compose_skips_blank_prefix_entries(world: AppWorld) -> Non
     )
     await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough draft"))
     assert generator.soften_calls
+
+
+@pytest.mark.unit
+async def test_inline_compose_crisis_screen_skips_quota_and_generator(world: AppWorld) -> None:
+    await world.ensure_granted_user(100)
+    generator = FakeTextGenerator()
+    quota = FakeRateLimiter(limit=0)
+    use_case, sink = _ports(world, _Fakes(generator=generator, quota=quota))
+    result = await use_case.execute(
+        InlineComposeCommand(TelegramUserId(100), "я не хочу жить больше")
+    )
+    assert result.safety is SafetyVerdict.CRISIS
+    assert result.variants == ()
+    assert result.scenario is UsageScenario.SOFTEN
+    assert generator.soften_calls == []
+    assert quota.check_count() == 0
+    assert isinstance(sink, RecordingUsageEventSink)
+    event = sink.events[0]
+    assert event.outcome is UsageOutcome.SCREENED
+    assert event.safety == SafetyVerdict.CRISIS.value
+    assert event.scenario is UsageScenario.SOFTEN
+    assert event.billable_tokens == 0
+    help_result = await use_case.execute(
+        InlineComposeCommand(TelegramUserId(100), "граница: убью тебя")
+    )
+    assert help_result.scenario is UsageScenario.HELP_SAY
+    assert help_result.safety is SafetyVerdict.CRISIS
+    assert generator.help_say_calls == []
 
 
 @pytest.mark.unit

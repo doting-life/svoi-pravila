@@ -27,6 +27,7 @@ from svoi_pravila.adapters.llm.gigachat.mapping import (
     raise_for_finish_reason,
 )
 from svoi_pravila.adapters.llm.gigachat.prepared import PreparedMessages
+from svoi_pravila.adapters.llm.gigachat.prompt_leak import prompt_leak_reason, system_prompt_windows
 from svoi_pravila.adapters.llm.gigachat.validation import (
     MAX_TOKENS_ANALYSIS,
     analysis_reason,
@@ -196,7 +197,11 @@ class AnalysisPhase:
                 yielded = True
                 yield AnalysisChunk(text=text)
             add_usage(self._state, last_usage)
-            defect = analysis_reason(buffer)
+            leak = prompt_leak_reason(
+                (buffer,),
+                windows=system_prompt_windows(self._params.prepared.system),
+            )
+            defect = leak if leak is not None else analysis_reason(buffer)
             if defect is not None:
                 raise invalid(
                     defect,

@@ -6,6 +6,7 @@ import base64
 import binascii
 import re
 from enum import StrEnum
+from pathlib import Path
 from typing import Self
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -34,6 +35,18 @@ class LogLevel(StrEnum):
     CRITICAL = "CRITICAL"
 
 
+class GigaChatScope(StrEnum):
+    """GigaChat API access scope selected by account type."""
+
+    PERS = "PERS"
+    B2B = "B2B"
+    CORP = "CORP"
+
+    def api_scope(self) -> str:
+        """Return the SDK scope string expected by GigaChat."""
+        return f"GIGACHAT_API_{self.value}"
+
+
 class Settings(BaseSettings):
     """Runtime configuration loaded from `SP_*` process environment variables."""
 
@@ -52,6 +65,14 @@ class Settings(BaseSettings):
     forwarded_allow_ips: str
     data_kek: SecretStr
     data_kek_id: str
+    gigachat_credentials: SecretStr
+    gigachat_scope: GigaChatScope
+    gigachat_ca_bundle_file: Path
+    gigachat_model_soften: str = Field(min_length=1)
+    gigachat_model_help_say: str = Field(min_length=1)
+    gigachat_model_decode: str = Field(min_length=1)
+    gigachat_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
+    gigachat_max_retries: int = Field(default=1, ge=0, le=2)
 
     @field_validator("database_url")
     @classmethod
@@ -94,6 +115,15 @@ class Settings(BaseSettings):
         """Reject KEK identifiers outside the allowed pattern."""
         if _KEK_ID_RE.fullmatch(value) is None:
             msg = "data_kek_id must match ^[a-z0-9-]{1,32}$"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("gigachat_ca_bundle_file")
+    @classmethod
+    def gigachat_ca_bundle_must_exist(cls, value: Path) -> Path:
+        """Reject missing CA bundle files."""
+        if not value.is_file():
+            msg = f"gigachat_ca_bundle_file does not exist: {value}"
             raise ValueError(msg)
         return value
 

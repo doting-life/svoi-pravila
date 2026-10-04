@@ -1,0 +1,8 @@
+{
+  "method": "POST",
+  "url": "https://api.giga.chat/v2/chat/completions",
+  "status": 200,
+  "request_headers": {},
+  "request_body": "",
+  "response_body": "{\"messages\":[{\"role\":\"assistant\",\"content\":[{\"text\":\"{\\\"variants\\\":[],\\\"applied_rule_indexes\\\":[],\\\"safety\\\":\\\"ok\\\"}\"}]}],\"finish_reason\":\"blacklist\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}"
+}

@@ -34,6 +34,10 @@ async def test_create_application_wires_probes_into_readyz(
     monkeypatch.setattr("svoi_pravila.bootstrap.create_engine", lambda _settings: engine)
     monkeypatch.setattr("svoi_pravila.bootstrap.create_client", lambda _settings: valkey)
     monkeypatch.setattr(
+        "svoi_pravila.bootstrap.create_gigachat_client",
+        lambda _settings: object(),
+    )
+    monkeypatch.setattr(
         "svoi_pravila.bootstrap.DatabaseProbe",
         lambda _engine: OkProbe("database"),
     )
@@ -48,8 +52,12 @@ async def test_create_application_wires_probes_into_readyz(
     async def dispose_engine(_engine: object) -> None:
         closed.append("engine")
 
+    async def close_gigachat(_client: object) -> None:
+        closed.append("gigachat")
+
     monkeypatch.setattr("svoi_pravila.bootstrap.close_client", close_client)
     monkeypatch.setattr("svoi_pravila.bootstrap.dispose_engine", dispose_engine)
+    monkeypatch.setattr("svoi_pravila.bootstrap.close_gigachat_client", close_gigachat)
 
     app = create_application(settings)
     async with app.router.lifespan_context(app):
@@ -60,7 +68,7 @@ async def test_create_application_wires_probes_into_readyz(
             body = response.json()
             assert body["ready"] is True
             assert {p["name"] for p in body["probes"]} == {"database", "valkey"}
-    assert closed == ["valkey", "engine"]
+    assert closed == ["gigachat", "valkey", "engine"]
 
 
 @pytest.mark.unit
@@ -75,6 +83,10 @@ async def test_create_application_readyz_failed_when_probe_fails(
     monkeypatch.setattr("svoi_pravila.bootstrap.create_engine", lambda _settings: object())
     monkeypatch.setattr("svoi_pravila.bootstrap.create_client", lambda _settings: object())
     monkeypatch.setattr(
+        "svoi_pravila.bootstrap.create_gigachat_client",
+        lambda _settings: object(),
+    )
+    monkeypatch.setattr(
         "svoi_pravila.bootstrap.DatabaseProbe",
         lambda _engine: FailingProbe("database"),
     )
@@ -88,6 +100,7 @@ async def test_create_application_readyz_failed_when_probe_fails(
 
     monkeypatch.setattr("svoi_pravila.bootstrap.close_client", _noop)
     monkeypatch.setattr("svoi_pravila.bootstrap.dispose_engine", _noop)
+    monkeypatch.setattr("svoi_pravila.bootstrap.close_gigachat_client", _noop)
 
     app = create_application(settings)
     transport = ASGITransport(app=app)

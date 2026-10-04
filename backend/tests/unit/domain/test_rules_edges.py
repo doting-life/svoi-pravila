@@ -107,6 +107,20 @@ def test_transition_errors() -> None:
     assert rejected.status is RuleStatus.REJECTED
     with pytest.raises(InvalidTransitionError):
         rejected.reject_pending(PARTNER, NOW)
+
+    active_no_pending = Rule.propose(
+        rule_id=RuleId(UUID(int=15)),
+        scope=ContactScope(ContactId(UUID(int=2))),
+        category=RuleCategory.OTHER,
+        approvers=frozenset({OWNER, PARTNER}),
+        author_id=OWNER,
+        text=RuleText("stable"),
+        now=NOW,
+    ).approve(PARTNER, NOW)
+    assert active_no_pending.status is RuleStatus.ACTIVE
+    assert active_no_pending.pending_revision is None
+    with pytest.raises(InvalidTransitionError, match="no pending revision"):
+        active_no_pending.reject_pending(PARTNER, NOW)
     with pytest.raises(InvalidTransitionError):
         rejected.archive(OWNER, NOW)
     with pytest.raises(InvalidTransitionError):

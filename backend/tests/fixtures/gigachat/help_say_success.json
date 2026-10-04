@@ -1,0 +1,8 @@
+{
+  "method": "POST",
+  "url": "https://api.giga.chat/v2/chat/completions",
+  "status": 200,
+  "request_headers": {},
+  "request_body": "",
+  "response_body": "{\"model\":\"GigaChat-2-Pro:2.0.30.01\",\"created_at\":1791046211,\"messages\":[{\"role\":\"assistant\",\"content\":[{\"text\":\"{\\n    \\\"variants\\\": [\\n        {\\n            \\\"text\\\": \\\"Не смогу приехать к вам в эти выходные, прости. Может, в другой раз?\\\",\\n            \\\"firmness\\\": \\\"gentle\\\"\\n        },\\n        {\\n            \\\"text\\\": \\\"Эти выходные пропускаю, планы уже другие. Давай встретимся позже?\\\",\\n            \\\"firmness\\\": \\\"balanced\\\"\\n        },\\n        {\\n            \\\"text\\\": \\\"Нет, в эти выходные не приеду. Не настаивай.\\\",\\n            \\\"firmness\\\": \\\"firm\\\"\\n        }\\n    ],\\n    \\\"applied_rule_indexes\\\": [],\\n    \\\"safety\\\": \\\"ok\\\"\\n}\"}]}],\"finish_reason\":\"stop\",\"usage\":{\"input_tokens\":561,\"input_tokens_details\":{\"prompt_tokens\":561,\"cached_tokens\":0},\"output_tokens\":137,\"total_tokens\":698}}"
+}

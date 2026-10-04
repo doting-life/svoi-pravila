@@ -10,6 +10,7 @@ from fastapi import FastAPI
 
 from svoi_pravila.adapters.cache.client import close_client, create_client
 from svoi_pravila.adapters.cache.probe import ValkeyProbe
+from svoi_pravila.adapters.llm.gigachat.client import close_gigachat_client, create_gigachat_client
 from svoi_pravila.adapters.persistence.engine import create_engine, dispose_engine
 from svoi_pravila.adapters.persistence.probe import DatabaseProbe
 from svoi_pravila.api.app import create_app
@@ -32,12 +33,14 @@ def create_application(settings: Settings) -> FastAPI:
 
     engine = create_engine(settings)
     valkey = create_client(settings)
+    gigachat = create_gigachat_client(settings)
     check_readiness = CheckReadiness(
         probes=(DatabaseProbe(engine), ValkeyProbe(valkey)),
         timeout_seconds=settings.readiness_timeout_seconds,
     )
 
     async def dispose() -> None:
+        await close_gigachat_client(gigachat)
         await close_client(valkey)
         await dispose_engine(engine)
 

@@ -1,0 +1,8 @@
+{
+  "method": "POST",
+  "url": "https://api.giga.chat/v2/chat/completions",
+  "status": 401,
+  "request_headers": {},
+  "request_body": "",
+  "response_body": "{\"error\":\"unauthorized\"}"
+}

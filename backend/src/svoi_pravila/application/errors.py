@@ -2,7 +2,40 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
+
+from svoi_pravila.application.ports.generation import TokenUsage
 from svoi_pravila.domain.access import AccessStatus
+
+
+class UnavailableKind(StrEnum):
+    """C0 classifier for generation unavailability (no provider text)."""
+
+    TIMEOUT = "timeout"
+    RATE_LIMITED = "rate_limited"
+    AUTH = "auth"
+    SERVER = "server"
+    NETWORK = "network"
+
+
+class InvalidOutputReason(StrEnum):
+    """C0 reason a generation result failed validation (one per attempt)."""
+
+    EMPTY_MESSAGE = "empty_message"
+    JSON_DECODE = "json_decode"
+    SCHEMA_VIOLATION = "schema_violation"
+    VARIANT_COUNT = "variant_count"
+    FIRMNESS_SET = "firmness_set"
+    RULE_INDEX_OUT_OF_RANGE = "rule_index_out_of_range"
+    URL_IN_TEXT = "url_in_text"
+    MARKUP_FENCE = "markup_fence"
+    EMPTY_TEXT = "empty_text"
+    TEXT_TOO_LONG = "text_too_long"
+    LENGTH = "length"
+    ANALYSIS_TOO_LONG = "analysis_too_long"
+    HYPOTHESIS_COUNT = "hypothesis_count"
+    NON_OK_WITH_PAYLOAD = "non_ok_with_payload"
+    BOUNDARY_COLLISION = "boundary_collision"
 
 
 class ApplicationError(Exception):
@@ -39,3 +72,47 @@ class ContactAlreadyLinked(ApplicationError):
 
 class ConflictError(ApplicationError):
     """Unique constraint violated (duplicate key)."""
+
+
+class GenerationUnavailable(ApplicationError):
+    """Generation provider is unavailable, timed out, or rate-limited."""
+
+    def __init__(
+        self,
+        kind: UnavailableKind,
+        *,
+        usage: TokenUsage,
+        attempts: int,
+    ) -> None:
+        self.kind = kind
+        self.usage = usage
+        self.attempts = attempts
+        super().__init__("generation unavailable")
+
+
+class GenerationRefusedByProvider(ApplicationError):
+    """Provider moderation refused to generate a completion."""
+
+    def __init__(self, *, usage: TokenUsage, attempts: int) -> None:
+        self.usage = usage
+        self.attempts = attempts
+        super().__init__("generation refused by provider")
+
+
+class InvalidGenerationOutput(ApplicationError):
+    """Model output failed schema or content validation."""
+
+    def __init__(
+        self,
+        reasons: tuple[InvalidOutputReason, ...],
+        *,
+        usage: TokenUsage,
+        attempts: int,
+    ) -> None:
+        if not reasons:
+            msg = "InvalidGenerationOutput requires at least one reason"
+            raise ValueError(msg)
+        self.reasons = reasons
+        self.usage = usage
+        self.attempts = attempts
+        super().__init__("invalid generation output")

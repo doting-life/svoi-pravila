@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from svoi_pravila.bootstrap import load_settings, serve
 from svoi_pravila.config import Environment
 from tests.factories import make_settings
+
+_CERT = Path(__file__).resolve().parents[2] / "certs" / "russian_trusted_root_ca.pem"
 
 
 @pytest.mark.unit
@@ -22,6 +26,19 @@ def test_load_settings_reads_process_environment(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("SP_VALKEY_URL", "redis://127.0.0.1:6379/0")
     monkeypatch.setenv("SP_READINESS_TIMEOUT_SECONDS", "1.0")
     monkeypatch.setenv("SP_FORWARDED_ALLOW_IPS", "127.0.0.1")
+    monkeypatch.setenv(
+        "SP_DATA_KEK",
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    )
+    monkeypatch.setenv("SP_DATA_KEK_ID", "test-1")
+    monkeypatch.setenv("SP_GIGACHAT_CREDENTIALS", "test-credentials")
+    monkeypatch.setenv("SP_GIGACHAT_SCOPE", "PERS")
+    monkeypatch.setenv("SP_GIGACHAT_CA_BUNDLE_FILE", str(_CERT))
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_SOFTEN", "GigaChat-2")
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_HELP_SAY", "GigaChat-2")
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_DECODE", "GigaChat-2")
+    monkeypatch.setenv("SP_GIGACHAT_TIMEOUT_SECONDS", "5")
+    monkeypatch.setenv("SP_GIGACHAT_MAX_RETRIES", "0")
     settings = load_settings()
     assert settings.environment is Environment.TEST
     assert settings.forwarded_allow_ips == "127.0.0.1"

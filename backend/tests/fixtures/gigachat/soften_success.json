@@ -1,0 +1,8 @@
+{
+  "method": "POST",
+  "url": "https://api.giga.chat/v2/chat/completions",
+  "status": 200,
+  "request_headers": {},
+  "request_body": "",
+  "response_body": "{\"model\":\"GigaChat-2:2.0.30.01\",\"created_at\":1791046012,\"messages\":[{\"role\":\"assistant\",\"content\":[{\"text\":\"{\\n    \\\"variants\\\": [\\n        {\\n            \\\"text\\\": \\\"Мне кажется, наше общение становится слишком контролирующим. Давай найдем баланс?\\\",\\n            \\\"firmness\\\": \\\"balanced\\\"\\n        },\\n        {\\n            \\\"text\\\": \\\"Я ценю твою заботу, но мне некомфортно, когда ты пытаешься контролировать мои действия. Пожалуйста, уважай мое пространство.\\\",\\n            \\\"firmness\\\": \\\"firm\\\"\\n        },\\n        {\\n            \\\"text\\\": \\\"Давай поговорим о том, почему тебе хочется контролировать мои поступки? Мне важно чувствовать себя свободным в наших отношениях.\\\",\\n            \\\"firmness\\\": \\\"gentle\\\"\\n        }\\n    ],\\n    \\\"applied_rule_indexes\\\": [],\\n    \\\"safety\\\": \\\"ok\\\"\\n}\"}]}],\"finish_reason\":\"stop\",\"usage\":{\"input_tokens\":349,\"input_tokens_details\":{\"prompt_tokens\":349,\"cached_tokens\":237},\"output_tokens\":180,\"total_tokens\":529}}"
+}

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from svoi_pravila.config import Environment, LogLevel, Settings
 from tests.factories import make_settings
+
+_CERT = Path(__file__).resolve().parents[2] / "certs" / "russian_trusted_root_ca.pem"
 
 
 @pytest.mark.unit
@@ -20,18 +24,10 @@ def test_settings_valid() -> None:
 @pytest.mark.unit
 def test_settings_rejects_missing_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SP_ENVIRONMENT", raising=False)
+    values = make_settings().model_dump()
+    del values["environment"]
     with pytest.raises(ValidationError):
-        Settings(
-            log_level=LogLevel.INFO,
-            http_host="127.0.0.1",
-            http_port=8000,
-            database_url="postgresql+asyncpg://user:pass@127.0.0.1:5432/db",
-            valkey_url="redis://127.0.0.1:6379/0",
-            readiness_timeout_seconds=1.0,
-            forwarded_allow_ips="127.0.0.1",
-            data_kek="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
-            data_kek_id="test-1",
-        )
+        Settings.model_validate(values)
 
 
 @pytest.mark.unit
@@ -84,8 +80,20 @@ def test_settings_from_env_requires_environment(monkeypatch: pytest.MonkeyPatch)
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     )
     monkeypatch.setenv("SP_DATA_KEK_ID", "test-1")
+    _set_gigachat_env(monkeypatch)
     with pytest.raises(ValidationError):
         Settings()
+
+
+def _set_gigachat_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SP_GIGACHAT_CREDENTIALS", "test-credentials")
+    monkeypatch.setenv("SP_GIGACHAT_SCOPE", "PERS")
+    monkeypatch.setenv("SP_GIGACHAT_CA_BUNDLE_FILE", str(_CERT))
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_SOFTEN", "GigaChat-2")
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_HELP_SAY", "GigaChat-2")
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_DECODE", "GigaChat-2")
+    monkeypatch.setenv("SP_GIGACHAT_TIMEOUT_SECONDS", "5")
+    monkeypatch.setenv("SP_GIGACHAT_MAX_RETRIES", "0")
 
 
 @pytest.mark.unit
@@ -106,6 +114,7 @@ def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     )
     monkeypatch.setenv("SP_DATA_KEK_ID", "test-1")
+    _set_gigachat_env(monkeypatch)
     settings = Settings()
     assert settings.environment is Environment.TEST
     assert settings.readiness_timeout_seconds == 1.5
@@ -121,3 +130,9 @@ def test_settings_rejects_bad_data_kek() -> None:
         make_settings(data_kek="AAAA")  # too short
     with pytest.raises(ValidationError):
         make_settings(data_kek_id="BAD_ID")
+
+
+@pytest.mark.unit
+def test_settings_rejects_missing_gigachat_ca_bundle() -> None:
+    with pytest.raises(ValidationError):
+        make_settings(gigachat_ca_bundle_file=Path("/nonexistent/russian_trusted_root_ca.pem"))

@@ -1,0 +1,8 @@
+{
+  "method": "POST",
+  "url": "https://api.giga.chat/v2/chat/completions",
+  "status": 200,
+  "request_headers": {},
+  "request_body": "",
+  "response_body": "event: chunk\ndata: {\"messages\":[{\"content\":[{\"text\":\"vozmozhno partner ustal\"}]}],\"finish_reason\":null}\n\nevent: chunk\ndata: {\"messages\":[{\"content\":[{\"text\":\" ot razgovora\"}]}],\"finish_reason\":\"stop\",\"usage\":{\"input_tokens\":2,\"output_tokens\":4}}\n\n"
+}

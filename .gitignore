@@ -18,6 +18,7 @@ ENV/
 .env.*
 !.env.example
 *.pem
+!backend/certs/russian_trusted_root_ca.pem
 *.key
 
 # Coverage / test
@@ -44,3 +45,6 @@ Thumbs.db
 # Tooling
 .pre-commit-cache/
 *.log
+
+# Benchmark output (C0 markdown tables)
+backend/benchmarks/out/

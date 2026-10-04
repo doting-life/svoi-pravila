@@ -4,8 +4,9 @@
 
 ## Текущее
 - Дата: 2026-10-03 · Спринт 0 (Фундамент)
-- Активная задача: **0006.2 — «Расшифровать» в личке, события использования** · ветка `task/0006-2-dm-decode` · бюджет GigaChat ≤ 15 000 токенов; старт после мержа 0006.1 владельцем (CI полностью зелёный)
-- 0005 влит в `master` (`4818b1b`); репозиторий `doting-life/svoi-pravila` (GitHub, приватный) создан, CI работает: на ветке 0006.1 зелёные `backend`, `secrets`, `stack-smoke`, красный `image`
+- Активная задача: **0006.2-a — исправления «Расшифровать»** · ветка `task/0006-2-dm-decode` · GigaChat 0 токенов; живая проверка (≤ 3 разбора, ≤ 15 000 токенов) — владелец после ACCEPT
+- В `master`: 0005 (`4818b1b`), 0006.1 (`b031a29`, CI полностью зелёный, включая `image`). Репозиторий `doting-life/svoi-pravila`
+- Dependabot PR #3 (python 3.13 → 3.14) — закрыть: Python 3.14 отложен до поддержки зависимостями (ADR-0001)
 - Тестовый бот создан, токен в локальном `.env` (владелец, 04.10)
 - Модели (ADR-0006 ред. 1.2): «Смягчить», «Помоги сказать» — GigaChat-3-Lightning; «Расшифровать» — GigaChat-2-Pro
 - Правило с 04.10 (владелец): ключ разработки жёстко ограничен по токенам; живые вызовы — только с бюджетом в промпте (`60-live-provider-budget`)
@@ -40,7 +41,8 @@
 | 0005-g | Bench HTTP observation via public httpx hooks | `task/0005-llm-gigachat` | проверен 04.10 | **ACCEPT** (0005 целиком) |
 | 0006.1 | Telegram channel foundation, onboarding | `task/0006-telegram-channel` | проверен 04.10 | CHANGES REQUIRED: гейты красные без ручных переопределений окружения (миграции и тесты требуют токен бота); нераскрытые подавления; согласия отображаются с сырой Markdown-разметкой и не называют GigaChat |
 | 0006.1-a | Telegram channel review fixes | `task/0006-telegram-channel` | проверен 04.10 | **ACCEPT** (0006.1 целиком); ручная проверка в Telegram — за владельцем |
-| 0006.2 | DM decode with streaming, usage events, scenario limit | `task/0006-2-dm-decode` | BLOCKED 04.10 (корректно: 0006.1 не влит в `master`) | ждёт мержа |
+| 0006.2 | DM decode with streaming, usage events, scenario limit | `task/0006-2-dm-decode` | проверен 04.10 | CHANGES REQUIRED: `except Exception` в application, дублирование логики правил, «unknown» версия промпта в событиях, событие пишется до показа результата |
+| 0006.2-a | DM decode review fixes, Dependabot policy | `task/0006-2-dm-decode` | выдан | — |
 | 0006.1-b | Image gate: Debian security updates, base digest pin, Dependabot | `task/0006-telegram-channel` | проверен 04.10 | **ACCEPT** (Trivy: 21 CVE → 0) |
 
 ## Решения

@@ -38,23 +38,11 @@ def build_router() -> Router:
     async def start(message: Message, tg_deps: TelegramDeps) -> None:
         if message.from_user is None:
             return
-        await _render_current_step(message, tg_deps, message.from_user.id)
+        await render_current_step(message, tg_deps, message.from_user.id)
 
     @router.message(Command("help"))
     async def help_command(message: Message, tg_deps: TelegramDeps) -> None:
         await message.answer(tg_deps.strings.help_body)
-
-    @router.message()
-    async def any_private_message(message: Message, tg_deps: TelegramDeps) -> None:
-        if message.from_user is None:
-            return
-        step = await tg_deps.get_onboarding_step.execute(
-            GetOnboardingStepQuery(TelegramUserId(message.from_user.id))
-        )
-        if step.step.kind is OnboardingStepKind.DONE:
-            await message.answer(tg_deps.strings.help_body)
-            return
-        await _render_current_step(message, tg_deps, message.from_user.id)
 
     @router.callback_query(F.data == "age:y")
     async def age_yes(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> None:
@@ -150,7 +138,7 @@ async def _send_current_step(
     await bot.send_message(chat_id, text, reply_markup=keyboard)
 
 
-async def _render_current_step(
+async def render_current_step(
     message: Message,
     deps: TelegramDeps,
     telegram_user_id: int,

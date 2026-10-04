@@ -14,6 +14,7 @@ from svoi_pravila.application.ports.repositories import (
     InviteRepository,
     PairRepository,
     RuleRepository,
+    UsageEventRepository,
     UserRepository,
 )
 from svoi_pravila.application.ports.unit_of_work import UnitOfWork
@@ -256,6 +257,7 @@ class _ConflictOnCreateUow:
         self.pairs: PairRepository
         self.rules: RuleRepository
         self.invites: InviteRepository
+        self.usage_events: UsageEventRepository
 
     async def __aenter__(self) -> _ConflictOnCreateUow:
         await self._inner.__aenter__()
@@ -265,6 +267,7 @@ class _ConflictOnCreateUow:
         self.pairs = self._inner.pairs
         self.rules = self._inner.rules
         self.invites = self._inner.invites
+        self.usage_events = self._inner.usage_events
         return self
 
     async def __aexit__(
@@ -310,6 +313,7 @@ class _ConflictWithoutExistingUow:
         self.pairs: PairRepository
         self.rules: RuleRepository
         self.invites: InviteRepository
+        self.usage_events: UsageEventRepository
 
     async def __aenter__(self) -> _ConflictWithoutExistingUow:
         return self

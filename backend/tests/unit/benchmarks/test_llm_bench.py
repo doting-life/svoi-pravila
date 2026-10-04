@@ -313,6 +313,8 @@ async def test_run_case_ok_and_invalid_and_outputs_off() -> None:
                 (InvalidOutputReason.VARIANT_COUNT,),
                 usage=TokenUsage(),
                 attempts=1,
+                model="m",
+                prompt_version="p",
             )
 
     rec_bad = await run_case(Boom(), soften, _opts("soften"))
@@ -336,7 +338,12 @@ async def test_run_case_refused_and_unavailable() -> None:
 
     class Refuse(FakeTextGenerator):
         async def soften(self, request: SoftenRequest) -> SoftenResult:
-            raise GenerationRefusedByProvider(usage=TokenUsage(), attempts=1)
+            raise GenerationRefusedByProvider(
+                usage=TokenUsage(),
+                attempts=1,
+                model="m",
+                prompt_version="p",
+            )
 
     class Down(FakeTextGenerator):
         async def soften(self, request: SoftenRequest) -> SoftenResult:
@@ -344,6 +351,8 @@ async def test_run_case_refused_and_unavailable() -> None:
                 UnavailableKind.TIMEOUT,
                 usage=TokenUsage(),
                 attempts=1,
+                model="m",
+                prompt_version="p",
             )
 
     refused = await run_case(Refuse(), soften, _opts("soften"))
@@ -373,6 +382,8 @@ async def test_run_case_rate_limited_stops() -> None:
                 UnavailableKind.RATE_LIMITED,
                 usage=TokenUsage(),
                 attempts=1,
+                model="m",
+                prompt_version="p",
             )
 
     capture = _StickyRateLimitCapture()
@@ -766,6 +777,8 @@ async def test_async_main_rate_limited_incomplete(
                 UnavailableKind.RATE_LIMITED,
                 usage=TokenUsage(),
                 attempts=1,
+                model="m",
+                prompt_version="p",
             )
 
     cases = [
@@ -1016,6 +1029,8 @@ async def test_run_benchmark_incremental_out_and_rate_limit(
                     UnavailableKind.RATE_LIMITED,
                     usage=TokenUsage(),
                     attempts=1,
+                    model="m",
+                    prompt_version="p",
                 )
             return await super().soften(request)
 
@@ -1057,6 +1072,8 @@ async def test_run_benchmark_skips_ops_without_cases_and_prints_reasons(
                 (InvalidOutputReason.VARIANT_COUNT,),
                 usage=TokenUsage(),
                 attempts=1,
+                model="m",
+                prompt_version="p",
             )
 
     class AlwaysInvalid(FakeTextGenerator):
@@ -1220,6 +1237,8 @@ async def test_failed_calls_carry_usage_and_mean_attempts() -> None:
                 (InvalidOutputReason.VARIANT_COUNT, InvalidOutputReason.VARIANT_COUNT),
                 usage=TokenUsage(input=11, output=7, precached=2),
                 attempts=2,
+                model="m",
+                prompt_version="p",
             )
 
     rec = await run_case(FailSoft(), _soften_case(), _opts("soften"))

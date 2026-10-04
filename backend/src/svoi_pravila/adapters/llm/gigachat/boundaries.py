@@ -30,6 +30,8 @@ def allocate_token(untrusted: Sequence[str], *, factory: Callable[[], str]) -> s
         (InvalidOutputReason.BOUNDARY_COLLISION,),
         usage=TokenUsage(),
         attempts=0,
+        model="prepare",
+        prompt_version="prepare",
     )
 
 

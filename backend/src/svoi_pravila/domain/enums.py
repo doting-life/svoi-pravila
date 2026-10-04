@@ -39,3 +39,28 @@ class ConsentKind(StrEnum):
 
     PERSONAL_DATA = "personal_data"
     SPECIAL_CATEGORY = "special_category"
+
+
+class UsageScenario(StrEnum):
+    """Scenario that produced a usage event."""
+
+    DECODE = "decode"
+    SOFTEN = "soften"
+    HELP_SAY = "help_say"
+
+
+class UsageSurface(StrEnum):
+    """Channel surface that produced a usage event."""
+
+    DM = "dm"
+    INLINE = "inline"
+    MINIAPP = "miniapp"
+
+
+class UsageOutcome(StrEnum):
+    """C0 outcome of a generation attempt that reached the provider."""
+
+    OK = "ok"
+    INVALID_OUTPUT = "invalid_output"
+    REFUSED = "refused"
+    UNAVAILABLE = "unavailable"

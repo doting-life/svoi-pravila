@@ -19,13 +19,22 @@ from svoi_pravila.adapters.persistence.models import (
     PairRow,
     RuleRevisionRow,
     RuleRow,
+    UsageEventRow,
     UserRow,
 )
 from svoi_pravila.adapters.persistence.registry import RowRegistry
 from svoi_pravila.crypto import FieldCipher
 from svoi_pravila.domain.consent import Consent
 from svoi_pravila.domain.contact import Contact
-from svoi_pravila.domain.enums import ConsentKind, RelationshipKind, RuleCategory, RuleStatus
+from svoi_pravila.domain.enums import (
+    ConsentKind,
+    RelationshipKind,
+    RuleCategory,
+    RuleStatus,
+    UsageOutcome,
+    UsageScenario,
+    UsageSurface,
+)
 from svoi_pravila.domain.ids import (
     ConsentId,
     ContactId,
@@ -33,6 +42,7 @@ from svoi_pravila.domain.ids import (
     PairId,
     RuleId,
     TelegramUserId,
+    UsageEventId,
     UserId,
 )
 from svoi_pravila.domain.invite import Invite, InviteTokenHash
@@ -45,6 +55,7 @@ from svoi_pravila.domain.rules import (
     RuleScope,
 )
 from svoi_pravila.domain.text import ContactLabel, RuleText, Sha256Hex
+from svoi_pravila.domain.usage import UsageEvent
 from svoi_pravila.domain.user import User
 
 
@@ -485,4 +496,62 @@ class SqlAlchemyInviteRepository:
         row = self._registry.require(InviteRow, invite.id)
         row.accepted_by = invite.accepted_by
         row.accepted_at = invite.accepted_at
+        await flush_or_raise(self._session)
+
+
+class SqlAlchemyUsageEventRepository:
+    """Usage-event repository (append-only)."""
+
+    def __init__(self, session: AsyncSession, registry: RowRegistry) -> None:
+        self._session = session
+        self._registry = registry
+
+    def _to_domain(self, row: UsageEventRow) -> UsageEvent:
+        return UsageEvent(
+            id=UsageEventId(row.id),
+            occurred_at=row.occurred_at,
+            user_pseudonym=row.user_pseudonym,
+            scenario=UsageScenario(row.scenario),
+            surface=UsageSurface(row.surface),
+            outcome=UsageOutcome(row.outcome),
+            unavailable_kind=row.unavailable_kind,
+            safety=row.safety,
+            model=row.model,
+            prompt_version=row.prompt_version,
+            latency_ms=row.latency_ms,
+            ttfc_ms=row.ttfc_ms,
+            attempts=row.attempts,
+            input_tokens=row.input_tokens,
+            output_tokens=row.output_tokens,
+            billable_tokens=row.billable_tokens,
+        )
+
+    async def get(self, event_id: UsageEventId) -> UsageEvent | None:
+        row = await self._session.get(UsageEventRow, event_id)
+        if row is None:
+            return None
+        self._registry.register(UsageEventRow, row.id, row)
+        return self._to_domain(row)
+
+    async def add(self, event: UsageEvent) -> None:
+        row = UsageEventRow(
+            id=event.id,
+            occurred_at=event.occurred_at,
+            user_pseudonym=event.user_pseudonym,
+            scenario=event.scenario.value,
+            surface=event.surface.value,
+            outcome=event.outcome.value,
+            unavailable_kind=event.unavailable_kind,
+            safety=event.safety,
+            model=event.model,
+            prompt_version=event.prompt_version,
+            latency_ms=event.latency_ms,
+            ttfc_ms=event.ttfc_ms,
+            attempts=event.attempts,
+            input_tokens=event.input_tokens,
+            output_tokens=event.output_tokens,
+            billable_tokens=event.billable_tokens,
+        )
+        self._session.add(row)
+        self._registry.register(UsageEventRow, event.id, row)
         await flush_or_raise(self._session)

@@ -13,16 +13,26 @@ from svoi_pravila.application.ports.repositories import (
     InviteRepository,
     PairRepository,
     RuleRepository,
+    UsageEventRepository,
     UserRepository,
 )
 from svoi_pravila.application.ports.unit_of_work import UnitOfWork
 from svoi_pravila.domain.consent import Consent
 from svoi_pravila.domain.contact import Contact
 from svoi_pravila.domain.enums import RuleStatus
-from svoi_pravila.domain.ids import ContactId, InviteId, PairId, RuleId, TelegramUserId, UserId
+from svoi_pravila.domain.ids import (
+    ContactId,
+    InviteId,
+    PairId,
+    RuleId,
+    TelegramUserId,
+    UsageEventId,
+    UserId,
+)
 from svoi_pravila.domain.invite import Invite, InviteTokenHash
 from svoi_pravila.domain.pair import Pair
 from svoi_pravila.domain.rules import Rule, RuleScope
+from svoi_pravila.domain.usage import UsageEvent
 from svoi_pravila.domain.user import User
 
 
@@ -38,6 +48,7 @@ class _DurableState:
     rules: dict[RuleId, Rule] = field(default_factory=dict)
     invites: dict[InviteId, Invite] = field(default_factory=dict)
     invites_by_hash: dict[str, InviteId] = field(default_factory=dict)
+    usage_events: dict[UsageEventId, UsageEvent] = field(default_factory=dict)
 
 
 class InMemoryUserRepository:
@@ -178,6 +189,19 @@ class InMemoryInviteRepository:
         self._working.invites_by_hash[invite.token_hash.hex] = invite.id
 
 
+class InMemoryUsageEventRepository:
+    """Transactional usage-event repository."""
+
+    def __init__(self, working: _DurableState) -> None:
+        self._working = working
+
+    async def get(self, event_id: UsageEventId) -> UsageEvent | None:
+        return self._working.usage_events.get(event_id)
+
+    async def add(self, event: UsageEvent) -> None:
+        self._working.usage_events[event.id] = event
+
+
 class InMemoryUnitOfWork:
     """Unit of work that commits working copies into shared durable state."""
 
@@ -191,6 +215,7 @@ class InMemoryUnitOfWork:
         self.pairs: PairRepository
         self.rules: RuleRepository
         self.invites: InviteRepository
+        self.usage_events: UsageEventRepository
 
     async def __aenter__(self) -> InMemoryUnitOfWork:
         self._working = deepcopy(self._durable)
@@ -201,6 +226,7 @@ class InMemoryUnitOfWork:
         self.pairs = InMemoryPairRepository(self._working)
         self.rules = InMemoryRuleRepository(self._working)
         self.invites = InMemoryInviteRepository(self._working)
+        self.usage_events = InMemoryUsageEventRepository(self._working)
         return self
 
     async def __aexit__(
@@ -224,6 +250,7 @@ class InMemoryUnitOfWork:
         self._durable.rules = self._working.rules
         self._durable.invites = self._working.invites
         self._durable.invites_by_hash = self._working.invites_by_hash
+        self._durable.usage_events = self._working.usage_events
         self._committed = True
 
 

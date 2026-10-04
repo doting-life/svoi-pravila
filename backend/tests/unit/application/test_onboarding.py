@@ -13,6 +13,7 @@ from svoi_pravila.application.ports.repositories import (
     InviteRepository,
     PairRepository,
     RuleRepository,
+    UsageEventRepository,
     UserRepository,
 )
 from svoi_pravila.application.ports.unit_of_work import UnitOfWork
@@ -186,6 +187,7 @@ async def test_accept_age_conflict_then_found(world: AppWorld) -> None:
             self.pairs: PairRepository
             self.rules: RuleRepository
             self.invites: InviteRepository
+            self.usage_events: UsageEventRepository
 
         async def __aenter__(self) -> _ConflictUow:
             await self._inner.__aenter__()
@@ -195,6 +197,7 @@ async def test_accept_age_conflict_then_found(world: AppWorld) -> None:
             self.pairs = self._inner.pairs
             self.rules = self._inner.rules
             self.invites = self._inner.invites
+            self.usage_events = self._inner.usage_events
             return self
 
         async def __aexit__(
@@ -256,6 +259,7 @@ async def test_accept_age_conflict_without_winner(world: AppWorld) -> None:
             self.pairs: PairRepository
             self.rules: RuleRepository
             self.invites: InviteRepository
+            self.usage_events: UsageEventRepository
 
         async def __aenter__(self) -> _EmptyUow:
             return self

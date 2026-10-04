@@ -53,6 +53,10 @@ class VariantValidation:
     min_variants: int
     max_variants: int
     require_all_firmness: bool
+    usage: TokenUsage
+    attempts: int
+    model: str
+    prompt_version: str
 
 
 def invalid(
@@ -60,9 +64,17 @@ def invalid(
     *,
     usage: TokenUsage,
     attempts: int,
+    model: str,
+    prompt_version: str,
 ) -> InvalidGenerationOutput:
     """Build a single-reason InvalidGenerationOutput."""
-    return InvalidGenerationOutput((reason,), usage=usage, attempts=attempts)
+    return InvalidGenerationOutput(
+        (reason,),
+        usage=usage,
+        attempts=attempts,
+        model=model,
+        prompt_version=prompt_version,
+    )
 
 
 def text_reason(text: str) -> InvalidOutputReason | None:
@@ -94,57 +106,54 @@ def analysis_reason(text: str) -> InvalidOutputReason | None:
 def validate_variants(
     variants_raw: list[VariantOut],
     spec: VariantValidation,
-    *,
-    usage: TokenUsage,
-    attempts: int,
 ) -> tuple[tuple[Variant, ...], tuple[int, ...], SafetyVerdict]:
     """Validate variant list and safety against port invariants."""
+
+    def fail(reason: InvalidOutputReason) -> InvalidGenerationOutput:
+        return invalid(
+            reason,
+            usage=spec.usage,
+            attempts=spec.attempts,
+            model=spec.model,
+            prompt_version=spec.prompt_version,
+        )
+
     try:
         # StrEnum constructor raises ValueError for an unknown member.
         safety = SafetyVerdict(spec.safety_raw)
     except ValueError as exc:
-        raise invalid(InvalidOutputReason.SCHEMA_VIOLATION, usage=usage, attempts=attempts) from exc
+        raise fail(InvalidOutputReason.SCHEMA_VIOLATION) from exc
 
     for idx in spec.applied:
         if idx < 0 or idx >= spec.rule_count:
-            raise invalid(
-                InvalidOutputReason.RULE_INDEX_OUT_OF_RANGE,
-                usage=usage,
-                attempts=attempts,
-            )
+            raise fail(InvalidOutputReason.RULE_INDEX_OUT_OF_RANGE)
 
     if safety is not SafetyVerdict.OK:
         if variants_raw:
-            raise invalid(
-                InvalidOutputReason.NON_OK_WITH_PAYLOAD,
-                usage=usage,
-                attempts=attempts,
-            )
+            raise fail(InvalidOutputReason.NON_OK_WITH_PAYLOAD)
         return (), tuple(spec.applied), safety
 
     if not (spec.min_variants <= len(variants_raw) <= spec.max_variants):
-        raise invalid(InvalidOutputReason.VARIANT_COUNT, usage=usage, attempts=attempts)
+        raise fail(InvalidOutputReason.VARIANT_COUNT)
 
     variants: list[Variant] = []
     seen: set[Firmness] = set()
     for item in variants_raw:
         dirty = text_reason(item.text)
         if dirty is not None:
-            raise invalid(dirty, usage=usage, attempts=attempts)
+            raise fail(dirty)
         try:
             # StrEnum constructor raises ValueError for an unknown member.
             firmness = Firmness(item.firmness.value)
         except ValueError as exc:
-            raise invalid(
-                InvalidOutputReason.SCHEMA_VIOLATION, usage=usage, attempts=attempts
-            ) from exc
+            raise fail(InvalidOutputReason.SCHEMA_VIOLATION) from exc
         if firmness in seen:
-            raise invalid(InvalidOutputReason.FIRMNESS_SET, usage=usage, attempts=attempts)
+            raise fail(InvalidOutputReason.FIRMNESS_SET)
         seen.add(firmness)
         variants.append(Variant(text=item.text, firmness=firmness))
 
     if spec.require_all_firmness and seen != set(Firmness):
-        raise invalid(InvalidOutputReason.FIRMNESS_SET, usage=usage, attempts=attempts)
+        raise fail(InvalidOutputReason.FIRMNESS_SET)
 
     return tuple(variants), tuple(spec.applied), safety
 
@@ -164,22 +173,34 @@ def to_decode_result(parsed: DecodeOut, meta: GenerationMeta, *, rule_count: int
             min_variants=3 if ok else 0,
             max_variants=3,
             require_all_firmness=ok,
+            usage=usage,
+            attempts=attempts,
+            model=meta.model,
+            prompt_version=meta.prompt_version,
         ),
-        usage=usage,
-        attempts=attempts,
     )
+
+    def fail(reason: InvalidOutputReason) -> InvalidGenerationOutput:
+        return invalid(
+            reason,
+            usage=usage,
+            attempts=attempts,
+            model=meta.model,
+            prompt_version=meta.prompt_version,
+        )
+
     if ok:
         if not (1 <= len(parsed.hypotheses) <= MAX_HYPOTHESES):
-            raise invalid(InvalidOutputReason.HYPOTHESIS_COUNT, usage=usage, attempts=attempts)
+            raise fail(InvalidOutputReason.HYPOTHESIS_COUNT)
         request_reason = text_reason(parsed.underlying_request.strip())
         if request_reason is not None:
-            raise invalid(request_reason, usage=usage, attempts=attempts)
+            raise fail(request_reason)
         for hyp in parsed.hypotheses:
             hyp_reason = text_reason(hyp)
             if hyp_reason is not None:
-                raise invalid(hyp_reason, usage=usage, attempts=attempts)
+                raise fail(hyp_reason)
     elif parsed.hypotheses or parsed.underlying_request.strip():
-        raise invalid(InvalidOutputReason.NON_OK_WITH_PAYLOAD, usage=usage, attempts=attempts)
+        raise fail(InvalidOutputReason.NON_OK_WITH_PAYLOAD)
     return DecodeResult(
         hypotheses=tuple(parsed.hypotheses),
         underlying_request=parsed.underlying_request,

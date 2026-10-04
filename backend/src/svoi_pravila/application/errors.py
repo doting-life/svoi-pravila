@@ -74,6 +74,10 @@ class ConflictError(ApplicationError):
     """Unique constraint violated (duplicate key)."""
 
 
+class UsageEventWriteFailed(ApplicationError):
+    """Persisting a usage event failed; the user-visible result must not change."""
+
+
 class GenerationUnavailable(ApplicationError):
     """Generation provider is unavailable, timed out, or rate-limited."""
 
@@ -83,20 +87,49 @@ class GenerationUnavailable(ApplicationError):
         *,
         usage: TokenUsage,
         attempts: int,
+        model: str,
+        prompt_version: str,
     ) -> None:
         self.kind = kind
         self.usage = usage
         self.attempts = attempts
+        self.model = model
+        self.prompt_version = prompt_version
         super().__init__("generation unavailable")
 
 
 class GenerationRefusedByProvider(ApplicationError):
     """Provider moderation refused to generate a completion."""
 
-    def __init__(self, *, usage: TokenUsage, attempts: int) -> None:
+    def __init__(
+        self,
+        *,
+        usage: TokenUsage,
+        attempts: int,
+        model: str,
+        prompt_version: str,
+    ) -> None:
         self.usage = usage
         self.attempts = attempts
+        self.model = model
+        self.prompt_version = prompt_version
         super().__init__("generation refused by provider")
+
+
+class ScenarioBusy(ApplicationError):
+    """A decode (or other scenario) is already in flight for this user."""
+
+
+class ScenarioQuotaExceeded(ApplicationError):
+    """The per-user scenario quota window is exhausted."""
+
+
+class IncomingTextTooShort(ApplicationError):
+    """Incoming text is shorter than the allowed bound."""
+
+
+class IncomingTextTooLong(ApplicationError):
+    """Incoming text is longer than the allowed bound."""
 
 
 class InvalidGenerationOutput(ApplicationError):
@@ -108,6 +141,8 @@ class InvalidGenerationOutput(ApplicationError):
         *,
         usage: TokenUsage,
         attempts: int,
+        model: str,
+        prompt_version: str,
     ) -> None:
         if not reasons:
             msg = "InvalidGenerationOutput requires at least one reason"
@@ -115,4 +150,6 @@ class InvalidGenerationOutput(ApplicationError):
         self.reasons = reasons
         self.usage = usage
         self.attempts = attempts
+        self.model = model
+        self.prompt_version = prompt_version
         super().__init__("invalid generation output")

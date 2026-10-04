@@ -41,6 +41,8 @@ class AttemptState:
     """Mutable counters and outcome for one generation_call log record."""
 
     started: float
+    model: str
+    prompt_version: str
     outcome: str = "ok"
     attempts: int = field(default=0)
     input_tokens: int = field(default=0)
@@ -94,6 +96,8 @@ def finalize_invalid(state: AttemptState) -> InvalidGenerationOutput:
         tuple(state.collected_reasons),
         usage=token_usage_from_state(state),
         attempts=len(state.collected_reasons),
+        model=state.model,
+        prompt_version=state.prompt_version,
     )
 
 

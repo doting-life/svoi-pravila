@@ -149,6 +149,9 @@ class Settings(BaseSettings):
     telegram_rate_limit_per_minute: int = Field(default=30, ge=1, le=600)
     telegram_dedup_ttl_seconds: int = Field(default=300, ge=1, le=86_400)
     telegram_shutdown_grace_seconds: float = Field(default=10.0, gt=0, le=120)
+    decode_deadline_seconds: float = Field(default=45.0, gt=0, le=120)
+    decode_per_hour: int = Field(default=20, ge=1, le=10_000)
+    telegram_draft_min_interval_ms: int = Field(default=500, ge=50, le=5_000)
 
     @field_validator("database_url")
     @classmethod

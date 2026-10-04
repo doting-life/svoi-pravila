@@ -33,7 +33,7 @@ def _unreachable_valkey_url(valkey_url: str) -> str:
 async def test_database_probe_ok(settings: Settings) -> None:
     engine = create_engine(settings)
     try:
-        await DatabaseProbe(engine).check()
+        await DatabaseProbe(engine).check(2.0)
     finally:
         await dispose_engine(engine)
 
@@ -42,7 +42,7 @@ async def test_database_probe_ok(settings: Settings) -> None:
 async def test_valkey_probe_ok(settings: Settings) -> None:
     client = create_client(settings)
     try:
-        await ValkeyProbe(client).check()
+        await ValkeyProbe(client).check(2.0)
     finally:
         await close_client(client)
 

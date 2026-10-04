@@ -21,6 +21,8 @@ def test_invalid_generation_output_carries_reasons() -> None:
         (InvalidOutputReason.EMPTY_MESSAGE, InvalidOutputReason.JSON_DECODE),
         usage=usage,
         attempts=2,
+        model="m",
+        prompt_version="p",
     )
     assert err.reasons == (InvalidOutputReason.EMPTY_MESSAGE, InvalidOutputReason.JSON_DECODE)
     assert err.usage == usage
@@ -31,7 +33,12 @@ def test_invalid_generation_output_carries_reasons() -> None:
 
 @pytest.mark.unit
 def test_generation_refused_carries_usage_and_attempts() -> None:
-    err = GenerationRefusedByProvider(usage=TokenUsage(output=2), attempts=1)
+    err = GenerationRefusedByProvider(
+        usage=TokenUsage(output=2),
+        attempts=1,
+        model="m",
+        prompt_version="p",
+    )
     assert err.usage.output == 2
     assert err.usage.billable == 2
     assert err.attempts == 1
@@ -43,6 +50,8 @@ def test_invalid_generation_output_attempts_explicit() -> None:
         (InvalidOutputReason.EMPTY_MESSAGE,),
         usage=TokenUsage(),
         attempts=3,
+        model="m",
+        prompt_version="p",
     )
     assert err.attempts == 3
 
@@ -60,7 +69,7 @@ def test_all_invalid_output_reasons_are_c0_tokens() -> None:
 @pytest.mark.unit
 def test_invalid_generation_output_rejects_empty_reasons() -> None:
     with pytest.raises(ValueError, match="at least one reason"):
-        InvalidGenerationOutput((), usage=TokenUsage(), attempts=0)
+        InvalidGenerationOutput((), usage=TokenUsage(), attempts=0, model="m", prompt_version="p")
 
 
 @pytest.mark.unit
@@ -69,6 +78,8 @@ def test_unavailable_kind_on_error() -> None:
         UnavailableKind.RATE_LIMITED,
         usage=TokenUsage(input=1, output=0),
         attempts=1,
+        model="m",
+        prompt_version="p",
     )
     assert err.kind is UnavailableKind.RATE_LIMITED
     assert err.usage.billable == 1

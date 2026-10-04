@@ -60,6 +60,7 @@ class AnalysisStreamParams:
     model: str
     prepared: PreparedMessages
     started: float
+    prompt_version: str
 
 
 class _RetryAttemptError(Exception):
@@ -87,6 +88,8 @@ def _reraise_refused(state: AttemptState) -> NoReturn:
     raise GenerationRefusedByProvider(
         usage=token_usage_from_state(state),
         attempts=state.attempts,
+        model=state.model,
+        prompt_version=state.prompt_version,
     ) from None
 
 
@@ -96,6 +99,8 @@ def _reraise_unavailable(state: AttemptState, kind: UnavailableKind) -> NoReturn
         kind,
         usage=token_usage_from_state(state),
         attempts=state.attempts,
+        model=state.model,
+        prompt_version=state.prompt_version,
     ) from None
 
 
@@ -104,6 +109,8 @@ def _handle_provider_exc(state: AttemptState, exc: BaseException) -> NoReturn:
         exc,
         usage=token_usage_from_state(state),
         attempts=state.attempts,
+        model=state.model,
+        prompt_version=state.prompt_version,
     )
     _reraise_unavailable(state, mapped.kind)
 
@@ -113,7 +120,11 @@ class AnalysisPhase:
 
     def __init__(self, params: AnalysisStreamParams) -> None:
         self._params = params
-        self._state = AttemptState(started=params.started)
+        self._state = AttemptState(
+            started=params.started,
+            model=params.model,
+            prompt_version=params.prompt_version,
+        )
         self._completed: list[AnalysisPhaseResult] = []
 
     @property
@@ -173,6 +184,8 @@ class AnalysisPhase:
                         typed_chunk.finish_reason,
                         usage=token_usage_from_state(self._state),
                         attempts=self._state.attempts,
+                        model=self._state.model,
+                        prompt_version=self._state.prompt_version,
                     )
                 if typed_chunk.usage is not None:
                     last_usage = typed_chunk.usage
@@ -189,6 +202,8 @@ class AnalysisPhase:
                     defect,
                     usage=token_usage_from_state(self._state),
                     attempts=self._state.attempts,
+                    model=self._state.model,
+                    prompt_version=self._state.prompt_version,
                 )
             self._completed.append(
                 AnalysisPhaseResult(

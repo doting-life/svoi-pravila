@@ -79,6 +79,7 @@ from svoi_pravila.benchmarks.report import (
     standard_report_header,
 )
 from svoi_pravila.benchmarks.runner import (
+    AuthFailedError,
     BenchmarkParams,
     BenchmarkRuntime,
     CallRecord,
@@ -260,6 +261,10 @@ def test_format_report_incomplete() -> None:
     body = format_report(["| row |"], incomplete=True)
     assert "INCOMPLETE" in body
     assert "rate_limited" in body
+    auth = format_report(["| row |"], incomplete=True, incomplete_reason="auth")
+    assert "auth failed" in auth
+    budget = format_report(["| row |"], incomplete=True, incomplete_reason="token_budget")
+    assert "token budget reached" in budget
 
 
 @pytest.mark.unit
@@ -404,6 +409,35 @@ async def test_run_case_rate_limited_stops() -> None:
         ("retry-after", "1"),
         ("x-ratelimit-remaining", "0"),
     )
+
+
+@pytest.mark.unit
+async def test_run_case_auth_stops() -> None:
+    soften = BenchCase(
+        id="s1",
+        operation="soften",
+        expected_safety="ok",
+        soften=SoftenRequest(
+            draft="черновик",
+            rules=(),
+            relationship=RelationshipKind.FRIEND,
+            deadline_seconds=1.0,
+        ),
+    )
+
+    class AuthFail(FakeTextGenerator):
+        async def soften(self, request: SoftenRequest) -> SoftenResult:
+            raise GenerationUnavailable(
+                UnavailableKind.AUTH,
+                usage=TokenUsage(),
+                attempts=1,
+                model="m",
+                prompt_version="p",
+            )
+
+    with pytest.raises(AuthFailedError) as exc_info:
+        await run_case(AuthFail(), soften, _opts("soften"))
+    assert exc_info.value.record.unavailable_kind == "auth"
 
 
 @pytest.mark.unit
@@ -821,6 +855,67 @@ async def test_async_main_rate_limited_incomplete(
 
 
 @pytest.mark.unit
+async def test_async_main_auth_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    class _Client:
+        async def aget_models(self) -> object:
+            return SimpleNamespace(data=[])
+
+    async def _close(_client: object) -> None:
+        return None
+
+    class AuthGen(FakeTextGenerator):
+        async def soften(self, request: SoftenRequest) -> SoftenResult:
+            raise GenerationUnavailable(
+                UnavailableKind.AUTH,
+                usage=TokenUsage(),
+                attempts=1,
+                model="m",
+                prompt_version="p",
+            )
+
+    cases = [
+        BenchCase(
+            id="s1",
+            operation="soften",
+            expected_safety="ok",
+            soften=SoftenRequest(
+                draft="черновик",
+                rules=(),
+                relationship=RelationshipKind.FRIEND,
+                deadline_seconds=1.0,
+            ),
+        ),
+    ]
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", lambda _s: _Client())
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.close_gigachat_client", _close)
+
+    def _auth_factory(_c: object, _s: object) -> AuthGen:
+        return AuthGen()
+
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.GigaChatTextGenerator", _auth_factory)
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: cases)
+    out_path = tmp_path / "auth.md"
+    code = await async_main(
+        _cli_args(
+            models=["GigaChat-2"],
+            ops=["soften"],
+            out=str(out_path),
+        )
+    )
+    assert code == 1
+    captured = capsys.readouterr().out
+    assert "auth failed" in captured
+    written = out_path.read_text(encoding="utf-8")
+    assert "auth failed" in written
+    assert "soften" in written
+
+
+@pytest.mark.unit
 @respx.mock
 @pytest.mark.parametrize("proxy_mode", ["proxy", "no_proxy"])
 async def test_recording_json_writes_fixture(
@@ -1169,6 +1264,7 @@ def test_out_writer_header_once_and_none_path(tmp_path: Path) -> None:
         rate_limit_headers=(("retry-after", "1"), ("x-ratelimit-remaining", "0")),
     )
     writer.write_incomplete(token_budget=(10, 20))
+    writer.write_incomplete(auth_failed=True)
     text = path.read_text(encoding="utf-8")
     assert text.count("HEADER") == 1
     assert "| row |" in text
@@ -1177,6 +1273,7 @@ def test_out_writer_header_once_and_none_path(tmp_path: Path) -> None:
     assert "header retry-after: 1" in text
     assert "header x-ratelimit-remaining: 0" in text
     assert "token budget reached (spent 10 of 20)" in text
+    assert "auth failed" in text
     assert "reasons: (none)" in text
     noop = OutWriter(None)
     noop.write_header_once("H")

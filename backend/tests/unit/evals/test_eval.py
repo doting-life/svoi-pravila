@@ -22,6 +22,7 @@ from svoi_pravila.application.errors import (
 from svoi_pravila.application.ports.generation import TokenUsage
 from svoi_pravila.benchmarks.out_writer import OutWriter
 from svoi_pravila.benchmarks.runner import (
+    AuthFailedError,
     CallRecord,
     RateLimitedError,
     SpendTracker,
@@ -420,6 +421,16 @@ async def test_runner_error_and_budget_paths() -> None:
     )
     with pytest.raises(RateLimitedError):
         await run_eval_case(limited, ordinary, runtime, deadline=5.0, show_outputs=False)
+    authed = FakeTextGenerator()
+    authed.soften_error = GenerationUnavailable(
+        UnavailableKind.AUTH,
+        usage=TokenUsage(),
+        attempts=1,
+        model="m",
+        prompt_version="p",
+    )
+    with pytest.raises(AuthFailedError):
+        await run_eval_case(authed, ordinary, runtime, deadline=5.0, show_outputs=False)
     params = EvalParams(
         operations=("soften",),
         models=("fake",),
@@ -444,6 +455,13 @@ async def test_runner_error_and_budget_paths() -> None:
     )
     assert limited_incomplete is True
     assert rate_error is not None
+    second = next(c for c in load_cases(_DATA) if c.id == "soften-ordinary_conflict-02")
+    _auth_recs, auth_incomplete, auth_error, _ab = await run_eval(
+        authed, [ordinary, second], limited_params, runtime
+    )
+    assert auth_incomplete is True
+    assert isinstance(auth_error, AuthFailedError)
+    assert len(_auth_recs) == 0
     with pytest.raises(ValueError, match="align"):
         await warmup_eval(
             FakeTextGenerator(),
@@ -522,9 +540,9 @@ def test_plan_eval_align_and_empty_operation() -> None:
 @pytest.mark.unit
 def test_write_incomplete_markers(tmp_path: Path) -> None:
     out = OutWriter(tmp_path / "inc.md")
-    _write_incomplete(out, incomplete=False, rate_error=None, budget_error=None)
+    _write_incomplete(out, incomplete=False, fail_fast=None, budget_error=None)
     budget = TokenBudgetExceededError(spent=1, limit=2)
-    _write_incomplete(out, incomplete=True, rate_error=None, budget_error=budget)
+    _write_incomplete(out, incomplete=True, fail_fast=None, budget_error=budget)
     rate = RateLimitedError(
         CallRecord(
             outcome="unavailable",
@@ -540,10 +558,25 @@ def test_write_incomplete_markers(tmp_path: Path) -> None:
         http_status=429,
         rate_limit_headers=(("retry-after", "1"),),
     )
-    _write_incomplete(out, incomplete=True, rate_error=rate, budget_error=None)
+    _write_incomplete(out, incomplete=True, fail_fast=rate, budget_error=None)
+    auth = AuthFailedError(
+        CallRecord(
+            outcome="unavailable",
+            latency_ms=0,
+            expected_safety="ok",
+            attempts=1,
+            reasons=(),
+            unavailable_kind="auth",
+            input_tokens=0,
+            output_tokens=0,
+            billable_tokens=0,
+        )
+    )
+    _write_incomplete(out, incomplete=True, fail_fast=auth, budget_error=None)
     text = (tmp_path / "inc.md").read_text(encoding="utf-8")
     assert "INCOMPLETE" in text
     assert "429" in text
+    assert "auth failed" in text
 
 
 @pytest.mark.unit
@@ -604,6 +637,27 @@ async def test_async_main_live_and_failures(
     ns.out = str(rate_out)
     assert await async_main(ns) == 1
     assert "INCOMPLETE" in rate_out.read_text(encoding="utf-8")
+
+    async def _auth(_gen: object, _cases: object, _params: object, _runtime: object) -> None:
+        raise AuthFailedError(
+            CallRecord(
+                outcome="unavailable",
+                latency_ms=0,
+                expected_safety="ok",
+                attempts=1,
+                reasons=(),
+                unavailable_kind="auth",
+                input_tokens=0,
+                output_tokens=0,
+                billable_tokens=0,
+            )
+        )
+
+    monkeypatch.setattr("svoi_pravila.evals.cli.warmup_eval", _auth)
+    auth_out = tmp_path / "auth.md"
+    ns.out = str(auth_out)
+    assert await async_main(ns) == 1
+    assert "auth failed" in auth_out.read_text(encoding="utf-8")
 
     async def _budget(_gen: object, _cases: object, _params: object, _runtime: object) -> None:
         raise TokenBudgetExceededError(spent=1, limit=2)

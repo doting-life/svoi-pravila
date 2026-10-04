@@ -6,8 +6,12 @@ BACKEND := backend
 GITLEAKS_IMAGE := zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
 TRIVY_IMAGE := aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e
 
-# Pass repo-root .env into uv when present (path relative to backend/).
-ENV_FILE_ARG := $(if $(wildcard .env),--env-file ../.env,)
+ENV_FILE ?= .env
+export ENV_FILE
+ENV_FILE_ABS := $(abspath $(ENV_FILE))
+ENV_FILE_ARG := $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE_ABS),)
+COMPOSE_ENV := $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE_ABS),)
+COMPOSE := docker compose $(COMPOSE_ENV)
 UV := cd $(BACKEND) && uv run $(ENV_FILE_ARG)
 
 install:
@@ -51,10 +55,13 @@ test:
 	$(UV) coverage report --include='*/svoi_pravila/evals/*' --fail-under=95
 
 bench-llm:
-	docker compose --profile app run --rm --entrypoint svoi-pravila-bench-llm api $(BENCH_ARGS)
+	$(COMPOSE) --profile app run --rm --entrypoint svoi-pravila-bench-llm api $(BENCH_ARGS)
 
 eval-llm:
-	docker compose --profile app run --rm --entrypoint svoi-pravila-eval api $(EVAL_ARGS)
+	mkdir -p $(BACKEND)/evals/out
+	$(COMPOSE) --profile app run --rm \
+		-v "$(CURDIR)/$(BACKEND)/evals/out:/app/evals/out" \
+		--entrypoint svoi-pravila-eval api $(EVAL_ARGS)
 
 audit:
 	cd $(BACKEND) && uv export --frozen --no-dev --no-emit-project -o /tmp/svoi-pravila-requirements.txt
@@ -74,29 +81,29 @@ migrations-check:
 	$(UV) alembic check
 
 dev-env:
-	test -f .env || cp .env.example .env
-	cd $(BACKEND) && uv run python ../scripts/ensure_dev_env.py
+	test -f "$(ENV_FILE)" || cp .env.example "$(ENV_FILE)"
+	cd $(BACKEND) && uv run python ../scripts/ensure_dev_env.py --env-file "$(ENV_FILE_ABS)"
 
 infra-up: dev-env
-	docker compose up -d --wait
+	$(COMPOSE) up -d --wait
 
 infra-down:
-	docker compose down
+	$(COMPOSE) down
 
 build:
-	docker compose --profile app build
+	$(COMPOSE) --profile app build
 
 up: build
-	docker compose --profile app up -d --wait
+	$(COMPOSE) --profile app up -d --wait
 	@echo "API: http://127.0.0.1:$${API_PORT:-8000}"
 
 down:
-	docker compose --profile app down
+	$(COMPOSE) --profile app down
 
 logs:
-	docker compose --profile app logs -f api migrate
+	$(COMPOSE) --profile app logs -f api migrate
 
 ps:
-	docker compose --profile app ps
+	$(COMPOSE) --profile app ps
 
 check: lint fmt-check typecheck imports migrations-check test audit secrets

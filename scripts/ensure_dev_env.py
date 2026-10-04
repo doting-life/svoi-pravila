@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import base64
 import re
 import secrets
@@ -108,4 +109,18 @@ def main(env_path: Path = ENV_PATH, example_path: Path = EXAMPLE_PATH) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Fill missing local env secrets.")
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        default=ENV_PATH,
+        help="Env file to create or update (default: repo-root .env)",
+    )
+    parser.add_argument(
+        "--example-file",
+        type=Path,
+        default=EXAMPLE_PATH,
+        help="Template copied when the env file does not exist",
+    )
+    args = parser.parse_args()
+    main(env_path=args.env_file, example_path=args.example_file)

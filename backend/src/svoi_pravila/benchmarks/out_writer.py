@@ -46,6 +46,7 @@ class OutWriter:
         http_status: int | None = None,
         rate_limit_headers: tuple[tuple[str, str], ...] = (),
         token_budget: tuple[int, int] | None = None,
+        auth_failed: bool = False,
     ) -> None:
         """Append the INCOMPLETE marker and C0 diagnostics."""
         if self._path is None:
@@ -53,6 +54,8 @@ class OutWriter:
         if token_budget is not None:
             spent, limit = token_budget
             lines = [f"**INCOMPLETE** — token budget reached (spent {spent} of {limit})"]
+        elif auth_failed:
+            lines = ["**INCOMPLETE** — auth failed"]
         else:
             lines = ["**INCOMPLETE** — stopped after first `rate_limited`"]
             if http_status is not None:

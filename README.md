@@ -18,6 +18,16 @@ make check
 
 `make infra-up` starts only PostgreSQL and Valkey (for gates and tests). Use the Local stack section below to run the application itself.
 
+## Fresh environment check
+
+Never delete, move, or overwrite an existing repo-root `.env` (it holds credentials that cannot be restored from the repository). To run gates against a generated file:
+
+```bash
+make dev-env ENV_FILE=/tmp/sp-fresh.env && make check ENV_FILE=/tmp/sp-fresh.env
+```
+
+`make dev-env ENV_FILE=/path/outside/repo.env` creates or updates that file only.
+
 ## Local stack
 
 The supported way to run the application locally is the Docker stack (same images intended for the VPS): one-shot migrations, then the API, plus PostgreSQL and Valkey.

@@ -17,7 +17,9 @@ from svoi_pravila.application.ports.generation import DecodeCompleted, TextGener
 from svoi_pravila.benchmarks.out_writer import OutWriter
 from svoi_pravila.benchmarks.recording import RateLimitCapture
 from svoi_pravila.benchmarks.runner import (
+    AuthFailedError,
     CallRecord,
+    FailFastUnavailableError,
     RateLimitedError,
     SpendTracker,
     TokenBudgetExceededError,
@@ -64,22 +66,23 @@ def _screen_record(case: EvalCase) -> EvalRecord:
     )
 
 
-def _raise_if_rate_limited(exc: GenerationUnavailable) -> None:
-    if exc.kind is not UnavailableKind.RATE_LIMITED:
+def _raise_if_fail_fast(exc: GenerationUnavailable) -> None:
+    if exc.kind not in {UnavailableKind.RATE_LIMITED, UnavailableKind.AUTH}:
         return
-    raise RateLimitedError(
-        CallRecord(
-            outcome="unavailable",
-            latency_ms=0,
-            expected_safety="ok",
-            attempts=exc.attempts,
-            reasons=(),
-            unavailable_kind=exc.kind.value,
-            input_tokens=exc.usage.input,
-            output_tokens=exc.usage.output,
-            billable_tokens=exc.usage.billable,
-        )
+    record = CallRecord(
+        outcome="unavailable",
+        latency_ms=0,
+        expected_safety="ok",
+        attempts=exc.attempts,
+        reasons=(),
+        unavailable_kind=exc.kind.value,
+        input_tokens=exc.usage.input,
+        output_tokens=exc.usage.output,
+        billable_tokens=exc.usage.billable,
     )
+    if exc.kind is UnavailableKind.RATE_LIMITED:
+        raise RateLimitedError(record)
+    raise AuthFailedError(record)
 
 
 def _error_record(
@@ -87,7 +90,7 @@ def _error_record(
     exc: GenerationRefusedByProvider | InvalidGenerationOutput | GenerationUnavailable,
 ) -> EvalRecord:
     if isinstance(exc, GenerationUnavailable):
-        _raise_if_rate_limited(exc)
+        _raise_if_fail_fast(exc)
         outcome = "unavailable"
         reasons: tuple[str, ...] = ()
         billable = exc.usage.billable
@@ -250,10 +253,12 @@ async def run_eval(
     cases: list[EvalCase],
     params: EvalParams,
     runtime: EvalRuntime,
-) -> tuple[list[EvalRecord], bool, RateLimitedError | None, TokenBudgetExceededError | None]:
+) -> tuple[
+    list[EvalRecord], bool, FailFastUnavailableError | None, TokenBudgetExceededError | None
+]:
     """Run selected operations; return records and incomplete flag."""
     records: list[EvalRecord] = []
-    rate_error: RateLimitedError | None = None
+    fail_fast: FailFastUnavailableError | None = None
     budget_error: TokenBudgetExceededError | None = None
     selected = [case for case in cases if case.operation in params.operations]
     try:
@@ -272,14 +277,14 @@ async def run_eval(
             )
             runtime.spend.add(record.billable_tokens)
             records.append(record)
-    except RateLimitedError as exc:
+    except FailFastUnavailableError as exc:
         runtime.spend.add(exc.record.billable_tokens)
-        rate_error = exc
+        fail_fast = exc
     except TokenBudgetExceededError as exc:
         budget_error = exc
     write_eval_out(runtime.out, records)
-    incomplete = rate_error is not None or budget_error is not None
-    return records, incomplete, rate_error, budget_error
+    incomplete = fail_fast is not None or budget_error is not None
+    return records, incomplete, fail_fast, budget_error
 
 
 def eval_exit_code(

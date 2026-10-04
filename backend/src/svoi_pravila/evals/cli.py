@@ -12,7 +12,8 @@ from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.benchmarks.out_writer import OutWriter
 from svoi_pravila.benchmarks.recording import RateLimitCapture, install_rate_limit_capture
 from svoi_pravila.benchmarks.runner import (
-    RateLimitedError,
+    AuthFailedError,
+    FailFastUnavailableError,
     SpendTracker,
     TokenBudgetExceededError,
 )
@@ -121,13 +122,13 @@ async def async_main(args: argparse.Namespace) -> int:
         print("Calls are sequential. One unmeasured warm-up runs per distinct model.")
         print(f"Operations: {', '.join(operations)}")
         print(f"Max billable tokens: {args.max_tokens}")
-        records, incomplete, rate_error, budget_error = await _run_live(
+        records, incomplete, fail_fast, budget_error = await _run_live(
             gen, cases, params, runtime, out
         )
         _write_incomplete(
             out,
             incomplete=incomplete,
-            rate_error=rate_error,
+            fail_fast=fail_fast,
             budget_error=budget_error,
         )
         print(format_metrics(records))
@@ -148,11 +149,13 @@ async def _run_live(
     params: EvalParams,
     runtime: EvalRuntime,
     out: OutWriter,
-) -> tuple[list[EvalRecord], bool, RateLimitedError | None, TokenBudgetExceededError | None]:
+) -> tuple[
+    list[EvalRecord], bool, FailFastUnavailableError | None, TokenBudgetExceededError | None
+]:
     try:
         await warmup_eval(gen, cases, params, runtime)
         return await run_eval(gen, cases, params, runtime)
-    except RateLimitedError as exc:
+    except FailFastUnavailableError as exc:
         write_eval_out(out, [])
         return [], True, exc, None
     except TokenBudgetExceededError as exc:
@@ -164,7 +167,7 @@ def _write_incomplete(
     out: OutWriter,
     *,
     incomplete: bool,
-    rate_error: RateLimitedError | None,
+    fail_fast: FailFastUnavailableError | None,
     budget_error: TokenBudgetExceededError | None,
 ) -> None:
     if not incomplete:
@@ -172,10 +175,11 @@ def _write_incomplete(
     if budget_error is not None:
         out.write_incomplete(token_budget=(budget_error.spent, budget_error.limit))
         return
-    if rate_error is not None:
+    if fail_fast is not None:
         out.write_incomplete(
-            http_status=rate_error.http_status,
-            rate_limit_headers=rate_error.rate_limit_headers,
+            http_status=fail_fast.http_status,
+            rate_limit_headers=fail_fast.rate_limit_headers,
+            auth_failed=isinstance(fail_fast, AuthFailedError),
         )
 
 

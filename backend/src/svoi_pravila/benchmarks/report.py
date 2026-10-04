@@ -208,10 +208,20 @@ def decode_stream_report_header() -> str:
     )
 
 
-def format_report(rows: list[str], *, incomplete: bool) -> str:
+def format_report(
+    rows: list[str],
+    *,
+    incomplete: bool,
+    incomplete_reason: str | None = None,
+) -> str:
     """Join table sections with an optional INCOMPLETE banner."""
     parts: list[str] = []
     if incomplete:
-        parts.append("**INCOMPLETE** — stopped after first `rate_limited`")
+        if incomplete_reason == "auth":
+            parts.append("**INCOMPLETE** — auth failed")
+        elif incomplete_reason == "token_budget":
+            parts.append("**INCOMPLETE** — token budget reached")
+        else:
+            parts.append("**INCOMPLETE** — stopped after first `rate_limited`")
     parts.extend(rows)
     return "\n".join(parts)

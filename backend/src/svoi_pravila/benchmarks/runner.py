@@ -115,7 +115,24 @@ class SpendTracker:
             self.warmup_billable += billable
 
 
-class RateLimitedError(Exception):
+class FailFastUnavailableError(Exception):
+    """Stop the run after the first auth or rate_limited unavailable outcome."""
+
+    def __init__(
+        self,
+        record: CallRecord,
+        *,
+        message: str,
+        http_status: int | None = None,
+        rate_limit_headers: tuple[tuple[str, str], ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.record = record
+        self.http_status = http_status
+        self.rate_limit_headers = rate_limit_headers
+
+
+class RateLimitedError(FailFastUnavailableError):
     """Raised when the first rate_limited unavailable outcome is observed."""
 
     def __init__(
@@ -125,10 +142,30 @@ class RateLimitedError(Exception):
         http_status: int | None = None,
         rate_limit_headers: tuple[tuple[str, str], ...] = (),
     ) -> None:
-        super().__init__("rate_limited")
-        self.record = record
-        self.http_status = http_status
-        self.rate_limit_headers = rate_limit_headers
+        super().__init__(
+            record,
+            message="rate_limited",
+            http_status=http_status,
+            rate_limit_headers=rate_limit_headers,
+        )
+
+
+class AuthFailedError(FailFastUnavailableError):
+    """Raised when the first auth unavailable outcome is observed."""
+
+    def __init__(
+        self,
+        record: CallRecord,
+        *,
+        http_status: int | None = None,
+        rate_limit_headers: tuple[tuple[str, str], ...] = (),
+    ) -> None:
+        super().__init__(
+            record,
+            message="auth",
+            http_status=http_status,
+            rate_limit_headers=rate_limit_headers,
+        )
 
 
 class TokenBudgetExceededError(Exception):
@@ -371,20 +408,25 @@ async def run_case(
         actual_safety=attempt.actual_safety if ok else None,
         output_line=attempt.output_line,
     )
-    rate_limited = (
-        attempt.outcome == "unavailable"
-        and attempt.unavailable_kind == UnavailableKind.RATE_LIMITED.value
-    )
-    if rate_limited:
-        capture = options.rate_limits
-        status = capture.http_status if capture is not None else None
-        headers = capture.rate_limit_headers if capture is not None else ()
+    _raise_if_fail_fast(record, rate_limits=options.rate_limits)
+    return record
+
+
+def _raise_if_fail_fast(
+    record: CallRecord,
+    *,
+    rate_limits: RateLimitCapture | None,
+) -> None:
+    kind = record.unavailable_kind
+    if kind == UnavailableKind.RATE_LIMITED.value:
+        capture = rate_limits
         raise RateLimitedError(
             record,
-            http_status=status,
-            rate_limit_headers=headers,
+            http_status=capture.http_status if capture is not None else None,
+            rate_limit_headers=capture.rate_limit_headers if capture is not None else (),
         )
-    return record
+    if kind == UnavailableKind.AUTH.value:
+        raise AuthFailedError(record)
 
 
 async def warmup(
@@ -438,7 +480,7 @@ class _OperationRun:
 
 async def _run_operation(
     run: _OperationRun,
-) -> tuple[list[str], bool, RateLimitedError | None, TokenBudgetExceededError | None]:
+) -> tuple[list[str], bool, FailFastUnavailableError | None, TokenBudgetExceededError | None]:
     op_cases = cases_for_operation(run.cases, run.operation)
     if not op_cases:
         return [], False, None, None
@@ -449,7 +491,7 @@ async def _run_operation(
     )
     run.runtime.out.write_header_once(header)
     stats = RunStats()
-    rate_error: RateLimitedError | None = None
+    rate_error: FailFastUnavailableError | None = None
     budget_error: TokenBudgetExceededError | None = None
     try:
         for _ in range(run.params.repeat):
@@ -471,7 +513,7 @@ async def _run_operation(
                 )
                 run.runtime.spend.add(record.billable_tokens)
                 stats.records.append(record)
-    except RateLimitedError as exc:
+    except FailFastUnavailableError as exc:
         run.runtime.spend.add(exc.record.billable_tokens)
         stats.records.append(exc.record)
         rate_error = exc
@@ -492,7 +534,7 @@ async def run_benchmark(
     cases: list[BenchCase],
     params: BenchmarkParams,
     runtime: BenchmarkRuntime | None = None,
-) -> tuple[list[str], bool, RateLimitedError | None, TokenBudgetExceededError | None]:
+) -> tuple[list[str], bool, FailFastUnavailableError | None, TokenBudgetExceededError | None]:
     """Run selected operations for one model; return table rows and incomplete flag."""
     active = runtime if runtime is not None else BenchmarkRuntime(OutWriter(None), SpendTracker())
     rows: list[str] = []

@@ -46,5 +46,6 @@ Thumbs.db
 .pre-commit-cache/
 *.log
 
-# Benchmark output (C0 markdown tables)
+# Benchmark / eval output (C0 markdown tables)
 backend/benchmarks/out/
+backend/evals/out/

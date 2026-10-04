@@ -25,7 +25,6 @@ AnswerFn = Callable[[InlineQuery, Bot, "TelegramDeps"], Awaitable[None]]
 class _Slot:
     seq: int
     task: asyncio.Task[None]
-    reached_provider: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,12 +38,14 @@ class _Job:
 
 
 class InlineQueryCoordinator:
-    """One waiting task per user; generation in flight is not cancelled."""
+    """One generation in flight per user; unstarted queries are superseded."""
 
     def __init__(self, sleeper: Sleeper, *, debounce_seconds: float) -> None:
         self._sleeper = sleeper
         self._debounce_seconds = debounce_seconds
         self._slots: dict[int, _Slot] = {}
+        self._in_flight: dict[int, asyncio.Task[None]] = {}
+        self._waiting: set[tuple[int, int]] = set()
         self._tasks: set[asyncio.Task[None]] = set()
 
     @property
@@ -64,12 +65,19 @@ class InlineQueryCoordinator:
         user_id = user.id
         previous = self._slots.get(user_id)
         seq = 1 if previous is None else previous.seq + 1
-        if previous is not None and not previous.task.done() and not previous.reached_provider:
+        flying = self._in_flight.get(user_id)
+        waiting = previous is not None and (user_id, previous.seq) in self._waiting
+        if (
+            previous is not None
+            and not previous.task.done()
+            and previous.task is not flying
+            and not waiting
+        ):
             previous.task.cancel()
             logger.info("inline_query_superseded")
         job = _Job(user_id=user_id, seq=seq, query=query, bot=bot, deps=deps, answer=answer)
         task = asyncio.create_task(self._run(job), name="telegram-inline")
-        self._slots[user_id] = _Slot(seq=seq, task=task, reached_provider=False)
+        self._slots[user_id] = _Slot(seq=seq, task=task)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
@@ -79,21 +87,31 @@ class InlineQueryCoordinator:
         current = asyncio.current_task()
         return slot is not None and current is not None and slot.task is current
 
-    async def drain(self) -> None:
-        """Await remaining tasks (used by tests)."""
-        pending = [task for task in self._tasks if not task.done()]
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+    def _still_latest(self, job: _Job) -> bool:
+        slot = self._slots.get(job.user_id)
+        return slot is not None and slot.seq == job.seq
 
     async def _run(self, job: _Job) -> None:
         try:
             await self._sleeper.sleep(self._debounce_seconds)
-            slot = self._slots.get(job.user_id)
-            if slot is None or slot.seq != job.seq:
+            marker = (job.user_id, job.seq)
+            self._waiting.add(marker)
+            try:
+                flying = self._in_flight.get(job.user_id)
+                slot = self._slots.get(job.user_id)
+                if slot is not None and flying is not None and flying is not slot.task:
+                    await flying
+            finally:
+                self._waiting.discard(marker)
+            if not self._still_latest(job):
                 return
-            slot.reached_provider = True
+            slot = self._slots[job.user_id]
+            self._in_flight[job.user_id] = slot.task
             await job.answer(job.query, job.bot, job.deps)
         finally:
+            running = asyncio.current_task()
+            if self._in_flight.get(job.user_id) is running:
+                del self._in_flight[job.user_id]
             current = self._slots.get(job.user_id)
             if current is not None and current.seq == job.seq:
                 del self._slots[job.user_id]

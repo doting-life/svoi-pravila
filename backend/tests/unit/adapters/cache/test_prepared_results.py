@@ -13,10 +13,10 @@ from svoi_pravila.adapters.cache.prepared_results import (
 )
 from svoi_pravila.application.errors import PreparedResultUnavailable
 from svoi_pravila.application.ports.prepared_results import PreparedVariant
-from svoi_pravila.application.prepared_token import (
+from svoi_pravila.application.prepared_ref import (
     INLINE_QUERY_LIMIT,
-    TOKEN_LENGTH,
-    is_prepared_token,
+    PREPARED_REF_LENGTH,
+    is_prepared_ref,
 )
 from svoi_pravila.domain.enums import Firmness
 
@@ -50,9 +50,9 @@ def _store() -> tuple[ValkeyPreparedResults, _MemoryRedis]:
 async def test_prepared_token_length_fits_inline_query_limit() -> None:
     store, _memory = _store()
     token = await store.store("a" * 64, PreparedVariant(Firmness.GENTLE, "hello"))
-    assert len(token) == TOKEN_LENGTH
-    assert TOKEN_LENGTH < INLINE_QUERY_LIMIT
-    assert is_prepared_token(token)
+    assert len(token) == PREPARED_REF_LENGTH
+    assert PREPARED_REF_LENGTH < INLINE_QUERY_LIMIT
+    assert is_prepared_ref(token)
 
 
 @pytest.mark.unit

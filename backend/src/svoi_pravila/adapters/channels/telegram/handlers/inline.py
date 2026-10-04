@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-from typing import cast
 
 from aiogram import Bot, Router
 from aiogram.types import (
@@ -34,7 +33,7 @@ from svoi_pravila.application.errors import (
 )
 from svoi_pravila.application.inline_result_ref import encode_inline_result_ref
 from svoi_pravila.application.ports.generation import Variant
-from svoi_pravila.application.prepared_token import is_prepared_token
+from svoi_pravila.application.prepared_ref import is_prepared_ref
 from svoi_pravila.application.use_cases.inline_compose import InlineComposeCommand
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoiceCommand
 from svoi_pravila.domain.enums import UsageScenario
@@ -50,7 +49,7 @@ def build_inline_router() -> Router:
 
     @router.inline_query()
     async def inline_query(query: InlineQuery, tg_deps: TelegramDeps, bot: Bot) -> None:
-        if is_prepared_token(query.query):
+        if is_prepared_ref(query.query):
             await _answer_prepared(query, bot, tg_deps)
             return
         tg_deps.inline_queries.submit(query, bot, tg_deps, _answer_composed)
@@ -63,7 +62,7 @@ def build_inline_router() -> Router:
         user_id = chosen.from_user.id
         result_id = chosen.result_id
         query = chosen.query
-        if is_prepared_token(query):
+        if is_prepared_ref(query):
             pseudonym = tg_deps.pseudonymizer.pseudonymize(_PREPARED_PURPOSE, str(user_id))
             with contextlib.suppress(PreparedResultUnavailable):
                 await tg_deps.prepared_results.delete(pseudonym, query)
@@ -79,8 +78,6 @@ def build_inline_router() -> Router:
 
 async def _answer_composed(query: InlineQuery, bot: Bot, tg_deps: TelegramDeps) -> None:
     user_id = query.from_user.id
-    if not tg_deps.inline_queries.is_current_task(user_id):
-        return
     try:
         result = await tg_deps.inline_compose.execute(
             InlineComposeCommand(TelegramUserId(user_id), query.query)
@@ -108,7 +105,7 @@ async def _answer_composed(query: InlineQuery, bot: Bot, tg_deps: TelegramDeps) 
         return
     await bot.answer_inline_query(
         inline_query_id=query.id,
-        results=cast(list[InlineQueryResultUnion], articles),
+        results=articles,
         is_personal=True,
         cache_time=tg_deps.inline_cache_seconds,
     )
@@ -121,16 +118,14 @@ async def _answer_prepared(query: InlineQuery, bot: Bot, tg_deps: TelegramDeps) 
     except PreparedResultUnavailable:
         await _answer_empty(query, bot, tg_deps, onboard=False)
         return
+    articles = _articles(
+        tg_deps.strings,
+        UsageScenario.DECODE,
+        (Variant(text=variant.text, firmness=variant.firmness),),
+    )
     await bot.answer_inline_query(
         inline_query_id=query.id,
-        results=cast(
-            list[InlineQueryResultUnion],
-            _articles(
-                tg_deps.strings,
-                UsageScenario.DECODE,
-                (Variant(text=variant.text, firmness=variant.firmness),),
-            ),
-        ),
+        results=articles,
         is_personal=True,
         cache_time=tg_deps.inline_cache_seconds,
     )
@@ -140,8 +135,8 @@ def _articles(
     strings: TelegramStrings,
     scenario: UsageScenario,
     variants: tuple[Variant, ...],
-) -> list[InlineQueryResultArticle]:
-    articles: list[InlineQueryResultArticle] = []
+) -> list[InlineQueryResultUnion]:
+    articles: list[InlineQueryResultUnion] = []
     for variant in variants:
         if not variant.text:
             continue

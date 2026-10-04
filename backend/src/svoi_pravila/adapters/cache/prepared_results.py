@@ -9,10 +9,7 @@ from redis.asyncio import Redis
 
 from svoi_pravila.application.errors import PreparedResultUnavailable
 from svoi_pravila.application.ports.prepared_results import PreparedVariant
-from svoi_pravila.application.prepared_token import (
-    TOKEN_PREFIX,
-    is_prepared_token,
-)
+from svoi_pravila.application.prepared_ref import PREPARED_REF_PREFIX, is_prepared_ref
 from svoi_pravila.crypto.cipher import FieldCipher
 from svoi_pravila.crypto.errors import DecryptionError
 from svoi_pravila.domain.enums import Firmness
@@ -40,7 +37,7 @@ class ValkeyPreparedResults:
         """Encrypt ``variant`` under a random key and return a ``p_`` token."""
         token_id = secrets.token_bytes(_ID_LEN)
         key = secrets.token_bytes(_KEY_LEN)
-        token = _encode_token(token_id, key)
+        token = _encode_ref(token_id, key)
         plaintext = f"{variant.firmness.value}\n{variant.text}".encode()
         blob = FieldCipher(key).encrypt(plaintext, aad=_aad(token_id, user_pseudonym))
         stored = base64.b64encode(blob).decode("ascii")
@@ -49,7 +46,7 @@ class ValkeyPreparedResults:
 
     async def redeem(self, user_pseudonym: str, token: str) -> PreparedVariant:
         """Decrypt for the owning user; leave the ciphertext until delete/TTL."""
-        token_id, key = _decode_token(token)
+        token_id, key = _decode_ref(token)
         stored = await self._client.get(self._redis_key(token_id))
         if stored is None:
             raise PreparedResultUnavailable()
@@ -65,7 +62,7 @@ class ValkeyPreparedResults:
 
     async def delete(self, user_pseudonym: str, token: str) -> None:
         """Drop the ciphertext after a successful same-user decrypt."""
-        token_id, _key = _decode_token(token)
+        token_id, _key = _decode_ref(token)
         await self.redeem(user_pseudonym, token)
         await self._client.delete(self._redis_key(token_id))
 
@@ -77,14 +74,15 @@ def _aad(token_id: bytes, user_pseudonym: str) -> bytes:
     return f"{_AAD_VERSION}:{token_id.hex()}:{user_pseudonym}".encode()
 
 
-def _encode_token(token_id: bytes, key: bytes) -> str:
-    return TOKEN_PREFIX + base64.urlsafe_b64encode(token_id + key).decode("ascii").rstrip("=")
+def _encode_ref(token_id: bytes, key: bytes) -> str:
+    packed = base64.urlsafe_b64encode(token_id + key).decode("ascii").rstrip("=")
+    return PREPARED_REF_PREFIX + packed
 
 
-def _decode_token(token: str) -> tuple[bytes, bytes]:
-    if not is_prepared_token(token):
+def _decode_ref(token: str) -> tuple[bytes, bytes]:
+    if not is_prepared_ref(token):
         raise PreparedResultUnavailable()
-    body = token[len(TOKEN_PREFIX) :]
+    body = token[len(PREPARED_REF_PREFIX) :]
     raw = base64.urlsafe_b64decode(body)
     return raw[:_ID_LEN], raw[_ID_LEN:]
 

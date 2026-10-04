@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -31,6 +32,7 @@ from tests.fakes.telegram_session import FakeTelegramSession
 from tests.fakes.uow import InMemoryUnitOfWorkFactory
 from tests.fakes.usage_sink import RecordingUsageEventSink
 
+from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
 from svoi_pravila.adapters.channels.telegram.lifecycle import ALLOWED_UPDATES, TelegramLifecycle
 from svoi_pravila.adapters.channels.telegram.localization import (
@@ -47,6 +49,12 @@ from svoi_pravila.application.ports.generation import (
     Variant,
 )
 from svoi_pravila.application.ports.prepared_results import PreparedVariant
+from svoi_pravila.application.prepared_ref import PREPARED_REF_PREFIX, is_prepared_ref
+from svoi_pravila.application.use_cases.inline_compose import (
+    InlineCompose,
+    InlineComposeCommand,
+    InlineComposeResult,
+)
 from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
 from svoi_pravila.domain.enums import ConsentKind, Firmness, UsageEventKind, UsageScenario
 
@@ -129,6 +137,12 @@ async def _onboard(
     await dispatcher.feed_update(bot, _callback(start + 3, user_id, f"cg:special_category:{sc}:y"))
 
 
+async def _await_inline(deps: TelegramDeps) -> None:
+    pending = [task for task in deps.inline_queries.tasks if not task.done()]
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
 @pytest.mark.unit
 def test_allowed_updates_include_inline() -> None:
     assert "inline_query" in ALLOWED_UPDATES
@@ -158,7 +172,7 @@ async def test_inline_not_onboarded_gets_setup_button() -> None:
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
     await lifecycle.dispatcher.feed_update(bot, _inline(1, 12, "long enough draft"))
-    await deps.inline_queries.drain()
+    await _await_inline(deps)
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
     assert len(answers) == 1
     assert answers[0].results == []
@@ -179,7 +193,7 @@ async def test_inline_too_short_help_button() -> None:
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
     await _onboard(bot, lifecycle, 13, catalog)
     await lifecycle.dispatcher.feed_update(bot, _inline(10, 13, "hi"))
-    await deps.inline_queries.drain()
+    await _await_inline(deps)
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
     assert answers[-1].results == []
     assert answers[-1].button is not None
@@ -199,7 +213,7 @@ async def test_inline_compose_articles_and_choice() -> None:
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
     await _onboard(bot, lifecycle, 14, catalog)
     await lifecycle.dispatcher.feed_update(bot, _inline(20, 14, "please leave quietly"))
-    await deps.inline_queries.drain()
+    await _await_inline(deps)
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
     assert answers[-1].is_personal is True
     assert len(answers[-1].results) == 2
@@ -242,7 +256,7 @@ async def test_prepared_token_answers_without_generation() -> None:
         PreparedVariant(firmness=Firmness.BALANCED, text="insert-me"),
     )
     await lifecycle.dispatcher.feed_update(bot, _inline(30, 15, token))
-    await deps.inline_queries.drain()
+    await _await_inline(deps)
     assert generator.soften_calls == []
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
     assert len(answers[-1].results) == 1
@@ -282,7 +296,7 @@ async def test_inline_debounce_cancels_before_provider() -> None:
     await lifecycle.dispatcher.feed_update(bot, _inline(41, 16, "second draft here"))
     await sleeper.entered.wait()
     sleeper.release.set()
-    await deps.inline_queries.drain()
+    await lifecycle.shutdown()
     assert len(generator.soften_calls) == 1
     assert generator.soften_calls[0].draft == "second draft here"
 
@@ -310,14 +324,20 @@ async def test_inline_in_flight_generation_not_cancelled() -> None:
     await _onboard(bot, lifecycle, 17, catalog)
     await lifecycle.dispatcher.feed_update(bot, _inline(50, 17, "first long draft"))
     await generator.soften_started.wait()
+    assert [call.draft for call in generator.soften_calls] == ["first long draft"]
     await lifecycle.dispatcher.feed_update(bot, _inline(51, 17, "second long draft"))
+    assert [call.draft for call in generator.soften_calls] == ["first long draft"]
     block.set()
-    await deps.inline_queries.drain()
-    assert len(generator.soften_calls) == 2
+    await _await_inline(deps)
+    assert [call.draft for call in generator.soften_calls] == [
+        "first long draft",
+        "second long draft",
+    ]
     generations = [event for event in sink.events if event.event_kind is UsageEventKind.GENERATION]
     assert len(generations) == 2
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
     assert len(answers) == 1
+    assert answers[0].inline_query_id == "51"
 
 
 @pytest.mark.unit
@@ -375,7 +395,7 @@ async def test_help_say_inline_articles() -> None:
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
     await _onboard(bot, lifecycle, 19, catalog)
     await lifecycle.dispatcher.feed_update(bot, _inline(70, 19, "извинись: I was late to dinner"))
-    await deps.inline_queries.drain()
+    await _await_inline(deps)
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
     article = answers[-1].results[0]
     assert isinstance(article, InlineQueryResultArticle)
@@ -406,11 +426,10 @@ async def test_inline_empty_variants_help_button() -> None:
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
     await _onboard(bot, lifecycle, 22, catalog)
     await lifecycle.dispatcher.feed_update(bot, _inline(90, 22, "long enough draft"))
-    await deps.inline_queries.drain()
+    await _await_inline(deps)
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
     assert answers[-1].results == []
     assert answers[-1].button is not None
-    await deps.inline_queries.drain()
 
 
 @pytest.mark.unit
@@ -424,3 +443,262 @@ async def test_chosen_invalid_ref_is_ignored() -> None:
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
     await lifecycle.dispatcher.feed_update(bot, _chosen(80, 21, "not-a-ref", "query text"))
     assert [e for e in sink.events if e.event_kind is UsageEventKind.RESULT_CHOSEN] == []
+
+
+@pytest.mark.unit
+async def test_newer_query_waits_for_in_flight_then_runs() -> None:
+    catalog = FakeConsentCatalog()
+    uow = InMemoryUnitOfWorkFactory()
+    block = asyncio.Event()
+    generator = FakeTextGenerator()
+    generator.soften_block = block
+    sink = RecordingUsageEventSink()
+    deps = make_telegram_deps(
+        TelegramTestDeps(
+            uow=uow,
+            catalog=catalog,
+            generator=generator,
+            sink=sink,
+            debounce_seconds=0.0,
+        )
+    )
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 24, catalog)
+    await lifecycle.dispatcher.feed_update(bot, _inline(100, 24, "alpha draft waiting"))
+    await generator.soften_started.wait()
+    await lifecycle.dispatcher.feed_update(bot, _inline(101, 24, "beta draft waiting"))
+    assert len(generator.soften_calls) == 1
+    block.set()
+    await _await_inline(deps)
+    assert [call.draft for call in generator.soften_calls] == [
+        "alpha draft waiting",
+        "beta draft waiting",
+    ]
+    answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
+    assert [item.inline_query_id for item in answers] == ["101"]
+    assert len([e for e in sink.events if e.event_kind is UsageEventKind.GENERATION]) == 2
+
+
+@pytest.mark.unit
+async def test_third_query_supersedes_waiter_only_latest_runs() -> None:
+    catalog = FakeConsentCatalog()
+    uow = InMemoryUnitOfWorkFactory()
+    block = asyncio.Event()
+    generator = FakeTextGenerator()
+    generator.soften_block = block
+    deps = make_telegram_deps(
+        TelegramTestDeps(
+            uow=uow,
+            catalog=catalog,
+            generator=generator,
+            debounce_seconds=0.0,
+        )
+    )
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 25, catalog)
+    await lifecycle.dispatcher.feed_update(bot, _inline(110, 25, "first of three drafts"))
+    await generator.soften_started.wait()
+    await lifecycle.dispatcher.feed_update(bot, _inline(111, 25, "middle of three drafts"))
+    await asyncio.sleep(0)
+    await lifecycle.dispatcher.feed_update(bot, _inline(112, 25, "latest of three drafts"))
+    assert [call.draft for call in generator.soften_calls] == ["first of three drafts"]
+    block.set()
+    await _await_inline(deps)
+    assert [call.draft for call in generator.soften_calls] == [
+        "first of three drafts",
+        "latest of three drafts",
+    ]
+    answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
+    assert [item.inline_query_id for item in answers] == ["112"]
+
+
+@pytest.mark.unit
+async def test_not_onboarded_in_flight_answers_only_current_query() -> None:
+    block = asyncio.Event()
+    started = asyncio.Event()
+    base = make_telegram_deps()
+    inner = base.inline_compose
+
+    class _HoldingCompose(InlineCompose):
+        def __init__(self, wrapped: InlineCompose) -> None:
+            super().__init__(wrapped._ports)
+
+        async def execute(self, command: InlineComposeCommand) -> InlineComposeResult:
+            started.set()
+            await block.wait()
+            return await super().execute(command)
+
+    deps = replace(base, inline_compose=_HoldingCompose(inner))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await lifecycle.dispatcher.feed_update(bot, _inline(120, 26, "first not onboarded"))
+    await started.wait()
+    await lifecycle.dispatcher.feed_update(bot, _inline(121, 26, "second not onboarded"))
+    block.set()
+    await _await_inline(deps)
+    answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
+    assert [item.inline_query_id for item in answers] == ["121"]
+    assert answers[0].results == []
+    assert answers[0].button is not None
+    assert answers[0].button.start_parameter == "start"
+
+
+@pytest.mark.unit
+async def test_in_flight_error_does_not_answer_stale_query() -> None:
+    block = asyncio.Event()
+    started = asyncio.Event()
+    catalog = FakeConsentCatalog()
+    uow = InMemoryUnitOfWorkFactory()
+    base = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog))
+    inner = base.inline_compose
+
+    class _HoldingCompose(InlineCompose):
+        def __init__(self, wrapped: InlineCompose) -> None:
+            super().__init__(wrapped._ports)
+
+        async def execute(self, command: InlineComposeCommand) -> InlineComposeResult:
+            started.set()
+            await block.wait()
+            return await super().execute(command)
+
+    deps = replace(base, inline_compose=_HoldingCompose(inner))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 32, catalog)
+    await lifecycle.dispatcher.feed_update(bot, _inline(150, 32, "hi"))
+    await started.wait()
+    await lifecycle.dispatcher.feed_update(bot, _inline(151, 32, "ok draft here"))
+    block.set()
+    await _await_inline(deps)
+    answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
+    assert [item.inline_query_id for item in answers] == ["151"]
+
+
+async def _assert_prepared_ref_empty(
+    *,
+    user_id: int,
+    update_id: int,
+    query: str,
+    prepared: FakePreparedResults,
+) -> None:
+    catalog = FakeConsentCatalog()
+    uow = InMemoryUnitOfWorkFactory()
+    generator = FakeTextGenerator()
+    deps = make_telegram_deps(
+        TelegramTestDeps(
+            uow=uow,
+            catalog=catalog,
+            generator=generator,
+            prepared=prepared,
+        )
+    )
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, user_id, catalog)
+    assert is_prepared_ref(query)
+    await lifecycle.dispatcher.feed_update(bot, _inline(update_id, user_id, query))
+    await lifecycle.shutdown()
+    assert generator.soften_calls == []
+    answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
+    assert len(answers) == 1
+    assert answers[0].results == []
+    assert answers[0].button is not None
+    assert answers[0].button.start_parameter == "help"
+    assert answers[0].is_personal is True
+
+
+@pytest.mark.unit
+async def test_prepared_ref_wrong_user_empty_help() -> None:
+    prepared = FakePreparedResults()
+    stored = await prepared.store(
+        "other-user",
+        PreparedVariant(firmness=Firmness.GENTLE, text="nope"),
+    )
+    await _assert_prepared_ref_empty(user_id=27, update_id=130, query=stored, prepared=prepared)
+
+
+@pytest.mark.unit
+async def test_prepared_ref_expired_empty_help() -> None:
+    prepared = FakePreparedResults()
+    stored = await prepared.store(
+        "placeholder",
+        PreparedVariant(firmness=Firmness.GENTLE, text="gone"),
+    )
+    prepared.expired.add(stored)
+    await _assert_prepared_ref_empty(user_id=28, update_id=131, query=stored, prepared=prepared)
+
+
+@pytest.mark.unit
+async def test_prepared_ref_tampered_byte_empty_help() -> None:
+    prepared = FakePreparedResults()
+    stored = await prepared.store(
+        "placeholder",
+        PreparedVariant(firmness=Firmness.GENTLE, text="secret"),
+    )
+    flip = "A" if stored[-1] != "A" else "B"
+    tampered = stored[:-1] + flip
+    await _assert_prepared_ref_empty(user_id=29, update_id=132, query=tampered, prepared=prepared)
+
+
+@pytest.mark.unit
+async def test_prepared_ref_unknown_id_empty_help() -> None:
+    await _assert_prepared_ref_empty(
+        user_id=30,
+        update_id=133,
+        query=PREPARED_REF_PREFIX + "Z" * 64,
+        prepared=FakePreparedResults(),
+    )
+
+
+@pytest.mark.unit
+async def test_inline_quota_and_long_preview() -> None:
+    catalog = FakeConsentCatalog()
+    uow = InMemoryUnitOfWorkFactory()
+    long_text = ("please stay calm " * 8).strip()
+    generator = FakeTextGenerator(
+        soften_result=SoftenResult(
+            variants=(
+                Variant(text="", firmness=Firmness.GENTLE),
+                Variant(text=long_text, firmness=Firmness.BALANCED),
+            ),
+            applied_rule_indexes=(),
+            safety=SafetyVerdict.OK,
+            meta=GenerationMeta(
+                model="fake",
+                prompt_version="soften@v1",
+                latency_ms=1,
+                attempts=1,
+                usage=TokenUsage(),
+            ),
+        )
+    )
+    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, generator=generator))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 31, catalog)
+    await lifecycle.dispatcher.feed_update(bot, _inline(140, 31, "long enough draft"))
+    await _await_inline(deps)
+    answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
+    article = answers[-1].results[0]
+    assert isinstance(article, InlineQueryResultArticle)
+    assert len(article.description or "") == 64
+    quota_deps = make_telegram_deps(
+        TelegramTestDeps(uow=uow, catalog=catalog, inline_quota_limit=0)
+    )
+    quota_session = FakeTelegramSession()
+    quota_bot = Bot(token="1:TEST", session=quota_session)
+    quota_life = build_telegram_lifecycle(_settings(), quota_deps, bot=quota_bot)
+    await quota_life.dispatcher.feed_update(quota_bot, _inline(141, 31, "long enough draft"))
+    await _await_inline(quota_deps)
+    quota_answers = [req for req in quota_session.requests if isinstance(req, AnswerInlineQuery)]
+    assert quota_answers[-1].results == []
+    assert quota_answers[-1].button is not None
+    assert quota_answers[-1].button.start_parameter == "help"

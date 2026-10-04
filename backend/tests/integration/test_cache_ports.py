@@ -16,7 +16,7 @@ from svoi_pravila.adapters.cache.prepared_results import ValkeyPreparedResults
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
 from svoi_pravila.application.errors import PreparedResultUnavailable
 from svoi_pravila.application.ports.prepared_results import PreparedVariant
-from svoi_pravila.application.prepared_token import TOKEN_LENGTH
+from svoi_pravila.application.prepared_ref import PREPARED_REF_LENGTH
 from svoi_pravila.config import Settings
 from svoi_pravila.domain.enums import Firmness
 from tests.factories import make_settings
@@ -123,6 +123,6 @@ async def test_prepared_token_wrong_user_and_tamper_rejected(valkey_db15: Redis)
 async def test_prepared_token_length_and_ttl_key_has_no_telegram_id(valkey_db15: Redis) -> None:
     store = ValkeyPreparedResults(valkey_db15, ttl_seconds=60)
     token = await store.store("ff" * 32, PreparedVariant(Firmness.FIRM, "ok"))
-    assert len(token) == TOKEN_LENGTH
+    assert len(token) == PREPARED_REF_LENGTH
     keys = [key async for key in valkey_db15.scan_iter(match="tg:prepared:*")]
     assert all("telegram" not in key for key in keys)

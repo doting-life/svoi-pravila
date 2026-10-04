@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Callable
@@ -29,6 +30,7 @@ from tests.fakes.telegram_session import FakeTelegramSession
 from tests.fakes.uow import InMemoryUnitOfWorkFactory
 from tests.fakes.usage_sink import RecordingUsageEventSink
 
+from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
 from svoi_pravila.application.inline_result_ref import encode_inline_result_ref
 from svoi_pravila.application.ports.generation import (
@@ -65,6 +67,12 @@ def _assert_no_markers(blob: str) -> None:
         _SENTINEL_VARIANT,
     ):
         assert marker not in blob
+
+
+async def _await_inline(deps: TelegramDeps) -> None:
+    pending = [task for task in deps.inline_queries.tasks if not task.done()]
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
 
 
 @pytest.mark.unit
@@ -301,7 +309,7 @@ async def test_inline_and_choice_privacy_canary(
             ),
         ),
     )
-    await deps.inline_queries.drain()
+    await _await_inline(deps)
     result_id = encode_inline_result_ref(UsageScenario.SOFTEN, Firmness.GENTLE)
     await lifecycle.dispatcher.feed_update(
         bot,

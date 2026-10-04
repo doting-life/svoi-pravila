@@ -11,11 +11,11 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from svoi_pravila.adapters.persistence.models import Base
-from svoi_pravila.bootstrap import load_settings
+from svoi_pravila.bootstrap import load_database_settings
 from svoi_pravila.observability import configure_logging
 
 config = context.config
-settings = load_settings()
+settings = load_database_settings()
 configure_logging(settings, sys.stdout)
 
 target_metadata = Base.metadata

@@ -7,7 +7,14 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from svoi_pravila.config import Environment, LogLevel, Settings, TelegramUpdatesMode
+from svoi_pravila.config import (
+    DatabaseSettings,
+    Environment,
+    LogLevel,
+    Settings,
+    TelegramUpdatesMode,
+)
+from svoi_pravila.config import TestInfraSettings as InfraEnvSettings
 from tests.factories import make_settings
 
 _CERT = Path(__file__).resolve().parents[2] / "certs" / "russian_trusted_root_ca.pem"
@@ -287,3 +294,25 @@ def test_rate_limit_and_lifecycle_defaults() -> None:
     assert settings.telegram_rate_limit_per_minute == 30
     assert settings.telegram_dedup_ttl_seconds == 300
     assert settings.telegram_shutdown_grace_seconds == 10.0
+
+
+@pytest.mark.unit
+def test_database_settings_accepts_url_without_telegram(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SP_DATABASE_URL", "postgresql+asyncpg://u:p@127.0.0.1:5432/db")
+    monkeypatch.setenv("SP_LOG_LEVEL", "INFO")
+    monkeypatch.delenv("SP_TELEGRAM_BOT_TOKEN", raising=False)
+    monkeypatch.setenv("SP_TELEGRAM_UPDATES_MODE", "polling")
+    loaded = DatabaseSettings()
+    assert loaded.database_url.get_secret_value().startswith("postgresql+asyncpg://")
+
+
+@pytest.mark.unit
+def test_test_infra_settings_loads_db_and_valkey(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SP_DATABASE_URL", "postgresql+asyncpg://u:p@127.0.0.1:5432/db")
+    monkeypatch.setenv("SP_VALKEY_URL", "redis://127.0.0.1:6379/0")
+    monkeypatch.setenv("SP_TELEGRAM_UPDATES_MODE", "polling")
+    monkeypatch.delenv("SP_TELEGRAM_BOT_TOKEN", raising=False)
+    loaded = InfraEnvSettings()
+    assert loaded.valkey_url.get_secret_value().startswith("redis://")

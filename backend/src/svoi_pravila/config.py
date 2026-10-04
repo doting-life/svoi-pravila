@@ -59,13 +59,68 @@ class TelegramUpdatesMode(StrEnum):
     DISABLED = "disabled"
 
 
-class Settings(BaseSettings):
-    """Runtime configuration loaded from `SP_*` process environment variables."""
+_SETTINGS_CONFIG = SettingsConfigDict(
+    env_prefix="SP_",
+    extra="forbid",
+)
 
-    model_config = SettingsConfigDict(
-        env_prefix="SP_",
-        extra="forbid",
-    )
+
+def _validate_database_url(value: SecretStr) -> SecretStr:
+    raw = value.get_secret_value()
+    if not raw.startswith("postgresql+asyncpg://"):
+        msg = "database_url must start with postgresql+asyncpg://"
+        raise ValueError(msg)
+    return value
+
+
+def _validate_valkey_url(value: SecretStr) -> SecretStr:
+    raw = value.get_secret_value()
+    if not (raw.startswith("redis://") or raw.startswith("rediss://")):
+        msg = "valkey_url must start with redis:// or rediss://"
+        raise ValueError(msg)
+    return value
+
+
+class DatabaseSettings(BaseSettings):
+    """Migrate-process settings: database URL and logging only."""
+
+    model_config = _SETTINGS_CONFIG
+
+    log_level: LogLevel = LogLevel.INFO
+    database_url: SecretStr
+
+    @field_validator("database_url")
+    @classmethod
+    def database_url_must_use_asyncpg(cls, value: SecretStr) -> SecretStr:
+        """Reject database URLs that are not `postgresql+asyncpg://`."""
+        return _validate_database_url(value)
+
+
+class TestInfraSettings(BaseSettings):
+    """Test-fixture settings: database and Valkey URLs only."""
+
+    model_config = _SETTINGS_CONFIG
+
+    database_url: SecretStr
+    valkey_url: SecretStr
+
+    @field_validator("database_url")
+    @classmethod
+    def database_url_must_use_asyncpg(cls, value: SecretStr) -> SecretStr:
+        """Reject database URLs that are not `postgresql+asyncpg://`."""
+        return _validate_database_url(value)
+
+    @field_validator("valkey_url")
+    @classmethod
+    def valkey_url_must_use_redis_scheme(cls, value: SecretStr) -> SecretStr:
+        """Reject Valkey URLs that are not `redis://` or `rediss://`."""
+        return _validate_valkey_url(value)
+
+
+class Settings(BaseSettings):
+    """Full API-process configuration from `SP_*` environment variables."""
+
+    model_config = _SETTINGS_CONFIG
 
     environment: Environment
     log_level: LogLevel = LogLevel.INFO
@@ -99,21 +154,13 @@ class Settings(BaseSettings):
     @classmethod
     def database_url_must_use_asyncpg(cls, value: SecretStr) -> SecretStr:
         """Reject database URLs that are not `postgresql+asyncpg://`."""
-        raw = value.get_secret_value()
-        if not raw.startswith("postgresql+asyncpg://"):
-            msg = "database_url must start with postgresql+asyncpg://"
-            raise ValueError(msg)
-        return value
+        return _validate_database_url(value)
 
     @field_validator("valkey_url")
     @classmethod
     def valkey_url_must_use_redis_scheme(cls, value: SecretStr) -> SecretStr:
         """Reject Valkey URLs that are not `redis://` or `rediss://`."""
-        raw = value.get_secret_value()
-        if not (raw.startswith("redis://") or raw.startswith("rediss://")):
-            msg = "valkey_url must start with redis:// or rediss://"
-            raise ValueError(msg)
-        return value
+        return _validate_valkey_url(value)
 
     @field_validator("data_kek")
     @classmethod

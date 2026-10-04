@@ -23,7 +23,7 @@ from svoi_pravila.adapters.persistence.probe import DatabaseProbe
 from svoi_pravila.adapters.persistence.uow import SqlAlchemyUnitOfWorkFactory
 from svoi_pravila.adapters.system.clock import SystemClock
 from svoi_pravila.adapters.system.ids import Uuid7IdGenerator
-from svoi_pravila.api.app import create_app
+from svoi_pravila.api.app import AppLifecycleHooks, create_app
 from svoi_pravila.api.telegram_webhook import (
     TelegramWebhookBindings,
     build_telegram_webhook_router,
@@ -34,7 +34,12 @@ from svoi_pravila.application.use_cases.get_consent_document import GetConsentDo
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
-from svoi_pravila.config import Settings, TelegramUpdatesMode
+from svoi_pravila.config import (
+    DatabaseSettings,
+    Settings,
+    TelegramUpdatesMode,
+    TestInfraSettings,
+)
 from svoi_pravila.crypto import HmacPseudonymizer
 from svoi_pravila.observability import configure_logging
 
@@ -42,8 +47,18 @@ _HEALTHCHECK_TIMEOUT_SECONDS = 2.0
 _HTTP_OK = 200
 
 
+def load_database_settings() -> DatabaseSettings:
+    """Load migrate-process settings (database URL and log level only)."""
+    return DatabaseSettings()
+
+
+def load_test_infra_settings() -> TestInfraSettings:
+    """Load test-fixture settings (database and Valkey URLs only)."""
+    return TestInfraSettings()
+
+
 def load_settings() -> Settings:
-    """Construct Settings from the process environment (sole call site in ``src/``)."""
+    """Load full API-process Settings from the process environment."""
     return Settings()
 
 
@@ -128,12 +143,14 @@ def create_application(settings: Settings) -> FastAPI:
         await dispose_engine(engine)
 
     return create_app(
-        check_readiness=check_readiness,
-        environment=settings.environment,
-        dispose=dispose,
-        on_startup=on_startup,
-        on_shutdown=on_shutdown,
-        extra_routers=extra_routers,
+        check_readiness,
+        settings.environment,
+        AppLifecycleHooks(
+            dispose=dispose,
+            on_startup=on_startup,
+            on_shutdown=on_shutdown,
+            extra_routers=extra_routers,
+        ),
     )
 
 

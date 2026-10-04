@@ -5,24 +5,25 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from svoi_pravila.domain.enums import RelationshipKind
+from svoi_pravila.domain.enums import RelationshipKind, RuleCategory
 from svoi_pravila.domain.ids import ContactId
 
 DIALOG_PSEUDONYM_PURPOSE = "dialog"
-DialogStep = Literal["awaiting_label", "awaiting_rename"]
+DialogStep = Literal["awaiting_label", "awaiting_rename", "awaiting_rule_text"]
 
 
 @dataclass(frozen=True, slots=True)
 class DialogRecord:
-    """Typed dialog value: step plus optional contact id and relationship.
+    """Typed dialog value: step plus optional C0/C1 fields.
 
-    Classifications: ``step`` C0, ``relationship`` C0, ``contact_id`` C1.
-    Never includes a label or message text.
+    Classifications: ``step`` C0, ``relationship`` C0, ``category`` C0, ``contact_id`` C1.
+    Never includes a label, rule text, or message text.
     """
 
     step: DialogStep
     contact_id: ContactId | None = None
     relationship: RelationshipKind | None = None
+    category: RuleCategory | None = None
 
 
 class DialogState(Protocol):

@@ -36,6 +36,12 @@ def test_settings_valid() -> None:
 
 
 @pytest.mark.unit
+def test_settings_rejects_invalid_display_timezone() -> None:
+    with pytest.raises(ValidationError, match="IANA"):
+        make_settings(display_timezone="Not/AZone")
+
+
+@pytest.mark.unit
 def test_settings_rejects_missing_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SP_ENVIRONMENT", raising=False)
     values = make_settings().model_dump()

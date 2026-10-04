@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import cast
 from uuid import UUID
 
@@ -15,7 +16,7 @@ from svoi_pravila.adapters.cache.dialog_state import (
     serialize_dialog_record,
 )
 from svoi_pravila.application.ports.dialog_state import DialogRecord
-from svoi_pravila.domain.enums import RelationshipKind
+from svoi_pravila.domain.enums import RelationshipKind, RuleCategory
 from svoi_pravila.domain.ids import ContactId
 
 
@@ -47,6 +48,15 @@ def test_serialize_parse_round_trip() -> None:
     label_only = DialogRecord(step="awaiting_label", relationship=RelationshipKind.PARTNER)
     assert parse_dialog_record(serialize_dialog_record(label_only)) == label_only
     assert "label" not in serialize_dialog_record(record)
+    with_category = DialogRecord(
+        step="awaiting_rule_text",
+        contact_id=ContactId(UUID(int=8)),
+        category=RuleCategory.TABOO_TOPIC,
+    )
+    encoded = serialize_dialog_record(with_category)
+    assert parse_dialog_record(encoded) == with_category
+    assert set(json.loads(encoded)) <= {"step", "contact_id", "relationship", "category"}
+    assert "label" not in json.loads(encoded)
 
 
 @pytest.mark.unit
@@ -61,6 +71,8 @@ def test_parse_dialog_record_rejects_bad_payloads() -> None:
         parse_dialog_record('{"step":"awaiting_rename","contact_id":"nope"}')
     with pytest.raises(ValueError, match="relationship"):
         parse_dialog_record('{"step":"awaiting_label","relationship":"nope"}')
+    with pytest.raises(ValueError, match="category"):
+        parse_dialog_record('{"step":"awaiting_rule_text","category":"nope"}')
 
 
 @pytest.mark.unit

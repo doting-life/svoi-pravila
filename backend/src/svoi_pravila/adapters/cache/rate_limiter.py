@@ -28,17 +28,26 @@ return {0, first_rejection}
 class ValkeyRateLimiter:
     """Atomic fixed-window limiter; keys never contain Telegram ids."""
 
-    def __init__(self, client: Redis, *, limit_per_minute: int) -> None:
+    def __init__(
+        self,
+        client: Redis,
+        *,
+        limit: int,
+        window_seconds: int,
+        key_prefix: str = "tg:rl",
+    ) -> None:
         self._client = client
-        self._limit = limit_per_minute
+        self._limit = limit
+        self._window_seconds = window_seconds
+        self._key_prefix = key_prefix
         self._script = client.register_script(_LUA)
 
     async def check(self, pseudonym: str) -> RateLimitDecision:
         """Increment the window counter for ``pseudonym`` and return the decision."""
-        key = f"tg:rl:{pseudonym}"
+        key = f"{self._key_prefix}:{pseudonym}"
         allowed, first_rejection = await self._script(
             keys=[key],
-            args=[self._limit, 60],
+            args=[self._limit, self._window_seconds],
         )
         return RateLimitDecision(
             allowed=bool(int(allowed)),

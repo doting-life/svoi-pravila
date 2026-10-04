@@ -14,6 +14,7 @@ from svoi_pravila.adapters.persistence.repositories import (
     SqlAlchemyInviteRepository,
     SqlAlchemyPairRepository,
     SqlAlchemyRuleRepository,
+    SqlAlchemyUsageEventRepository,
     SqlAlchemyUserRepository,
 )
 from svoi_pravila.application.ports.repositories import (
@@ -22,6 +23,7 @@ from svoi_pravila.application.ports.repositories import (
     InviteRepository,
     PairRepository,
     RuleRepository,
+    UsageEventRepository,
     UserRepository,
 )
 from svoi_pravila.application.ports.unit_of_work import UnitOfWork
@@ -48,6 +50,7 @@ class SqlAlchemyUnitOfWork:
         self.pairs: PairRepository
         self.rules: RuleRepository
         self.invites: InviteRepository
+        self.usage_events: UsageEventRepository
 
     async def __aenter__(self) -> SqlAlchemyUnitOfWork:
         self._session = self._session_factory()
@@ -61,6 +64,7 @@ class SqlAlchemyUnitOfWork:
         self.pairs = SqlAlchemyPairRepository(self._session, keys, registry)
         self.rules = SqlAlchemyRuleRepository(self._session, keys, registry)
         self.invites = SqlAlchemyInviteRepository(self._session, registry)
+        self.usage_events = SqlAlchemyUsageEventRepository(self._session, registry)
         return self
 
     async def __aexit__(

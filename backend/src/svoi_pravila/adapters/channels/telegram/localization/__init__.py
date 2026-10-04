@@ -26,6 +26,17 @@ class TelegramStrings:
     help_body: str
     rate_limited: str
     error_generic: str
+    decode_copy: str
+    decode_need_text: str
+    decode_busy: str
+    decode_quota: str
+    decode_too_short: str
+    decode_too_long: str
+    decode_crisis: str
+    decode_refuse_manipulation: str
+    decode_refused: str
+    decode_invalid: str
+    decode_unavailable: str
 
 
 _KEYS: dict[str, str] = {
@@ -44,6 +55,17 @@ _KEYS: dict[str, str] = {
     "help.body": "help_body",
     "rate_limited": "rate_limited",
     "error.generic": "error_generic",
+    "decode.copy": "decode_copy",
+    "decode.need_text": "decode_need_text",
+    "decode.busy": "decode_busy",
+    "decode.quota": "decode_quota",
+    "decode.too_short": "decode_too_short",
+    "decode.too_long": "decode_too_long",
+    "decode.crisis": "decode_crisis",
+    "decode.refuse_manipulation": "decode_refuse_manipulation",
+    "decode.refused": "decode_refused",
+    "decode.invalid": "decode_invalid",
+    "decode.unavailable": "decode_unavailable",
 }
 
 

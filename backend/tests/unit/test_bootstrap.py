@@ -12,6 +12,7 @@ from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifec
 from svoi_pravila.bootstrap import create_application
 from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
 from tests.factories import make_settings
+from tests.fakes.concurrency import FakeConcurrencyGuard
 from tests.fakes.probes import FailingProbe, OkProbe
 from tests.fakes.rate_limit import FakeRateLimiter, FakeUpdateDeduplicator
 from tests.fakes.telegram_session import FakeTelegramSession
@@ -53,7 +54,11 @@ def _patch_infrastructure(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("svoi_pravila.bootstrap.close_gigachat_client", _noop)
     monkeypatch.setattr(
         "svoi_pravila.bootstrap.ValkeyRateLimiter",
-        lambda _client, *, limit_per_minute: FakeRateLimiter(limit=limit_per_minute),
+        lambda _client, *, limit, window_seconds, key_prefix="tg:rl": FakeRateLimiter(limit=limit),
+    )
+    monkeypatch.setattr(
+        "svoi_pravila.bootstrap.ValkeyConcurrencyGuard",
+        lambda _client: FakeConcurrencyGuard(),
     )
     monkeypatch.setattr(
         "svoi_pravila.bootstrap.ValkeyUpdateDeduplicator",

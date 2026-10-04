@@ -8,11 +8,12 @@ from urllib.parse import urlsplit, urlunsplit
 import pytest
 from aiogram import Bot
 from aiogram.types import CallbackQuery, Chat, Message, Update, User
-from sqlalchemy import MetaData, String, Text, select
+from sqlalchemy import MetaData, String, Text, select, text
 from sqlalchemy.dialects.postgresql import BYTEA
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from svoi_pravila.adapters.cache.client import close_client, create_client
+from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
 from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
@@ -20,9 +21,20 @@ from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifec
 from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
 from svoi_pravila.adapters.consents import PackageConsentCatalog
 from svoi_pravila.adapters.persistence.uow import SqlAlchemyUnitOfWorkFactory
+from svoi_pravila.adapters.persistence.usage_sink import UnitOfWorkUsageEventSink
 from svoi_pravila.adapters.system.clock import SystemClock
 from svoi_pravila.adapters.system.ids import Uuid7IdGenerator
+from svoi_pravila.adapters.system.monotonic import SystemMonotonicClock
+from svoi_pravila.application.ports.generation import (
+    DecodeResult,
+    Firmness,
+    GenerationMeta,
+    SafetyVerdict,
+    TokenUsage,
+    Variant,
+)
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
+from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
 from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocument
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
@@ -31,6 +43,7 @@ from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
 from svoi_pravila.crypto import HmacPseudonymizer
 from svoi_pravila.domain.enums import ConsentKind
 from tests.factories import make_settings
+from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.telegram_session import FakeTelegramSession
 
 _SENTINEL_TEXT = "SENTINEL_TEXT_PRIVACY_0006_INT"
@@ -38,6 +51,9 @@ _SENTINEL_FIRST = "SENTINEL_FIRST_PRIVACY_0006_INT"
 _SENTINEL_LAST = "SENTINEL_LAST_PRIVACY_0006_INT"
 _SENTINEL_USER = "sentinel_user_privacy_0006_int"
 _SENTINEL_ID = 9876543210999
+_SENTINEL_ANALYSIS = "SENTINEL_ANALYSIS_PRIVACY_0006_INT"
+_SENTINEL_HYP = "SENTINEL_HYPOTHESIS_PRIVACY_0006_INT"
+_SENTINEL_VARIANT = "SENTINEL_VARIANT_PRIVACY_0006_INT"
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
@@ -89,7 +105,43 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
     await valkey.flushdb()
     catalog = PackageConsentCatalog()
     clock = SystemClock()
+    monotonic = SystemMonotonicClock()
     ids = Uuid7IdGenerator()
+    pepper = HmacPseudonymizer(settings.pseudonym_pepper_bytes())
+    decode = DecodeIncoming(
+        DecodeIncomingPorts(
+            uow_factory=uow_factory,
+            catalog=catalog,
+            generator=FakeTextGenerator(
+                stream_chunks=(_SENTINEL_ANALYSIS,),
+                decode_result=DecodeResult(
+                    hypotheses=(_SENTINEL_HYP,),
+                    underlying_request=_SENTINEL_TEXT,
+                    variants=(Variant(text=_SENTINEL_VARIANT, firmness=Firmness.GENTLE),),
+                    applied_rule_indexes=(),
+                    safety=SafetyVerdict.OK,
+                    meta=GenerationMeta(
+                        model="fake",
+                        prompt_version="decode@v1",
+                        latency_ms=1,
+                        attempts=1,
+                        usage=TokenUsage(),
+                    ),
+                ),
+            ),
+            guard=ValkeyConcurrencyGuard(valkey),
+            quota=ValkeyRateLimiter(
+                valkey, limit=20, window_seconds=3600, key_prefix="tg:decode:quota"
+            ),
+            sink=UnitOfWorkUsageEventSink(uow_factory),
+            clock=clock,
+            monotonic=monotonic,
+            ids=ids,
+            pseudonymizer=pepper,
+            deadline_seconds=45.0,
+            decode_model="fake",
+        )
+    )
     deps = TelegramDeps(
         strings=load_ru_strings(),
         get_onboarding_step=GetOnboardingStep(uow_factory, catalog),
@@ -97,9 +149,12 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
         accept_age=AcceptAgeConfirmation(uow_factory, ids, clock),
         grant_consent=GrantConsent(uow_factory, catalog, ids, clock),
         get_consent_document=GetConsentDocument(catalog),
+        decode_incoming=decode,
         deduplicator=ValkeyUpdateDeduplicator(valkey, ttl_seconds=60),
-        rate_limiter=ValkeyRateLimiter(valkey, limit_per_minute=30),
-        pseudonymizer=HmacPseudonymizer(settings.pseudonym_pepper_bytes()),
+        rate_limiter=ValkeyRateLimiter(valkey, limit=30, window_seconds=60, key_prefix="tg:rl"),
+        pseudonymizer=pepper,
+        monotonic=monotonic,
+        draft_min_interval_ms=50,
     )
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
@@ -186,15 +241,59 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             ),
         )
 
+    await lifecycle.dispatcher.feed_update(
+        bot,
+        Update(
+            update_id=104,
+            message=Message(
+                message_id=2,
+                date=_NOW,
+                chat=Chat(id=_SENTINEL_ID, type="private"),
+                from_user=User(
+                    id=_SENTINEL_ID,
+                    is_bot=False,
+                    first_name=_SENTINEL_FIRST,
+                    last_name=_SENTINEL_LAST,
+                    username=_SENTINEL_USER,
+                ),
+                text=_SENTINEL_TEXT,
+            ),
+        ),
+    )
+
     markers = (
         _SENTINEL_TEXT,
         _SENTINEL_FIRST,
         _SENTINEL_LAST,
         _SENTINEL_USER,
         str(_SENTINEL_ID),
+        _SENTINEL_ANALYSIS,
+        _SENTINEL_HYP,
+        _SENTINEL_VARIANT,
     )
     async with engine.connect() as conn:
         await _assert_no_markers_in_text_columns(conn, markers)
+        count = (await conn.execute(text("SELECT count(*) FROM usage_events"))).scalar_one()
+        assert count == 1
+        row = (
+            await conn.execute(
+                text(
+                    "SELECT user_pseudonym, scenario, surface, outcome, "
+                    "unavailable_kind, safety, model, prompt_version, "
+                    "latency_ms, ttfc_ms, attempts, input_tokens, "
+                    "output_tokens, billable_tokens FROM usage_events"
+                )
+            )
+        ).one()
+        assert row.scenario == "decode"
+        assert row.surface == "dm"
+        assert row.outcome == "ok"
+        assert len(row.user_pseudonym) == 64
+        assert row.user_pseudonym != str(_SENTINEL_ID)
+        for marker in markers:
+            assert marker not in row.user_pseudonym
+            assert marker not in row.model
+            assert marker not in row.prompt_version
 
     keys = [key async for key in valkey.scan_iter(match="*")]
     for key in keys:

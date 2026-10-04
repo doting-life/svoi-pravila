@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
+
 from svoi_pravila.application.ports.rate_limiter import RateLimitDecision
 
 
@@ -40,4 +42,4 @@ class FakePseudonymizer:
     """Deterministic test pseudonymizer."""
 
     def pseudonymize(self, purpose: str, value: str) -> str:
-        return f"{purpose}:{value}"
+        return sha256(f"{purpose}\0{value}".encode()).hexdigest()

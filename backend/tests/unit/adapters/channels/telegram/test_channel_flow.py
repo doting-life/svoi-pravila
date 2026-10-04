@@ -16,21 +16,13 @@ from aiogram.methods import (
 )
 from aiogram.types import CallbackQuery, Chat, Message, PhotoSize, Update, User
 from tests.factories import make_settings
-from tests.fakes.clock import FakeClock
 from tests.fakes.consent_catalog import FakeConsentCatalog
-from tests.fakes.ids import FakeIdGenerator
-from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter, FakeUpdateDeduplicator
+from tests.fakes.telegram_deps import TelegramTestDeps, make_telegram_deps
 from tests.fakes.telegram_session import FakeTelegramSession
 from tests.fakes.uow import InMemoryUnitOfWorkFactory
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
-from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
-from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
-from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocument
-from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
-from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
-from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.config import Environment, TelegramUpdatesMode
 from svoi_pravila.domain.enums import ConsentKind
 from svoi_pravila.domain.ids import TelegramUserId
@@ -43,19 +35,7 @@ def _world(
 ) -> tuple[TelegramDeps, InMemoryUnitOfWorkFactory, FakeConsentCatalog]:
     uow = InMemoryUnitOfWorkFactory()
     catalog = FakeConsentCatalog()
-    clock = FakeClock()
-    ids = FakeIdGenerator()
-    deps = TelegramDeps(
-        strings=load_ru_strings(),
-        get_onboarding_step=GetOnboardingStep(uow, catalog),
-        get_user_by_telegram_id=GetUserByTelegramId(uow),
-        accept_age=AcceptAgeConfirmation(uow, ids, clock),
-        grant_consent=GrantConsent(uow, catalog, ids, clock),
-        get_consent_document=GetConsentDocument(catalog),
-        deduplicator=FakeUpdateDeduplicator(),
-        rate_limiter=FakeRateLimiter(limit=rate_limit),
-        pseudonymizer=FakePseudonymizer(),
-    )
+    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, rate_limit=rate_limit))
     return deps, uow, catalog
 
 
@@ -234,7 +214,8 @@ async def test_onboarding_accept_and_decline_paths() -> None:
 
     await lifecycle.dispatcher.feed_update(bot, _callback(8, 31, "cg:personal_data:999:y"))
     await lifecycle.dispatcher.feed_update(bot, _private_message(9, 31, "hello sentinel"))
-    assert deps.strings.help_body in _sent_texts(session)
+    texts_after = _sent_texts(session)
+    assert any("analysis" in text or "hypothesis" in text for text in texts_after)
 
 
 @pytest.mark.unit

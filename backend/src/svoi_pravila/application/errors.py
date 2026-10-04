@@ -99,6 +99,22 @@ class GenerationRefusedByProvider(ApplicationError):
         super().__init__("generation refused by provider")
 
 
+class ScenarioBusy(ApplicationError):
+    """A decode (or other scenario) is already in flight for this user."""
+
+
+class ScenarioQuotaExceeded(ApplicationError):
+    """The per-user scenario quota window is exhausted."""
+
+
+class IncomingTextTooShort(ApplicationError):
+    """Incoming text is shorter than the allowed bound."""
+
+
+class IncomingTextTooLong(ApplicationError):
+    """Incoming text is longer than the allowed bound."""
+
+
 class InvalidGenerationOutput(ApplicationError):
     """Model output failed schema or content validation."""
 

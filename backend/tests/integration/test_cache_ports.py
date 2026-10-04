@@ -10,6 +10,7 @@ import pytest
 from redis.asyncio import Redis
 
 from svoi_pravila.adapters.cache.client import close_client, create_client
+from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
 from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
 from svoi_pravila.config import Settings
@@ -55,7 +56,7 @@ async def test_deduplicator_expires(valkey_db15: Redis) -> None:
 
 @pytest.mark.integration
 async def test_rate_limiter_first_rejection_flag(valkey_db15: Redis) -> None:
-    limiter = ValkeyRateLimiter(valkey_db15, limit_per_minute=2)
+    limiter = ValkeyRateLimiter(valkey_db15, limit=2, window_seconds=60)
     first = await limiter.check("pseudo-a")
     second = await limiter.check("pseudo-a")
     third = await limiter.check("pseudo-a")
@@ -70,7 +71,22 @@ async def test_rate_limiter_first_rejection_flag(valkey_db15: Redis) -> None:
 
 @pytest.mark.integration
 async def test_rate_limiter_keys_use_pseudonym_only(valkey_db15: Redis) -> None:
-    limiter = ValkeyRateLimiter(valkey_db15, limit_per_minute=5)
+    limiter = ValkeyRateLimiter(valkey_db15, limit=5, window_seconds=60)
     await limiter.check("abc123")
     keys = [key async for key in valkey_db15.scan_iter(match="tg:rl:*")]
     assert keys == ["tg:rl:abc123"]
+
+
+@pytest.mark.integration
+async def test_concurrency_guard_exclusive_and_owner_release(valkey_db15: Redis) -> None:
+    guard = ValkeyConcurrencyGuard(valkey_db15)
+    first = await guard.acquire("tg:decode:lock:abc", ttl_seconds=5)
+    second = await guard.acquire("tg:decode:lock:abc", ttl_seconds=5)
+    assert first is not None
+    assert second is None
+    await guard.release("tg:decode:lock:abc", "wrong")
+    still = await guard.acquire("tg:decode:lock:abc", ttl_seconds=5)
+    assert still is None
+    await guard.release("tg:decode:lock:abc", first)
+    third = await guard.acquire("tg:decode:lock:abc", ttl_seconds=5)
+    assert third is not None

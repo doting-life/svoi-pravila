@@ -294,6 +294,12 @@ def test_rate_limit_and_lifecycle_defaults() -> None:
     assert settings.telegram_rate_limit_per_minute == 30
     assert settings.telegram_dedup_ttl_seconds == 300
     assert settings.telegram_shutdown_grace_seconds == 10.0
+    assert settings.inline_min_chars == 8
+    assert settings.inline_per_hour == 30
+    assert settings.inline_deadline_seconds == 8.0
+    assert settings.inline_debounce_ms == 600
+    assert settings.inline_cache_seconds == 30
+    assert settings.prepared_result_ttl_seconds == 600
 
 
 @pytest.mark.unit

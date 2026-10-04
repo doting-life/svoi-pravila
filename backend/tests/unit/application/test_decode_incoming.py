@@ -28,7 +28,6 @@ from svoi_pravila.application.ports.generation import (
     DecodeEvent,
     DecodeRequest,
     DecodeResult,
-    Firmness,
     GenerationMeta,
     SafetyVerdict,
     TokenUsage,
@@ -53,6 +52,7 @@ from svoi_pravila.application.use_cases.set_active_contact import (
     SetActiveContactCommand,
 )
 from svoi_pravila.domain.enums import (
+    Firmness,
     RelationshipKind,
     RuleCategory,
     UsageOutcome,

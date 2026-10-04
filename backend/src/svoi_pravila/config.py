@@ -152,6 +152,12 @@ class Settings(BaseSettings):
     decode_deadline_seconds: float = Field(default=45.0, gt=0, le=120)
     decode_per_hour: int = Field(default=20, ge=1, le=10_000)
     telegram_draft_min_interval_ms: int = Field(default=500, ge=50, le=5_000)
+    inline_min_chars: int = Field(default=8, ge=1, le=64)
+    inline_per_hour: int = Field(default=30, ge=1, le=10_000)
+    inline_deadline_seconds: float = Field(default=8.0, gt=0, le=30)
+    inline_debounce_ms: int = Field(default=600, ge=0, le=5_000)
+    inline_cache_seconds: int = Field(default=30, ge=0, le=300)
+    prepared_result_ttl_seconds: int = Field(default=600, ge=1, le=600)
 
     @field_validator("database_url")
     @classmethod

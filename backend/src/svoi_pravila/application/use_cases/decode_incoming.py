@@ -38,8 +38,7 @@ from svoi_pravila.application.ports.rate_limiter import RateLimiter
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.ports.usage_event_sink import UsageEventSink
 from svoi_pravila.application.use_cases._access import require_access
-from svoi_pravila.application.use_cases._contact_access import load_owned_contact
-from svoi_pravila.application.use_cases._effective_rules import collect_effective_rules
+from svoi_pravila.application.use_cases._generation_context import load_active_contact_rule_context
 from svoi_pravila.domain.enums import (
     RelationshipKind,
     UsageOutcome,
@@ -196,19 +195,7 @@ class DecodeIncoming:
             if user is None:
                 raise NotFound()
             await require_access(uow, self._ports.catalog, user.id)
-            if user.active_contact_id is None:
-                return RelationshipKind.OTHER, ()
-            contact = await uow.contacts.get(user.active_contact_id)
-            contact, pair = await load_owned_contact(uow, user.id, contact)
-            views = await collect_effective_rules(uow, contact, pair)
-            return contact.relationship, tuple(
-                RuleContext(
-                    category=view.category,
-                    text=view.text.value,
-                    effective_since=view.effective_since,
-                )
-                for view in views
-            )
+            return await load_active_contact_rule_context(uow, user)
 
     def _base_event(self, draft: _UsageDraft) -> UsageEvent:
         ended = self._ports.monotonic.monotonic()

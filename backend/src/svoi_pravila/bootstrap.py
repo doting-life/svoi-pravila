@@ -13,11 +13,17 @@ from svoi_pravila.adapters.cache.client import close_client, create_client
 from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
 from svoi_pravila.adapters.cache.confirmation_tokens import ValkeyConfirmationTokens
 from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
+from svoi_pravila.adapters.cache.prepared_results import ValkeyPreparedResults
 from svoi_pravila.adapters.cache.probe import ValkeyProbe
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
 from svoi_pravila.adapters.channels.telegram import build_telegram_lifecycle
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
-from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
+from svoi_pravila.adapters.channels.telegram.inline_scheduler import InlineQueryCoordinator
+from svoi_pravila.adapters.channels.telegram.localization import (
+    help_say_intent_prefixes,
+    load_ru_strings,
+)
+from svoi_pravila.adapters.channels.telegram.sleeper import AsyncioSleeper
 from svoi_pravila.adapters.consents import PackageConsentCatalog
 from svoi_pravila.adapters.llm.gigachat.adapter import GigaChatTextGenerator
 from svoi_pravila.adapters.llm.gigachat.client import close_gigachat_client, create_gigachat_client
@@ -42,6 +48,8 @@ from svoi_pravila.application.use_cases.get_consent_document import GetConsentDo
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
+from svoi_pravila.application.use_cases.inline_compose import InlineCompose, InlineComposePorts
+from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoice
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.config import (
     DatabaseSettings,
@@ -120,6 +128,27 @@ def create_application(settings: Settings) -> FastAPI:
                 deadline_seconds=settings.decode_deadline_seconds,
             )
         )
+        inline_compose = InlineCompose(
+            InlineComposePorts(
+                uow_factory=uow_factory,
+                catalog=catalog,
+                generator=generator,
+                quota=ValkeyRateLimiter(
+                    valkey,
+                    limit=settings.inline_per_hour,
+                    window_seconds=3600,
+                    key_prefix="tg:inline:quota",
+                ),
+                sink=sink,
+                clock=clock,
+                monotonic=monotonic,
+                ids=ids,
+                pseudonymizer=pseudonymizer,
+                min_chars=settings.inline_min_chars,
+                deadline_seconds=settings.inline_deadline_seconds,
+                intent_prefixes=help_say_intent_prefixes(strings),
+            )
+        )
         deps = TelegramDeps(
             strings=strings,
             get_onboarding_step=GetOnboardingStep(uow_factory, catalog),
@@ -128,6 +157,16 @@ def create_application(settings: Settings) -> FastAPI:
             grant_consent=GrantConsent(uow_factory, catalog, ids, clock),
             get_consent_document=GetConsentDocument(catalog),
             decode_incoming=decode_incoming,
+            inline_compose=inline_compose,
+            record_inline_choice=RecordInlineChoice(sink, clock, ids, pseudonymizer),
+            prepared_results=ValkeyPreparedResults(
+                valkey,
+                ttl_seconds=settings.prepared_result_ttl_seconds,
+            ),
+            inline_queries=InlineQueryCoordinator(
+                AsyncioSleeper(),
+                debounce_seconds=settings.inline_debounce_ms / 1000.0,
+            ),
             revoke_all_consents=RevokeAllConsents(uow_factory, clock),
             delete_my_account=DeleteMyAccount(uow_factory, ids, pseudonymizer, clock),
             export_my_data=ExportMyData(uow_factory, clock),
@@ -146,6 +185,7 @@ def create_application(settings: Settings) -> FastAPI:
             pseudonymizer=pseudonymizer,
             monotonic=monotonic,
             draft_min_interval_ms=settings.telegram_draft_min_interval_ms,
+            inline_cache_seconds=settings.inline_cache_seconds,
         )
         lifecycle = build_telegram_lifecycle(settings, deps)
         if settings.telegram_updates_mode is TelegramUpdatesMode.WEBHOOK:

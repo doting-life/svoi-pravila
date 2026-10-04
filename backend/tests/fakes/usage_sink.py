@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from svoi_pravila.application.errors import UsageEventWriteFailed
 from svoi_pravila.domain.usage import UsageEvent
 
 
@@ -19,5 +20,5 @@ class FailingUsageEventSink:
     """Sink that always fails (decode must still complete)."""
 
     async def record(self, event: UsageEvent) -> None:
-        msg = "sink unavailable"
-        raise RuntimeError(msg)
+        del event
+        raise UsageEventWriteFailed()

@@ -139,7 +139,6 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             ids=ids,
             pseudonymizer=pepper,
             deadline_seconds=45.0,
-            decode_model="fake",
         )
     )
     deps = TelegramDeps(

@@ -166,6 +166,8 @@ def _empty_stream_result() -> InvalidGenerationOutput:
         (InvalidOutputReason.EMPTY_MESSAGE,),
         usage=TokenUsage(),
         attempts=1,
+        model="bench",
+        prompt_version="bench",
     )
 
 

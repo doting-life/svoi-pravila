@@ -114,7 +114,6 @@ def create_application(settings: Settings) -> FastAPI:
                 ids=ids,
                 pseudonymizer=pseudonymizer,
                 deadline_seconds=settings.decode_deadline_seconds,
-                decode_model=settings.gigachat_model_decode,
             )
         )
         deps = TelegramDeps(

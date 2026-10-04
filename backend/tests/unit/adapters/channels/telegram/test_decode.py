@@ -264,21 +264,34 @@ async def test_decode_maps_errors() -> None:
         (
             FakeTextGenerator(
                 stream_error=InvalidGenerationOutput(
-                    (InvalidOutputReason.JSON_DECODE,), usage=TokenUsage(), attempts=1
+                    (InvalidOutputReason.JSON_DECODE,),
+                    usage=TokenUsage(),
+                    attempts=1,
+                    model="m",
+                    prompt_version="p",
                 )
             ),
             "decode_invalid",
         ),
         (
             FakeTextGenerator(
-                stream_error=GenerationRefusedByProvider(usage=TokenUsage(), attempts=1)
+                stream_error=GenerationRefusedByProvider(
+                    usage=TokenUsage(),
+                    attempts=1,
+                    model="m",
+                    prompt_version="p",
+                )
             ),
             "decode_refused",
         ),
         (
             FakeTextGenerator(
                 stream_error=GenerationUnavailable(
-                    UnavailableKind.SERVER, usage=TokenUsage(), attempts=1
+                    UnavailableKind.SERVER,
+                    usage=TokenUsage(),
+                    attempts=1,
+                    model="m",
+                    prompt_version="p",
                 )
             ),
             "decode_unavailable",
@@ -365,6 +378,63 @@ def test_render_decode_safety_and_copy_truncation() -> None:
     button = short_keyboard.inline_keyboard[0][0]
     assert button.copy_text is not None
     assert button.copy_text.text == "short-copy"
+    copy_ok = DecodeCompleted(
+        analysis="",
+        result=DecodeResult(
+            hypotheses=(),
+            underlying_request="",
+            variants=(
+                Variant(text="", firmness=Firmness.GENTLE),
+                Variant(text="z" * 256, firmness=Firmness.BALANCED),
+                Variant(text="z" * 257, firmness=Firmness.FIRM),
+            ),
+            applied_rule_indexes=(),
+            safety=SafetyVerdict.OK,
+            meta=meta,
+        ),
+    )
+    copy_rendered = render_decode_completed(strings, copy_ok, copy_max=256)
+    assert len(copy_rendered) == 2
+    assert copy_rendered[0][0] == "z" * 256
+    assert copy_rendered[0][1] is not None
+    assert copy_rendered[1][0] == "z" * 257
+    assert copy_rendered[1][1] is None
+    hypo_only = DecodeCompleted(
+        analysis="",
+        result=DecodeResult(
+            hypotheses=("only-h",),
+            underlying_request="",
+            variants=(),
+            applied_rule_indexes=(),
+            safety=SafetyVerdict.OK,
+            meta=meta,
+        ),
+    )
+    assert render_decode_completed(strings, hypo_only, copy_max=256) == (("only-h", None),)
+    underlying_only = DecodeCompleted(
+        analysis="",
+        result=DecodeResult(
+            hypotheses=(),
+            underlying_request="only-u",
+            variants=(),
+            applied_rule_indexes=(),
+            safety=SafetyVerdict.OK,
+            meta=meta,
+        ),
+    )
+    assert render_decode_completed(strings, underlying_only, copy_max=256) == (("only-u", None),)
+    empty_payload = DecodeCompleted(
+        analysis="",
+        result=DecodeResult(
+            hypotheses=(),
+            underlying_request="",
+            variants=(),
+            applied_rule_indexes=(),
+            safety=SafetyVerdict.OK,
+            meta=meta,
+        ),
+    )
+    assert render_decode_completed(strings, empty_payload, copy_max=256) == ()
     assert copy_text_markup(strings, "z" * 256, copy_max=256) is not None
     assert copy_text_markup(strings, "z" * 257, copy_max=256) is None
     assert copy_text_markup(strings, "", copy_max=256) is None

@@ -34,7 +34,7 @@ _ZERO = TokenUsage()
 @pytest.mark.unit
 def test_raise_for_finish_reason_length() -> None:
     with pytest.raises(InvalidGenerationOutput) as exc_info:
-        raise_for_finish_reason("length", usage=_ZERO, attempts=1)
+        raise_for_finish_reason("length", usage=_ZERO, attempts=1, model="m", prompt_version="p")
     assert exc_info.value.reasons == (InvalidOutputReason.LENGTH,)
     assert exc_info.value.usage == _ZERO
     assert exc_info.value.attempts == 1
@@ -44,15 +44,15 @@ def test_raise_for_finish_reason_length() -> None:
 def test_raise_for_finish_reason_blacklist() -> None:
     usage = TokenUsage(input=2, output=1)
     with pytest.raises(GenerationRefusedByProvider) as exc_info:
-        raise_for_finish_reason("blacklist", usage=usage, attempts=1)
+        raise_for_finish_reason("blacklist", usage=usage, attempts=1, model="m", prompt_version="p")
     assert exc_info.value.usage == usage
     assert exc_info.value.attempts == 1
 
 
 @pytest.mark.unit
 def test_raise_for_finish_reason_stop_is_noop() -> None:
-    raise_for_finish_reason("stop", usage=_ZERO, attempts=0)
-    raise_for_finish_reason(None, usage=_ZERO, attempts=0)
+    raise_for_finish_reason("stop", usage=_ZERO, attempts=0, model="m", prompt_version="p")
+    raise_for_finish_reason(None, usage=_ZERO, attempts=0, model="m", prompt_version="p")
 
 
 @pytest.mark.unit
@@ -63,6 +63,8 @@ def test_map_forbidden_logs_auth_failed(
         ForbiddenError("https://example.test", 403, b"no", None),
         usage=_ZERO,
         attempts=0,
+        model="m",
+        prompt_version="p",
     )
     assert mapped.kind is UnavailableKind.AUTH
     assert any(e.get("event") == "generation_auth_failed" for e in capture_log_events())
@@ -81,6 +83,8 @@ def test_map_response_error_status_codes() -> None:
             ResponseError("https://example.test", status, b"x", None),
             usage=TokenUsage(input=1),
             attempts=2,
+            model="m",
+            prompt_version="p",
         )
         assert mapped.kind is kind
         assert mapped.usage.input == 1
@@ -90,6 +94,8 @@ def test_map_response_error_status_codes() -> None:
             ResponseError("https://example.test", 404, b"missing", None),
             usage=_ZERO,
             attempts=0,
+            model="m",
+            prompt_version="p",
         )
     assert unexpected.value.status_code == 404
     with pytest.raises(ResponseError) as teapot:
@@ -97,13 +103,21 @@ def test_map_response_error_status_codes() -> None:
             ResponseError("https://example.test", 418, b"teapot", None),
             usage=_ZERO,
             attempts=0,
+            model="m",
+            prompt_version="p",
         )
     assert teapot.value.status_code == 418
 
 
 @pytest.mark.unit
 def test_map_httpx_connect_error() -> None:
-    mapped = map_provider_exception(httpx.ConnectError("boom"), usage=_ZERO, attempts=0)
+    mapped = map_provider_exception(
+        httpx.ConnectError("boom"),
+        usage=_ZERO,
+        attempts=0,
+        model="m",
+        prompt_version="p",
+    )
     assert mapped.kind is UnavailableKind.NETWORK
 
 
@@ -113,6 +127,8 @@ def test_map_authentication_error() -> None:
         AuthenticationError("https://example.test", 401, b"no", None),
         usage=_ZERO,
         attempts=0,
+        model="m",
+        prompt_version="p",
     )
     assert mapped.kind is UnavailableKind.AUTH
 
@@ -120,7 +136,13 @@ def test_map_authentication_error() -> None:
 @pytest.mark.unit
 def test_map_unknown_exception_propagates() -> None:
     with pytest.raises(RuntimeError, match="mystery"):
-        map_provider_exception(RuntimeError("mystery"), usage=_ZERO, attempts=0)
+        map_provider_exception(
+            RuntimeError("mystery"),
+            usage=_ZERO,
+            attempts=0,
+            model="m",
+            prompt_version="p",
+        )
 
 
 @pytest.mark.unit
@@ -132,7 +154,7 @@ def test_usage_tokens_typed() -> None:
 
 @pytest.mark.unit
 def test_add_usage_precached_billable_derived() -> None:
-    state = AttemptState(started=0.0)
+    state = AttemptState(started=0.0, model="m", prompt_version="p")
     add_usage(
         state,
         ChatUsage(

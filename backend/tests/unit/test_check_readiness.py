@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness, ProbeOutcome
-from tests.fakes.probes import FailingProbe, HangingProbe, OkProbe
+from tests.fakes.probes import FailingProbe, HangingProbe, OkProbe, RaisingProbe
 
 
 @pytest.mark.unit
@@ -57,3 +57,9 @@ async def test_empty_probes_ready() -> None:
     result = await CheckReadiness(probes=[], timeout_seconds=0.5).execute()
     assert result.ready is True
     assert result.probes == ()
+
+
+@pytest.mark.unit
+async def test_unexpected_probe_error_propagates() -> None:
+    with pytest.raises(RuntimeError, match="unexpected probe failure"):
+        await CheckReadiness(probes=[RaisingProbe("x")], timeout_seconds=0.5).execute()

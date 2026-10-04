@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -43,6 +43,10 @@ from svoi_pravila.application.use_cases.decode_incoming import (
     DecodeIncomingPorts,
 )
 from svoi_pravila.application.use_cases.ensure_user import EnsureUser, EnsureUserCommand
+from svoi_pravila.application.use_cases.get_effective_rules import (
+    GetEffectiveRules,
+    GetEffectiveRulesCommand,
+)
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule, ProposeRuleCommand
 from svoi_pravila.application.use_cases.set_active_contact import (
     SetActiveContact,
@@ -94,7 +98,6 @@ def _ports(
             ids=world.ids,
             pseudonymizer=FakePseudonymizer(),
             deadline_seconds=chosen.deadline_seconds,
-            decode_model="fallback-model",
         )
     )
     return use_case, recording, concurrency
@@ -218,7 +221,12 @@ async def test_decode_active_rules_and_error_outcomes(world: AppWorld) -> None:
     assert sink.events[0].ttfc_ms is None
 
     refused = FakeTextGenerator(
-        stream_error=GenerationRefusedByProvider(usage=TokenUsage(input=2), attempts=2)
+        stream_error=GenerationRefusedByProvider(
+            usage=TokenUsage(input=2),
+            attempts=2,
+            model="m",
+            prompt_version="p",
+        )
     )
     refused_uc, refused_sink, _ = _ports(world, _DecodeFakes(generator=refused))
     with pytest.raises(GenerationRefusedByProvider):
@@ -231,6 +239,8 @@ async def test_decode_active_rules_and_error_outcomes(world: AppWorld) -> None:
             (InvalidOutputReason.JSON_DECODE,),
             usage=TokenUsage(output=3),
             attempts=3,
+            model="m",
+            prompt_version="p",
         )
     )
     invalid_uc, invalid_sink, _ = _ports(world, _DecodeFakes(generator=invalid))
@@ -244,6 +254,8 @@ async def test_decode_active_rules_and_error_outcomes(world: AppWorld) -> None:
             UnavailableKind.TIMEOUT,
             usage=TokenUsage(input=4),
             attempts=4,
+            model="m",
+            prompt_version="p",
         )
     )
     un_uc, un_sink, _ = _ports(world, _DecodeFakes(generator=unavailable))
@@ -253,7 +265,8 @@ async def test_decode_active_rules_and_error_outcomes(world: AppWorld) -> None:
     recorded = un_sink.events[0]
     assert recorded.outcome is UsageOutcome.UNAVAILABLE
     assert recorded.unavailable_kind == UnavailableKind.TIMEOUT.value
-    assert recorded.model == "fallback-model"
+    assert recorded.model == "m"
+    assert recorded.prompt_version == "p"
 
 
 @pytest.mark.unit
@@ -296,8 +309,6 @@ async def test_decode_clock_truncation(world: AppWorld) -> None:
     await _drain(use_case, 104, "incoming")
     assert isinstance(sink, RecordingUsageEventSink)
     assert sink.events[0].occurred_at.microsecond == 0
-    with pytest.raises(TypeError, match="typed generation error"):
-        await use_case._record_event(user_key="1", started=0.0, first_chunk_at=None)
 
 
 @pytest.mark.unit
@@ -370,6 +381,88 @@ async def test_decode_pair_scope_and_skipped_rules(
     )
     await _drain(use_case, 200, "incoming")
     assert generator.decode_stream_calls[-1].rules == ()
+
+
+@pytest.mark.unit
+async def test_decode_and_get_effective_rules_share_rule_set(world: AppWorld) -> None:
+    inviter = await world.ensure_granted_user(210)
+    invitee = await world.ensure_granted_user(211)
+    contact = (
+        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+            CreateContactCommand(inviter.id, ContactLabel("Partner"), RelationshipKind.PARTNER)
+        )
+    ).contact
+    invite = await CreateInvite(
+        world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
+    ).execute(CreateInviteCommand(inviter.id, contact.id))
+    accepted = await AcceptInvite(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        AcceptInviteCommand(
+            invitee.id,
+            invite.raw_token,
+            ContactLabel("Inviter"),
+            RelationshipKind.PARTNER,
+        )
+    )
+    await SetActiveContact(world.uow_factory, world.catalog).execute(
+        SetActiveContactCommand(inviter.id, contact.id)
+    )
+    owned = await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        ProposeRuleCommand(
+            inviter.id,
+            contact.id,
+            RuleCategory.TABOO_TOPIC,
+            RuleText("owner visible"),
+            shared=False,
+        )
+    )
+    hidden = await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        ProposeRuleCommand(
+            invitee.id,
+            accepted.invitee_contact.id,
+            RuleCategory.OTHER,
+            RuleText("partner hidden"),
+            shared=False,
+        )
+    )
+    generator = FakeTextGenerator()
+    use_case, _sink, _g = _ports(world, _DecodeFakes(generator=generator))
+    await _drain(use_case, 210, "incoming")
+    effective = await GetEffectiveRules(world.uow_factory, world.catalog).execute(
+        GetEffectiveRulesCommand(inviter.id, contact.id)
+    )
+    decode_texts = {item.text for item in generator.decode_stream_calls[0].rules}
+    view_texts = {view.text.value for view in effective.rules}
+    view_ids = {view.rule_id for view in effective.rules}
+    assert decode_texts == view_texts
+    assert owned.rule.id in view_ids
+    assert hidden.rule.id not in view_ids
+    assert "partner hidden" not in decode_texts
+
+
+@pytest.mark.unit
+async def test_decode_ok_event_recorded_after_completed_yield(world: AppWorld) -> None:
+    await world.ensure_granted_user(106)
+    use_case, sink, _g = _ports(world)
+    agen: AsyncGenerator[DecodeEvent] = use_case.execute(
+        DecodeIncomingCommand(TelegramUserId(106), "incoming")
+    )
+    completed: DecodeCompleted | None = None
+    async for event in agen:
+        if isinstance(event, DecodeCompleted):
+            completed = event
+            break
+    assert completed is not None
+    assert isinstance(sink, RecordingUsageEventSink)
+    assert sink.events == []
+    await agen.aclose()
+    assert sink.events == []
+
+    drained, drain_sink, _ = _ports(world)
+    events = await _drain(drained, 106, "incoming")
+    assert isinstance(events[-1], DecodeCompleted)
+    assert isinstance(drain_sink, RecordingUsageEventSink)
+    assert len(drain_sink.events) == 1
+    assert drain_sink.events[0].outcome is UsageOutcome.OK
 
 
 class _CancelStream(FakeTextGenerator):

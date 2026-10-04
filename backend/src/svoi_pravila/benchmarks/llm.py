@@ -83,7 +83,9 @@ async def _print_available_models(client: GigaChat, *, list_only: bool) -> None:
             print(f"- {name}")
     except PROVIDER_EXCEPTIONS as exc:
         if list_only:
-            raise map_provider_exception(exc, usage=TokenUsage(), attempts=0) from None
+            raise map_provider_exception(
+                exc, usage=TokenUsage(), attempts=0, model="list", prompt_version="list"
+            ) from None
         print(
             f"Warning: could not list models ({type(exc).__name__}); "
             "continuing with requested models."

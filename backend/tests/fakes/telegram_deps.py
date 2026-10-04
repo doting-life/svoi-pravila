@@ -59,7 +59,6 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             ids=ids,
             pseudonymizer=FakePseudonymizer(),
             deadline_seconds=chosen.deadline_seconds,
-            decode_model="fake-decode",
         )
     )
     return TelegramDeps(

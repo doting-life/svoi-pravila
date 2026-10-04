@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+import asyncpg
+import structlog
+from sqlalchemy.exc import SQLAlchemyError
+
+from svoi_pravila.application.errors import UsageEventWriteFailed
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.domain.usage import UsageEvent
+
+logger = structlog.get_logger(__name__)
 
 
 class UnitOfWorkUsageEventSink:
@@ -14,6 +21,13 @@ class UnitOfWorkUsageEventSink:
 
     async def record(self, event: UsageEvent) -> None:
         """Insert and commit ``event``."""
-        async with self._uow_factory() as uow:
-            await uow.usage_events.add(event)
-            await uow.commit()
+        try:
+            async with self._uow_factory() as uow:
+                await uow.usage_events.add(event)
+                await uow.commit()
+        except (SQLAlchemyError, asyncpg.PostgresError) as exc:
+            logger.info(
+                "usage_event_write_failed",
+                error_type=type(exc).__name__,
+            )
+            raise UsageEventWriteFailed() from exc

@@ -4,8 +4,8 @@
 
 ## Текущее
 - Дата: 2026-10-03 · Спринт 0 (Фундамент)
-- Активная задача: **0006.2 — «Расшифровать» в личке, события использования** · ветка `task/0006-telegram-channel` · бюджет GigaChat ≤ 15 000 токенов (3 проверочных вызова)
-- 0005 влит в `master` (`4818b1b`); `origin` настроен локально (`doting-life/svoi-pravila`), репозиторий не создан — CI не запускался (D-10, владелец)
+- Активная задача: **0006.1-b — красный гейт `image` (Trivy: пакеты Debian в базовом образе)** · ветка `task/0006-telegram-channel`; затем мерж 0006.1 владельцем и **0006.2** (выдан, ждёт мержа) · бюджет GigaChat 0006.2 ≤ 15 000 токенов
+- 0005 влит в `master` (`4818b1b`); репозиторий `doting-life/svoi-pravila` (GitHub, приватный) создан, CI работает: на ветке 0006.1 зелёные `backend`, `secrets`, `stack-smoke`, красный `image`
 - Тестовый бот создан, токен в локальном `.env` (владелец, 04.10)
 - Модели (ADR-0006 ред. 1.2): «Смягчить», «Помоги сказать» — GigaChat-3-Lightning; «Расшифровать» — GigaChat-2-Pro
 - Правило с 04.10 (владелец): ключ разработки жёстко ограничен по токенам; живые вызовы — только с бюджетом в промпте (`60-live-provider-budget`)
@@ -40,7 +40,8 @@
 | 0005-g | Bench HTTP observation via public httpx hooks | `task/0005-llm-gigachat` | проверен 04.10 | **ACCEPT** (0005 целиком) |
 | 0006.1 | Telegram channel foundation, onboarding | `task/0006-telegram-channel` | проверен 04.10 | CHANGES REQUIRED: гейты красные без ручных переопределений окружения (миграции и тесты требуют токен бота); нераскрытые подавления; согласия отображаются с сырой Markdown-разметкой и не называют GigaChat |
 | 0006.1-a | Telegram channel review fixes | `task/0006-telegram-channel` | проверен 04.10 | **ACCEPT** (0006.1 целиком); ручная проверка в Telegram — за владельцем |
-| 0006.2 | DM decode with streaming, usage events, scenario limit | `task/0006-telegram-channel` | выдан | — |
+| 0006.2 | DM decode with streaming, usage events, scenario limit | `task/0006-2-dm-decode` | BLOCKED 04.10 (корректно: 0006.1 не влит в `master`) | ждёт мержа |
+| 0006.1-b | Image gate: Debian security updates, base digest pin, Dependabot | `task/0006-telegram-channel` | выдан | — |
 
 ## Решения
 | № | Решение | Статус |
@@ -54,5 +55,5 @@
 | D-7 | Выход из общего свода | открыто, до 27.10 |
 | D-8 | Возраст 18+ | открыто, до 08.10 |
 | D-9 | «Обращение» = завершённый сценарий | решение CTO 03.10 |
-| D-10 | Репозиторий и CI (приватный GitHub) | открыто, до 04.10 |
+| D-10 | Репозиторий и CI (приватный GitHub) | принято 04.10: `doting-life/svoi-pravila` |
 | D-11 | Имена ботов, домен | открыто, до 07.10 |

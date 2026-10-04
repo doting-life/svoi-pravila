@@ -17,6 +17,8 @@ The development GigaChat key has a hard token limit. Every live call spends the 
 - Run the tool with `--dry-run` first: it prints the planned call count and a worst-case token estimate (maximum output caps and every retry), and makes no call. The worst-case total usually far exceeds real spend; it does not have to fit the budget.
 - Proceed when the prompt's budget is at least the largest single-call worst-case estimate. The hard cap `--max-tokens <budget>` (always set) guarantees the total: the tool stops before any call whose worst case would cross the budget and marks the output `INCOMPLETE`.
 - Order runs so the most important and cheapest segments come first; an `INCOMPLETE` result is reported with what was measured, never re-run to completion without a new budget.
+- Preflight before any live run: `--list-models` (authenticates and lists models, spends no generation tokens). If it fails, stop and report; do not start the run.
+- Stop at the first `auth` failure, like `rate_limited`.
 
 ## How to spend
 - Prompt iteration: on the smoke subset named in the prompt, `--repeat 1`. A full-set run is used once, for the final confirmation of a single candidate.

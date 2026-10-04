@@ -168,6 +168,8 @@ jobs:
           for key, value in (
               ("SP_ENVIRONMENT", "test"),
               ("SP_TELEGRAM_UPDATES_MODE", "disabled"),
+              ("SP_GIGACHAT_CREDENTIALS", "ci-placeholder"),
+              ("SP_GIGACHAT_SCOPE", "PERS"),
           ):
               import re
               if re.search(rf"^{key}=", text, flags=re.M):

@@ -76,6 +76,11 @@ class InMemoryUserRepository:
         self._working.users[user.id] = user
         self._working.users_by_telegram[user.telegram_user_id.value] = user.id
 
+    async def delete(self, user_id: UserId) -> None:
+        user = self._working.users.pop(user_id, None)
+        if user is not None:
+            self._working.users_by_telegram.pop(user.telegram_user_id.value, None)
+
 
 class InMemoryConsentRepository:
     """Transactional consent repository."""
@@ -91,6 +96,13 @@ class InMemoryConsentRepository:
 
     async def update(self, consent: Consent) -> None:
         self._working.consents[consent.id] = consent
+
+    async def delete_for_user(self, user_id: UserId) -> None:
+        to_drop = [
+            cid for cid, consent in self._working.consents.items() if consent.user_id == user_id
+        ]
+        for cid in to_drop:
+            del self._working.consents[cid]
 
 
 class InMemoryContactRepository:
@@ -114,6 +126,15 @@ class InMemoryContactRepository:
     async def update(self, contact: Contact) -> None:
         self._working.contacts[contact.id] = contact
 
+    async def get_for_owner_and_pair(self, owner_id: UserId, pair_id: PairId) -> Contact | None:
+        for contact in self._working.contacts.values():
+            if contact.owner_id == owner_id and contact.pair_id == pair_id:
+                return contact
+        return None
+
+    async def delete(self, contact_id: ContactId) -> None:
+        self._working.contacts.pop(contact_id, None)
+
 
 class InMemoryPairRepository:
     """Transactional pair repository."""
@@ -135,6 +156,12 @@ class InMemoryPairRepository:
         if await self.find_between(*tuple(pair.members)) is not None:
             raise ConflictError()
         self._working.pairs[pair.id] = pair
+
+    async def list_for_member(self, user_id: UserId) -> list[Pair]:
+        return [pair for pair in self._working.pairs.values() if pair.is_member(user_id)]
+
+    async def delete(self, pair_id: PairId) -> None:
+        self._working.pairs.pop(pair_id, None)
 
 
 class InMemoryRuleRepository:
@@ -162,6 +189,9 @@ class InMemoryRuleRepository:
     async def update(self, rule: Rule) -> None:
         self._working.rules[rule.id] = rule
 
+    async def delete(self, rule_id: RuleId) -> None:
+        self._working.rules.pop(rule_id, None)
+
 
 class InMemoryInviteRepository:
     """Transactional invite repository."""
@@ -188,6 +218,18 @@ class InMemoryInviteRepository:
         self._working.invites[invite.id] = invite
         self._working.invites_by_hash[invite.token_hash.hex] = invite.id
 
+    async def list_involving(self, user_id: UserId) -> list[Invite]:
+        return [
+            invite
+            for invite in self._working.invites.values()
+            if user_id in {invite.inviter_id, invite.accepted_by}
+        ]
+
+    async def delete(self, invite_id: InviteId) -> None:
+        invite = self._working.invites.pop(invite_id, None)
+        if invite is not None:
+            self._working.invites_by_hash.pop(invite.token_hash.hex, None)
+
 
 class InMemoryUsageEventRepository:
     """Transactional usage-event repository."""
@@ -200,6 +242,15 @@ class InMemoryUsageEventRepository:
 
     async def add(self, event: UsageEvent) -> None:
         self._working.usage_events[event.id] = event
+
+    async def delete_for_pseudonym(self, user_pseudonym: str) -> None:
+        to_drop = [
+            eid
+            for eid, event in self._working.usage_events.items()
+            if event.user_pseudonym == user_pseudonym
+        ]
+        for eid in to_drop:
+            del self._working.usage_events[eid]
 
 
 class InMemoryUnitOfWork:

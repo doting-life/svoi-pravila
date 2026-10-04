@@ -58,3 +58,28 @@ Local delivery uses **polling**. Webhook mode is for VPS/staging/production (tas
 7. Send `/help` and a plain text message — both should show the help text (`/start`, `/help` only).
 
 Without a bot token, automated tests still cover the channel; manual smoke is skipped.
+
+## Data export (`/export`)
+
+The bot sends an in-memory UTF-8 JSON document (`svoi-pravila-export-YYYYMMDD.json`). It is never written to disk, Valkey, or logs. `export_version` is `1`. Other keys are Russian:
+
+| Key | Meaning |
+|---|---|
+| `export_version` | Schema version (integer) |
+| `выгружено` | Export timestamp (ISO-8601) |
+| `пользователь.создан` | Account created_at |
+| `пользователь.возраст_подтверждён` | Age confirmation time or null |
+| `согласия[].вид` | Consent kind |
+| `согласия[].версия` | Consent text version |
+| `согласия[].sha256` | Consent text hash |
+| `согласия[].выдано` / `отозвано` | Grant / revoke times |
+| `контакты[].подпись` | Contact label (C2, decrypted in memory) |
+| `контакты[].отношение` | Relationship kind |
+| `контакты[].создан` | Contact created_at |
+| `контакты[].в_паре` | Whether the contact is linked to a pair |
+| `контакты[].правила` | Owner contact-scope rules (all statuses, all revisions) |
+| `контакты[].общие_правила` | Pair-scope rules when linked (partner **contact-scope** rules are never included) |
+| `...категория` / `статус` / `создано` | Rule metadata |
+| `...редакции[].номер` / `текст` / `предложено` / `начало_действия` | Revision fields |
+| `...редакции[].автор` | `я` or `партнёр` (no user ids) |
+

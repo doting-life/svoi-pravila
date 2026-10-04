@@ -192,6 +192,50 @@ class Rule:
             created_at=now,
         )
 
+    @classmethod
+    def rehome_authored_to_contact(
+        cls,
+        source: Rule,
+        *,
+        remaining_id: UserId,
+        contact_id: ContactId,
+        new_id: RuleId,
+        now: datetime,
+    ) -> Rule | None:
+        """Copy remaining-member revisions onto a new private contact-scope rule.
+
+        Revision numbers are re-based from 1. Approvers become ``{remaining_id}``.
+        Already-effective revisions keep ``effective_since``. Pending revisions
+        take effect at ``now`` (the leave moment). ARCHIVED is preserved;
+        other sources become ACTIVE. Returns ``None`` when the remaining member
+        authored no revisions.
+        """
+        require_utc(now)
+        kept = [revision for revision in source.revisions if revision.author_id == remaining_id]
+        if not kept:
+            return None
+        rebuilt = tuple(
+            RuleRevision(
+                number=index,
+                text=revision.text,
+                author_id=remaining_id,
+                proposed_at=revision.proposed_at,
+                approved_by=frozenset({remaining_id}),
+                effective_since=revision.effective_since or now,
+            )
+            for index, revision in enumerate(kept, start=1)
+        )
+        status = RuleStatus.ARCHIVED if source.status is RuleStatus.ARCHIVED else RuleStatus.ACTIVE
+        return cls(
+            id=new_id,
+            scope=ContactScope(contact_id=contact_id),
+            category=source.category,
+            approvers=frozenset({remaining_id}),
+            status=status,
+            revisions=rebuilt,
+            created_at=source.created_at,
+        )
+
     def approve(self, user_id: UserId, now: datetime) -> Rule:
         """Approve the pending revision."""
         require_utc(now)

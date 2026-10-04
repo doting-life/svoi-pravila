@@ -44,6 +44,10 @@ class UserRepository(Protocol):
         """Persist an updated user."""
         ...
 
+    async def delete(self, user_id: UserId) -> None:
+        """Delete the user and shred the user DEK. No-op if missing."""
+        ...
+
 
 class ConsentRepository(Protocol):
     """Persistence for consents."""
@@ -58,6 +62,10 @@ class ConsentRepository(Protocol):
 
     async def update(self, consent: Consent) -> None:
         """Persist an updated consent."""
+        ...
+
+    async def delete_for_user(self, user_id: UserId) -> None:
+        """Delete every consent row for the user."""
         ...
 
 
@@ -84,6 +92,14 @@ class ContactRepository(Protocol):
         """Persist an updated contact."""
         ...
 
+    async def get_for_owner_and_pair(self, owner_id: UserId, pair_id: PairId) -> Contact | None:
+        """Return the owner's contact linked to ``pair_id``, if any."""
+        ...
+
+    async def delete(self, contact_id: ContactId) -> None:
+        """Delete a contact. No-op if missing."""
+        ...
+
 
 class PairRepository(Protocol):
     """Persistence for pairs."""
@@ -101,6 +117,14 @@ class PairRepository(Protocol):
 
         Raises ConflictError when a pair with the same two members exists.
         """
+        ...
+
+    async def list_for_member(self, user_id: UserId) -> list[Pair]:
+        """List pairs that include ``user_id``."""
+        ...
+
+    async def delete(self, pair_id: PairId) -> None:
+        """Delete the pair and shred the pair DEK. No-op if missing."""
         ...
 
 
@@ -127,6 +151,10 @@ class RuleRepository(Protocol):
         """Persist an updated rule."""
         ...
 
+    async def delete(self, rule_id: RuleId) -> None:
+        """Delete a rule and its revisions. No-op if missing."""
+        ...
+
 
 class InviteRepository(Protocol):
     """Persistence for invites."""
@@ -150,6 +178,14 @@ class InviteRepository(Protocol):
         """Persist an updated invite."""
         ...
 
+    async def list_involving(self, user_id: UserId) -> list[Invite]:
+        """List invites created by or accepted by ``user_id``."""
+        ...
+
+    async def delete(self, invite_id: InviteId) -> None:
+        """Delete an invite. No-op if missing."""
+        ...
+
 
 class UsageEventRepository(Protocol):
     """Persistence for C0 usage events."""
@@ -160,4 +196,8 @@ class UsageEventRepository(Protocol):
 
     async def get(self, event_id: UsageEventId) -> UsageEvent | None:
         """Return the event by id or None."""
+        ...
+
+    async def delete_for_pseudonym(self, user_pseudonym: str) -> None:
+        """Delete usage events keyed by analytics HMAC hex, not a Telegram id."""
         ...

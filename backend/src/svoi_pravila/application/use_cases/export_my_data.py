@@ -1,0 +1,120 @@
+"""Export user-visible data as an in-memory DTO (never persisted)."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+
+from svoi_pravila.application.ports.clock import Clock
+from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
+from svoi_pravila.application.use_cases._effective_rules import collect_visible_rules
+from svoi_pravila.domain.ids import TelegramUserId, UserId
+from svoi_pravila.domain.rules import RuleRevision
+
+
+def _iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat()
+
+
+def _revision_payload(revision: RuleRevision, *, actor_id: UserId) -> dict[str, object]:
+    author = "я" if revision.author_id == actor_id else "партнёр"
+    return {
+        "номер": revision.number,
+        "текст": revision.text.value,
+        "предложено": _iso(revision.proposed_at),
+        "начало_действия": _iso(revision.effective_since),
+        "автор": author,
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class ExportMyDataCommand:
+    """Input for ExportMyData."""
+
+    telegram_user_id: TelegramUserId
+
+
+@dataclass(frozen=True, slots=True)
+class ExportMyDataResult:
+    """In-memory export payload. ``found`` is False when the user is unknown."""
+
+    found: bool
+    payload: dict[str, object] | None
+
+
+class ExportMyData:
+    """Build a JSON-serializable dump of data the user may see."""
+
+    def __init__(self, uow_factory: UnitOfWorkFactory, clock: Clock) -> None:
+        self._uow_factory = uow_factory
+        self._clock = clock
+
+    async def execute(self, command: ExportMyDataCommand) -> ExportMyDataResult:
+        """Return visible contacts, consents, and rules; partner private rules omitted."""
+        async with self._uow_factory() as uow:
+            user = await uow.users.get_by_telegram_id(command.telegram_user_id)
+            if user is None:
+                return ExportMyDataResult(found=False, payload=None)
+            consents = await uow.consents.list_for_user(user.id)
+            contacts_payload: list[dict[str, object]] = []
+            for contact in await uow.contacts.list_for_owner(user.id):
+                pair = None
+                if contact.pair_id is not None:
+                    pair = await uow.pairs.get(contact.pair_id)
+                visible = await collect_visible_rules(uow, contact, pair)
+                private = [view for view in visible if view.scope_kind == "contact"]
+                shared = [view for view in visible if view.scope_kind == "pair"]
+                contacts_payload.append(
+                    {
+                        "подпись": contact.label.value,
+                        "отношение": contact.relationship.value,
+                        "создан": _iso(contact.created_at),
+                        "в_паре": contact.pair_id is not None,
+                        "правила": [
+                            {
+                                "категория": view.category.value,
+                                "статус": view.status.value,
+                                "создано": _iso(view.created_at),
+                                "редакции": [
+                                    _revision_payload(rev, actor_id=user.id)
+                                    for rev in view.revisions
+                                ],
+                            }
+                            for view in private
+                        ],
+                        "общие_правила": [
+                            {
+                                "категория": view.category.value,
+                                "статус": view.status.value,
+                                "создано": _iso(view.created_at),
+                                "редакции": [
+                                    _revision_payload(rev, actor_id=user.id)
+                                    for rev in view.revisions
+                                ],
+                            }
+                            for view in shared
+                        ],
+                    }
+                )
+            payload: dict[str, object] = {
+                "export_version": 1,
+                "выгружено": _iso(self._clock.now()),
+                "пользователь": {
+                    "создан": _iso(user.created_at),
+                    "возраст_подтверждён": _iso(user.age_confirmed_at),
+                },
+                "согласия": [
+                    {
+                        "вид": consent.kind.value,
+                        "версия": consent.text_version,
+                        "sha256": consent.text_sha256.value,
+                        "выдано": _iso(consent.granted_at),
+                        "отозвано": _iso(consent.revoked_at),
+                    }
+                    for consent in consents
+                ],
+                "контакты": contacts_payload,
+            }
+            return ExportMyDataResult(found=True, payload=payload)

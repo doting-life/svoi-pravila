@@ -304,6 +304,9 @@ class _ConflictOnCreateUsers:
     async def update(self, user: User) -> None:
         await self._inner.update(user)
 
+    async def delete(self, user_id: UserId) -> None:
+        await self._inner.delete(user_id)
+
 
 class _ConflictWithoutExistingUow:
     def __init__(self) -> None:
@@ -341,4 +344,7 @@ class _EmptyConflictUsers:
         raise ConflictError()
 
     async def update(self, user: User) -> None:
+        return None
+
+    async def delete(self, user_id: UserId) -> None:
         return None

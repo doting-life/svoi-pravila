@@ -245,6 +245,77 @@ async def test_contact_pair_rule_invite_repos(uow_factory: UnitOfWorkFactory) ->
 
 
 @pytest.mark.unit
+async def test_repository_deletes(uow_factory: UnitOfWorkFactory) -> None:
+    owner_user = _user(12, 410)
+    partner_user = _user(13, 411)
+    owner = owner_user.id
+    partner = partner_user.id
+    contact = Contact(
+        id=ContactId(UUID(int=22)),
+        owner_id=owner,
+        label=ContactLabel("A"),
+        relationship=RelationshipKind.FRIEND,
+        pair_id=None,
+        created_at=NOW,
+    )
+    pair = Pair(
+        id=PairId(UUID(int=32)),
+        members=frozenset({owner, partner}),
+        created_at=NOW,
+    )
+    rule = Rule.propose(
+        rule_id=RuleId(UUID(int=42)),
+        scope=ContactScope(contact_id=contact.id),
+        category=RuleCategory.OTHER,
+        approvers=frozenset({owner}),
+        author_id=owner,
+        text=RuleText("hello"),
+        now=NOW,
+    )
+    invite = Invite.create(
+        invite_id=InviteId(UUID(int=52)),
+        inviter_id=owner,
+        contact_id=contact.id,
+        token_hash=InviteTokenHash.from_raw_token("delete-token"),
+        created_at=NOW,
+    )
+    consent = Consent(
+        id=ConsentId(UUID(int=62)),
+        user_id=owner,
+        kind=ConsentKind.PERSONAL_DATA,
+        text_version="v1",
+        text_sha256=Sha256Hex("d" * 64),
+        granted_at=NOW,
+        revoked_at=None,
+    )
+    async with uow_factory() as uow:
+        await _seed_users(uow, owner_user, partner_user)
+        await uow.contacts.add(contact)
+        await uow.pairs.add(pair)
+        linked = contact.link_pair(pair.id)
+        await uow.contacts.update(linked)
+        await uow.rules.add(rule)
+        await uow.invites.add(invite)
+        await uow.consents.add(consent)
+        assert await uow.contacts.get_for_owner_and_pair(owner, pair.id) is not None
+        assert await uow.invites.list_involving(owner)
+        assert await uow.pairs.list_for_member(owner)
+        await uow.invites.delete(invite.id)
+        await uow.rules.delete(rule.id)
+        await uow.contacts.delete(contact.id)
+        await uow.pairs.delete(pair.id)
+        await uow.consents.delete_for_user(owner)
+        await uow.users.delete(owner)
+        await uow.commit()
+    async with uow_factory() as uow:
+        assert await uow.users.get(owner) is None
+        assert await uow.rules.get(rule.id) is None
+        assert await uow.contacts.get(contact.id) is None
+        assert await uow.pairs.get(pair.id) is None
+        assert await uow.invites.get(invite.id) is None
+
+
+@pytest.mark.unit
 async def test_usage_event_repo_roundtrip(uow_factory: UnitOfWorkFactory) -> None:
     event = UsageEvent(
         id=UsageEventId(UUID(int=70)),
@@ -272,3 +343,7 @@ async def test_usage_event_repo_roundtrip(uow_factory: UnitOfWorkFactory) -> Non
         assert loaded == event
         missing = await uow.usage_events.get(UsageEventId(UUID(int=71)))
         assert missing is None
+        await uow.usage_events.delete_for_pseudonym(event.user_pseudonym)
+        await uow.commit()
+    async with uow_factory() as uow:
+        assert await uow.usage_events.get(event.id) is None

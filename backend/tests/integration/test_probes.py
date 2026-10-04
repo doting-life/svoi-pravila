@@ -5,6 +5,7 @@ from __future__ import annotations
 from urllib.parse import urlsplit, urlunsplit
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.engine.url import make_url
 
 from svoi_pravila.adapters.cache.client import close_client, create_client
@@ -27,6 +28,12 @@ def _unreachable_valkey_url(valkey_url: str) -> str:
         userinfo = f"{userinfo}@"
     netloc = f"{userinfo}{host}:1"
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
+class _FailingStatementProbe(DatabaseProbe):
+    async def _select_one(self) -> None:
+        async with self._engine.connect() as connection:
+            await connection.execute(text("SELECT 1 FROM __svoi_pravila_missing__"))
 
 
 @pytest.mark.integration
@@ -63,6 +70,20 @@ async def test_unreachable_database_probe_fails(settings: Settings) -> None:
     try:
         result = await CheckReadiness(
             probes=[DatabaseProbe(engine)],
+            timeout_seconds=2.0,
+        ).execute()
+    finally:
+        await dispose_engine(engine)
+    assert result.ready is False
+    assert result.probes[0].status is ProbeOutcome.FAILED
+
+
+@pytest.mark.integration
+async def test_database_probe_failing_statement_is_failed(settings: Settings) -> None:
+    engine = create_engine(settings)
+    try:
+        result = await CheckReadiness(
+            probes=[_FailingStatementProbe(engine)],
             timeout_seconds=2.0,
         ).execute()
     finally:

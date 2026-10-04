@@ -28,9 +28,11 @@ from svoi_pravila.domain.consent import Consent
 from svoi_pravila.domain.contact import Contact
 from svoi_pravila.domain.enums import (
     ConsentKind,
+    Firmness,
     RelationshipKind,
     RuleCategory,
     RuleStatus,
+    UsageEventKind,
     UsageOutcome,
     UsageScenario,
     UsageSurface,
@@ -596,6 +598,10 @@ class SqlAlchemyUsageEventRepository:
             input_tokens=row.input_tokens,
             output_tokens=row.output_tokens,
             billable_tokens=row.billable_tokens,
+            event_kind=UsageEventKind(row.event_kind),
+            variant_firmness=None
+            if row.variant_firmness is None
+            else Firmness(row.variant_firmness),
         )
 
     async def get(self, event_id: UsageEventId) -> UsageEvent | None:
@@ -623,6 +629,10 @@ class SqlAlchemyUsageEventRepository:
             input_tokens=event.input_tokens,
             output_tokens=event.output_tokens,
             billable_tokens=event.billable_tokens,
+            event_kind=event.event_kind.value,
+            variant_firmness=(
+                None if event.variant_firmness is None else event.variant_firmness.value
+            ),
         )
         self._session.add(row)
         self._registry.register(UsageEventRow, event.id, row)

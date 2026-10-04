@@ -64,3 +64,18 @@ class UsageOutcome(StrEnum):
     INVALID_OUTPUT = "invalid_output"
     REFUSED = "refused"
     UNAVAILABLE = "unavailable"
+
+
+class UsageEventKind(StrEnum):
+    """C0 kind of usage_events row (no conversation text)."""
+
+    GENERATION = "generation"
+    RESULT_CHOSEN = "result_chosen"
+
+
+class Firmness(StrEnum):
+    """How firmly a suggested reply asserts a boundary."""
+
+    GENTLE = "gentle"
+    BALANCED = "balanced"
+    FIRM = "firm"

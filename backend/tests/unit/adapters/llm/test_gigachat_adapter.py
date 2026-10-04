@@ -73,7 +73,6 @@ from svoi_pravila.application.ports.generation import (
     DecodeCompleted,
     DecodeRequest,
     DecodeResult,
-    Firmness,
     HelpSayIntent,
     HelpSayRequest,
     RuleContext,
@@ -82,7 +81,7 @@ from svoi_pravila.application.ports.generation import (
     TokenUsage,
 )
 from svoi_pravila.benchmarks.estimate import chars_to_tokens
-from svoi_pravila.domain.enums import RelationshipKind, RuleCategory
+from svoi_pravila.domain.enums import Firmness, RelationshipKind, RuleCategory
 from tests.factories import make_settings
 
 

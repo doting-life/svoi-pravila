@@ -10,13 +10,13 @@ from svoi_pravila.adapters.llm.gigachat.schemas import DecodeOut, VariantOut
 from svoi_pravila.application.errors import InvalidGenerationOutput, InvalidOutputReason
 from svoi_pravila.application.ports.generation import (
     DecodeResult,
-    Firmness,
     GenerationMeta,
     RuleContext,
     SafetyVerdict,
     TokenUsage,
     Variant,
 )
+from svoi_pravila.domain.enums import Firmness
 
 _URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 _FENCE_RE = re.compile(r"```")

@@ -8,7 +8,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
-from svoi_pravila.domain.enums import RelationshipKind, RuleCategory
+from svoi_pravila.domain.enums import Firmness, RelationshipKind, RuleCategory
 
 BOUNDED_TEXT_MIN = 1
 BOUNDED_TEXT_MAX = 4000
@@ -19,14 +19,6 @@ def _validate_bounded_text(name: str, value: str) -> None:
     if length < BOUNDED_TEXT_MIN or length > BOUNDED_TEXT_MAX:
         msg = f"{name} length must be between {BOUNDED_TEXT_MIN} and {BOUNDED_TEXT_MAX}"
         raise ValueError(msg)
-
-
-class Firmness(StrEnum):
-    """How firmly a suggested reply asserts a boundary."""
-
-    GENTLE = "gentle"
-    BALANCED = "balanced"
-    FIRM = "firm"
 
 
 class SafetyVerdict(StrEnum):

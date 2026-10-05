@@ -15,6 +15,7 @@ RuleId = NewType("RuleId", uuid.UUID)
 InviteId = NewType("InviteId", uuid.UUID)
 ConsentId = NewType("ConsentId", uuid.UUID)
 UsageEventId = NewType("UsageEventId", uuid.UUID)
+RuleSuggestionId = NewType("RuleSuggestionId", uuid.UUID)
 
 
 @dataclass(frozen=True, slots=True)

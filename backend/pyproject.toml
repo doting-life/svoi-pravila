@@ -76,6 +76,7 @@ select = [
 "tests/**" = ["S101", "PLR2004", "DTZ001", "RUF001", "TRY003", "S105", "S106"]
 "src/svoi_pravila/application/errors.py" = ["N818"]
 "src/svoi_pravila/domain/rules.py" = ["PLR0913"]
+"src/svoi_pravila/domain/rule_suggestion.py" = ["PLR0913"]
 "src/svoi_pravila/domain/pair.py" = ["PLR2004"]
 "src/svoi_pravila/benchmarks/**" = ["T201"]
 "src/svoi_pravila/evals/**" = ["T201"]

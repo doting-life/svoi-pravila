@@ -109,6 +109,7 @@ class GigaChatRuntimeSettings(Protocol):
     gigachat_model_soften: str
     gigachat_model_help_say: str
     gigachat_model_decode: str
+    gigachat_model_suggest: str
     gigachat_timeout_seconds: float
     gigachat_max_retries: int
 
@@ -124,6 +125,7 @@ class LlmToolSettings(BaseSettings):
     gigachat_model_soften: str = Field(min_length=1)
     gigachat_model_help_say: str = Field(min_length=1)
     gigachat_model_decode: str = Field(min_length=1)
+    gigachat_model_suggest: str = Field(default="GigaChat-3-Lightning", min_length=1)
     gigachat_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
     gigachat_max_retries: int = Field(default=1, ge=0, le=2)
 
@@ -197,6 +199,7 @@ class Settings(BaseSettings):
     gigachat_model_soften: str = Field(min_length=1)
     gigachat_model_help_say: str = Field(min_length=1)
     gigachat_model_decode: str = Field(min_length=1)
+    gigachat_model_suggest: str = Field(default="GigaChat-3-Lightning", min_length=1)
     gigachat_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
     gigachat_max_retries: int = Field(default=1, ge=0, le=2)
     telegram_updates_mode: TelegramUpdatesMode
@@ -210,6 +213,7 @@ class Settings(BaseSettings):
     telegram_shutdown_grace_seconds: float = Field(default=10.0, gt=0, le=120)
     decode_deadline_seconds: float = Field(default=45.0, gt=0, le=120)
     decode_per_hour: int = Field(default=20, ge=1, le=10_000)
+    suggest_per_hour: int = Field(default=10, ge=1, le=10_000)
     telegram_draft_min_interval_ms: int = Field(default=500, ge=50, le=5_000)
     inline_min_chars: int = Field(default=8, ge=1, le=64)
     inline_per_hour: int = Field(default=30, ge=1, le=10_000)
@@ -218,6 +222,7 @@ class Settings(BaseSettings):
     inline_cache_seconds: int = Field(default=30, ge=0, le=300)
     inline_reuse_max_entries: int = Field(default=10_000, ge=1, le=1_000_000)
     prepared_result_ttl_seconds: int = Field(default=600, ge=1, le=600)
+    rule_source_ttl_seconds: int = Field(default=600, ge=60, le=600)
     dialog_ttl_seconds: int = Field(default=600, ge=1, le=86_400)
     display_timezone: str = Field(default="Europe/Moscow")
 

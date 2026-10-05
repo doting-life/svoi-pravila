@@ -4,7 +4,8 @@
 
 ## Текущее
 - Дата: 2026-10-04 · Спринт 0 (Фундамент)
-- Активная задача: **0013 — каркас мини-приложения** · ветка `task/0013-miniapp-bootstrap` · GigaChat 0 токенов; старт после мержа 0011.2
+- Активная задача: **0013-a — доработка каркаса мини-приложения** (актуальный Caddy, клиент только same-origin, размер образа) · ветка `task/0013-miniapp-bootstrap` · GigaChat 0 токенов
+- В `master`: 0011.2 (`2be0872`, squash #13)
 - Решение по 0012: «Расшифровать» в группах не делаем в MVP — ADR-0007
 - В `master`: 0011.1 (`66bf03e`, squash #12)
 - Расход GigaChat в 0011.2: 6 313 из 8 000 (3 221 — прогон без нужных метрик, нарушение правила 60; 3 092 — итоговый смоук)
@@ -76,7 +77,8 @@
 | 0011.2 | Suggest rule from decode (LLM, one-time token) | `task/0011-2-suggest-from-decode` | проверен 05.10 | **BLOCKED** → 0011.2-a: живой прогон (3 221 токен) без метрик категории/`none`/цитирования; в промпте нет определений категорий; ошибочная метка sr-4; результат `suggest_rule` допускает невозможные состояния; квота тратится без вызова модели |
 | 0011.2-a | suggest_rule prompt, metrics, typed result; one live re-run | `task/0011-2-suggest-from-decode` | проверен 05.10 | **ACCEPT** (852 теста, 98,67 %; смоук: категория 7/7, `none` 2/2, дубль не измерен; критерий совпадений снят — ADR-0006 ред. 1.3) |
 | 0012 | R&D spike: decode in groups | — (отчёт в чате) | проверен 05.10 | **ACCEPT**; рекомендация «Guest + ephemeral» отклонена: вызов `@bot` виден всем, ephemeral только в группах → ADR-0007 «не делаем в MVP»; ветку спайка удалить |
-| 0013 | Mini-app bootstrap (Vite/React/TS, OpenAPI client, CSP, gates) | `task/0013-miniapp-bootstrap` | выдан | — |
+| 0013 | Mini-app bootstrap (Vite/React/TS, OpenAPI client, CSP, gates) | `task/0013-miniapp-bootstrap` | проверен 05.10 | **CHANGES** → 0013-a: Caddy 2.10.2 вместо актуального 2.11.4, уязвимости stdlib скрыты флагом `--ignore-unfixed`; клиент API допускает чужой `baseUrl`; образ 136 МБ без объяснения |
+| 0013-a | Mini-app bootstrap fixes | `task/0013-miniapp-bootstrap` | выдан | — |
 | 0006.1-b | Image gate: Debian security updates, base digest pin, Dependabot | `task/0006-telegram-channel` | проверен 04.10 | **ACCEPT** (Trivy: 21 CVE → 0) |
 
 ## Решения

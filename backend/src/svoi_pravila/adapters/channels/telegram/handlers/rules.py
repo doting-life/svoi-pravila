@@ -31,12 +31,22 @@ from svoi_pravila.adapters.channels.telegram.presenters import (
 )
 from svoi_pravila.application.errors import AccessNotGranted, NotFound, OpenRuleLimitReached
 from svoi_pravila.application.ports.dialog_state import DialogRecord
+from svoi_pravila.application.use_cases.accept_suggestion import (
+    AcceptSuggestionCommand,
+    AcceptSuggestionOutcome,
+)
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRuleCommand
+from svoi_pravila.application.use_cases.dismiss_suggestion import (
+    DismissSuggestionCommand,
+    DismissSuggestionOutcome,
+)
 from svoi_pravila.application.use_cases.list_rules import ListRulesCommand
+from svoi_pravila.application.use_cases.list_suggestions import ListSuggestionsCommand
 from svoi_pravila.application.use_cases.propose_rule import ProposeRuleCommand
 from svoi_pravila.domain.enums import RuleCategory
 from svoi_pravila.domain.errors import InvalidTransitionError, InvalidValueError
-from svoi_pravila.domain.ids import RuleId
+from svoi_pravila.domain.ids import RuleId, RuleSuggestionId
+from svoi_pravila.domain.rule_suggestion import RuleSuggestion
 from svoi_pravila.domain.rules import Rule
 from svoi_pravila.domain.text import RuleText
 from svoi_pravila.domain.user import User
@@ -66,6 +76,8 @@ def build_rules_router() -> Router:
     router.callback_query.register(ask_archive, F.data.startswith("ru:ar:"))
     router.callback_query.register(confirm_archive, F.data.startswith("ru:ay:"))
     router.callback_query.register(cancel_archive, F.data == "ru:ax")
+    router.callback_query.register(accept_suggestion, F.data.startswith("sg:a:"))
+    router.callback_query.register(dismiss_suggestion, F.data.startswith("sg:d:"))
     router.message.register(dialog_text, AwaitingRuleText())
     return router
 
@@ -270,6 +282,70 @@ async def _rule_for_archive_confirm(
     return match
 
 
+async def accept_suggestion(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> None:
+    """Accept a pending suggestion and refresh the rules list."""
+    await clear_callback_keyboard(bot, callback)
+    await callback.answer()
+    if not await require_done_callback(callback, tg_deps, bot):
+        return
+    suggestion_id = _parse_suggestion_id(callback.data, "a")
+    if suggestion_id is None:
+        return
+    user = await actor(tg_deps, callback.from_user.id)
+    if user is None:
+        await send_current_step(bot, callback, tg_deps, callback.from_user.id)
+        return
+    try:
+        result = await tg_deps.accept_suggestion.execute(
+            AcceptSuggestionCommand(user.id, suggestion_id)
+        )
+    except (NotFound, AccessNotGranted):
+        await reply_callback(bot, callback, tg_deps.strings.error_generic)
+        return
+    if result.outcome is AcceptSuggestionOutcome.ALREADY_DECIDED:
+        await reply_callback(bot, callback, tg_deps.strings.suggestion_already_decided)
+        return
+    if result.outcome is AcceptSuggestionOutcome.OPEN_RULE_LIMIT:
+        await reply_callback(bot, callback, tg_deps.strings.rules_limit)
+        return
+    await _send_rules_list_callback(callback, tg_deps, bot, callback.from_user.id)
+
+
+async def dismiss_suggestion(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> None:
+    """Dismiss a pending suggestion with a short confirmation."""
+    await clear_callback_keyboard(bot, callback)
+    await callback.answer()
+    if not await require_done_callback(callback, tg_deps, bot):
+        return
+    suggestion_id = _parse_suggestion_id(callback.data, "d")
+    if suggestion_id is None:
+        return
+    user = await actor(tg_deps, callback.from_user.id)
+    if user is None:
+        await send_current_step(bot, callback, tg_deps, callback.from_user.id)
+        return
+    try:
+        result = await tg_deps.dismiss_suggestion.execute(
+            DismissSuggestionCommand(user.id, suggestion_id)
+        )
+    except (NotFound, AccessNotGranted):
+        await reply_callback(bot, callback, tg_deps.strings.error_generic)
+        return
+    if result.outcome is DismissSuggestionOutcome.ALREADY_DECIDED:
+        await reply_callback(bot, callback, tg_deps.strings.suggestion_already_decided)
+        return
+    await reply_callback(bot, callback, tg_deps.strings.suggestion_dismissed)
+
+
+async def _pending_suggestions(tg_deps: TelegramDeps, user: User) -> tuple[RuleSuggestion, ...]:
+    if user.active_contact_id is None:
+        return ()
+    listed = await tg_deps.list_suggestions.execute(
+        ListSuggestionsCommand(user.id, user.active_contact_id)
+    )
+    return listed.suggestions
+
+
 async def _send_rules_list(message: Message, tg_deps: TelegramDeps, telegram_user_id: int) -> None:
     user = await actor(tg_deps, telegram_user_id)
     if user is None:
@@ -279,9 +355,11 @@ async def _send_rules_list(message: Message, tg_deps: TelegramDeps, telegram_use
         await message.answer(tg_deps.strings.rules_no_active_contact)
         return
     listed = await tg_deps.list_rules.execute(ListRulesCommand(user.id, user.active_contact_id))
+    suggestions = await _pending_suggestions(tg_deps, user)
     chunks, keyboard = render_rules_list(
         tg_deps.strings,
         listed.rules,
+        suggestions=suggestions,
         now=tg_deps.clock.now(),
         tz=tg_deps.display_timezone,
     )
@@ -305,9 +383,11 @@ async def _send_rules_list_callback(
         await bot.send_message(chat_id, tg_deps.strings.rules_no_active_contact)
         return
     listed = await tg_deps.list_rules.execute(ListRulesCommand(user.id, user.active_contact_id))
+    suggestions = await _pending_suggestions(tg_deps, user)
     chunks, keyboard = render_rules_list(
         tg_deps.strings,
         listed.rules,
+        suggestions=suggestions,
         now=tg_deps.clock.now(),
         tz=tg_deps.display_timezone,
     )
@@ -344,5 +424,17 @@ def _parse_rule_id(data: str | None, action: str) -> RuleId | None:
         return None
     try:
         return RuleId(uuid.UUID(parts[2]))
+    except ValueError:
+        return None
+
+
+def _parse_suggestion_id(data: str | None, action: str) -> RuleSuggestionId | None:
+    if data is None:
+        return None
+    parts = data.split(":")
+    if len(parts) != _CALLBACK_PARTS or parts[0] != "sg" or parts[1] != action:
+        return None
+    try:
+        return RuleSuggestionId(uuid.UUID(parts[2]))
     except ValueError:
         return None

@@ -15,7 +15,7 @@ from svoi_pravila.adapters.channels.telegram.localization import (
     rule_category_label,
 )
 from svoi_pravila.domain.enums import ConsentKind, RelationshipKind, RuleCategory
-from svoi_pravila.domain.ids import ContactId, RuleId
+from svoi_pravila.domain.ids import ContactId, RuleId, RuleSuggestionId
 
 _CALLBACK_DATA_MAX_BYTES = 64
 
@@ -182,12 +182,39 @@ def rule_category_keyboard(strings: TelegramStrings) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def suggestion_decision_keyboard(
+    strings: TelegramStrings,
+    suggestion_id: RuleSuggestionId,
+) -> InlineKeyboardMarkup:
+    """Accept / dismiss buttons for one suggestion. Callback data carries the id only."""
+    accept = _require_callback_bytes(f"sg:a:{suggestion_id}")
+    dismiss = _require_callback_bytes(f"sg:d:{suggestion_id}")
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=strings.suggestion_accept, callback_data=accept),
+                InlineKeyboardButton(text=strings.suggestion_dismiss, callback_data=dismiss),
+            ]
+        ]
+    )
+
+
 def rules_keyboard(
     strings: TelegramStrings,
     rule_ids: tuple[RuleId, ...],
+    suggestion_ids: tuple[RuleSuggestionId, ...] = (),
 ) -> InlineKeyboardMarkup:
-    """Per-rule archive plus add. Callback data carries ids only."""
+    """Suggestion decisions, per-rule archive, plus add. Callback data carries ids only."""
     rows: list[list[InlineKeyboardButton]] = []
+    for suggestion_id in suggestion_ids:
+        accept = _require_callback_bytes(f"sg:a:{suggestion_id}")
+        dismiss = _require_callback_bytes(f"sg:d:{suggestion_id}")
+        rows.append(
+            [
+                InlineKeyboardButton(text=strings.suggestion_accept, callback_data=accept),
+                InlineKeyboardButton(text=strings.suggestion_dismiss, callback_data=dismiss),
+            ]
+        )
     for index, rule_id in enumerate(rule_ids, start=1):
         archive = _require_callback_bytes(f"ru:ar:{rule_id}")
         rows.append(

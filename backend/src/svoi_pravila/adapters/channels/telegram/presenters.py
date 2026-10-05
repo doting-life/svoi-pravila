@@ -19,6 +19,7 @@ from svoi_pravila.adapters.channels.telegram.localization import (
     TelegramStrings,
     render_crisis_message,
     render_refuse_manipulation,
+    suggestion_firmness_adjective,
 )
 from svoi_pravila.application.ports.generation import (
     AppliedRuleView,
@@ -31,8 +32,9 @@ from svoi_pravila.application.use_cases.get_onboarding_step import (
 )
 from svoi_pravila.domain.consent_document import ConsentDocument
 from svoi_pravila.domain.contact import Contact
-from svoi_pravila.domain.enums import RuleStatus
+from svoi_pravila.domain.enums import Firmness, RuleStatus
 from svoi_pravila.domain.ids import ContactId
+from svoi_pravila.domain.rule_suggestion import RuleSuggestion
 from svoi_pravila.domain.rules import Rule
 
 TELEGRAM_MESSAGE_MAX = 4096
@@ -165,16 +167,36 @@ def display_rule_text(rule: Rule) -> str:
     return rule.require_effective_revision().text.value
 
 
+def render_suggestion_dm(
+    strings: TelegramStrings,
+    *,
+    firmness: Firmness,
+    contact_label: str,
+    rule_text: str,
+) -> str:
+    """One-time tone suggestion DM body (catalog template; no LLM)."""
+    return strings.suggestion_dm.format(
+        tone=suggestion_firmness_adjective(strings, firmness),
+        label=contact_label,
+        text=rule_text,
+    )
+
+
 def render_rules_list(
     strings: TelegramStrings,
     rules: tuple[Rule, ...],
     *,
+    suggestions: tuple[RuleSuggestion, ...] = (),
     now: datetime,
     tz: ZoneInfo,
 ) -> tuple[tuple[str, ...], InlineKeyboardMarkup]:
-    """ACTIVE and PROPOSED rules only; ARCHIVED and REJECTED stay hidden."""
+    """Pending suggestions above ACTIVE/PROPOSED rules; ARCHIVED/REJECTED stay hidden."""
+    lines: list[str] = []
+    if suggestions:
+        lines.append(strings.suggestion_header)
+        lines.extend(f"• {suggestion.text.value}" for suggestion in suggestions)
     visible: list[Rule] = []
-    lines = [strings.rules_header]
+    lines.append(strings.rules_header)
     number = 0
     for rule in rules:
         if rule.status is RuleStatus.ACTIVE:
@@ -190,7 +212,11 @@ def render_rules_list(
             visible.append(rule)
     if number == 0:
         lines.append(strings.rules_empty)
-    keyboard = rules_keyboard(strings, tuple(rule.id for rule in visible))
+    keyboard = rules_keyboard(
+        strings,
+        tuple(rule.id for rule in visible),
+        tuple(s.id for s in suggestions),
+    )
     return pack_message_lines(tuple(lines)), keyboard
 
 

@@ -20,7 +20,9 @@ from aiogram.types import (
 
 from svoi_pravila.adapters.channels.telegram.dates import format_display_date
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
+from svoi_pravila.adapters.channels.telegram.keyboards import suggestion_decision_keyboard
 from svoi_pravila.adapters.channels.telegram.localization import firmness_label
+from svoi_pravila.adapters.channels.telegram.presenters import render_suggestion_dm
 from svoi_pravila.application.errors import (
     AccessNotGranted,
     GenerationRefusedByProvider,
@@ -39,13 +41,16 @@ from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
 from svoi_pravila.application.ports.generation import AppliedRuleView, SafetyVerdict, Variant
 from svoi_pravila.application.ports.monotonic import MonotonicClock
 from svoi_pravila.application.prepared_ref import is_prepared_ref
+from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramIdQuery
 from svoi_pravila.application.use_cases.inline_compose import (
     InlineComposeCommand,
     InlineComposeResult,
 )
+from svoi_pravila.application.use_cases.list_contacts import ListContactsCommand
+from svoi_pravila.application.use_cases.list_suggestions import ListSuggestionsCommand
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoiceCommand
 from svoi_pravila.domain.enums import UsageScenario
-from svoi_pravila.domain.ids import TelegramUserId
+from svoi_pravila.domain.ids import RuleSuggestionId, TelegramUserId
 
 _PREVIEW_MAX = 256
 _PREPARED_PURPOSE = "prepared"
@@ -95,6 +100,7 @@ def build_inline_router() -> Router:
     async def chosen_inline_result(
         chosen: ChosenInlineResult,
         tg_deps: TelegramDeps,
+        bot: Bot,
     ) -> None:
         user_id = chosen.from_user.id
         result_id = chosen.result_id
@@ -104,13 +110,57 @@ def build_inline_router() -> Router:
             with contextlib.suppress(PreparedResultUnavailable):
                 await tg_deps.prepared_results.delete(pseudonym, query)
         try:
-            await tg_deps.record_inline_choice.execute(
+            recorded = await tg_deps.record_inline_choice.execute(
                 RecordInlineChoiceCommand(TelegramUserId(user_id), result_id)
             )
         except InvalidInlineResultRef:
             return
+        if recorded.suggestion_id is not None:
+            await _send_tone_suggestion_dm(bot, tg_deps, user_id, recorded.suggestion_id)
 
     return router
+
+
+async def _send_tone_suggestion_dm(
+    bot: Bot,
+    tg_deps: TelegramDeps,
+    telegram_user_id: int,
+    suggestion_id: RuleSuggestionId,
+) -> None:
+    """One-time DM for a new tone suggestion; Telegram API failures are C0-logged only."""
+    try:
+        lookup = await tg_deps.get_user_by_telegram_id.execute(
+            GetUserByTelegramIdQuery(TelegramUserId(telegram_user_id))
+        )
+        user = lookup.user
+        if user is None or user.active_contact_id is None:
+            return
+        pending = await tg_deps.list_suggestions.execute(
+            ListSuggestionsCommand(user.id, user.active_contact_id)
+        )
+        suggestion = next((s for s in pending.suggestions if s.id == suggestion_id), None)
+        if suggestion is None or suggestion.firmness is None:
+            return
+        contacts = await tg_deps.list_contacts.execute(ListContactsCommand(user.id))
+        contact = next((c for c in contacts.contacts if c.id == suggestion.contact_id), None)
+        if contact is None:
+            return
+        text = render_suggestion_dm(
+            tg_deps.strings,
+            firmness=suggestion.firmness,
+            contact_label=contact.label.value,
+            rule_text=suggestion.text.value,
+        )
+        await bot.send_message(
+            telegram_user_id,
+            text,
+            reply_markup=suggestion_decision_keyboard(tg_deps.strings, suggestion.id),
+        )
+    except (TelegramAPIError, NotFound, AccessNotGranted) as exc:
+        logger.info(
+            "tone_suggestion_dm_failed",
+            error_type=type(exc).__name__,
+        )
 
 
 async def _answer_composed(query: InlineQuery, bot: Bot, tg_deps: TelegramDeps) -> None:

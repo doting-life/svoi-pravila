@@ -11,7 +11,6 @@ from svoi_pravila.application.ports.id_generator import IdGenerator
 from svoi_pravila.application.ports.pair_notifier import PairNotifier
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.use_cases._access import load_access_status, require_access
-from svoi_pravila.application.use_cases._pair_notify import notify_after_commit
 from svoi_pravila.domain.contact import MAX_CONTACTS_PER_USER, Contact
 from svoi_pravila.domain.enums import RelationshipKind
 from svoi_pravila.domain.ids import ContactId, InviteId, PairId, UserId
@@ -113,9 +112,7 @@ class AcceptInvite:
             inviter_contact_id = invite.contact_id
             await uow.commit()
 
-        await notify_after_commit(
-            lambda: self._notifier.invite_accepted(inviter_id, inviter_contact_id),
-        )
+        await self._notifier.invite_accepted(inviter_id, inviter_contact_id)
         return AcceptInviteResult(
             pair=pair,
             invitee_contact=invitee_contact,

@@ -10,7 +10,6 @@ from svoi_pravila.application.ports.id_generator import IdGenerator
 from svoi_pravila.application.ports.pair_notifier import PairNotifier
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.use_cases._access import require_access
-from svoi_pravila.application.use_cases._pair_notify import notify_after_commit
 from svoi_pravila.application.use_cases._propose_rule import ProposeRuleParams, propose_rule_in_uow
 from svoi_pravila.domain.enums import RuleCategory
 from svoi_pravila.domain.ids import ContactId, RuleId, UserId
@@ -79,7 +78,5 @@ class ProposeRule:
 
         if notify is not None:
             partner_id, shared_rule_id = notify
-            await notify_after_commit(
-                lambda: self._notifier.shared_rule_proposed(partner_id, shared_rule_id),
-            )
+            await self._notifier.shared_rule_proposed(partner_id, shared_rule_id)
         return ProposeRuleResult(rule=rule)

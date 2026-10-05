@@ -10,7 +10,6 @@ from svoi_pravila.application.ports.id_generator import IdGenerator
 from svoi_pravila.application.ports.pair_notifier import PairNotifier
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.use_cases._leave_pair import dissolve_pair_for_leaving_member
-from svoi_pravila.application.use_cases._pair_notify import notify_after_commit
 from svoi_pravila.domain.ids import ContactId, PairId, UserId
 
 
@@ -70,7 +69,5 @@ class LeavePair:
             )
             await uow.commit()
 
-        await notify_after_commit(
-            lambda: self._notifier.partner_left(remaining_user_id, remaining_contact_id),
-        )
+        await self._notifier.partner_left(remaining_user_id, remaining_contact_id)
         return LeavePairResult(pair_id=command.pair_id)

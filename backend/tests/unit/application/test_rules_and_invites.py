@@ -46,7 +46,7 @@ from svoi_pravila.domain.contact import MAX_CONTACTS_PER_USER, Contact
 from svoi_pravila.domain.enums import ConsentKind, RelationshipKind, RuleCategory, RuleStatus
 from svoi_pravila.domain.errors import InviteExpiredError
 from svoi_pravila.domain.ids import ContactId, InviteId, PairId, RuleId
-from svoi_pravila.domain.rules import MAX_OPEN_RULES_PER_SCOPE, RuleRevision
+from svoi_pravila.domain.rules import MAX_OPEN_RULES_PER_SCOPE, PairScope, RuleRevision
 from svoi_pravila.domain.text import ContactLabel, RuleText
 from svoi_pravila.domain.user import User
 from tests.unit.application.conftest import AppWorld
@@ -760,9 +760,9 @@ async def test_notifier_after_commit_and_failure_isolated(world: AppWorld) -> No
 
     inviter, invitee, contact, accepted = await _pair_world(world)
     assert world.notifier.invite_accepted_calls
-    failing = FakePairNotifier(fail=True)
+    ok = FakePairNotifier()
     shared = await ProposeRule(
-        world.uow_factory, world.catalog, world.ids, world.clock, failing
+        world.uow_factory, world.catalog, world.ids, world.clock, ok
     ).execute(
         ProposeRuleCommand(
             inviter.id,
@@ -773,16 +773,42 @@ async def test_notifier_after_commit_and_failure_isolated(world: AppWorld) -> No
         )
     )
     assert shared.rule.status is RuleStatus.PROPOSED
+    assert ok.shared_rule_proposed_calls
+
+    failing = FakePairNotifier(fail=True)
+    with pytest.raises(RuntimeError, match="notifier failure"):
+        await ProposeRule(
+            world.uow_factory, world.catalog, world.ids, world.clock, failing
+        ).execute(
+            ProposeRuleCommand(
+                inviter.id,
+                contact.id,
+                RuleCategory.OTHER,
+                RuleText("shared after fail"),
+                shared=True,
+            )
+        )
     assert failing.shared_rule_proposed_calls
-    await ApproveRule(world.uow_factory, world.catalog, world.clock, failing).execute(
-        ApproveRuleCommand(invitee.id, shared.rule.id)
-    )
+    async with world.uow_factory() as uow:
+        rules = await uow.rules.list_for_scope(PairScope(pair_id=accepted.pair.id))
+        texts = {rule.revisions[-1].text.value for rule in rules}
+        assert "shared after fail" in texts
+
+    with pytest.raises(RuntimeError, match="notifier failure"):
+        await ApproveRule(world.uow_factory, world.catalog, world.clock, failing).execute(
+            ApproveRuleCommand(invitee.id, shared.rule.id)
+        )
     assert failing.shared_rule_decided_calls
-    assert failing.shared_rule_decided_calls[0].approved is True
+    async with world.uow_factory() as uow:
+        stored = await uow.rules.get(shared.rule.id)
+        assert stored is not None
+        assert stored.status is RuleStatus.ACTIVE
+
     leave_notifier = FakePairNotifier(fail=True)
-    await LeavePair(world.uow_factory, world.ids, world.clock, leave_notifier).execute(
-        LeavePairCommand(inviter.id, accepted.pair.id)
-    )
+    with pytest.raises(RuntimeError, match="notifier failure"):
+        await LeavePair(world.uow_factory, world.ids, world.clock, leave_notifier).execute(
+            LeavePairCommand(inviter.id, accepted.pair.id)
+        )
     assert leave_notifier.partner_left_calls
     async with world.uow_factory() as uow:
         assert await uow.pairs.get(accepted.pair.id) is None

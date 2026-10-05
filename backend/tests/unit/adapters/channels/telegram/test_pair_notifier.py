@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import cast
 from uuid import UUID
 
 import pytest
 from aiogram import Bot
-from aiogram.exceptions import TelegramAPIError
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.methods import SendMessage
 from tests.fakes.clock import FakeClock
 from tests.fakes.consent_catalog import FakeConsentCatalog
@@ -169,7 +170,54 @@ async def test_telegram_pair_notifier_happy_paths_and_guards(
 
 
 @pytest.mark.unit
-async def test_telegram_pair_notifier_logs_send_and_load_failures(
+async def test_telegram_pair_notifier_swallows_telegram_api_errors(
+    world: tuple[
+        InMemoryUnitOfWorkFactory,
+        FakeConsentCatalog,
+        FakeIdGenerator,
+        FakeClock,
+        FakeTokenGenerator,
+    ],
+    capture_log_events: Callable[[], list[dict[str, object]]],
+) -> None:
+    uow, catalog, ids, clock, _tokens = world
+    strings = load_ru_strings()
+    inviter_id = await _grant(uow, catalog, ids, clock, 601)
+    contact = (
+        await CreateContact(uow, catalog, ids, clock).execute(
+            CreateContactCommand(inviter_id, ContactLabel("X"), RelationshipKind.FRIEND)
+        )
+    ).contact
+
+    for exc in (
+        TelegramForbiddenError(
+            method=SendMessage(chat_id=1, text="x"),
+            message="Forbidden: bot was blocked by the user",
+        ),
+        TelegramBadRequest(
+            method=SendMessage(chat_id=1, text="x"),
+            message="Bad Request: chat not found",
+        ),
+    ):
+        session = FakeTelegramSession()
+        session.set_error(SendMessage, exc)
+        bot = Bot(token="1:TEST", session=session)
+        notifier = TelegramPairNotifier(bot, uow, strings)
+        await notifier.invite_accepted(inviter_id, contact.id)
+        await notifier.partner_left(inviter_id, contact.id)
+
+    events = capture_log_events()
+    failed = [event for event in events if event.get("event") == "pair_notifier_failed"]
+    assert failed
+    assert {event.get("action") for event in failed} >= {"invite_accepted", "partner_left"}
+    assert {event.get("error_type") for event in failed} >= {
+        "TelegramForbiddenError",
+        "TelegramBadRequest",
+    }
+
+
+@pytest.mark.unit
+async def test_telegram_pair_notifier_propagates_non_telegram_errors(
     world: tuple[
         InMemoryUnitOfWorkFactory,
         FakeConsentCatalog,
@@ -178,30 +226,21 @@ async def test_telegram_pair_notifier_logs_send_and_load_failures(
         FakeTokenGenerator,
     ],
 ) -> None:
-    uow, catalog, ids, clock, _tokens = world
+    _uow, _catalog, _ids, _clock, _tokens = world
     strings = load_ru_strings()
     session = FakeTelegramSession()
-    session.set_error(
-        SendMessage,
-        TelegramAPIError(method=SendMessage(chat_id=1, text="x"), message="fail"),
-    )
     bot = Bot(token="1:TEST", session=session)
-    notifier = TelegramPairNotifier(bot, uow, strings)
-    inviter_id = await _grant(uow, catalog, ids, clock, 601)
-    contact = (
-        await CreateContact(uow, catalog, ids, clock).execute(
-            CreateContactCommand(inviter_id, ContactLabel("X"), RelationshipKind.FRIEND)
-        )
-    ).contact
-    await notifier.invite_accepted(inviter_id, contact.id)
-    await notifier.partner_left(inviter_id, contact.id)
 
     class _BoomFactory:
         def __call__(self) -> object:
             raise RuntimeError("uow boom")
 
     boom = TelegramPairNotifier(bot, cast(UnitOfWorkFactory, _BoomFactory()), strings)
-    await boom.invite_accepted(inviter_id, contact.id)
-    await boom.shared_rule_proposed(inviter_id, RuleId(UUID(int=1)))
-    await boom.shared_rule_decided(inviter_id, RuleId(UUID(int=1)), approved=False)
-    await boom.partner_left(inviter_id, contact.id)
+    with pytest.raises(RuntimeError, match="uow boom"):
+        await boom.invite_accepted(UserId(UUID(int=1)), ContactId(UUID(int=2)))
+    with pytest.raises(RuntimeError, match="uow boom"):
+        await boom.shared_rule_proposed(UserId(UUID(int=1)), RuleId(UUID(int=1)))
+    with pytest.raises(RuntimeError, match="uow boom"):
+        await boom.shared_rule_decided(UserId(UUID(int=1)), RuleId(UUID(int=1)), approved=False)
+    with pytest.raises(RuntimeError, match="uow boom"):
+        await boom.partner_left(UserId(UUID(int=1)), ContactId(UUID(int=2)))

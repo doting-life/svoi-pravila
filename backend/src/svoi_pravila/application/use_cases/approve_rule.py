@@ -13,7 +13,6 @@ from svoi_pravila.application.use_cases._contact_access import (
     load_rule_for_approver,
     require_pending_revision,
 )
-from svoi_pravila.application.use_cases._pair_notify import notify_after_commit
 from svoi_pravila.domain.ids import RuleId, UserId
 from svoi_pravila.domain.rules import Rule
 
@@ -60,7 +59,5 @@ class ApproveRule:
             await uow.rules.update(updated)
             await uow.commit()
 
-        await notify_after_commit(
-            lambda: self._notifier.shared_rule_decided(author_id, rule_id, approved=True),
-        )
+        await self._notifier.shared_rule_decided(author_id, rule_id, approved=True)
         return ApproveRuleResult(rule=updated)

@@ -11,7 +11,6 @@ from svoi_pravila.application.ports.pair_notifier import PairNotifier
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.use_cases._leave_pair import dissolve_pair_for_leaving_member
-from svoi_pravila.application.use_cases._pair_notify import notify_after_commit
 from svoi_pravila.domain.ids import ContactId, TelegramUserId, UserId
 from svoi_pravila.domain.rules import ContactScope
 
@@ -94,11 +93,5 @@ class DeleteMyAccount:
             await uow.commit()
 
         for partner_id, partner_contact_id in partner_notices:
-            notice_user = partner_id
-            notice_contact = partner_contact_id
-
-            async def _notify(uid: UserId = notice_user, cid: ContactId = notice_contact) -> None:
-                await self._notifier.partner_left(uid, cid)
-
-            await notify_after_commit(_notify)
+            await self._notifier.partner_left(partner_id, partner_contact_id)
         return DeleteMyAccountResult(found=True)

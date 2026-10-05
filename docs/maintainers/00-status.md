@@ -4,7 +4,9 @@
 
 ## Текущее
 - Дата: 2026-10-04 · Спринт 0 (Фундамент)
-- Активная задача: **0011.2 — кнопка «Сделать правилом»** · ветка `task/0011-2-suggest-from-decode` · живой смоук ≤ 8 000 токенов (после подтверждения владельцем остатка квоты); старт после мержа 0011.1
+- Активная задача: **0011.2-a — промпт и метрики `suggest_rule`, один повторный живой прогон** · ветка `task/0011-2-suggest-from-decode` · живой бюджет ≤ 4 779 токенов (остаток от 8 000)
+- В `master`: 0011.1 (`66bf03e`, squash #12)
+- Расход GigaChat в 0011.2: 3 221 токен — прогон без нужных метрик (нарушение правила 60: метрики не проверены офлайн до вызова)
 - В `master`: 0010 (`2180caa`, squash #11)
 - В `master`: 0009.2 (`16037df`, squash #10)
 - В `master`: 0009.1 (`18ba3f1`, squash #9)
@@ -70,7 +72,8 @@
 | 0010-b | Produce errors as values, synchronous expiry | `task/0010-inline-opt` | проверен 04.10 | **ACCEPT** (770 тестов, 99,28 %); дублирующий кортеж типов ошибок в адаптере — в 0011.1, часть 0 |
 | 0011.1 | Rule suggestions: tone signal | `task/0011-1-tone-suggestions` | проверен 05.10 | **CHANGES** → 0011.1-a: при ожидающем тон-кандидате и смене доминирующей жёсткости уникальный индекс откатывает транзакцию — сигнал замерзает навсегда; приложение глушит `OSError`/`RuntimeError`/`TimeoutError`; потерянное обновление `tone_signals`; новые репозитории без интеграционных тестов (`repositories.py` 91 %) |
 | 0011.1-a | Tone signal fixes, repository integration tests | `task/0011-1-tone-suggestions` | проверен 05.10 | **ACCEPT** (820 тестов, 99,31 %); геттер с записью `tone_signals.get(for_update=True)` — переименовать, в 0011.2 часть 0 |
-| 0011.2 | Suggest rule from decode (LLM, one-time token) | `task/0011-2-suggest-from-decode` | выдан | — |
+| 0011.2 | Suggest rule from decode (LLM, one-time token) | `task/0011-2-suggest-from-decode` | проверен 05.10 | **BLOCKED** → 0011.2-a: живой прогон (3 221 токен) без метрик категории/`none`/цитирования; в промпте нет определений категорий; ошибочная метка sr-4; результат `suggest_rule` допускает невозможные состояния; квота тратится без вызова модели |
+| 0011.2-a | suggest_rule prompt, metrics, typed result; one live re-run | `task/0011-2-suggest-from-decode` | выдан | — |
 | 0006.1-b | Image gate: Debian security updates, base digest pin, Dependabot | `task/0006-telegram-channel` | проверен 04.10 | **ACCEPT** (Trivy: 21 CVE → 0) |
 
 ## Решения

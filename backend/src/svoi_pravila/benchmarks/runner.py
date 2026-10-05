@@ -22,6 +22,7 @@ from svoi_pravila.application.ports.generation import (
     DecodeResult,
     HelpSayRequest,
     SoftenRequest,
+    SuggestRuleProposed,
     SuggestRuleRequest,
     SuggestRuleResult,
     TextGenerator,
@@ -40,6 +41,7 @@ from svoi_pravila.benchmarks.report import (
     aggregate_row,
     decode_stream_report_header,
     format_reasons_line,
+    format_suggest_rule_case_table,
     standard_report_header,
     suggest_rule_report_header,
 )
@@ -72,6 +74,8 @@ class CallRecord:
     schema_valid_first_attempt: bool | None = None
     expected_verdict: str | None = None
     expected_category: str | None = None
+    generated_text: str | None = None
+    case_id: str | None = None
 
 
 @dataclass
@@ -211,6 +215,7 @@ class _AttemptResult:
     text_length: int | None = None
     overlap_violation: bool = False
     schema_valid_first_attempt: bool | None = None
+    generated_text: str | None = None
 
 
 def _empty_stream_result() -> InvalidGenerationOutput:
@@ -294,19 +299,26 @@ async def _run_suggest_rule(
     show_outputs: bool,
 ) -> _AttemptResult:
     result: SuggestRuleResult = await gen.suggest_rule(request)
+    if isinstance(result, SuggestRuleProposed):
+        actual_verdict = "ok"
+        actual_category = result.category.value
+        text = result.text.value
+    else:
+        actual_verdict = "none"
+        actual_category = None
+        text = None
     output_line = None
     if show_outputs:
         output_line = json.dumps(
             {
                 "id": case_id,
-                "verdict": result.verdict.value,
-                "category": None if result.category is None else result.category.value,
-                "text": result.text,
+                "verdict": actual_verdict,
+                "category": actual_category,
+                "text": text,
             },
             ensure_ascii=False,
         )
     inp, out, billable = _usage_fields(result.meta.usage)
-    text = result.text
     return _AttemptResult(
         outcome="ok",
         attempts=result.meta.attempts,
@@ -317,11 +329,12 @@ async def _run_suggest_rule(
         billable_tokens=billable,
         actual_safety="ok",
         output_line=output_line,
-        actual_verdict=result.verdict.value,
-        actual_category=None if result.category is None else result.category.value,
+        actual_verdict=actual_verdict,
+        actual_category=actual_category,
         text_length=None if text is None else len(text),
         overlap_violation=_has_verbatim_overlap(request.incoming, text),
         schema_valid_first_attempt=result.meta.attempts == 1,
+        generated_text=text,
     )
 
 
@@ -490,6 +503,8 @@ async def run_case(
         text_length=attempt.text_length if ok else None,
         overlap_violation=attempt.overlap_violation if ok else False,
         schema_valid_first_attempt=attempt.schema_valid_first_attempt,
+        generated_text=attempt.generated_text if ok else None,
+        case_id=case.id,
     )
     _raise_if_fail_fast(record, rate_limits=options.rate_limits)
     return record
@@ -606,11 +621,17 @@ async def _run_operation(
     row, reasons = aggregate_row(stats.records, operation=run.operation, model=run.params.model)
     run.runtime.out.write_row(row)
     run.runtime.out.write_reasons(format_reasons_line(reasons))
+    printed_rows = [header, row]
+    if run.operation == "suggest_rule":
+        case_lines = format_suggest_rule_case_table(stats.records)
+        for line in case_lines:
+            run.runtime.out.write_row(line)
+        printed_rows.extend(case_lines)
     if reasons:
         print(f"reasons {run.operation} {run.params.model}: {reasons}")
     _emit_outputs(stats.records, show_outputs=run.params.show_outputs)
     incomplete = rate_error is not None or budget_error is not None
-    return [header, row], incomplete, rate_error, budget_error
+    return printed_rows, incomplete, rate_error, budget_error
 
 
 async def run_benchmark(

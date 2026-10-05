@@ -12,31 +12,48 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 RUN pnpm build
 
-# Strip ambient capabilities in a disposable stage so the final layer
-# never retains apk tools or package caches (see task 0013-a).
-# Official image: https://github.com/caddyserver/caddy/releases/tag/v2.11.4
-FROM caddy:2.11.4@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52 AS stripcaps
-RUN apk add --no-cache libcap \
-	&& setcap -r /usr/bin/caddy \
-	&& apk del libcap
+# ADR-0008: build Caddy v2.11.4 from source on a current Go toolchain.
+# https://github.com/caddyserver/caddy/releases/tag/v2.11.4
+# xcaddy: https://github.com/caddyserver/xcaddy/releases/tag/v0.4.7
+FROM golang:1.26.8-alpine@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c AS caddybuild
 
-# Alpine final (not `FROM caddy`) so the stripped binary is not layered
-# on top of the identical Hub binary (which doubled history size ~45 MB).
-FROM alpine:3.23.6@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
+RUN apk add --no-cache git ca-certificates \
+	&& go install github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.7
 
-COPY --from=stripcaps /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY --from=stripcaps /usr/bin/caddy /usr/bin/caddy
+ENV CGO_ENABLED=0
+ENV XCADDY_GO_BUILD_FLAGS="-trimpath -ldflags '-w -s'"
 
-RUN adduser -D -u 10001 -H -s /sbin/nologin miniapp \
-	&& mkdir -p /srv /config/caddy /data/caddy /etc/caddy \
-	&& chown -R miniapp:miniapp /srv /config /data
+WORKDIR /build
+# Raise modules that still ship vulnerable in Hub caddy:2.11.4 (0013-a Trivy):
+#   golang.org/x/crypto@v0.55.0  — CVE-2026-56854
+#   golang.org/x/net@v0.58.0     — CVE-2026-46600 (also required by crypto/grpc)
+#   golang.org/x/text@v0.39.0    — CVE-2026-56852
+#   google.golang.org/grpc@v1.83.2 — CVE-2026-84304, CVE-2026-84445, GHSA-hrxh-6v49-42gf
+RUN mkdir -p /out \
+	&& xcaddy build v2.11.4 --output /out/caddy \
+		--replace golang.org/x/crypto=golang.org/x/crypto@v0.55.0 \
+		--replace golang.org/x/net=golang.org/x/net@v0.58.0 \
+		--replace golang.org/x/text=golang.org/x/text@v0.39.0 \
+		--replace google.golang.org/grpc=google.golang.org/grpc@v1.83.2
 
-COPY --from=build --chown=miniapp:miniapp /app/dist /srv
-COPY --chown=miniapp:miniapp Caddyfile /etc/caddy/Caddyfile
+# Directories owned by distroless nonroot (uid/gid 65532); no shell in the final image.
+FROM alpine:3.23.6@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0 AS rootfs
+RUN mkdir -p /srv /config/caddy /data/caddy /etc/caddy \
+	&& chown -R 65532:65532 /srv /config /data /etc/caddy
+
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
+
+COPY --from=caddybuild /out/caddy /usr/bin/caddy
+COPY --from=rootfs --chown=65532:65532 /srv /srv
+COPY --from=rootfs --chown=65532:65532 /config /config
+COPY --from=rootfs --chown=65532:65532 /data /data
+COPY --from=rootfs --chown=65532:65532 /etc/caddy /etc/caddy
+COPY --from=build --chown=65532:65532 /app/dist /srv
+COPY --chown=65532:65532 Caddyfile /etc/caddy/Caddyfile
 
 ENV XDG_CONFIG_HOME=/config
 ENV XDG_DATA_HOME=/data
 
-USER miniapp
+USER nonroot
 EXPOSE 8080
-CMD ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+CMD ["/usr/bin/caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]

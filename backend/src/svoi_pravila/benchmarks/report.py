@@ -179,12 +179,53 @@ def aggregate_decode_stream_row(
     return row, reason_counts
 
 
+def _suggest_rule_quality(records: list[CallRecord]) -> tuple[float, str, int]:
+    """Category match %, none recall fraction, overlap violation count."""
+    ok = [r for r in records if r.outcome == "ok"]
+    category_cases = [
+        r for r in ok if r.expected_verdict == "ok" and r.expected_category is not None
+    ]
+    category_hits = sum(1 for r in category_cases if r.actual_category == r.expected_category)
+    category_pct = (100.0 * category_hits / len(category_cases)) if category_cases else 0.0
+    none_cases = [r for r in ok if r.expected_verdict == "none"]
+    none_hits = sum(1 for r in none_cases if r.actual_verdict == "none")
+    none_recall = f"{none_hits}/{len(none_cases)}" if none_cases else "0/0"
+    overlaps = sum(1 for r in ok if r.overlap_violation)
+    return category_pct, none_recall, overlaps
+
+
+def aggregate_suggest_rule_row(
+    records: list[CallRecord], *, model: str
+) -> tuple[str, dict[str, int]]:
+    """Return one markdown row for suggest_rule with category/none/overlap metrics."""
+    n = len(records)
+    ok = [r for r in records if r.outcome == "ok"]
+    ok_lat = [r.latency_ms for r in ok]
+    all_lat = [r.latency_ms for r in records]
+    schema_first, schema_after, refuse_pct, reason_counts, unavail_parts = _quality_metrics(
+        records, operation="suggest_rule"
+    )
+    mean_attempts, mean_in, mean_out, cost = _token_cost(records, model)
+    category_pct, none_recall, overlaps = _suggest_rule_quality(records)
+    schema = f"{schema_first:.0f}/{schema_after:.0f}"
+    tokens = f"{mean_in:.0f}/{mean_out:.0f}"
+    row = (
+        f"| suggest_rule | {model} | {n} | {percentile(ok_lat, 50):.0f} | "
+        f"{percentile(ok_lat, 95):.0f} | {percentile(all_lat, 50):.0f} | "
+        f"{schema} | {refuse_pct:.0f} | {unavail_parts} | {category_pct:.0f} | "
+        f"{none_recall} | {overlaps} | {mean_attempts:.2f} | {tokens} | {cost:.3f} |"
+    )
+    return row, reason_counts
+
+
 def aggregate_row(
     records: list[CallRecord], *, operation: str, model: str
 ) -> tuple[str, dict[str, int]]:
     """Dispatch to the correct table row builder."""
     if operation == "decode_stream":
         return aggregate_decode_stream_row(records, model=model)
+    if operation == "suggest_rule":
+        return aggregate_suggest_rule_row(records, model=model)
     return aggregate_standard_row(records, operation=operation, model=model)
 
 
@@ -205,6 +246,16 @@ def decode_stream_report_header() -> str:
         "total-p50 | total-p95 | schema% first/after | refuse% | unavail% by kind | "
         "safety ok/crisis/refuse | false-non-ok% | mean att | tok in/out | est. ₽ |\n"
         "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---:|---:|---:|---:|"
+    )
+
+
+def suggest_rule_report_header() -> str:
+    """Markdown header for suggest_rule rows."""
+    return (
+        "| operation | model | n | ok-p50 | ok-p95 | all-p50 | "
+        "schema% first/after | refuse% | unavail% by kind | category-match% | "
+        "none-recall | overlap | mean att | tok in/out | est. ₽ |\n"
+        "|---|---|---:|---:|---:|---:|---:|---:|---|---:|---|---:|---:|---:|---:|"
     )
 
 

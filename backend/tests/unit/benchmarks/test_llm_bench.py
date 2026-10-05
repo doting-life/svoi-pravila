@@ -1325,6 +1325,42 @@ def test_phase_count_first_attempt_metric() -> None:
     assert format_reasons_line({"variant_count": 2}) == "reasons: variant_count:2"
     assert format_reasons_line({}) == "reasons: (none)"
 
+    suggest_ok = CallRecord(
+        "ok",
+        100,
+        "ok",
+        1,
+        (),
+        None,
+        10,
+        5,
+        billable_tokens=15,
+        actual_verdict="ok",
+        actual_category="how_to_ask",
+        expected_verdict="ok",
+        expected_category="how_to_ask",
+    )
+    suggest_none = CallRecord(
+        "ok",
+        100,
+        "ok",
+        1,
+        (),
+        None,
+        10,
+        5,
+        billable_tokens=15,
+        actual_verdict="none",
+        expected_verdict="none",
+    )
+    suggest_row, _ = aggregate_row(
+        [suggest_ok, suggest_none], operation="suggest_rule", model="GigaChat-3-Lightning"
+    )
+    assert "100/100" in suggest_row
+    assert "| 100 |" in suggest_row or " 100 |" in suggest_row
+    assert "1/1" in suggest_row
+    assert "| 0 |" in suggest_row
+
 
 @pytest.mark.unit
 async def test_failed_calls_carry_usage_and_mean_attempts() -> None:

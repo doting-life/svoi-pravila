@@ -41,6 +41,7 @@ from svoi_pravila.benchmarks.report import (
     decode_stream_report_header,
     format_reasons_line,
     standard_report_header,
+    suggest_rule_report_header,
 )
 
 OutcomeName = Literal["ok", "invalid_output", "refused", "unavailable"]
@@ -69,6 +70,8 @@ class CallRecord:
     text_length: int | None = None
     overlap_violation: bool = False
     schema_valid_first_attempt: bool | None = None
+    expected_verdict: str | None = None
+    expected_category: str | None = None
 
 
 @dataclass
@@ -463,6 +466,8 @@ async def run_case(
             attempt.schema_valid_first_attempt = False
     latency_ms = (time.perf_counter() - started) * 1000
     ok = attempt.outcome == "ok"
+    expected_verdict = None if case.expected_verdict is None else case.expected_verdict
+    expected_category = None if case.expected_category is None else case.expected_category.value
     record = CallRecord(
         outcome=attempt.outcome,
         latency_ms=latency_ms,
@@ -478,6 +483,8 @@ async def run_case(
         billable_tokens=attempt.billable_tokens,
         actual_safety=attempt.actual_safety if ok else None,
         output_line=attempt.output_line,
+        expected_verdict=expected_verdict,
+        expected_category=expected_category,
         actual_verdict=attempt.actual_verdict if ok else None,
         actual_category=attempt.actual_category if ok else None,
         text_length=attempt.text_length if ok else None,
@@ -560,11 +567,12 @@ async def _run_operation(
     op_cases = cases_for_operation(run.cases, run.operation)
     if not op_cases:
         return [], False, None, None
-    header = (
-        decode_stream_report_header()
-        if run.operation == "decode_stream"
-        else standard_report_header()
-    )
+    if run.operation == "decode_stream":
+        header = decode_stream_report_header()
+    elif run.operation == "suggest_rule":
+        header = suggest_rule_report_header()
+    else:
+        header = standard_report_header()
     run.runtime.out.write_header_once(header)
     stats = RunStats()
     rate_error: FailFastUnavailableError | None = None

@@ -11,6 +11,7 @@ const meDone = {
     consent_kind: null,
     consent_version: null,
     active_contact_id: "c1",
+    account_exists: true,
     max_contacts: 20,
     max_open_rules: 50,
     display_timezone: "Europe/Moscow",
@@ -109,16 +110,38 @@ describe("App", () => {
         expect(await screen.findByText(ru.contactsEmpty)).toBeInTheDocument();
     });
 
-    it("shows the incomplete onboarding gate", async () => {
+    it("shows the incomplete onboarding gate without rights when no account", async () => {
         const fetchImpl = mockFetch([
-            { path: "/api/v1/me", body: { ...meDone, onboarding_step: "age" } },
+            {
+                path: "/api/v1/me",
+                body: { ...meDone, onboarding_step: "age", account_exists: false },
+            },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
         expect(await screen.findByText(ru.gateIncomplete)).toBeInTheDocument();
         expect(screen.queryByText(ru.gateConsentExtra)).not.toBeInTheDocument();
+        expect(
+            screen.queryByRole("button", { name: ru.privacyExportAction }),
+        ).not.toBeInTheDocument();
+        expect(
+            screen.queryByRole("button", { name: ru.privacyDeleteAction }),
+        ).not.toBeInTheDocument();
     });
 
-    it("shows the consent gate with an extra line and closes", async () => {
+    it("shows export and delete on incomplete gate when account exists", async () => {
+        const fetchImpl = mockFetch([
+            {
+                path: "/api/v1/me",
+                body: { ...meDone, onboarding_step: "age", account_exists: true },
+            },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        expect(await screen.findByText(ru.gateIncomplete)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: ru.privacyExportAction })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: ru.privacyDeleteAction })).toBeInTheDocument();
+    });
+
+    it("shows the consent gate with rights actions and closes", async () => {
         const fetchImpl = mockFetch([
             { path: "/api/v1/me", body: { ...meDone, onboarding_step: "consent" } },
         ]);
@@ -126,11 +149,13 @@ describe("App", () => {
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
         expect(await screen.findByText(ru.gateIncomplete)).toBeInTheDocument();
         expect(screen.getByText(ru.gateConsentExtra)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: ru.privacyExportAction })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: ru.privacyDeleteAction })).toBeInTheDocument();
         click(ru.close);
         expect(adapter.close).toHaveBeenCalled();
     });
 
-    it("shows the unauthorized gate on 401", async () => {
+    it("shows the unauthorized gate on 401 without rights actions", async () => {
         const fetchImpl = mockFetch([
             {
                 path: "/api/v1/me",
@@ -140,6 +165,12 @@ describe("App", () => {
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
         expect(await screen.findByText(ru.gateUnauthorized)).toBeInTheDocument();
+        expect(
+            screen.queryByRole("button", { name: ru.privacyExportAction }),
+        ).not.toBeInTheDocument();
+        expect(
+            screen.queryByRole("button", { name: ru.privacyDeleteAction }),
+        ).not.toBeInTheDocument();
     });
 
     it("shows consent gate when /me returns consent_required", async () => {
@@ -153,6 +184,34 @@ describe("App", () => {
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
         expect(await screen.findByText(ru.gateIncomplete)).toBeInTheDocument();
         expect(screen.getByText(ru.gateConsentExtra)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: ru.privacyExportAction })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: ru.privacyDeleteAction })).toBeInTheDocument();
+    });
+
+    it("exports from consent gate and completes delete two-step to deleted screen", async () => {
+        const showConfirm = vi.fn(() => Promise.resolve(true));
+        const adapter = fakeAdapter({ showConfirm });
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: { ...meDone, onboarding_step: "consent" } },
+            {
+                method: "POST",
+                path: "/api/v1/me/export",
+                status: 202,
+                body: { delivered_to: "bot_chat" },
+            },
+            { method: "POST", path: "/api/v1/me/delete", status: 204, body: null },
+        ]);
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyExportAction }));
+        expect(await screen.findByText(ru.privacyExportDone)).toBeInTheDocument();
+        expect(adapter.hapticNotification).toHaveBeenCalledWith("success");
+
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
+        expect(showConfirm).toHaveBeenCalled();
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyDeleteForever }));
+        expect(await screen.findByText(ru.privacyDeleted)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.close }));
+        expect(adapter.close).toHaveBeenCalled();
     });
 
     it("shows a generic me error with retry", async () => {

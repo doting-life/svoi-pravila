@@ -50,6 +50,7 @@ const meDone = {
     consent_kind: null,
     consent_version: null,
     active_contact_id: "c1",
+    account_exists: true,
     max_contacts: 20,
     max_open_rules: 50,
     display_timezone: "Europe/Moscow",
@@ -144,7 +145,11 @@ async function mockApi(page, mode) {
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
-                body: JSON.stringify({ ...meDone, onboarding_step: "age" }),
+                body: JSON.stringify({
+                    ...meDone,
+                    onboarding_step: "age",
+                    account_exists: false,
+                }),
             });
             return;
         }
@@ -152,7 +157,11 @@ async function mockApi(page, mode) {
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
-                body: JSON.stringify({ ...meDone, onboarding_step: "consent" }),
+                body: JSON.stringify({
+                    ...meDone,
+                    onboarding_step: "consent",
+                    account_exists: true,
+                }),
             });
             return;
         }
@@ -234,6 +243,8 @@ async function captureScheme(browser, baseUrl, scheme) {
     await mockApi(consent, "gate-consent");
     await consent.goto(baseUrl, { waitUntil: "networkidle" });
     await consent.waitForSelector("text=Нужно подтвердить согласия");
+    await consent.waitForSelector("text=Выгрузить данные");
+    await consent.waitForSelector("text=Удалить аккаунт");
     await shot(consent, `${scheme}-gate-consent`);
     await consent.close();
 

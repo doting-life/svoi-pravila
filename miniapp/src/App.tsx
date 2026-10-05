@@ -59,7 +59,14 @@ function MiniappShell({
     }, [forceConsentGate, me, nav, telegram]);
 
     if (forceConsentGate) {
-        return <GateScreen kind="consent" telegram={telegram} />;
+        return (
+            <GateScreen
+                kind="consent"
+                telegram={telegram}
+                showRightsActions
+                onAccountDeleted={onAccountDeleted}
+            />
+        );
     }
 
     if (me.status === "loading") {
@@ -71,16 +78,27 @@ function MiniappShell({
             return <GateScreen kind="unauthorized" telegram={telegram} />;
         }
         if (me.error.code === "consent_required") {
-            return <GateScreen kind="consent" telegram={telegram} />;
+            return (
+                <GateScreen
+                    kind="consent"
+                    telegram={telegram}
+                    showRightsActions
+                    onAccountDeleted={onAccountDeleted}
+                />
+            );
         }
         return <ErrorView message={me.error.message} onRetry={me.refetch} />;
     }
 
     if (me.data.onboarding_step !== "done") {
+        const incomplete = me.data.onboarding_step === "age";
+        const showRightsActions = incomplete ? me.data.account_exists : true;
         return (
             <GateScreen
                 kind={me.data.onboarding_step === "consent" ? "consent" : "incomplete"}
                 telegram={telegram}
+                showRightsActions={showRightsActions}
+                onAccountDeleted={showRightsActions ? onAccountDeleted : undefined}
             />
         );
     }

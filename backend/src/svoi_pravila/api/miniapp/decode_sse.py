@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import AsyncGenerator, Mapping
 from dataclasses import dataclass
@@ -61,21 +60,6 @@ def format_sse(event: str, data: Mapping[str, Any] | list[Any] | None = None) ->
     return f"event: {event}\ndata: {payload}\n\n"
 
 
-def _error_code_for(exc: BaseException) -> MiniappErrorCode | None:
-    mapping: tuple[tuple[type[BaseException], MiniappErrorCode], ...] = (
-        (IncomingTextTooShort, MiniappErrorCode.TEXT_TOO_SHORT),
-        (IncomingTextTooLong, MiniappErrorCode.TEXT_TOO_LONG),
-        (ScenarioQuotaExceeded, MiniappErrorCode.QUOTA_EXCEEDED),
-        (ScenarioBusy, MiniappErrorCode.BUSY),
-        (GenerationUnavailable, MiniappErrorCode.GENERATION_UNAVAILABLE),
-        (InvalidGenerationOutput, MiniappErrorCode.INVALID_OUTPUT),
-    )
-    for error_type, code in mapping:
-        if isinstance(exc, error_type):
-            return code
-    return None
-
-
 def _completed_payload(
     completed: DecodeCompleted,
     *,
@@ -115,6 +99,25 @@ async def _drain_use_case(agen: AsyncGenerator[object]) -> None:
         return
 
 
+_MAPPED_DECODE_ERRORS: tuple[tuple[type[BaseException], MiniappErrorCode], ...] = (
+    (IncomingTextTooShort, MiniappErrorCode.TEXT_TOO_SHORT),
+    (IncomingTextTooLong, MiniappErrorCode.TEXT_TOO_LONG),
+    (ScenarioQuotaExceeded, MiniappErrorCode.QUOTA_EXCEEDED),
+    (ScenarioBusy, MiniappErrorCode.BUSY),
+    (GenerationUnavailable, MiniappErrorCode.GENERATION_UNAVAILABLE),
+    (InvalidGenerationOutput, MiniappErrorCode.INVALID_OUTPUT),
+)
+
+
+def _sse_error_for(exc: BaseException) -> str:
+    """Map a known application error to an SSE error frame."""
+    for error_type, code in _MAPPED_DECODE_ERRORS:
+        if isinstance(exc, error_type):
+            return format_sse("error", {"code": code.value})
+    msg = f"unmapped decode error: {type(exc).__name__}"
+    raise TypeError(msg)
+
+
 async def iter_decode_sse(
     ports: DecodeStreamPorts,
     *,
@@ -130,6 +133,7 @@ async def iter_decode_sse(
             surface=UsageSurface.MINIAPP,
         )
     )
+    mapped = tuple(error_type for error_type, _code in _MAPPED_DECODE_ERRORS)
     try:
         while True:
             try:
@@ -179,12 +183,7 @@ async def iter_decode_sse(
             return
     except GenerationRefusedByProvider:
         yield format_sse("refused")
-    except BaseException as exc:
-        if isinstance(exc, (asyncio.CancelledError, GeneratorExit)):
-            raise
-        code = _error_code_for(exc)
-        if code is None:
-            raise
-        yield format_sse("error", {"code": code.value})
+    except mapped as exc:
+        yield _sse_error_for(exc)
     finally:
         await agen.aclose()

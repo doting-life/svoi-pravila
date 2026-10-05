@@ -11,14 +11,12 @@ from svoi_pravila.api.miniapp.deps import (
     MiniappAuthContext,
     MiniappDeps,
     authenticate_miniapp,
-    enforce_body_limit,
-    map_access_error,
+    bind_miniapp_auth,
     no_store,
     parse_path_uuid,
     require_actor,
 )
-from svoi_pravila.api.miniapp.errors import ErrorBody, MiniappErrorCode
-from svoi_pravila.api.miniapp.http import MiniappHttpError
+from svoi_pravila.api.miniapp.errors import ErrorBody
 from svoi_pravila.api.miniapp.schemas import (
     AcceptSuggestionResponse,
     ContactItem,
@@ -33,12 +31,7 @@ from svoi_pravila.api.miniapp.schemas import (
     SuggestionItem,
     SuggestionListResponse,
 )
-from svoi_pravila.application.errors import (
-    AccessNotGranted,
-    ContactLimitReached,
-    NotFound,
-    OpenRuleLimitReached,
-)
+from svoi_pravila.application.rule_view import RuleListItemView, project_rules_for_list
 from svoi_pravila.application.use_cases.accept_suggestion import (
     AcceptSuggestion,
     AcceptSuggestionCommand,
@@ -70,7 +63,6 @@ from svoi_pravila.application.use_cases.set_active_contact import (
 )
 from svoi_pravila.domain.contact import MAX_CONTACTS_PER_USER, Contact
 from svoi_pravila.domain.enums import RelationshipKind, RuleCategory
-from svoi_pravila.domain.errors import InvalidTransitionError, InvalidValueError
 from svoi_pravila.domain.ids import ContactId, RuleId, RuleSuggestionId
 from svoi_pravila.domain.rules import MAX_OPEN_RULES_PER_SCOPE, PairScope, Rule
 from svoi_pravila.domain.text import ContactLabel, RuleText
@@ -116,24 +108,52 @@ def _contact_item(contact: Contact) -> ContactItem:
     )
 
 
+def _rule_item_from_view(view: RuleListItemView) -> RuleItem:
+    return RuleItem.model_validate(
+        {
+            "id": str(view.rule_id),
+            "category": view.category.value,
+            "status": view.status.value,
+            "text": view.text.value,
+            "shared": view.shared,
+            "created_at": view.created_at,
+            "effective_since": view.effective_since,
+            "has_pending_edit": view.has_pending_edit,
+        }
+    )
+
+
 def _rule_item(rule: Rule) -> RuleItem:
-    latest = rule.revisions[-1]
+    """Map a rule for mutation responses (list projection, or closed-status fallback)."""
+    views = project_rules_for_list((rule,))
+    if views:
+        return _rule_item_from_view(views[0])
     shared = isinstance(rule.scope, PairScope)
+    effective = rule.effective_revision
+    if effective is not None:
+        text = effective.text
+        effective_since = effective.effective_since
+    else:
+        latest = rule.revisions[-1]
+        text = latest.text
+        effective_since = latest.effective_since
     return RuleItem.model_validate(
         {
             "id": str(rule.id),
             "category": rule.category.value,
             "status": rule.status.value,
-            "text": latest.text.value,
+            "text": text.value,
             "shared": shared,
             "created_at": rule.created_at,
-            "effective_since": latest.effective_since,
+            "effective_since": effective_since,
+            "has_pending_edit": False,
         }
     )
 
 
 def build_miniapp_router(bindings: MiniappRouterBindings) -> APIRouter:
     """Create `/api/v1` routes bound to composition-root use cases."""
+    bind_miniapp_auth(bindings.auth)
     router = APIRouter(prefix="/api/v1", tags=["miniapp"])
     _register_routes(router, bindings)
     return router
@@ -159,7 +179,6 @@ def _register_me(router: APIRouter, bindings: MiniappRouterBindings) -> None:
     async def get_me(
         response: Response,
         auth: Annotated[MiniappAuthContext, Depends(authenticate_miniapp)],
-        _: Annotated[None, Depends(enforce_body_limit)],
     ) -> MeResponse:
         no_store(response)
         step_result = await bindings.auth.get_onboarding_step.execute(
@@ -197,15 +216,9 @@ def _register_contacts(router: APIRouter, bindings: MiniappRouterBindings) -> No
     async def list_contacts(
         response: Response,
         actor: Annotated[User, Depends(require_actor)],
-        _: Annotated[None, Depends(enforce_body_limit)],
     ) -> ContactListResponse:
         no_store(response)
-        try:
-            result = await bindings.list_contacts.execute(ListContactsCommand(actor_id=actor.id))
-        except AccessNotGranted as exc:
-            raise map_access_error(exc) from exc
-        except NotFound as exc:
-            raise MiniappHttpError(MiniappErrorCode.NOT_FOUND, 404) from exc
+        result = await bindings.list_contacts.execute(ListContactsCommand(actor_id=actor.id))
         return ContactListResponse(contacts=[_contact_item(c) for c in result.contacts])
 
     @router.post(
@@ -219,27 +232,15 @@ def _register_contacts(router: APIRouter, bindings: MiniappRouterBindings) -> No
         body: CreateContactRequest,
         response: Response,
         actor: Annotated[User, Depends(require_actor)],
-        _: Annotated[None, Depends(enforce_body_limit)],
     ) -> ContactItem:
         no_store(response)
-        try:
-            label = ContactLabel(body.label)
-            relationship = RelationshipKind(body.relationship)
-            result = await bindings.create_contact.execute(
-                CreateContactCommand(
-                    actor_id=actor.id,
-                    label=label,
-                    relationship=relationship,
-                )
+        result = await bindings.create_contact.execute(
+            CreateContactCommand(
+                actor_id=actor.id,
+                label=ContactLabel(body.label),
+                relationship=RelationshipKind(body.relationship),
             )
-        except InvalidValueError as exc:
-            raise MiniappHttpError(MiniappErrorCode.VALIDATION_ERROR, 422) from exc
-        except ContactLimitReached as exc:
-            raise MiniappHttpError(MiniappErrorCode.CONTACT_LIMIT, 409) from exc
-        except AccessNotGranted as exc:
-            raise map_access_error(exc) from exc
-        except NotFound as exc:
-            raise MiniappHttpError(MiniappErrorCode.NOT_FOUND, 404) from exc
+        )
         return _contact_item(result.contact)
 
     @router.patch(
@@ -253,24 +254,16 @@ def _register_contacts(router: APIRouter, bindings: MiniappRouterBindings) -> No
         body: RenameContactRequest,
         response: Response,
         actor: Annotated[User, Depends(require_actor)],
-        _: Annotated[None, Depends(enforce_body_limit)],
     ) -> ContactItem:
         no_store(response)
         cid = ContactId(parse_path_uuid(contact_id))
-        try:
-            result = await bindings.rename_contact.execute(
-                RenameContactCommand(
-                    actor_id=actor.id,
-                    contact_id=cid,
-                    label=ContactLabel(body.label),
-                )
+        result = await bindings.rename_contact.execute(
+            RenameContactCommand(
+                actor_id=actor.id,
+                contact_id=cid,
+                label=ContactLabel(body.label),
             )
-        except InvalidValueError as exc:
-            raise MiniappHttpError(MiniappErrorCode.VALIDATION_ERROR, 422) from exc
-        except AccessNotGranted as exc:
-            raise map_access_error(exc) from exc
-        except NotFound as exc:
-            raise MiniappHttpError(MiniappErrorCode.NOT_FOUND, 404) from exc
+        )
         return _contact_item(result.contact)
 
     @router.post(
@@ -283,18 +276,12 @@ def _register_contacts(router: APIRouter, bindings: MiniappRouterBindings) -> No
         contact_id: str,
         response: Response,
         actor: Annotated[User, Depends(require_actor)],
-        _: Annotated[None, Depends(enforce_body_limit)],
     ) -> Response:
         no_store(response)
         cid = ContactId(parse_path_uuid(contact_id))
-        try:
-            await bindings.set_active_contact.execute(
-                SetActiveContactCommand(actor_id=actor.id, contact_id=cid)
-            )
-        except AccessNotGranted as exc:
-            raise map_access_error(exc) from exc
-        except NotFound as exc:
-            raise MiniappHttpError(MiniappErrorCode.NOT_FOUND, 404) from exc
+        await bindings.set_active_contact.execute(
+            SetActiveContactCommand(actor_id=actor.id, contact_id=cid)
+        )
         return Response(
             status_code=status.HTTP_204_NO_CONTENT,
             headers={"Cache-Control": "no-store"},
@@ -314,19 +301,14 @@ def _register_rules(router: APIRouter, bindings: MiniappRouterBindings) -> None:
         contact_id: str,
         response: Response,
         actor: Annotated[User, Depends(require_actor)],
-        _: Annotated[None, Depends(enforce_body_limit)],
     ) -> RuleListResponse:
         no_store(response)
         cid = ContactId(parse_path_uuid(contact_id))
-        try:
-            result = await bindings.list_rules.execute(
-                ListRulesCommand(actor_id=actor.id, contact_id=cid)
-            )
-        except AccessNotGranted as exc:
-            raise map_access_error(exc) from exc
-        except NotFound as exc:
-            raise MiniappHttpError(MiniappErrorCode.NOT_FOUND, 404) from exc
-        return RuleListResponse(rules=[_rule_item(r) for r in result.rules])
+        result = await bindings.list_rules.execute(
+            ListRulesCommand(actor_id=actor.id, contact_id=cid)
+        )
+        views = project_rules_for_list(result.rules)
+        return RuleListResponse(rules=[_rule_item_from_view(view) for view in views])
 
     @router.post(
         "/contacts/{contact_id}/rules",
@@ -340,28 +322,18 @@ def _register_rules(router: APIRouter, bindings: MiniappRouterBindings) -> None:
         body: CreateRuleRequest,
         response: Response,
         actor: Annotated[User, Depends(require_actor)],
-        _: Annotated[None, Depends(enforce_body_limit)],
     ) -> RuleItem:
         no_store(response)
         cid = ContactId(parse_path_uuid(contact_id))
-        try:
-            result = await bindings.propose_rule.execute(
-                ProposeRuleCommand(
-                    actor_id=actor.id,
-                    contact_id=cid,
-                    category=RuleCategory(body.category),
-                    text=RuleText(body.text),
-                    shared=False,
-                )
+        result = await bindings.propose_rule.execute(
+            ProposeRuleCommand(
+                actor_id=actor.id,
+                contact_id=cid,
+                category=RuleCategory(body.category),
+                text=RuleText(body.text),
+                shared=False,
             )
-        except InvalidValueError as exc:
-            raise MiniappHttpError(MiniappErrorCode.VALIDATION_ERROR, 422) from exc
-        except OpenRuleLimitReached as exc:
-            raise MiniappHttpError(MiniappErrorCode.OPEN_RULE_LIMIT, 409) from exc
-        except AccessNotGranted as exc:
-            raise map_access_error(exc) from exc
-        except NotFound as exc:
-            raise MiniappHttpError(MiniappErrorCode.NOT_FOUND, 404) from exc
+        )
         return _rule_item(result.rule)
 
     @router.post(
@@ -374,20 +346,12 @@ def _register_rules(router: APIRouter, bindings: MiniappRouterBindings) -> None:
         rule_id: str,
         response: Response,
         actor: Annotated[User, Depends(require_actor)],
-        _: Annotated[None, Depends(enforce_body_limit)],
     ) -> RuleItem:
         no_store(response)
         rid = RuleId(parse_path_uuid(rule_id))
-        try:
-            result = await bindings.archive_rule.execute(
-                ArchiveRuleCommand(actor_id=actor.id, rule_id=rid)
-            )
-        except InvalidTransitionError as exc:
-            raise MiniappHttpError(MiniappErrorCode.INVALID_TRANSITION, 409) from exc
-        except AccessNotGranted as exc:
-            raise map_access_error(exc) from exc
-        except NotFound as exc:
-            raise MiniappHttpError(MiniappErrorCode.NOT_FOUND, 404) from exc
+        result = await bindings.archive_rule.execute(
+            ArchiveRuleCommand(actor_id=actor.id, rule_id=rid)
+        )
         return _rule_item(result.rule)
 
 
@@ -404,18 +368,12 @@ def _register_suggestions(router: APIRouter, bindings: MiniappRouterBindings) ->
         contact_id: str,
         response: Response,
         actor: Annotated[User, Depends(require_actor)],
-        _: Annotated[None, Depends(enforce_body_limit)],
     ) -> SuggestionListResponse:
         no_store(response)
         cid = ContactId(parse_path_uuid(contact_id))
-        try:
-            result = await bindings.list_suggestions.execute(
-                ListSuggestionsCommand(actor_id=actor.id, contact_id=cid)
-            )
-        except AccessNotGranted as exc:
-            raise map_access_error(exc) from exc
-        except NotFound as exc:
-            raise MiniappHttpError(MiniappErrorCode.NOT_FOUND, 404) from exc
+        result = await bindings.list_suggestions.execute(
+            ListSuggestionsCommand(actor_id=actor.id, contact_id=cid)
+        )
         items = [
             SuggestionItem.model_validate(
                 {
@@ -441,18 +399,12 @@ def _register_suggestions(router: APIRouter, bindings: MiniappRouterBindings) ->
         suggestion_id: str,
         response: Response,
         actor: Annotated[User, Depends(require_actor)],
-        _: Annotated[None, Depends(enforce_body_limit)],
     ) -> AcceptSuggestionResponse:
         no_store(response)
         sid = RuleSuggestionId(parse_path_uuid(suggestion_id))
-        try:
-            result = await bindings.accept_suggestion.execute(
-                AcceptSuggestionCommand(actor_id=actor.id, suggestion_id=sid)
-            )
-        except AccessNotGranted as exc:
-            raise map_access_error(exc) from exc
-        except NotFound as exc:
-            raise MiniappHttpError(MiniappErrorCode.NOT_FOUND, 404) from exc
+        result = await bindings.accept_suggestion.execute(
+            AcceptSuggestionCommand(actor_id=actor.id, suggestion_id=sid)
+        )
         suggestion_id_out = str(result.suggestion.id) if result.suggestion is not None else str(sid)
         return AcceptSuggestionResponse.model_validate(
             {
@@ -472,18 +424,12 @@ def _register_suggestions(router: APIRouter, bindings: MiniappRouterBindings) ->
         suggestion_id: str,
         response: Response,
         actor: Annotated[User, Depends(require_actor)],
-        _: Annotated[None, Depends(enforce_body_limit)],
     ) -> DismissSuggestionResponse:
         no_store(response)
         sid = RuleSuggestionId(parse_path_uuid(suggestion_id))
-        try:
-            result = await bindings.dismiss_suggestion.execute(
-                DismissSuggestionCommand(actor_id=actor.id, suggestion_id=sid)
-            )
-        except AccessNotGranted as exc:
-            raise map_access_error(exc) from exc
-        except NotFound as exc:
-            raise MiniappHttpError(MiniappErrorCode.NOT_FOUND, 404) from exc
+        result = await bindings.dismiss_suggestion.execute(
+            DismissSuggestionCommand(actor_id=actor.id, suggestion_id=sid)
+        )
         suggestion_id_out = str(result.suggestion.id) if result.suggestion is not None else str(sid)
         return DismissSuggestionResponse.model_validate(
             {

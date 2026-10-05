@@ -333,6 +333,11 @@
             ],
             "title": "Effective Since"
           },
+          "has_pending_edit": {
+            "default": false,
+            "title": "Has Pending Edit",
+            "type": "boolean"
+          },
           "id": {
             "title": "Id",
             "type": "string"

@@ -58,6 +58,7 @@ class RuleItem(BaseModel):
     shared: bool
     created_at: datetime
     effective_since: datetime | None = None
+    has_pending_edit: bool = False
 
 
 class RuleListResponse(BaseModel):

@@ -342,6 +342,11 @@ export interface components {
             created_at: string;
             /** Effective Since */
             effective_since?: string | null;
+            /**
+             * Has Pending Edit
+             * @default false
+             */
+            has_pending_edit: boolean;
             /** Id */
             id: string;
             /** Shared */

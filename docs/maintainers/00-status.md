@@ -4,7 +4,8 @@
 
 ## Текущее
 - Дата: 2026-10-04 · Спринт 0 (Фундамент)
-- Активная задача: **0016.1 — приглашение второго и общий свод в боте** · ветка `task/0016-1-pair-bot` · GigaChat 0 токенов; старт после мержа 0015.3
+- Активная задача: **0016.1-a — типизированные ошибки уведомлений, покрытие обработчиков** · ветка `task/0016-1-pair-bot` · GigaChat 0 токенов
+- В `master`: 0015.3 (`99d985f`, squash #18)
 - В `master`: 0015.2 (`80f3261`, squash #17)
 - В `master`: 0015.1 (`a60f168`, squash #16)
 - В `master`: 0014 (`e8f6539`, squash #15)
@@ -93,7 +94,8 @@
 | 0015.2-b | Export disclosure from one source | `task/0015-2-miniapp-privacy` | проверен 05.10 | **ACCEPT** (бэкенд 931, мини-приложение 59 тестов); в 0015.3 часть 0: контракт import-linter «`privacy` — лист, приложение его не импортирует» |
 | 0015.3 | Mini-app decode: SSE, insert, make-rule | `task/0015-3-miniapp-decode` | проверен 05.10 | **CHANGES** → 0015.3-a: поток, отмена, тестовая точка (только TEST) приняты; кризисный текст продублирован в `ru.ts` вместо каталога сервера; цитата правила расходится с ботом («с» вместо «от», без кавычек); нет теста, что тестовая точка отсутствует вне TEST; лишний `miniapp/.tool-versions` |
 | 0015.3-a | Crisis and citation copy from one source | `task/0015-3-miniapp-decode` | проверен 05.10 | **ACCEPT** (бэкенд 952, мини-приложение 87 тестов); 0015 закрыт целиком. CTO: при проверке оставил `.git/index.lock` в папке владельца — удалён в той же сессии |
-| 0016.1 | Pair invite and shared rules in the bot | `task/0016-1-pair-bot` | выдан | — |
+| 0016.1 | Pair invite and shared rules in the bot | `task/0016-1-pair-bot` | проверен 05.10 | **CHANGES** → 0016.1-a: `except Exception` в слое приложения (`_pair_notify`) и 4× в адаптере уведомлений; покрытие обработчиков ниже 95 % (`contacts.py` 82 %, `onboarding.py` 87 %, `rules.py` 92 %), в отчёте — среднее по пакету; отзыв приглашения сделан удалением без отметки в отклонениях |
+| 0016.1-a | Typed notifier errors; handler coverage | `task/0016-1-pair-bot` | выдан | — |
 | 0006.1-b | Image gate: Debian security updates, base digest pin, Dependabot | `task/0006-telegram-channel` | проверен 04.10 | **ACCEPT** (Trivy: 21 CVE → 0) |
 
 ## Решения

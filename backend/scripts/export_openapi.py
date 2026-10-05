@@ -13,21 +13,26 @@ from svoi_pravila.api.miniapp import (
     MiniappRouterBindings,
     build_miniapp_router,
 )
+from svoi_pravila.application.ports.bot_username import BotUsername
 from svoi_pravila.application.ports.prepared_results import PreparedResults
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.rate_limiter import RateLimiter
 from svoi_pravila.application.ports.rule_sources import RuleSources
 from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
+from svoi_pravila.application.use_cases.approve_rule import ApproveRule
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.create_contact import CreateContact
+from svoi_pravila.application.use_cases.create_invite import CreateInvite
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming
 from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
 from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggestion
+from svoi_pravila.application.use_cases.leave_pair import LeavePair
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
 from svoi_pravila.application.use_cases.list_rules import ListRules
 from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
+from svoi_pravila.application.use_cases.reject_pending_rule import RejectPendingRule
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.request_my_data_export import RequestMyDataExport
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
@@ -48,9 +53,13 @@ def _openapi_bindings() -> MiniappRouterBindings:
         create_contact=cast(CreateContact, _stub()),
         rename_contact=cast(RenameContact, _stub()),
         set_active_contact=cast(SetActiveContact, _stub()),
+        create_invite=cast(CreateInvite, _stub()),
+        leave_pair=cast(LeavePair, _stub()),
         list_rules=cast(ListRules, _stub()),
         propose_rule=cast(ProposeRule, _stub()),
         archive_rule=cast(ArchiveRule, _stub()),
+        approve_rule=cast(ApproveRule, _stub()),
+        reject_pending_rule=cast(RejectPendingRule, _stub()),
         list_suggestions=cast(ListSuggestions, _stub()),
         accept_suggestion=cast(AcceptSuggestion, _stub()),
         dismiss_suggestion=cast(DismissSuggestion, _stub()),
@@ -64,6 +73,7 @@ def _openapi_bindings() -> MiniappRouterBindings:
         prepared_results=cast(PreparedResults, _stub()),
         rule_sources=cast(RuleSources, _stub()),
         pseudonymizer=cast(Pseudonymizer, _stub()),
+        bot_username=cast(BotUsername, _stub()),
     )
 
 

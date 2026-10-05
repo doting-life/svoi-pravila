@@ -31,6 +31,7 @@ class PrivacyCatalog:
     export: PrivacyExportTexts
     revoke: PrivacyActionTexts
     delete: PrivacyActionTexts
+    leave_pair: PrivacyActionTexts
 
 
 def load_privacy_catalog() -> PrivacyCatalog:
@@ -44,6 +45,7 @@ def load_privacy_catalog() -> PrivacyCatalog:
         export=_load_export(data.get("export")),
         revoke=_load_action(data.get("revoke"), label="revoke"),
         delete=_load_action(data.get("delete"), label="delete"),
+        leave_pair=_load_action(data.get("leave_pair"), label="leave_pair"),
     )
 
 

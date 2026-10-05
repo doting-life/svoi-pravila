@@ -11,15 +11,10 @@ export type ApiClient = ReturnType<typeof createClient<paths>>;
 export type CreateApiClientOptions = {
     readonly initData: string;
     readonly fetch?: typeof fetch;
-    /** Override for tests; defaults to same-origin `/api`. */
-    readonly baseUrl?: string;
 };
 
-function defaultBaseUrl(): string {
-    if (typeof window !== "undefined") {
-        return `${window.location.origin}${API_BASE_PATH}`;
-    }
-    return API_BASE_PATH;
+function sameOriginApiBaseUrl(): string {
+    return `${window.location.origin}${API_BASE_PATH}`;
 }
 
 function authMiddleware(initData: string): Middleware {
@@ -34,7 +29,7 @@ function authMiddleware(initData: string): Middleware {
 
 /** Same-origin OpenAPI client; attaches `Authorization: tma <initData>` on every request. */
 export function createApiClient(options: CreateApiClientOptions): ApiClient {
-    const baseUrl = options.baseUrl ?? defaultBaseUrl();
+    const baseUrl = sameOriginApiBaseUrl();
     const client =
         options.fetch === undefined
             ? createClient<paths>({ baseUrl })

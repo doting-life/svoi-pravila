@@ -646,10 +646,7 @@ describe("App", () => {
                 }
                 if (exportCalls === 2) {
                     return Promise.resolve(
-                        jsonResponse(
-                            { code: "bot_chat_unavailable", message: "start bot" },
-                            409,
-                        ),
+                        jsonResponse({ code: "bot_chat_unavailable", message: "start bot" }, 409),
                     );
                 }
                 return Promise.resolve(
@@ -718,7 +715,9 @@ describe("App", () => {
 
         showConfirm.mockResolvedValueOnce(true);
         fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
-        expect(await screen.findByRole("button", { name: ru.privacyDeleteForever })).toBeInTheDocument();
+        expect(
+            await screen.findByRole("button", { name: ru.privacyDeleteForever }),
+        ).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: ru.cancel }));
         expect(await screen.findByText(ru.privacyExportBlurb)).toBeInTheDocument();
 

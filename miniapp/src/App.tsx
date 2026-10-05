@@ -198,7 +198,11 @@ export function App({ adapter, fetchImpl }: AppProps) {
                 ) : accountDeleted ? (
                     <DeletedScreen telegram={telegram} />
                 ) : fetchImpl !== undefined ? (
-                    <ApiProvider key={sessionKey} initData={telegram.initData} fetchImpl={fetchImpl}>
+                    <ApiProvider
+                        key={sessionKey}
+                        initData={telegram.initData}
+                        fetchImpl={fetchImpl}
+                    >
                         <MiniappShell telegram={telegram} onAccountDeleted={onAccountDeleted} />
                     </ApiProvider>
                 ) : (

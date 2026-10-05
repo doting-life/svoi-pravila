@@ -1118,8 +1118,8 @@ describe("App", () => {
             ).toBe(true);
         });
 
-        fireEvent.click(screen.getByRole("button", { name: ru.contactAddRule }));
-        expect(screen.getByText(ru.addRuleScope)).toBeInTheDocument();
+        fireEvent.click(await screen.findByRole("button", { name: ru.contactAddRule }));
+        expect(await screen.findByText(ru.addRuleScope)).toBeInTheDocument();
         fireEvent.click(screen.getByLabelText(ru.addRuleScopeShared));
         fireEvent.change(screen.getByRole("textbox"), { target: { value: "общее новое" } });
         fireEvent.click(screen.getByRole("button", { name: ru.addRuleSubmit }));
@@ -1135,9 +1135,9 @@ describe("App", () => {
             ).toBe(true);
         });
 
-        expect(
-            await screen.findByRole("button", { name: ru.contactLeavePair }),
-        ).toBeInTheDocument();
+        await waitFor(() => {
+            expect(screen.getByRole("button", { name: ru.contactLeavePair })).toBeEnabled();
+        });
         fireEvent.click(screen.getByRole("button", { name: ru.contactLeavePair }));
         await waitFor(() => {
             expect(adapter.showConfirm).toHaveBeenCalledWith("TEST_LEAVE_PAIR_CONFIRM");
@@ -1160,7 +1160,10 @@ describe("App", () => {
         ]);
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
         fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
-        fireEvent.click(await screen.findByRole("button", { name: ru.contactLeavePair }));
+        await waitFor(() => {
+            expect(screen.getByRole("button", { name: ru.contactLeavePair })).toBeEnabled();
+        });
+        fireEvent.click(screen.getByRole("button", { name: ru.contactLeavePair }));
         await waitFor(() => {
             expect(adapter.showConfirm).toHaveBeenCalled();
         });

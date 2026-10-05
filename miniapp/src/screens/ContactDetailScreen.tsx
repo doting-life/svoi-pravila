@@ -330,6 +330,7 @@ export function ContactDetailScreen({
                     <button
                         type="button"
                         className="btn btn-danger"
+                        disabled={privacyTexts.status !== "success"}
                         onClick={() => {
                             void leave();
                         }}

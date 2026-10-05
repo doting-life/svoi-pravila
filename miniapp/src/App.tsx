@@ -128,6 +128,7 @@ function MiniappShell({
                             contactId: contact.id,
                             label: contact.label,
                             relationship: contact.relationship,
+                            paired: contact.paired,
                         }),
                     );
                 }}
@@ -157,6 +158,7 @@ function MiniappShell({
                         pushScreen(current, {
                             name: "addRule",
                             contactId,
+                            paired: false,
                             initialCategory: category,
                             initialText: text,
                         }),
@@ -171,14 +173,33 @@ function MiniappShell({
                 contactId={screen.contactId}
                 label={screen.label}
                 relationship={screen.relationship}
+                paired={screen.paired}
                 displayTimezone={me.data.display_timezone}
                 telegram={telegram}
                 onAddRule={() => {
                     setNav((current) =>
-                        pushScreen(current, { name: "addRule", contactId: screen.contactId }),
+                        pushScreen(current, {
+                            name: "addRule",
+                            contactId: screen.contactId,
+                            paired: screen.paired,
+                        }),
                     );
                 }}
                 onRulesChanged={me.refetch}
+                onPairingChanged={(paired) => {
+                    setNav((current) => {
+                        const top = currentScreen(current);
+                        if (top.name !== "contactDetail") {
+                            return current;
+                        }
+                        return {
+                            stack: [
+                                ...current.stack.slice(0, -1),
+                                { ...top, paired },
+                            ],
+                        };
+                    });
+                }}
             />
         );
     }
@@ -190,6 +211,7 @@ function MiniappShell({
         return (
             <AddRuleScreen
                 contactId={screen.contactId}
+                paired={screen.paired}
                 telegram={telegram}
                 {...(initialCategory !== undefined ? { initialCategory } : {})}
                 {...(screen.initialText !== undefined ? { initialText: screen.initialText } : {})}

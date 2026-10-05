@@ -26,6 +26,8 @@ export function fakeAdapter(overrides: Partial<TelegramAdapter> = {}): TelegramA
         expand: vi.fn(),
         close: vi.fn(),
         showConfirm: vi.fn(() => Promise.resolve(true)),
+        openTelegramLink: vi.fn(),
+        copyText: vi.fn(() => Promise.resolve(true)),
         hapticNotification: vi.fn(),
         switchInlineQuery: vi.fn(),
         onColorSchemeChanged: () => () => undefined,
@@ -70,6 +72,10 @@ export const privacyTexts = {
     delete: {
         description: "TEST_DELETE_DESCRIPTION",
         confirm: "TEST_DELETE_CONFIRM",
+    },
+    leave_pair: {
+        description: "TEST_LEAVE_PAIR_DESCRIPTION",
+        confirm: "TEST_LEAVE_PAIR_CONFIRM",
     },
 } as const;
 

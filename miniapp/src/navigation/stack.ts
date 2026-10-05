@@ -5,10 +5,12 @@ export type Screen =
           readonly contactId: string;
           readonly label: string;
           readonly relationship: string;
+          readonly paired: boolean;
       }
     | {
           readonly name: "addRule";
           readonly contactId: string;
+          readonly paired: boolean;
           readonly initialCategory?: string;
           readonly initialText?: string;
       }

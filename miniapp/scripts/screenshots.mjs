@@ -61,7 +61,16 @@ const contact = {
     label: "Аня",
     relationship: "partner",
     pair_id: null,
+    paired: false,
     created_at: "2026-10-01T12:00:00.000Z",
+};
+
+const pairedContact = {
+    ...contact,
+    id: "c2",
+    label: "Боря",
+    pair_id: "p1",
+    paired: true,
 };
 
 const rule = {
@@ -70,9 +79,22 @@ const rule = {
     status: "active",
     text: "не повышать голос",
     shared: false,
+    needs_my_approval: false,
     created_at: "2026-10-03T12:00:00.000Z",
     effective_since: "2026-10-03T12:00:00.000Z",
     has_pending_edit: true,
+};
+
+const sharedPending = {
+    id: "r2",
+    category: "apology",
+    status: "proposed",
+    text: "извиняться спокойно",
+    shared: true,
+    needs_my_approval: true,
+    created_at: "2026-10-04T12:00:00.000Z",
+    effective_since: null,
+    has_pending_edit: false,
 };
 
 const suggestion = {
@@ -108,6 +130,12 @@ const privacyTexts = {
             "Удаление сотрёт ваш аккаунт, согласия, контакты и ваши правила. Общие правила, которые написал партнёр, останутся у него. Это нельзя отменить.",
         confirm:
             "Удаление сотрёт ваш аккаунт, согласия, контакты и ваши правила. Общие правила, которые написал партнёр, останутся у него. Это нельзя отменить.",
+    },
+    leave_pair: {
+        description:
+            "Выход из общего свода. Каждый сохранит только правила, сформулированные им; общий свод будет удалён.",
+        confirm:
+            "Выйти из общего свода? Каждый сохранит только правила, сформулированные им; общий свод будет удалён.",
     },
 };
 
@@ -217,18 +245,22 @@ async function mockApi(page, mode) {
             return;
         }
         if (path === "/api/v1/contacts") {
+            const contacts =
+                mode === "paired" ? [contact, pairedContact] : [contact];
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
-                body: JSON.stringify({ contacts: [contact] }),
+                body: JSON.stringify({ contacts }),
             });
             return;
         }
         if (path.endsWith("/rules")) {
+            const rules =
+                mode === "paired" ? [rule, sharedPending] : [rule];
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
-                body: JSON.stringify({ rules: [rule] }),
+                body: JSON.stringify({ rules }),
             });
             return;
         }
@@ -237,6 +269,17 @@ async function mockApi(page, mode) {
                 status: 200,
                 contentType: "application/json",
                 body: JSON.stringify({ suggestions: [suggestion] }),
+            });
+            return;
+        }
+        if (path.endsWith("/invite") && route.request().method() === "POST") {
+            await route.fulfill({
+                status: 201,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    link: "https://t.me/test_bot?start=inv_demo",
+                    expires_at: "2026-10-08T12:00:00.000Z",
+                }),
             });
             return;
         }
@@ -336,6 +379,29 @@ async function captureScheme(browser, baseUrl, scheme) {
     await app.waitForSelector("text=Новое правило");
     await shot(app, `${scheme}-add-rule`);
     await app.close();
+
+    const unpairedInvite = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await installTelegram(unpairedInvite, scheme);
+    await mockApi(unpairedInvite, "app");
+    await unpairedInvite.goto(baseUrl, { waitUntil: "networkidle" });
+    await unpairedInvite.getByRole("button", { name: /Аня/ }).click();
+    await unpairedInvite.waitForSelector("text=Пригласить в общий свод");
+    await unpairedInvite.getByRole("button", { name: "Пригласить в общий свод" }).click();
+    await unpairedInvite.waitForSelector("text=https://t.me/test_bot?start=inv_demo");
+    await shot(unpairedInvite, `${scheme}-contact-invite`);
+    await unpairedInvite.close();
+
+    const paired = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await installTelegram(paired, scheme);
+    await mockApi(paired, "paired");
+    await paired.goto(baseUrl, { waitUntil: "networkidle" });
+    await paired.getByRole("button", { name: /Боря/ }).click();
+    await paired.waitForSelector("text=Общий свод");
+    await paired.waitForSelector("text=Личные правила");
+    await paired.waitForSelector("text=Общие правила");
+    await paired.waitForSelector("text=Подтвердить");
+    await shot(paired, `${scheme}-contact-paired`);
+    await paired.close();
 
     const privacy = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await installTelegram(privacy, scheme);

@@ -20,11 +20,12 @@ describe("navigation stack", () => {
             contactId: "c1",
             label: "Аня",
             relationship: "partner",
+            paired: false,
         });
         expect(currentScreen(state).name).toBe("contactDetail");
         expect(canGoBack(state)).toBe(true);
 
-        state = pushScreen(state, { name: "addRule", contactId: "c1" });
+        state = pushScreen(state, { name: "addRule", contactId: "c1", paired: false });
         expect(currentScreen(state).name).toBe("addRule");
 
         state = popScreen(state);

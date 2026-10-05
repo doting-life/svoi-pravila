@@ -14,8 +14,11 @@ export function useRules(contactId: string): ResourceState<readonly Rule[]> & {
     createRule: (input: {
         category: RuleCategory;
         text: string;
+        shared?: boolean;
     }) => Promise<{ data?: Rule; error?: ApiError }>;
     archiveRule: (ruleId: string) => Promise<{ data?: Rule; error?: ApiError }>;
+    approveRule: (ruleId: string) => Promise<{ data?: Rule; error?: ApiError }>;
+    rejectRule: (ruleId: string) => Promise<{ data?: Rule; error?: ApiError }>;
 } {
     const client = useApiClient();
     const loader = useCallback(async () => {
@@ -31,10 +34,14 @@ export function useRules(contactId: string): ResourceState<readonly Rule[]> & {
     const { refetch, ...resource } = useAsyncResource(loader, `rules:${contactId}`);
 
     const createRule = useCallback(
-        async (input: { category: RuleCategory; text: string }) => {
+        async (input: { category: RuleCategory; text: string; shared?: boolean }) => {
             const result = await client.POST("/api/v1/contacts/{contact_id}/rules", {
                 params: { path: { contact_id: contactId } },
-                body: input,
+                body: {
+                    category: input.category,
+                    text: input.text,
+                    shared: input.shared ?? false,
+                },
             });
             const unwrapped = unwrapApiResult(result);
             if (unwrapped.error === undefined) {
@@ -59,5 +66,33 @@ export function useRules(contactId: string): ResourceState<readonly Rule[]> & {
         [client, refetch],
     );
 
-    return { ...resource, refetch, createRule, archiveRule };
+    const approveRule = useCallback(
+        async (ruleId: string) => {
+            const result = await client.POST("/api/v1/rules/{rule_id}/approve", {
+                params: { path: { rule_id: ruleId } },
+            });
+            const unwrapped = unwrapApiResult(result);
+            if (unwrapped.error === undefined) {
+                refetch();
+            }
+            return unwrapped;
+        },
+        [client, refetch],
+    );
+
+    const rejectRule = useCallback(
+        async (ruleId: string) => {
+            const result = await client.POST("/api/v1/rules/{rule_id}/reject", {
+                params: { path: { rule_id: ruleId } },
+            });
+            const unwrapped = unwrapApiResult(result);
+            if (unwrapped.error === undefined) {
+                refetch();
+            }
+            return unwrapped;
+        },
+        [client, refetch],
+    );
+
+    return { ...resource, refetch, createRule, archiveRule, approveRule, rejectRule };
 }

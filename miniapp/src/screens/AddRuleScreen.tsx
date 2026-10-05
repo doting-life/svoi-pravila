@@ -8,6 +8,7 @@ const CATEGORIES = Object.keys(ru.categories) as CategoryKey[];
 
 export type AddRuleScreenProps = {
     readonly contactId: string;
+    readonly paired: boolean;
     readonly telegram: TelegramAdapter;
     readonly onCreated: () => void;
     readonly initialCategory?: RuleCategory;
@@ -16,6 +17,7 @@ export type AddRuleScreenProps = {
 
 export function AddRuleScreen({
     contactId,
+    paired,
     telegram,
     onCreated,
     initialCategory = "other",
@@ -24,6 +26,7 @@ export function AddRuleScreen({
     const rules = useRules(contactId);
     const [category, setCategory] = useState<RuleCategory>(initialCategory);
     const [text, setText] = useState(initialText);
+    const [shared, setShared] = useState(false);
     const [formError, setFormError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
@@ -35,7 +38,11 @@ export function AddRuleScreen({
         }
         setBusy(true);
         setFormError(null);
-        const result = await rules.createRule({ category, text: trimmed });
+        const result = await rules.createRule({
+            category,
+            text: trimmed,
+            shared: paired ? shared : false,
+        });
         setBusy(false);
         if (result.error !== undefined) {
             if (result.error.code === "open_rule_limit") {
@@ -60,6 +67,36 @@ export function AddRuleScreen({
             <h2 id="add-rule-title" className="screen-title">
                 {ru.addRuleTitle}
             </h2>
+
+            {paired ? (
+                <fieldset className="field">
+                    <legend className="field-label">{ru.addRuleScope}</legend>
+                    <div className="choice-row">
+                        <label className="choice">
+                            <input
+                                type="radio"
+                                name="scope"
+                                checked={!shared}
+                                onChange={() => {
+                                    setShared(false);
+                                }}
+                            />
+                            <span>{ru.addRuleScopePersonal}</span>
+                        </label>
+                        <label className="choice">
+                            <input
+                                type="radio"
+                                name="scope"
+                                checked={shared}
+                                onChange={() => {
+                                    setShared(true);
+                                }}
+                            />
+                            <span>{ru.addRuleScopeShared}</span>
+                        </label>
+                    </div>
+                </fieldset>
+            ) : null}
 
             <fieldset className="field">
                 <legend className="field-label">{ru.addRuleCategory}</legend>

@@ -116,6 +116,33 @@ class TelegramStrings:
     suggestion_decode_quota: str
     suggestion_decode_edit_prompt: str
     inline_rule_cited_prefix: str
+    contacts_invite: str
+    contacts_leave_pair: str
+    contacts_invite_explain: str
+    contacts_invite_share: str
+    contacts_leave_confirm: str
+    contacts_paired_mark: str
+    invite_reopen_link: str
+    invite_invalid: str
+    invite_expired: str
+    invite_own: str
+    invite_relationship_prompt: str
+    invite_accepted_invitee: str
+    invite_label_prompt: str
+    pair_invite_accepted: str
+    pair_shared_rule_proposed: str
+    pair_rule_approve: str
+    pair_rule_reject: str
+    pair_shared_rule_approved: str
+    pair_shared_rule_rejected: str
+    pair_partner_left: str
+    pair_rule_decided_gone: str
+    rules_private_header: str
+    rules_shared_header: str
+    rules_scope_prompt: str
+    rules_scope_private: str
+    rules_scope_shared: str
+    rules_shared_need_pair: str
     rights_revoke_explain: str
     rights_delete_explain: str
     rights_confirm: str
@@ -224,6 +251,33 @@ _KEYS: dict[str, str] = {
     "suggestion.decode_quota": "suggestion_decode_quota",
     "suggestion.decode_edit_prompt": "suggestion_decode_edit_prompt",
     "inline.rule_cited_prefix": "inline_rule_cited_prefix",
+    "contacts.invite": "contacts_invite",
+    "contacts.leave_pair": "contacts_leave_pair",
+    "contacts.invite_explain": "contacts_invite_explain",
+    "contacts.invite_share": "contacts_invite_share",
+    "contacts.leave_confirm": "contacts_leave_confirm",
+    "contacts.paired_mark": "contacts_paired_mark",
+    "invite.reopen_link": "invite_reopen_link",
+    "invite.invalid": "invite_invalid",
+    "invite.expired": "invite_expired",
+    "invite.own": "invite_own",
+    "invite.relationship_prompt": "invite_relationship_prompt",
+    "invite.accepted_invitee": "invite_accepted_invitee",
+    "invite.label_prompt": "invite_label_prompt",
+    "pair.invite_accepted": "pair_invite_accepted",
+    "pair.shared_rule_proposed": "pair_shared_rule_proposed",
+    "pair.rule_approve": "pair_rule_approve",
+    "pair.rule_reject": "pair_rule_reject",
+    "pair.shared_rule_approved": "pair_shared_rule_approved",
+    "pair.shared_rule_rejected": "pair_shared_rule_rejected",
+    "pair.partner_left": "pair_partner_left",
+    "pair.rule_decided_gone": "pair_rule_decided_gone",
+    "rules.private_header": "rules_private_header",
+    "rules.shared_header": "rules_shared_header",
+    "rules.scope_prompt": "rules_scope_prompt",
+    "rules.scope_private": "rules_scope_private",
+    "rules.scope_shared": "rules_scope_shared",
+    "rules.shared_need_pair": "rules_shared_need_pair",
     "rights.confirm": "rights_confirm",
     "rights.cancel": "rights_cancel",
     "rights.cancelled": "rights_cancelled",

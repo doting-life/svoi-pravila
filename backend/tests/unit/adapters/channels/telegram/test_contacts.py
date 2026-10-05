@@ -61,9 +61,9 @@ from svoi_pravila.application.use_cases.rename_contact import (
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsentsCommand
 from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
 from svoi_pravila.domain.access import AccessStatus
-from svoi_pravila.domain.contact import MAX_CONTACTS_PER_USER
+from svoi_pravila.domain.contact import MAX_CONTACTS_PER_USER, Contact
 from svoi_pravila.domain.enums import ConsentKind, RelationshipKind
-from svoi_pravila.domain.ids import ContactId, TelegramUserId
+from svoi_pravila.domain.ids import ContactId, PairId, TelegramUserId, UserId
 from svoi_pravila.domain.text import ContactLabel
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -317,9 +317,9 @@ async def test_contacts_callback_parse_and_corrupt_dialog() -> None:
     assert _parse_relationship(None) is None
     assert _parse_relationship("ct:rel:nope") is None
     assert _parse_relationship("x:rel:friend") is None
-    assert _parse_contact_id(None) is None
-    assert _parse_contact_id("ct:a:nope") is None
-    assert _parse_contact_id("ct:z:" + str(UUID(int=1))) is None
+    assert _parse_contact_id(None, "a") is None
+    assert _parse_contact_id("ct:a:nope", "a") is None
+    assert _parse_contact_id("ct:z:" + str(UUID(int=1)), "a") is None
     uow = InMemoryUnitOfWorkFactory()
     catalog = FakeConsentCatalog()
     dialog = FakeDialogState()
@@ -460,11 +460,32 @@ async def test_polling_commands_include_contacts_and_cancel() -> None:
 def test_contact_keyboards_and_relationship_labels() -> None:
     strings = load_ru_strings()
     ident = ContactId(UUID(int=1))
-    keyboard = contacts_keyboard(strings, (ident,))
+    unpaired = Contact(
+        id=ident,
+        owner_id=UserId(UUID(int=2)),
+        label=ContactLabel("Sam"),
+        relationship=RelationshipKind.FRIEND,
+        pair_id=None,
+        created_at=_NOW,
+    )
+    keyboard = contacts_keyboard(strings, (unpaired,))
     payloads = [btn.callback_data for row in keyboard.inline_keyboard for btn in row]
     assert "ct:n" in payloads
+    assert f"ct:i:{ident}" in payloads
     assert all(item is not None and "Sam" not in item for item in payloads)
     assert all(len(item.encode()) <= 64 for item in payloads if item is not None)
+    paired = Contact(
+        id=ContactId(UUID(int=3)),
+        owner_id=UserId(UUID(int=2)),
+        label=ContactLabel("Pat"),
+        relationship=RelationshipKind.PARTNER,
+        pair_id=PairId(UUID(int=4)),
+        created_at=_NOW,
+    )
+    leave_kb = contacts_keyboard(strings, (paired,))
+    leave_payloads = [btn.callback_data for row in leave_kb.inline_keyboard for btn in row]
+    assert f"ct:l:{paired.id}" in leave_payloads
+    assert f"ct:i:{paired.id}" not in leave_payloads
     rel = relationship_keyboard(strings)
     kinds = {kind.value for kind in RelationshipKind}
     found = {
@@ -673,3 +694,215 @@ async def test_polling_commands_include_rules() -> None:
     commands = next(req for req in session.requests if isinstance(req, SetMyCommands))
     names = [item.command for item in commands.commands]
     assert "rules" in names
+
+
+@pytest.mark.unit
+async def test_invite_leave_and_dialog_edge_branches() -> None:
+    from uuid import UUID
+
+    from svoi_pravila.application.errors import AccessNotGranted, NotFound
+    from svoi_pravila.application.use_cases.create_invite import CreateInviteResult
+    from svoi_pravila.application.use_cases.leave_pair import LeavePairResult
+    from svoi_pravila.domain.access import AccessStatus
+    from svoi_pravila.domain.ids import InviteId
+    from svoi_pravila.domain.invite import Invite, InviteTokenHash
+
+    uow = InMemoryUnitOfWorkFactory()
+    catalog = FakeConsentCatalog()
+    dialog = FakeDialogState()
+    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, dialog=dialog))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _onboard(bot, lifecycle, 540, catalog)
+    await lifecycle.dispatcher.feed_update(bot, _callback(1, 540, "ct:n"))
+    await lifecycle.dispatcher.feed_update(bot, _callback(2, 540, "ct:rel:friend"))
+    await lifecycle.dispatcher.feed_update(bot, _text_update(3, 540, "EdgeContact"))
+    owner = (
+        await deps.get_user_by_telegram_id.execute(GetUserByTelegramIdQuery(TelegramUserId(540)))
+    ).user
+    assert owner is not None
+    contact_id = (await deps.list_contacts.execute(ListContactsCommand(owner.id))).contacts[0].id
+
+    # confirm leave on unlinked contact
+    session.requests.clear()
+    await lifecycle.dispatcher.feed_update(bot, _callback(4, 540, f"ct:ly:{contact_id}"))
+    assert deps.strings.contacts_unavailable in _sent_texts(session)[-1]
+
+    # leave_pair error matrix
+    class _LeaveBoom:
+        async def execute(self, command: object) -> LeavePairResult:
+            raise NotFound()
+
+    class _LeaveDenied:
+        async def execute(self, command: object) -> LeavePairResult:
+            raise AccessNotGranted(
+                AccessStatus(age_confirmed=True, missing_consents=frozenset(), granted=False)
+            )
+
+    # invent a paired contact id that list will not find → unavailable already covered
+    # stub leave after injecting pair via HideAfterFirst on get user for confirm/set/start
+    hidden = replace(
+        deps, get_user_by_telegram_id=cast(Any, _HideUser(deps.get_user_by_telegram_id))
+    )
+    life_hidden = build_telegram_lifecycle(_settings(), hidden, bot=bot)
+    await life_hidden.dispatcher.feed_update(bot, _callback(5, 540, f"ct:a:{contact_id}"))
+    await life_hidden.dispatcher.feed_update(bot, _callback(6, 540, f"ct:i:{contact_id}"))
+    await life_hidden.dispatcher.feed_update(bot, _callback(7, 540, f"ct:ly:{contact_id}"))
+
+    after_first = replace(
+        deps,
+        get_user_by_telegram_id=cast(Any, _HideAfterFirst(deps.get_user_by_telegram_id)),
+    )
+    life_af = build_telegram_lifecycle(_settings(), after_first, bot=bot)
+    await life_af.dispatcher.feed_update(bot, _callback(8, 540, f"ct:a:{contact_id}"))
+
+    # start_invite long token raises
+    long_token = "t" * 80
+    owner_id = owner.id
+
+    class _LongInvite:
+        async def execute(self, command: object) -> CreateInviteResult:
+            invite = Invite.create(
+                invite_id=InviteId(UUID(int=9)),
+                inviter_id=owner_id,
+                contact_id=contact_id,
+                token_hash=InviteTokenHash.from_raw_token("abc"),
+                created_at=_NOW,
+            )
+            return CreateInviteResult(invite=invite, raw_token=long_token)
+
+    long_deps = replace(deps, create_invite=cast(Any, _LongInvite()))
+    life_long = build_telegram_lifecycle(_settings(), long_deps, bot=bot)
+    await life_long.dispatcher.feed_update(bot, _callback(9, 540, f"ct:i:{contact_id}"))
+
+    # ask_leave / cancel_leave / confirm_leave with no chat via inaccessible/null message
+    await lifecycle.dispatcher.feed_update(
+        bot,
+        Update(
+            update_id=10,
+            callback_query=CallbackQuery(
+                id="10",
+                from_user=User(id=540, is_bot=False, first_name="A"),
+                chat_instance="x",
+                data=f"ct:l:{contact_id}",
+                message=None,
+            ),
+        ),
+    )
+    await lifecycle.dispatcher.feed_update(
+        bot,
+        Update(
+            update_id=11,
+            callback_query=CallbackQuery(
+                id="11",
+                from_user=User(id=540, is_bot=False, first_name="A"),
+                chat_instance="x",
+                data="ct:lx",
+                message=None,
+            ),
+        ),
+    )
+    await lifecycle.dispatcher.feed_update(
+        bot,
+        Update(
+            update_id=12,
+            callback_query=CallbackQuery(
+                id="12",
+                from_user=User(id=540, is_bot=False, first_name="A"),
+                chat_instance="x",
+                data=f"ct:ly:{contact_id}",
+                message=None,
+            ),
+        ),
+    )
+
+    # leave_pair raises after contact appears paired — set pair_id via AcceptInvite path is heavy;
+    # stub list_contacts to return paired contact
+    from svoi_pravila.application.use_cases.list_contacts import ListContactsResult
+    from svoi_pravila.domain.contact import Contact
+    from svoi_pravila.domain.ids import PairId
+    from svoi_pravila.domain.text import ContactLabel
+
+    paired_contact = Contact(
+        id=contact_id,
+        owner_id=owner.id,
+        label=ContactLabel("EdgeContact"),
+        relationship=RelationshipKind.FRIEND,
+        pair_id=PairId(UUID(int=3)),
+        created_at=_NOW,
+    )
+
+    class _ListPaired:
+        async def execute(self, command: object) -> ListContactsResult:
+            return ListContactsResult(contacts=(paired_contact,))
+
+    for idx, leave_stub in enumerate((_LeaveBoom(), _LeaveDenied())):
+        leave_deps = replace(
+            deps,
+            list_contacts=cast(Any, _ListPaired()),
+            leave_pair=cast(Any, leave_stub),
+        )
+        session.requests.clear()
+        life_leave = build_telegram_lifecycle(_settings(), leave_deps, bot=bot)
+        await life_leave.dispatcher.feed_update(
+            bot, _callback(30 + idx, 540, f"ct:ly:{contact_id}")
+        )
+        assert deps.strings.error_generic in _sent_texts(session)[-1]
+
+    # invite label dialog edges
+    await dialog.set(
+        _dialog_key(540),
+        DialogRecord(step="awaiting_invite_label", invite_id=None, relationship=None),
+    )
+    await lifecycle.dispatcher.feed_update(bot, _text_update(20, 540, "BadInviteLabel"))
+    await dialog.set(
+        _dialog_key(540),
+        DialogRecord(
+            step="awaiting_invite_label",
+            invite_id=InviteId(UUID(int=8)),
+            relationship=RelationshipKind.FRIEND,
+        ),
+    )
+    await lifecycle.dispatcher.feed_update(bot, _text_update(21, 540, ""))  # invalid label
+    await dialog.set(
+        _dialog_key(540),
+        DialogRecord(
+            step="awaiting_invite_label",
+            invite_id=InviteId(UUID(int=8)),
+            relationship=RelationshipKind.FRIEND,
+        ),
+    )
+
+    class _AcceptFail:
+        async def execute(self, command: object) -> object:
+            raise NotFound()
+
+    accept_fail = replace(deps, accept_invite=cast(Any, _AcceptFail()))
+    life_fail = build_telegram_lifecycle(_settings(), accept_fail, bot=bot)
+    session.requests.clear()
+    await life_fail.dispatcher.feed_update(bot, _text_update(22, 540, "ValidLabelHere"))
+    assert deps.strings.invite_invalid in _sent_texts(session)[-1]
+
+    # dialog while actor missing after record set
+    await dialog.set(
+        _dialog_key(540),
+        DialogRecord(
+            step="awaiting_invite_label",
+            invite_id=InviteId(UUID(int=8)),
+            relationship=RelationshipKind.FRIEND,
+        ),
+    )
+    life_hidden2 = build_telegram_lifecycle(_settings(), hidden, bot=bot)
+    await life_hidden2.dispatcher.feed_update(bot, _text_update(23, 540, "AfterHide"))
+
+    # require_done false for dialog
+    await dialog.set(
+        _dialog_key(541),
+        DialogRecord(
+            step="awaiting_invite_label",
+            invite_id=InviteId(UUID(int=8)),
+            relationship=RelationshipKind.FRIEND,
+        ),
+    )
+    await lifecycle.dispatcher.feed_update(bot, _text_update(24, 541, "NotOnboarded"))

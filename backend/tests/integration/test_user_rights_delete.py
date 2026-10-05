@@ -13,6 +13,7 @@ from svoi_pravila.adapters.persistence.uow import SqlAlchemyUnitOfWorkFactory
 from svoi_pravila.application.use_cases.delete_my_account import (
     DeleteMyAccount,
     DeleteMyAccountCommand,
+    DeleteMyAccountPorts,
 )
 from svoi_pravila.config import Settings
 from svoi_pravila.crypto import HmacPseudonymizer
@@ -41,6 +42,7 @@ from svoi_pravila.domain.user import User
 from tests.fakes.clock import FakeClock
 from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
+from tests.fakes.pair_notifier import FakePairNotifier
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 LEAVE_AT = NOW + timedelta(days=5)
@@ -205,7 +207,14 @@ async def test_delete_account_shreds_caller_and_rehomes_partner_rules(
     )
     clock = FakeClock(LEAVE_AT)
     result = await DeleteMyAccount(
-        uow_factory_postgres, FakeIdGenerator(), pepper, clock, make_inline_reuse(clock)
+        DeleteMyAccountPorts(
+            uow_factory_postgres,
+            FakeIdGenerator(),
+            pepper,
+            clock,
+            make_inline_reuse(clock),
+            FakePairNotifier(),
+        )
     ).execute(DeleteMyAccountCommand(alice.telegram_user_id))
     assert result.found is True
     assert await _scan_has_uuid(engine, alice.id) is False

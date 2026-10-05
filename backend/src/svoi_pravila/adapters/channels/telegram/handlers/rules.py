@@ -24,6 +24,7 @@ from svoi_pravila.adapters.channels.telegram.handlers.helpers import (
 from svoi_pravila.adapters.channels.telegram.keyboards import (
     archive_rule_confirm_keyboard,
     rule_category_keyboard,
+    rule_scope_keyboard,
     suggestion_decision_keyboard,
 )
 from svoi_pravila.adapters.channels.telegram.localization import render_crisis_message
@@ -38,14 +39,17 @@ from svoi_pravila.application.use_cases.accept_suggestion import (
     AcceptSuggestionCommand,
     AcceptSuggestionOutcome,
 )
+from svoi_pravila.application.use_cases.approve_rule import ApproveRuleCommand
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRuleCommand
 from svoi_pravila.application.use_cases.dismiss_suggestion import (
     DismissSuggestionCommand,
     DismissSuggestionOutcome,
 )
+from svoi_pravila.application.use_cases.list_contacts import ListContactsCommand
 from svoi_pravila.application.use_cases.list_rules import ListRulesCommand
 from svoi_pravila.application.use_cases.list_suggestions import ListSuggestionsCommand
 from svoi_pravila.application.use_cases.propose_rule import ProposeRuleCommand
+from svoi_pravila.application.use_cases.reject_pending_rule import RejectPendingRuleCommand
 from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
     SuggestRuleFromDecodeCommand,
     SuggestRuleFromDecodeOutcome,
@@ -80,10 +84,14 @@ def build_rules_router() -> Router:
     router = Router(name="telegram_rules")
     router.message.register(rules_command, Command("rules"))
     router.callback_query.register(add_rule, F.data == "ru:n")
+    router.callback_query.register(choose_scope_private, F.data == "ru:sp")
+    router.callback_query.register(choose_scope_shared, F.data == "ru:ss")
     router.callback_query.register(choose_category, F.data.startswith("ru:cat:"))
     router.callback_query.register(ask_archive, F.data.startswith("ru:ar:"))
     router.callback_query.register(confirm_archive, F.data.startswith("ru:ay:"))
     router.callback_query.register(cancel_archive, F.data == "ru:ax")
+    router.callback_query.register(approve_pending_rule, F.data.startswith("pr:y:"))
+    router.callback_query.register(reject_pending_rule, F.data.startswith("pr:n:"))
     router.callback_query.register(accept_suggestion, F.data.startswith("sg:a:"))
     router.callback_query.register(edit_suggestion, F.data.startswith("sg:e:"))
     router.callback_query.register(dismiss_suggestion, F.data.startswith("sg:d:"))
@@ -105,7 +113,7 @@ async def rules_command(message: Message, tg_deps: TelegramDeps) -> None:
 
 
 async def add_rule(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> None:
-    """Offer category buttons for a new private rule."""
+    """Offer scope (when paired) or category buttons for a new rule."""
     await clear_callback_keyboard(bot, callback)
     await callback.answer()
     if not await require_done_callback(callback, tg_deps, bot):
@@ -120,6 +128,67 @@ async def add_rule(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> 
     if user.active_contact_id is None:
         await bot.send_message(chat_id, tg_deps.strings.rules_no_active_contact)
         return
+    listed = await tg_deps.list_contacts.execute(ListContactsCommand(user.id))
+    active = next(
+        (contact for contact in listed.contacts if contact.id == user.active_contact_id),
+        None,
+    )
+    if active is None:
+        await bot.send_message(chat_id, tg_deps.strings.rules_no_active_contact)
+        return
+    if active.pair_id is not None:
+        await bot.send_message(
+            chat_id,
+            tg_deps.strings.rules_scope_prompt,
+            reply_markup=rule_scope_keyboard(tg_deps.strings),
+        )
+        return
+    await bot.send_message(
+        chat_id,
+        tg_deps.strings.rules_header,
+        reply_markup=rule_category_keyboard(tg_deps.strings),
+    )
+
+
+async def choose_scope_private(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> None:
+    """Store private scope and offer category buttons."""
+    await _choose_scope(callback, tg_deps, bot, shared=False)
+
+
+async def choose_scope_shared(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> None:
+    """Store shared scope and offer category buttons."""
+    await _choose_scope(callback, tg_deps, bot, shared=True)
+
+
+async def _choose_scope(
+    callback: CallbackQuery,
+    tg_deps: TelegramDeps,
+    bot: Bot,
+    *,
+    shared: bool,
+) -> None:
+    await clear_callback_keyboard(bot, callback)
+    await callback.answer()
+    if not await require_done_callback(callback, tg_deps, bot):
+        return
+    chat_id = callback_chat_id(callback)
+    if chat_id is None:
+        return
+    user = await actor(tg_deps, callback.from_user.id)
+    if user is None:
+        await send_current_step(bot, callback, tg_deps, callback.from_user.id)
+        return
+    if user.active_contact_id is None:
+        await bot.send_message(chat_id, tg_deps.strings.rules_no_active_contact)
+        return
+    await tg_deps.dialog_state.set(
+        dialog_pseudonym(tg_deps, callback.from_user.id),
+        DialogRecord(
+            step="awaiting_rule_text",
+            contact_id=user.active_contact_id,
+            shared=shared,
+        ),
+    )
     await bot.send_message(
         chat_id,
         tg_deps.strings.rules_header,
@@ -128,7 +197,7 @@ async def add_rule(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> 
 
 
 async def choose_category(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> None:
-    """Store awaiting_rule_text with the active contact and category."""
+    """Store awaiting_rule_text with the active contact, category, and scope."""
     await clear_callback_keyboard(bot, callback)
     await callback.answer()
     if not await require_done_callback(callback, tg_deps, bot):
@@ -143,15 +212,30 @@ async def choose_category(callback: CallbackQuery, tg_deps: TelegramDeps, bot: B
     if user.active_contact_id is None:
         await reply_callback(bot, callback, tg_deps.strings.rules_no_active_contact)
         return
+    pseudonym = dialog_pseudonym(tg_deps, callback.from_user.id)
+    existing = await tg_deps.dialog_state.get(pseudonym)
+    shared = False
+    contact_id = user.active_contact_id
+    if existing is not None and existing.step == "awaiting_rule_text":
+        if existing.shared is not None:
+            shared = existing.shared
+        if existing.contact_id is not None:
+            contact_id = existing.contact_id
     await tg_deps.dialog_state.set(
-        dialog_pseudonym(tg_deps, callback.from_user.id),
+        pseudonym,
         DialogRecord(
             step="awaiting_rule_text",
-            contact_id=user.active_contact_id,
+            contact_id=contact_id,
             category=kind,
+            shared=shared,
         ),
     )
-    logger.info("telegram_dialog_set", step="awaiting_rule_text", category=kind.value)
+    logger.info(
+        "telegram_dialog_set",
+        step="awaiting_rule_text",
+        category=kind.value,
+        shared=shared,
+    )
     chat_id = callback_chat_id(callback)
     if chat_id is not None:
         await bot.send_message(chat_id, tg_deps.strings.rules_text_prompt)
@@ -214,6 +298,48 @@ async def cancel_archive(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bo
     await _send_rules_list_callback(callback, tg_deps, bot, callback.from_user.id)
 
 
+async def approve_pending_rule(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> None:
+    """Approve a pending shared rule from a pair notification."""
+    await clear_callback_keyboard(bot, callback)
+    await callback.answer()
+    if not await require_done_callback(callback, tg_deps, bot):
+        return
+    rule_id = _parse_pending_rule_id(callback.data, "y")
+    if rule_id is None:
+        return
+    user = await actor(tg_deps, callback.from_user.id)
+    if user is None:
+        await send_current_step(bot, callback, tg_deps, callback.from_user.id)
+        return
+    try:
+        await tg_deps.approve_rule.execute(ApproveRuleCommand(user.id, rule_id))
+    except (NotFound, AccessNotGranted, InvalidTransitionError):
+        await reply_callback(bot, callback, tg_deps.strings.pair_rule_decided_gone)
+        return
+    await reply_callback(bot, callback, tg_deps.strings.pair_shared_rule_approved)
+
+
+async def reject_pending_rule(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> None:
+    """Reject a pending shared rule from a pair notification."""
+    await clear_callback_keyboard(bot, callback)
+    await callback.answer()
+    if not await require_done_callback(callback, tg_deps, bot):
+        return
+    rule_id = _parse_pending_rule_id(callback.data, "n")
+    if rule_id is None:
+        return
+    user = await actor(tg_deps, callback.from_user.id)
+    if user is None:
+        await send_current_step(bot, callback, tg_deps, callback.from_user.id)
+        return
+    try:
+        await tg_deps.reject_pending_rule.execute(RejectPendingRuleCommand(user.id, rule_id))
+    except (NotFound, AccessNotGranted, InvalidTransitionError):
+        await reply_callback(bot, callback, tg_deps.strings.pair_rule_decided_gone)
+        return
+    await reply_callback(bot, callback, tg_deps.strings.pair_shared_rule_rejected)
+
+
 async def dialog_text(message: Message, tg_deps: TelegramDeps) -> None:
     """Consume the next private text as a rule body, never as decode."""
     if message.from_user is None or message.text is None:
@@ -254,7 +380,7 @@ async def _finish_rule_text(
                 record.contact_id,
                 record.category,
                 body,
-                shared=False,
+                shared=record.shared if record.shared is not None else False,
             )
         )
     except OpenRuleLimitReached:
@@ -383,6 +509,7 @@ async def edit_suggestion(callback: CallbackQuery, tg_deps: TelegramDeps, bot: B
             step="awaiting_rule_text",
             contact_id=suggestion.contact_id,
             category=suggestion.category,
+            shared=False,
         ),
     )
     await reply_callback(bot, callback, tg_deps.strings.suggestion_decode_edit_prompt)
@@ -532,6 +659,18 @@ def _parse_rule_id(data: str | None, action: str) -> RuleId | None:
         return None
     parts = data.split(":")
     if len(parts) != _CALLBACK_PARTS or parts[0] != "ru" or parts[1] != action:
+        return None
+    try:
+        return RuleId(uuid.UUID(parts[2]))
+    except ValueError:
+        return None
+
+
+def _parse_pending_rule_id(data: str | None, action: str) -> RuleId | None:
+    if data is None:
+        return None
+    parts = data.split(":")
+    if len(parts) != _CALLBACK_PARTS or parts[0] != "pr" or parts[1] != action:
         return None
     try:
         return RuleId(uuid.UUID(parts[2]))

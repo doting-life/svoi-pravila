@@ -203,7 +203,9 @@ async def test_decode_active_rules_and_error_outcomes(world: AppWorld) -> None:
     await SetActiveContact(world.uow_factory, world.catalog).execute(
         SetActiveContactCommand(user.id, contact.id)
     )
-    await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             user.id,
             contact.id,
@@ -328,10 +330,12 @@ async def test_decode_pair_scope_and_skipped_rules(
     invite = await CreateInvite(
         world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
     ).execute(CreateInviteCommand(inviter.id, contact.id))
-    await AcceptInvite(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    await AcceptInvite(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         AcceptInviteCommand(
             invitee.id,
-            invite.raw_token,
+            invite.invite.id,
             ContactLabel("Inviter"),
             RelationshipKind.PARTNER,
         )
@@ -339,7 +343,9 @@ async def test_decode_pair_scope_and_skipped_rules(
     await SetActiveContact(world.uow_factory, world.catalog).execute(
         SetActiveContactCommand(inviter.id, contact.id)
     )
-    await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             inviter.id,
             contact.id,
@@ -348,7 +354,9 @@ async def test_decode_pair_scope_and_skipped_rules(
             shared=True,
         )
     )
-    await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             inviter.id,
             contact.id,
@@ -398,10 +406,12 @@ async def test_decode_and_get_effective_rules_share_rule_set(world: AppWorld) ->
     invite = await CreateInvite(
         world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
     ).execute(CreateInviteCommand(inviter.id, contact.id))
-    accepted = await AcceptInvite(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    accepted = await AcceptInvite(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         AcceptInviteCommand(
             invitee.id,
-            invite.raw_token,
+            invite.invite.id,
             ContactLabel("Inviter"),
             RelationshipKind.PARTNER,
         )
@@ -409,7 +419,9 @@ async def test_decode_and_get_effective_rules_share_rule_set(world: AppWorld) ->
     await SetActiveContact(world.uow_factory, world.catalog).execute(
         SetActiveContactCommand(inviter.id, contact.id)
     )
-    owned = await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    owned = await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             inviter.id,
             contact.id,
@@ -418,7 +430,9 @@ async def test_decode_and_get_effective_rules_share_rule_set(world: AppWorld) ->
             shared=False,
         )
     )
-    hidden = await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    hidden = await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             invitee.id,
             accepted.invitee_contact.id,
@@ -551,7 +565,9 @@ async def test_decode_maps_applied_rule_indexes(world: AppWorld) -> None:
             CreateContactCommand(user.id, ContactLabel("Sam"), RelationshipKind.FRIEND)
         )
     ).contact
-    await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             user.id,
             contact.id,
@@ -560,7 +576,9 @@ async def test_decode_maps_applied_rule_indexes(world: AppWorld) -> None:
             shared=False,
         )
     )
-    await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             user.id,
             contact.id,

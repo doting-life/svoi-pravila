@@ -30,6 +30,7 @@ from svoi_pravila.application.use_cases.get_effective_rules import (
     GetEffectiveRules,
     GetEffectiveRulesCommand,
 )
+from svoi_pravila.application.use_cases.leave_pair import LeavePair, LeavePairCommand
 from svoi_pravila.application.use_cases.list_rules import ListRules, ListRulesCommand
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule, ProposeRuleCommand
 from svoi_pravila.application.use_cases.propose_rule_edit import (
@@ -44,8 +45,8 @@ from svoi_pravila.application.use_cases.revoke_consent import RevokeConsent, Rev
 from svoi_pravila.domain.contact import MAX_CONTACTS_PER_USER, Contact
 from svoi_pravila.domain.enums import ConsentKind, RelationshipKind, RuleCategory, RuleStatus
 from svoi_pravila.domain.errors import InviteExpiredError
-from svoi_pravila.domain.ids import ContactId, PairId, RuleId
-from svoi_pravila.domain.rules import MAX_OPEN_RULES_PER_SCOPE, RuleRevision
+from svoi_pravila.domain.ids import ContactId, InviteId, PairId, RuleId
+from svoi_pravila.domain.rules import MAX_OPEN_RULES_PER_SCOPE, PairScope, RuleRevision
 from svoi_pravila.domain.text import ContactLabel, RuleText
 from svoi_pravila.domain.user import User
 from tests.unit.application.conftest import AppWorld
@@ -64,10 +65,12 @@ async def _pair_world(
     invite = await CreateInvite(
         world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
     ).execute(CreateInviteCommand(inviter.id, contact.id))
-    accepted = await AcceptInvite(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    accepted = await AcceptInvite(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         AcceptInviteCommand(
             invitee.id,
-            invite.raw_token,
+            invite.invite.id,
             ContactLabel("Inviter"),
             RelationshipKind.PARTNER,
         )
@@ -79,7 +82,9 @@ async def _pair_world(
 async def test_private_and_shared_rules(world: AppWorld) -> None:
     inviter, invitee, contact, accepted = await _pair_world(world)
 
-    private = await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    private = await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             inviter.id,
             contact.id,
@@ -90,7 +95,9 @@ async def test_private_and_shared_rules(world: AppWorld) -> None:
     )
     assert private.rule.status is RuleStatus.ACTIVE
 
-    shared = await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    shared = await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             inviter.id,
             contact.id,
@@ -101,9 +108,9 @@ async def test_private_and_shared_rules(world: AppWorld) -> None:
     )
     assert shared.rule.status is RuleStatus.PROPOSED
 
-    approved = await ApproveRule(world.uow_factory, world.catalog, world.clock).execute(
-        ApproveRuleCommand(invitee.id, shared.rule.id)
-    )
+    approved = await ApproveRule(
+        world.uow_factory, world.catalog, world.clock, world.notifier
+    ).execute(ApproveRuleCommand(invitee.id, shared.rule.id))
     assert approved.rule.status is RuleStatus.ACTIVE
 
     edited = await ProposeRuleEdit(world.uow_factory, world.catalog, world.clock).execute(
@@ -124,9 +131,9 @@ async def test_private_and_shared_rules(world: AppWorld) -> None:
     )
     assert len(listed.rules) >= 2
 
-    rejected_edit = await RejectPendingRule(world.uow_factory, world.catalog, world.clock).execute(
-        RejectPendingRuleCommand(invitee.id, shared.rule.id)
-    )
+    rejected_edit = await RejectPendingRule(
+        world.uow_factory, world.catalog, world.clock, world.notifier
+    ).execute(RejectPendingRuleCommand(invitee.id, shared.rule.id))
     assert rejected_edit.rule.pending_revision is None
 
     archived = await ArchiveRule(world.uow_factory, world.catalog, world.clock).execute(
@@ -138,7 +145,9 @@ async def test_private_and_shared_rules(world: AppWorld) -> None:
 @pytest.mark.unit
 async def test_partner_cannot_list_or_get_rules_on_inviter_contact(world: AppWorld) -> None:
     inviter, invitee, contact, _accepted = await _pair_world(world)
-    await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             inviter.id,
             contact.id,
@@ -172,7 +181,9 @@ async def test_accept_invite_result_excludes_inviter_contact_and_label(
 async def test_stranger_not_found_for_rules_and_invites(world: AppWorld) -> None:
     inviter, _invitee, contact, accepted = await _pair_world(world)
     stranger = await world.ensure_granted_user(22)
-    shared = await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    shared = await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             inviter.id,
             contact.id,
@@ -190,11 +201,13 @@ async def test_stranger_not_found_for_rules_and_invites(world: AppWorld) -> None
             GetEffectiveRulesCommand(stranger.id, accepted.invitee_contact.id)
         )
     with pytest.raises(NotFound):
-        await ApproveRule(world.uow_factory, world.catalog, world.clock).execute(
+        await ApproveRule(world.uow_factory, world.catalog, world.clock, world.notifier).execute(
             ApproveRuleCommand(stranger.id, shared.rule.id)
         )
     with pytest.raises(NotFound):
-        await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        await ProposeRule(
+            world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+        ).execute(
             ProposeRuleCommand(
                 stranger.id,
                 contact.id,
@@ -217,13 +230,17 @@ async def test_effective_rules_sorted_by_effective_since_then_id(world: AppWorld
             CreateContactCommand(owner.id, ContactLabel("Solo"), RelationshipKind.OTHER)
         )
     ).contact
-    first = await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    first = await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             owner.id, contact.id, RuleCategory.OTHER, RuleText("earlier"), shared=False
         )
     )
     world.clock.advance(timedelta(seconds=5))
-    second = await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    second = await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             owner.id, contact.id, RuleCategory.OTHER, RuleText("later"), shared=False
         )
@@ -251,9 +268,11 @@ async def test_accept_invite_requires_inviter_access(world: AppWorld) -> None:
         RevokeConsentCommand(inviter.id, ConsentKind.PERSONAL_DATA)
     )
     with pytest.raises(NotFound):
-        await AcceptInvite(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        await AcceptInvite(
+            world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+        ).execute(
             AcceptInviteCommand(
-                invitee.id, invite.raw_token, ContactLabel("I"), RelationshipKind.FRIEND
+                invitee.id, invite.invite.id, ContactLabel("I"), RelationshipKind.FRIEND
             )
         )
 
@@ -276,9 +295,11 @@ async def test_accept_invite_respects_invitee_contact_limit(world: AppWorld) -> 
             CreateContactCommand(invitee.id, ContactLabel(f"x{i}"), RelationshipKind.OTHER)
         )
     with pytest.raises(ContactLimitReached):
-        await AcceptInvite(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        await AcceptInvite(
+            world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+        ).execute(
             AcceptInviteCommand(
-                invitee.id, invite.raw_token, ContactLabel("I"), RelationshipKind.FRIEND
+                invitee.id, invite.invite.id, ContactLabel("I"), RelationshipKind.FRIEND
             )
         )
 
@@ -303,9 +324,11 @@ async def test_invite_errors(world: AppWorld) -> None:
         world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
     ).execute(CreateInviteCommand(inviter.id, contact.id))
 
-    await AcceptInvite(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    await AcceptInvite(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         AcceptInviteCommand(
-            invitee.id, invite.raw_token, ContactLabel("I"), RelationshipKind.FRIEND
+            invitee.id, invite.invite.id, ContactLabel("I"), RelationshipKind.FRIEND
         )
     )
 
@@ -318,19 +341,26 @@ async def test_invite_errors(world: AppWorld) -> None:
         world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
     ).execute(CreateInviteCommand(inviter.id, contact2.id))
     with pytest.raises(AlreadyPaired):
-        await AcceptInvite(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        await AcceptInvite(
+            world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+        ).execute(
             AcceptInviteCommand(
                 invitee.id,
-                invite2.raw_token,
+                invite2.invite.id,
                 ContactLabel("I2"),
                 RelationshipKind.FRIEND,
             )
         )
 
     with pytest.raises(NotFound):
-        await AcceptInvite(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        await AcceptInvite(
+            world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+        ).execute(
             AcceptInviteCommand(
-                other.id, "unknown-token", ContactLabel("X"), RelationshipKind.OTHER
+                other.id,
+                InviteId(UUID(int=999_999)),
+                ContactLabel("X"),
+                RelationshipKind.OTHER,
             )
         )
 
@@ -344,9 +374,11 @@ async def test_invite_errors(world: AppWorld) -> None:
     ).execute(CreateInviteCommand(inviter.id, contact3.id))
     world.clock.advance(timedelta(days=8))
     with pytest.raises(InviteExpiredError):
-        await AcceptInvite(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        await AcceptInvite(
+            world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+        ).execute(
             AcceptInviteCommand(
-                other.id, invite3.raw_token, ContactLabel("O"), RelationshipKind.OTHER
+                other.id, invite3.invite.id, ContactLabel("O"), RelationshipKind.OTHER
             )
         )
 
@@ -360,7 +392,9 @@ async def test_shared_propose_requires_linked_contact(world: AppWorld) -> None:
         )
     ).contact
     with pytest.raises(NotFound):
-        await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        await ProposeRule(
+            world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+        ).execute(
             ProposeRuleCommand(
                 owner.id,
                 contact.id,
@@ -382,7 +416,9 @@ async def test_shared_propose_requires_linked_contact(world: AppWorld) -> None:
             ArchiveRuleCommand(owner.id, RuleId(UUID(int=99999)))
         )
     with pytest.raises(NotFound):
-        await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        await ProposeRule(
+            world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+        ).execute(
             ProposeRuleCommand(
                 owner.id,
                 ContactId(UUID(int=99999)),
@@ -428,9 +464,11 @@ async def test_accept_invite_rejects_reassigned_or_linked_contact(world: AppWorl
         )
         await uow.commit()
     with pytest.raises(NotFound):
-        await AcceptInvite(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        await AcceptInvite(
+            world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+        ).execute(
             AcceptInviteCommand(
-                invitee.id, invite.raw_token, ContactLabel("I"), RelationshipKind.FRIEND
+                invitee.id, invite.invite.id, ContactLabel("I"), RelationshipKind.FRIEND
             )
         )
 
@@ -447,9 +485,11 @@ async def test_accept_invite_rejects_reassigned_or_linked_contact(world: AppWorl
         await uow.contacts.update(linked)
         await uow.commit()
     with pytest.raises(AlreadyPaired):
-        await AcceptInvite(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        await AcceptInvite(
+            world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+        ).execute(
             AcceptInviteCommand(
-                invitee.id, invite2.raw_token, ContactLabel("I2"), RelationshipKind.FRIEND
+                invitee.id, invite2.invite.id, ContactLabel("I2"), RelationshipKind.FRIEND
             )
         )
 
@@ -466,7 +506,9 @@ async def test_propose_shared_with_missing_pair_not_found(world: AppWorld) -> No
         await uow.contacts.update(contact.link_pair(PairId(UUID(int=888))))
         await uow.commit()
     with pytest.raises(NotFound):
-        await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        await ProposeRule(
+            world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+        ).execute(
             ProposeRuleCommand(
                 owner.id,
                 contact.id,
@@ -481,7 +523,9 @@ async def test_propose_shared_with_missing_pair_not_found(world: AppWorld) -> No
 async def test_partner_cannot_propose_private_on_inviter_contact(world: AppWorld) -> None:
     _inviter, invitee, contact, _accepted = await _pair_world(world)
     with pytest.raises(NotFound):
-        await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        await ProposeRule(
+            world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+        ).execute(
             ProposeRuleCommand(
                 invitee.id,
                 contact.id,
@@ -500,7 +544,7 @@ async def test_open_rule_limit_reached(world: AppWorld) -> None:
             CreateContactCommand(owner.id, ContactLabel("Solo"), RelationshipKind.OTHER)
         )
     ).contact
-    propose = ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock)
+    propose = ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock, world.notifier)
     for i in range(MAX_OPEN_RULES_PER_SCOPE):
         await propose.execute(
             ProposeRuleCommand(
@@ -526,7 +570,9 @@ async def test_open_rule_limit_reached(world: AppWorld) -> None:
 @pytest.mark.unit
 async def test_effective_rules_skip_non_active(world: AppWorld) -> None:
     inviter, invitee, contact, accepted = await _pair_world(world)
-    await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             inviter.id,
             contact.id,
@@ -551,7 +597,9 @@ async def test_effective_rules_skip_active_without_effective_text(
             CreateContactCommand(owner.id, ContactLabel("Solo"), RelationshipKind.OTHER)
         )
     ).contact
-    await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             owner.id, contact.id, RuleCategory.OTHER, RuleText("active"), shared=False
         )
@@ -581,3 +629,304 @@ async def test_effective_rules_skip_active_without_effective_text(
         GetEffectiveRulesCommand(owner.id, contact.id)
     )
     assert still_empty.rules == ()
+
+
+@pytest.mark.unit
+async def test_resolve_invite_and_accept_by_id(world: AppWorld) -> None:
+    from svoi_pravila.application.use_cases.resolve_invite import (
+        ResolveInvite,
+        ResolveInviteCommand,
+    )
+    from svoi_pravila.domain.errors import SelfInviteAcceptError
+
+    inviter = await world.ensure_granted_user(60)
+    invitee = await world.ensure_granted_user(61)
+    contact = (
+        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+            CreateContactCommand(inviter.id, ContactLabel("Partner"), RelationshipKind.PARTNER)
+        )
+    ).contact
+    created = await CreateInvite(
+        world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
+    ).execute(CreateInviteCommand(inviter.id, contact.id))
+    resolved = await ResolveInvite(world.uow_factory, world.catalog, world.clock).execute(
+        ResolveInviteCommand(invitee.id, created.raw_token)
+    )
+    assert resolved.invite_id == created.invite.id
+    with pytest.raises(SelfInviteAcceptError):
+        await ResolveInvite(world.uow_factory, world.catalog, world.clock).execute(
+            ResolveInviteCommand(inviter.id, created.raw_token)
+        )
+    accepted = await AcceptInvite(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
+        AcceptInviteCommand(
+            invitee.id,
+            resolved.invite_id,
+            ContactLabel("Inviter"),
+            RelationshipKind.PARTNER,
+        )
+    )
+    assert accepted.invitee_contact.pair_id == accepted.pair.id
+    assert world.notifier.invite_accepted_calls
+    assert world.notifier.invite_accepted_calls[0].inviter_id == inviter.id
+    assert world.notifier.invite_accepted_calls[0].inviter_contact_id == contact.id
+
+
+@pytest.mark.unit
+async def test_resolve_invite_expired_used_and_missing(world: AppWorld) -> None:
+    from svoi_pravila.application.use_cases.resolve_invite import (
+        ResolveInvite,
+        ResolveInviteCommand,
+    )
+    from svoi_pravila.domain.errors import InviteAlreadyAcceptedError, InviteExpiredError
+    from svoi_pravila.domain.invite import INVITE_TTL
+
+    inviter = await world.ensure_granted_user(62)
+    invitee = await world.ensure_granted_user(63)
+    contact = (
+        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+            CreateContactCommand(inviter.id, ContactLabel("C"), RelationshipKind.FRIEND)
+        )
+    ).contact
+    created = await CreateInvite(
+        world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
+    ).execute(CreateInviteCommand(inviter.id, contact.id))
+    with pytest.raises(NotFound):
+        await ResolveInvite(world.uow_factory, world.catalog, world.clock).execute(
+            ResolveInviteCommand(invitee.id, "missing-token-xxxxxxxxxxxx")
+        )
+    await AcceptInvite(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
+        AcceptInviteCommand(
+            invitee.id, created.invite.id, ContactLabel("I"), RelationshipKind.FRIEND
+        )
+    )
+    with pytest.raises(InviteAlreadyAcceptedError):
+        await ResolveInvite(world.uow_factory, world.catalog, world.clock).execute(
+            ResolveInviteCommand(invitee.id, created.raw_token)
+        )
+
+    contact2 = (
+        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+            CreateContactCommand(inviter.id, ContactLabel("C2"), RelationshipKind.FRIEND)
+        )
+    ).contact
+    created2 = await CreateInvite(
+        world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
+    ).execute(CreateInviteCommand(inviter.id, contact2.id))
+    world.clock.advance(INVITE_TTL)
+    with pytest.raises(InviteExpiredError):
+        await ResolveInvite(world.uow_factory, world.catalog, world.clock).execute(
+            ResolveInviteCommand(invitee.id, created2.raw_token)
+        )
+
+
+@pytest.mark.unit
+async def test_create_invite_revokes_previous_pending(world: AppWorld) -> None:
+    from svoi_pravila.application.use_cases.resolve_invite import (
+        ResolveInvite,
+        ResolveInviteCommand,
+    )
+
+    inviter = await world.ensure_granted_user(64)
+    invitee = await world.ensure_granted_user(65)
+    contact = (
+        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+            CreateContactCommand(inviter.id, ContactLabel("C"), RelationshipKind.FRIEND)
+        )
+    ).contact
+    first = await CreateInvite(
+        world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
+    ).execute(CreateInviteCommand(inviter.id, contact.id))
+    second = await CreateInvite(
+        world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
+    ).execute(CreateInviteCommand(inviter.id, contact.id))
+    assert first.invite.id != second.invite.id
+    with pytest.raises(NotFound):
+        await ResolveInvite(world.uow_factory, world.catalog, world.clock).execute(
+            ResolveInviteCommand(invitee.id, first.raw_token)
+        )
+    resolved = await ResolveInvite(world.uow_factory, world.catalog, world.clock).execute(
+        ResolveInviteCommand(invitee.id, second.raw_token)
+    )
+    assert resolved.invite_id == second.invite.id
+
+
+@pytest.mark.unit
+async def test_notifier_after_commit_and_failure_isolated(world: AppWorld) -> None:
+    from tests.fakes.pair_notifier import FakePairNotifier
+
+    inviter, invitee, contact, accepted = await _pair_world(world)
+    assert world.notifier.invite_accepted_calls
+    ok = FakePairNotifier()
+    shared = await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, ok
+    ).execute(
+        ProposeRuleCommand(
+            inviter.id,
+            contact.id,
+            RuleCategory.TABOO_TOPIC,
+            RuleText("shared notify"),
+            shared=True,
+        )
+    )
+    assert shared.rule.status is RuleStatus.PROPOSED
+    assert ok.shared_rule_proposed_calls
+
+    failing = FakePairNotifier(fail=True)
+    with pytest.raises(RuntimeError, match="notifier failure"):
+        await ProposeRule(
+            world.uow_factory, world.catalog, world.ids, world.clock, failing
+        ).execute(
+            ProposeRuleCommand(
+                inviter.id,
+                contact.id,
+                RuleCategory.OTHER,
+                RuleText("shared after fail"),
+                shared=True,
+            )
+        )
+    assert failing.shared_rule_proposed_calls
+    async with world.uow_factory() as uow:
+        rules = await uow.rules.list_for_scope(PairScope(pair_id=accepted.pair.id))
+        texts = {rule.revisions[-1].text.value for rule in rules}
+        assert "shared after fail" in texts
+
+    with pytest.raises(RuntimeError, match="notifier failure"):
+        await ApproveRule(world.uow_factory, world.catalog, world.clock, failing).execute(
+            ApproveRuleCommand(invitee.id, shared.rule.id)
+        )
+    assert failing.shared_rule_decided_calls
+    async with world.uow_factory() as uow:
+        stored = await uow.rules.get(shared.rule.id)
+        assert stored is not None
+        assert stored.status is RuleStatus.ACTIVE
+
+    leave_notifier = FakePairNotifier(fail=True)
+    with pytest.raises(RuntimeError, match="notifier failure"):
+        await LeavePair(world.uow_factory, world.ids, world.clock, leave_notifier).execute(
+            LeavePairCommand(inviter.id, accepted.pair.id)
+        )
+    assert leave_notifier.partner_left_calls
+    async with world.uow_factory() as uow:
+        assert await uow.pairs.get(accepted.pair.id) is None
+
+
+@pytest.mark.unit
+async def test_resolve_invite_requires_inviter_access(world: AppWorld) -> None:
+    from svoi_pravila.application.use_cases.resolve_invite import (
+        ResolveInvite,
+        ResolveInviteCommand,
+    )
+
+    inviter = await world.ensure_granted_user(66)
+    invitee = await world.ensure_granted_user(67)
+    contact = (
+        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+            CreateContactCommand(inviter.id, ContactLabel("C"), RelationshipKind.FRIEND)
+        )
+    ).contact
+    created = await CreateInvite(
+        world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
+    ).execute(CreateInviteCommand(inviter.id, contact.id))
+    await RevokeConsent(world.uow_factory, world.clock).execute(
+        RevokeConsentCommand(inviter.id, ConsentKind.PERSONAL_DATA)
+    )
+    with pytest.raises(NotFound):
+        await ResolveInvite(world.uow_factory, world.catalog, world.clock).execute(
+            ResolveInviteCommand(invitee.id, created.raw_token)
+        )
+
+
+@pytest.mark.unit
+async def test_accept_invite_keeps_existing_active_contact(world: AppWorld) -> None:
+    inviter = await world.ensure_granted_user(68)
+    invitee = await world.ensure_granted_user(69)
+    existing = (
+        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+            CreateContactCommand(invitee.id, ContactLabel("Prior"), RelationshipKind.FRIEND)
+        )
+    ).contact
+    contact = (
+        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+            CreateContactCommand(inviter.id, ContactLabel("C"), RelationshipKind.FRIEND)
+        )
+    ).contact
+    created = await CreateInvite(
+        world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
+    ).execute(CreateInviteCommand(inviter.id, contact.id))
+    accepted = await AcceptInvite(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
+        AcceptInviteCommand(
+            invitee.id, created.invite.id, ContactLabel("I"), RelationshipKind.FRIEND
+        )
+    )
+    async with world.uow_factory() as uow:
+        invitee_user = await uow.users.get(invitee.id)
+        assert invitee_user is not None
+        assert invitee_user.active_contact_id == existing.id
+        assert accepted.invitee_contact.id != existing.id
+
+
+@pytest.mark.unit
+async def test_accept_invite_missing_user_after_mutations(world: AppWorld) -> None:
+    from tests.unit.application.test_contacts import _HideUserFactory
+
+    inviter = await world.ensure_granted_user(74)
+    invitee = await world.ensure_granted_user(75)
+    contact = (
+        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+            CreateContactCommand(inviter.id, ContactLabel("C"), RelationshipKind.FRIEND)
+        )
+    ).contact
+    created = await CreateInvite(
+        world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
+    ).execute(CreateInviteCommand(inviter.id, contact.id))
+    hiding = _HideUserFactory(world.uow_factory, invitee.id)
+    with pytest.raises(NotFound):
+        await AcceptInvite(hiding, world.catalog, world.ids, world.clock, world.notifier).execute(
+            AcceptInviteCommand(
+                invitee.id, created.invite.id, ContactLabel("I"), RelationshipKind.FRIEND
+            )
+        )
+
+
+@pytest.mark.unit
+async def test_approve_and_reject_require_pending_revision(world: AppWorld) -> None:
+    inviter, invitee, contact, _accepted = await _pair_world(world)
+    private = await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
+        ProposeRuleCommand(
+            inviter.id,
+            contact.id,
+            RuleCategory.OTHER,
+            RuleText("no pending"),
+            shared=False,
+        )
+    )
+    with pytest.raises(NotFound):
+        await ApproveRule(world.uow_factory, world.catalog, world.clock, world.notifier).execute(
+            ApproveRuleCommand(inviter.id, private.rule.id)
+        )
+    shared = await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
+        ProposeRuleCommand(
+            inviter.id,
+            contact.id,
+            RuleCategory.OTHER,
+            RuleText("to approve first"),
+            shared=True,
+        )
+    )
+    await ApproveRule(world.uow_factory, world.catalog, world.clock, world.notifier).execute(
+        ApproveRuleCommand(invitee.id, shared.rule.id)
+    )
+    with pytest.raises(NotFound):
+        await RejectPendingRule(
+            world.uow_factory, world.catalog, world.clock, world.notifier
+        ).execute(RejectPendingRuleCommand(invitee.id, shared.rule.id))

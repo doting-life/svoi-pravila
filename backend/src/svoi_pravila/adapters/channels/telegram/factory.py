@@ -81,6 +81,7 @@ def build_telegram_lifecycle(
             webhook_secret_token=webhook_secret,
             shutdown_grace_seconds=settings.telegram_shutdown_grace_seconds,
             inline_queries=deps.inline_queries,
+            bot_username=deps.bot_username,
             miniapp_url=settings.miniapp_url,
             extra_tasks=extra_tasks,
         ),

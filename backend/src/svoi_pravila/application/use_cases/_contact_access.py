@@ -7,7 +7,15 @@ from svoi_pravila.application.ports.unit_of_work import UnitOfWork
 from svoi_pravila.domain.contact import Contact
 from svoi_pravila.domain.ids import RuleId, UserId
 from svoi_pravila.domain.pair import Pair
-from svoi_pravila.domain.rules import Rule
+from svoi_pravila.domain.rules import Rule, RuleRevision
+
+
+def require_pending_revision(rule: Rule) -> RuleRevision:
+    """Return the pending revision or NotFound when none exists."""
+    pending = rule.pending_revision
+    if pending is None:
+        raise NotFound()
+    return pending
 
 
 async def load_owned_contact(

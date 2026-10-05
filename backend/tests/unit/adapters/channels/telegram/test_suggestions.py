@@ -26,6 +26,7 @@ from aiogram.types import (
 from tests.factories import make_settings
 from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.ids import FakeIdGenerator
+from tests.fakes.pair_notifier import FakePairNotifier
 from tests.fakes.telegram_deps import TelegramTestDeps, make_telegram_deps
 from tests.fakes.telegram_session import FakeTelegramSession
 from tests.fakes.uow import InMemoryUnitOfWorkFactory
@@ -149,7 +150,7 @@ def _sent_texts(session: FakeTelegramSession) -> list[str]:
 
 @pytest.mark.unit
 def test_feature_callback_registry_includes_sg() -> None:
-    assert FEATURE_CALLBACK_PREFIXES == ("ct", "ru", "sg", "sn")
+    assert FEATURE_CALLBACK_PREFIXES == ("ct", "ru", "sg", "sn", "pr", "iv")
     assert is_feature_callback("sg:a:00000000-0000-0000-0000-000000000001")
     assert is_feature_callback("ct:n")
     assert is_feature_callback("ru:n")
@@ -390,7 +391,7 @@ async def test_suggestion_accept_already_decided_and_limit() -> None:
                 ),
             ),
         )
-    propose = ProposeRule(uow, catalog, ids, deps.clock)
+    propose = ProposeRule(uow, catalog, ids, deps.clock, FakePairNotifier())
     async with uow() as active:
         user = await active.users.get_by_telegram_id(TelegramUserId(705))
         assert user is not None

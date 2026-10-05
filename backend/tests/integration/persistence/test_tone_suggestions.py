@@ -23,6 +23,7 @@ from svoi_pravila.application.use_cases.create_contact import CreateContact, Cre
 from svoi_pravila.application.use_cases.delete_my_account import (
     DeleteMyAccount,
     DeleteMyAccountCommand,
+    DeleteMyAccountPorts,
 )
 from svoi_pravila.application.use_cases.dismiss_suggestion import (
     DismissSuggestion,
@@ -58,6 +59,7 @@ from tests.fakes.clock import FakeClock
 from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
+from tests.fakes.pair_notifier import FakePairNotifier
 from tests.fakes.rate_limit import FakePseudonymizer
 from tests.fakes.usage_sink import RecordingUsageEventSink
 
@@ -314,7 +316,14 @@ async def test_suggestion_export_and_delete_clear_rows(
     assert contacts[0]["сигналы_тона"][0]["значения"] == [Firmness.BALANCED.value] * 5
 
     await DeleteMyAccount(
-        uow_factory, ids, FakePseudonymizer(), clock, make_inline_reuse(clock)
+        DeleteMyAccountPorts(
+            uow_factory,
+            ids,
+            FakePseudonymizer(),
+            clock,
+            make_inline_reuse(clock),
+            FakePairNotifier(),
+        )
     ).execute(DeleteMyAccountCommand(TelegramUserId(9200)))
     async with engine.connect() as conn:
         sug_count = (await conn.execute(text("SELECT count(*) FROM rule_suggestions"))).scalar_one()

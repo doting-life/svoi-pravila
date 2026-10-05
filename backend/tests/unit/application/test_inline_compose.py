@@ -39,6 +39,7 @@ from svoi_pravila.application.use_cases.create_contact import CreateContact, Cre
 from svoi_pravila.application.use_cases.delete_my_account import (
     DeleteMyAccount,
     DeleteMyAccountCommand,
+    DeleteMyAccountPorts,
 )
 from svoi_pravila.application.use_cases.ensure_user import EnsureUser, EnsureUserCommand
 from svoi_pravila.application.use_cases.inline_compose import (
@@ -401,7 +402,9 @@ async def test_inline_compose_maps_applied_rule_indexes(world: AppWorld) -> None
             CreateContactCommand(user.id, ContactLabel("Sam"), RelationshipKind.FRIEND)
         )
     ).contact
-    await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             user.id,
             contact.id,
@@ -494,7 +497,9 @@ async def test_inline_compose_reuse_miss_on_context_changes(world: AppWorld) -> 
         InlineComposeCommand(TelegramUserId(140), "long enough draft")
     )
     assert after_contact.reuse is InlineReuseStatus.MISS
-    await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             user.id,
             contact.id,
@@ -625,7 +630,14 @@ async def test_inline_compose_forget_on_delete_and_revoke(world: AppWorld) -> No
     await use_case.execute(InlineComposeCommand(TelegramUserId(150), "long enough draft"))
     assert generator.call_count == 1
     await DeleteMyAccount(
-        world.uow_factory, world.ids, FakePseudonymizer(), world.clock, reuse
+        DeleteMyAccountPorts(
+            world.uow_factory,
+            world.ids,
+            FakePseudonymizer(),
+            world.clock,
+            reuse,
+            world.notifier,
+        )
     ).execute(DeleteMyAccountCommand(TelegramUserId(150)))
     await world.ensure_granted_user(150)
     after_delete = await use_case.execute(

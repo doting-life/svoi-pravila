@@ -35,6 +35,12 @@ function kindFromStatus(status: number): ApiErrorKind {
     if (status === 422) {
         return "validation";
     }
+    if (status === 429) {
+        return "unknown";
+    }
+    if (status === 202) {
+        return "unknown";
+    }
     if (status >= 500) {
         return "server";
     }

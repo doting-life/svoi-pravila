@@ -15,6 +15,16 @@ describe("mapHttpError", () => {
         expect(mapHttpError(422).kind).toBe("validation");
         expect(mapHttpError(undefined).kind).toBe("network");
     });
+
+    it("maps bot_chat_unavailable 409, rate_limited 429, and 202", () => {
+        const unavailable = mapHttpError(409, "start", "bot_chat_unavailable");
+        expect(unavailable.kind).toBe("conflict");
+        expect(unavailable.code).toBe("bot_chat_unavailable");
+        const limited = mapHttpError(429, "slow", "rate_limited");
+        expect(limited.status).toBe(429);
+        expect(limited.code).toBe("rate_limited");
+        expect(mapHttpError(202).kind).toBe("unknown");
+    });
 });
 
 describe("parseErrorBody", () => {

@@ -1,9 +1,9 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import { ru } from "./localization/ru";
-import { fakeAdapter, mockFetch } from "./test/fakeTelegram";
+import { fakeAdapter, jsonResponse, mockFetch } from "./test/fakeTelegram";
 import type { TelegramAdapter } from "./telegram/webapp";
 
 const meDone = {
@@ -180,6 +180,8 @@ describe("App", () => {
         expect(await screen.findByText("Аня")).toBeInTheDocument();
         expect(screen.getByText(new RegExp(ru.contactsActiveBadge))).toBeInTheDocument();
         click(/Аня/);
+        expect(await screen.findByRole("heading", { name: "Аня" })).toBeInTheDocument();
+        expect(screen.getByText(ru.relationships.partner)).toBeInTheDocument();
         expect(await screen.findByText("не повышать голос")).toBeInTheDocument();
         expect(screen.getByText(ru.rulePendingEdit)).toBeInTheDocument();
         expect(screen.getByText(new RegExp(ru.ruleProposed))).toBeInTheDocument();
@@ -212,8 +214,11 @@ describe("App", () => {
         click(/Аня/);
         expect(await screen.findByText(ru.rulesEmpty)).toBeInTheDocument();
         expect(backCallback).toBeTypeOf("function");
-        backCallback?.();
-        expect(await screen.findByText("Аня")).toBeInTheDocument();
+        await act(async () => {
+            backCallback?.();
+        });
+        expect(await screen.findByRole("heading", { name: ru.contactsTitle })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /Аня/ })).toBeInTheDocument();
     });
 
     it("archives only after confirm accepts", async () => {
@@ -620,6 +625,184 @@ describe("App", () => {
         await screen.findByText(ru.contactsEmpty);
         themeHandler?.("dark");
         expect(document.documentElement.dataset.colorScheme).toBe("dark");
+    });
+
+    it("exports data with success, 409 and 429 handling", async () => {
+        const adapter = fakeAdapter();
+        let exportCalls = 0;
+        const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(String(input), init);
+            const path = new URL(request.url).pathname;
+            if (path === "/api/v1/me") {
+                return Promise.resolve(jsonResponse(meDone));
+            }
+            if (path === "/api/v1/contacts") {
+                return Promise.resolve(jsonResponse({ contacts: [contact] }));
+            }
+            if (path === "/api/v1/me/export" && request.method === "POST") {
+                exportCalls += 1;
+                if (exportCalls === 1) {
+                    return Promise.resolve(jsonResponse({ delivered_to: "bot_chat" }, 202));
+                }
+                if (exportCalls === 2) {
+                    return Promise.resolve(
+                        jsonResponse(
+                            { code: "bot_chat_unavailable", message: "start bot" },
+                            409,
+                        ),
+                    );
+                }
+                return Promise.resolve(
+                    jsonResponse({ code: "rate_limited", message: "slow" }, 429),
+                );
+            }
+            return Promise.resolve(jsonResponse({ code: "not_found", message: "x" }, 404));
+        }) as typeof fetch;
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyTitle }));
+        expect(await screen.findByText(ru.privacyExportBlurb)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyExportAction }));
+        expect(await screen.findByText(ru.privacyExportDone)).toBeInTheDocument();
+        expect(adapter.hapticNotification).toHaveBeenCalledWith("success");
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyExportAction }));
+        expect(await screen.findByText(ru.privacyExportUnavailable)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyExportAction }));
+        expect(await screen.findByText(ru.rateLimited)).toBeInTheDocument();
+    });
+
+    it("revokes consents only when confirm accepts and shows consent gate", async () => {
+        const showConfirm = vi.fn(() => Promise.resolve(false));
+        const adapter = fakeAdapter({ showConfirm });
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { method: "POST", path: "/api/v1/me/consents/revoke", status: 204, body: null },
+        ]);
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyTitle }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyRevokeAction }));
+        expect(showConfirm).toHaveBeenCalled();
+        expect(
+            vi.mocked(fetchImpl).mock.calls.some((call) => {
+                const request = call[0];
+                const url = request instanceof Request ? request.url : String(request);
+                return url.includes("/consents/revoke");
+            }),
+        ).toBe(false);
+
+        showConfirm.mockResolvedValueOnce(true);
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyRevokeAction }));
+        expect(await screen.findByText(ru.gateConsentExtra)).toBeInTheDocument();
+        expect(
+            vi.mocked(fetchImpl).mock.calls.some((call) => {
+                const request = call[0];
+                const url = request instanceof Request ? request.url : String(request);
+                return url.includes("/consents/revoke");
+            }),
+        ).toBe(true);
+    });
+
+    it("delete flow: step1 decline, step2 cancel, then success and close", async () => {
+        const showConfirm = vi.fn(() => Promise.resolve(false));
+        const adapter = fakeAdapter({ showConfirm });
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { method: "POST", path: "/api/v1/me/delete", status: 204, body: null },
+        ]);
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyTitle }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyDeleteAction }));
+        expect(showConfirm).toHaveBeenCalled();
+        expect(screen.queryByText(ru.privacyDeleteForever)).not.toBeInTheDocument();
+
+        showConfirm.mockResolvedValueOnce(true);
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
+        expect(await screen.findByRole("button", { name: ru.privacyDeleteForever })).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.cancel }));
+        expect(await screen.findByText(ru.privacyExportBlurb)).toBeInTheDocument();
+
+        showConfirm.mockResolvedValueOnce(true);
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyDeleteForever }));
+        expect(await screen.findByText(ru.privacyDeleted)).toBeInTheDocument();
+        expect(screen.queryByText("Аня")).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.close }));
+        expect(adapter.close).toHaveBeenCalled();
+    });
+
+    it("maps export generic errors and revoke/delete API failures", async () => {
+        const showConfirm = vi.fn(() => Promise.resolve(true));
+        const adapter = fakeAdapter({ showConfirm });
+        let exportCalls = 0;
+        const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(String(input), init);
+            const path = new URL(request.url).pathname;
+            if (path === "/api/v1/me") {
+                return Promise.resolve(jsonResponse(meDone));
+            }
+            if (path === "/api/v1/contacts") {
+                return Promise.resolve(jsonResponse({ contacts: [contact] }));
+            }
+            if (path === "/api/v1/me/export") {
+                exportCalls += 1;
+                return Promise.resolve(
+                    jsonResponse({ code: "not_found", message: "export failed" }, 500),
+                );
+            }
+            if (path === "/api/v1/me/consents/revoke") {
+                return Promise.resolve(
+                    jsonResponse({ code: "not_found", message: "revoke failed" }, 500),
+                );
+            }
+            if (path === "/api/v1/me/delete") {
+                return Promise.resolve(
+                    jsonResponse({ code: "open_rule_limit", message: "delete failed" }, 409),
+                );
+            }
+            return Promise.resolve(jsonResponse({ code: "not_found", message: "x" }, 404));
+        }) as typeof fetch;
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyTitle }));
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyExportAction }));
+        expect(await screen.findByText("export failed")).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyRevokeAction }));
+        await waitFor(() => {
+            expect(adapter.hapticNotification).toHaveBeenCalledWith("error");
+        });
+        expect(screen.getByText(ru.privacyExportBlurb)).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyDeleteForever }));
+        expect(await screen.findByText("delete failed")).toBeInTheDocument();
+        expect(exportCalls).toBe(1);
+    });
+
+    it("shows BackButton on the privacy screen", async () => {
+        let backCallback: (() => void) | undefined;
+        const adapter = fakeAdapter({
+            BackButton: {
+                show: vi.fn(),
+                hide: vi.fn(),
+                onClick: (callback: () => void) => {
+                    backCallback = callback;
+                    return () => {
+                        backCallback = undefined;
+                    };
+                },
+            },
+        });
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+        ]);
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyTitle }));
+        expect(await screen.findByText(ru.privacyExportBlurb)).toBeInTheDocument();
+        expect(adapter.BackButton.show).toHaveBeenCalled();
+        backCallback?.();
+        expect(await screen.findByText("Аня")).toBeInTheDocument();
     });
 });
 

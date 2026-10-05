@@ -196,6 +196,18 @@ async function mockApi(page, mode) {
             });
             return;
         }
+        if (path === "/api/v1/me/export") {
+            await route.fulfill({
+                status: 202,
+                contentType: "application/json",
+                body: JSON.stringify({ delivered_to: "bot_chat" }),
+            });
+            return;
+        }
+        if (path === "/api/v1/me/consents/revoke" || path === "/api/v1/me/delete") {
+            await route.fulfill({ status: 204, body: "" });
+            return;
+        }
         await route.fulfill({
             status: 404,
             contentType: "application/json",
@@ -246,6 +258,27 @@ async function captureScheme(browser, baseUrl, scheme) {
     await app.waitForSelector("text=Новое правило");
     await shot(app, `${scheme}-add-rule`);
     await app.close();
+
+    const privacy = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await installTelegram(privacy, scheme);
+    await mockApi(privacy, "app");
+    await privacy.goto(baseUrl, { waitUntil: "networkidle" });
+    await privacy.waitForSelector("text=Аня");
+    await privacy.getByRole("button", { name: "Приватность" }).click();
+    await privacy.waitForSelector("text=Выгрузить данные");
+    await shot(privacy, `${scheme}-privacy`);
+    await privacy.evaluate(() => {
+        window.Telegram.WebApp.showConfirm = (_m, cb) => {
+            cb?.(true);
+        };
+    });
+    await privacy.getByRole("button", { name: "Удалить аккаунт" }).click();
+    await privacy.waitForSelector("text=Удалить навсегда");
+    await shot(privacy, `${scheme}-delete-confirm`);
+    await privacy.getByRole("button", { name: "Удалить навсегда" }).click();
+    await privacy.waitForSelector("text=Аккаунт удалён");
+    await shot(privacy, `${scheme}-deleted`);
+    await privacy.close();
 }
 
 async function main() {

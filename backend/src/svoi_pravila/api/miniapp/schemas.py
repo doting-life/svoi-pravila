@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MeResponse(BaseModel):
@@ -18,6 +18,20 @@ class MeResponse(BaseModel):
     max_contacts: int = Field(ge=1)
     max_open_rules: int = Field(ge=1)
     display_timezone: str = Field(min_length=1)
+
+
+class ConfirmTrueRequest(BaseModel):
+    """Destructive confirmations: body must be exactly ``{\"confirm\": true}``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confirm: Literal[True]
+
+
+class ExportDeliveryResponse(BaseModel):
+    """POST /me/export — delivery acknowledgement (never the export payload)."""
+
+    delivered_to: Literal["bot_chat"]
 
 
 class ContactItem(BaseModel):

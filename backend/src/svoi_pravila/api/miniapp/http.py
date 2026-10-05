@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from svoi_pravila.api.miniapp.errors import MiniappErrorCode, error_body
 from svoi_pravila.application.errors import (
     AccessNotGranted,
+    BotChatUnavailable,
     ContactLimitReached,
     NotFound,
     OpenRuleLimitReached,
@@ -68,6 +69,10 @@ def register_miniapp_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(OpenRuleLimitReached)
     async def _open_rule_limit(_request: Request, _exc: OpenRuleLimitReached) -> JSONResponse:
         return _miniapp_json(MiniappErrorCode.OPEN_RULE_LIMIT, 409)
+
+    @app.exception_handler(BotChatUnavailable)
+    async def _bot_chat_unavailable(_request: Request, _exc: BotChatUnavailable) -> JSONResponse:
+        return _miniapp_json(MiniappErrorCode.BOT_CHAT_UNAVAILABLE, 409)
 
     @app.exception_handler(InvalidTransitionError)
     async def _invalid_transition(_request: Request, _exc: InvalidTransitionError) -> JSONResponse:

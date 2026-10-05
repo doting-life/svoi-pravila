@@ -12,14 +12,17 @@ from svoi_pravila.api.miniapp.deps import (
     no_store,
     parse_path_uuid,
 )
-from svoi_pravila.api.miniapp.errors import ErrorBody
+from svoi_pravila.api.miniapp.errors import ErrorBody, MiniappErrorCode
+from svoi_pravila.api.miniapp.http import MiniappHttpError
 from svoi_pravila.api.miniapp.schemas import (
     AcceptSuggestionResponse,
+    ConfirmTrueRequest,
     ContactItem,
     ContactListResponse,
     CreateContactRequest,
     CreateRuleRequest,
     DismissSuggestionResponse,
+    ExportDeliveryResponse,
     MeResponse,
     RenameContactRequest,
     RuleItem,
@@ -27,6 +30,7 @@ from svoi_pravila.api.miniapp.schemas import (
     SuggestionItem,
     SuggestionListResponse,
 )
+from svoi_pravila.application.ports.rate_limiter import RateLimiter
 from svoi_pravila.application.rule_view import RuleListItemView, project_rules_for_list
 from svoi_pravila.application.use_cases.accept_suggestion import (
     AcceptSuggestion,
@@ -36,6 +40,10 @@ from svoi_pravila.application.use_cases.archive_rule import ArchiveRule, Archive
 from svoi_pravila.application.use_cases.create_contact import (
     CreateContact,
     CreateContactCommand,
+)
+from svoi_pravila.application.use_cases.delete_my_account import (
+    DeleteMyAccount,
+    DeleteMyAccountCommand,
 )
 from svoi_pravila.application.use_cases.dismiss_suggestion import (
     DismissSuggestion,
@@ -52,6 +60,14 @@ from svoi_pravila.application.use_cases.propose_rule import ProposeRule, Propose
 from svoi_pravila.application.use_cases.rename_contact import (
     RenameContact,
     RenameContactCommand,
+)
+from svoi_pravila.application.use_cases.request_my_data_export import (
+    RequestMyDataExport,
+    RequestMyDataExportCommand,
+)
+from svoi_pravila.application.use_cases.revoke_all_consents import (
+    RevokeAllConsents,
+    RevokeAllConsentsCommand,
 )
 from svoi_pravila.application.use_cases.set_active_contact import (
     SetActiveContact,
@@ -75,6 +91,9 @@ _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
 }
 
 
+_EXPORT_RATE_PURPOSE = "export"
+
+
 @dataclass(frozen=True, slots=True)
 class MiniappRouterBindings:
     """Use cases and auth deps for the mini-app router."""
@@ -90,6 +109,10 @@ class MiniappRouterBindings:
     list_suggestions: ListSuggestions
     accept_suggestion: AcceptSuggestion
     dismiss_suggestion: DismissSuggestion
+    request_my_data_export: RequestMyDataExport
+    revoke_all_consents: RevokeAllConsents
+    delete_my_account: DeleteMyAccount
+    export_rate_limiter: RateLimiter
     display_timezone: str
 
 
@@ -154,7 +177,7 @@ def build_miniapp_router(bindings: MiniappRouterBindings) -> APIRouter:
     auth_dep = Annotated[MiniappAuthContext, Depends(authenticator.authenticate)]
     actor_dep = Annotated[User, Depends(authenticator.require_actor)]
     router = APIRouter(prefix="/api/v1", tags=["miniapp"])
-    _register_me(router, bindings, auth_dep)
+    _register_me(router, bindings, auth_dep, actor_dep)
     _register_contacts(router, bindings, actor_dep)
     _register_rules(router, bindings, actor_dep)
     _register_suggestions(router, bindings, actor_dep)
@@ -165,6 +188,7 @@ def _register_me(
     router: APIRouter,
     bindings: MiniappRouterBindings,
     auth_dep: Any,
+    actor_dep: Any,
 ) -> None:
     """Register me routes."""
 
@@ -201,6 +225,70 @@ def _register_me(
                 "display_timezone": bindings.display_timezone,
             }
         )
+
+    @router.post(
+        "/me/export",
+        operation_id="exportMyData",
+        status_code=status.HTTP_202_ACCEPTED,
+        response_model=ExportDeliveryResponse,
+        responses=_ERROR_RESPONSES,
+    )
+    async def export_my_data(
+        response: Response,
+        actor: actor_dep,
+    ) -> ExportDeliveryResponse:
+        no_store(response)
+        pseudonym = bindings.auth.pseudonymizer.pseudonymize(
+            _EXPORT_RATE_PURPOSE,
+            str(actor.telegram_user_id.value),
+        )
+        decision = await bindings.export_rate_limiter.check(pseudonym)
+        if not decision.allowed:
+            raise MiniappHttpError(MiniappErrorCode.RATE_LIMITED, 429)
+        result = await bindings.request_my_data_export.execute(
+            RequestMyDataExportCommand(telegram_user_id=actor.telegram_user_id)
+        )
+        return ExportDeliveryResponse.model_validate({"delivered_to": result.delivered_to})
+
+    @router.post(
+        "/me/consents/revoke",
+        operation_id="revokeAllConsents",
+        status_code=status.HTTP_204_NO_CONTENT,
+        response_model=None,
+        responses=_ERROR_RESPONSES,
+    )
+    async def revoke_all_consents(
+        response: Response,
+        actor: actor_dep,
+        body: ConfirmTrueRequest,
+    ) -> Response:
+        _ = body
+        no_store(response)
+        await bindings.revoke_all_consents.execute(
+            RevokeAllConsentsCommand(telegram_user_id=actor.telegram_user_id)
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @router.post(
+        "/me/delete",
+        operation_id="deleteMyAccount",
+        status_code=status.HTTP_204_NO_CONTENT,
+        response_model=None,
+        responses=_ERROR_RESPONSES,
+    )
+    async def delete_my_account(
+        response: Response,
+        auth: auth_dep,
+        body: ConfirmTrueRequest,
+    ) -> Response:
+        _ = body
+        no_store(response)
+        if auth.user is None:
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        await bindings.delete_my_account.execute(
+            DeleteMyAccountCommand(telegram_user_id=auth.telegram_user_id)
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 def _register_contacts(

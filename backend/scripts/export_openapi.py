@@ -13,16 +13,20 @@ from svoi_pravila.api.miniapp import (
     MiniappRouterBindings,
     build_miniapp_router,
 )
+from svoi_pravila.application.ports.rate_limiter import RateLimiter
 from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.create_contact import CreateContact
+from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
 from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggestion
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
 from svoi_pravila.application.use_cases.list_rules import ListRules
 from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
+from svoi_pravila.application.use_cases.request_my_data_export import RequestMyDataExport
+from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from svoi_pravila.config import Environment
 
@@ -45,6 +49,10 @@ def _openapi_bindings() -> MiniappRouterBindings:
         list_suggestions=cast(ListSuggestions, _stub()),
         accept_suggestion=cast(AcceptSuggestion, _stub()),
         dismiss_suggestion=cast(DismissSuggestion, _stub()),
+        request_my_data_export=cast(RequestMyDataExport, _stub()),
+        revoke_all_consents=cast(RevokeAllConsents, _stub()),
+        delete_my_account=cast(DeleteMyAccount, _stub()),
+        export_rate_limiter=cast(RateLimiter, _stub()),
         display_timezone="Europe/Moscow",
     )
 

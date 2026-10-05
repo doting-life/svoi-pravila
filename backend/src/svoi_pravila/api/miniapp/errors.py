@@ -21,6 +21,7 @@ class MiniappErrorCode(StrEnum):
     NOT_FOUND = "not_found"
     CONTACT_LIMIT = "contact_limit"
     OPEN_RULE_LIMIT = "open_rule_limit"
+    BOT_CHAT_UNAVAILABLE = "bot_chat_unavailable"
     INVALID_TRANSITION = "invalid_transition"
     VALIDATION_ERROR = "validation_error"
     BODY_TOO_LARGE = "body_too_large"

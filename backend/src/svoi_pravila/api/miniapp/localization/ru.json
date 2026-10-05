@@ -8,6 +8,7 @@
   "not_found": "Не найдено.",
   "contact_limit": "Достигнут лимит контактов.",
   "open_rule_limit": "Достигнут лимит открытых правил.",
+  "bot_chat_unavailable": "Напишите боту /start, затем повторите.",
   "invalid_transition": "Это действие сейчас недоступно.",
   "validation_error": "Проверьте введённые данные.",
   "body_too_large": "Слишком большой запрос."

@@ -12,7 +12,9 @@ from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 from tests.fakes.clock import FakeClock
 from tests.fakes.consent_catalog import FakeConsentCatalog
+from tests.fakes.export_delivery import FakeExportDelivery
 from tests.fakes.ids import FakeIdGenerator
+from tests.fakes.inline_reuse import make_inline_reuse
 from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
 from tests.fakes.tokens import FakeTokenGenerator
 from tests.fakes.uow import InMemoryUnitOfWorkFactory
@@ -29,8 +31,10 @@ from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestio
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.create_contact import CreateContact
+from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
 from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggestion
 from svoi_pravila.application.use_cases.ensure_user import EnsureUser, EnsureUserCommand
+from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
@@ -38,6 +42,8 @@ from svoi_pravila.application.use_cases.list_rules import ListRules
 from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
+from svoi_pravila.application.use_cases.request_my_data_export import RequestMyDataExport
+from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from svoi_pravila.config import Environment
 from svoi_pravila.domain.access import AccessStatus
@@ -96,6 +102,7 @@ def _app_with_bindings(
         get_user_by_telegram_id=GetUserByTelegramId(world.uow_factory),
         get_onboarding_step=GetOnboardingStep(world.uow_factory, world.catalog),
     )
+    reuse = make_inline_reuse(world.clock)
     bindings = MiniappRouterBindings(
         auth=auth,
         list_contacts=cast(
@@ -136,6 +143,19 @@ def _app_with_bindings(
             DismissSuggestion,
             dismiss_suggestion or DismissSuggestion(world.uow_factory, world.catalog, world.clock),
         ),
+        request_my_data_export=RequestMyDataExport(
+            ExportMyData(world.uow_factory, world.clock),
+            FakeExportDelivery(),
+        ),
+        revoke_all_consents=RevokeAllConsents(world.uow_factory, world.clock, reuse),
+        delete_my_account=DeleteMyAccount(
+            world.uow_factory,
+            world.ids,
+            FakePseudonymizer(),
+            world.clock,
+            reuse,
+        ),
+        export_rate_limiter=FakeRateLimiter(limit=3),
         display_timezone="Europe/Moscow",
     )
     return create_app(

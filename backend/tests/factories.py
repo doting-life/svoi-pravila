@@ -39,6 +39,7 @@ def make_settings(**overrides: object) -> Settings:
         "telegram_webhook_path_secret": None,
         "telegram_webhook_secret_token": None,
         "pseudonym_pepper": _TEST_PEPPER,
+        "miniapp_url": None,
     }
     values.update(overrides)
     return Settings.model_validate(values)

@@ -32,7 +32,9 @@ from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestio
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.create_contact import CreateContact
+from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
 from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggestion
+from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent, GrantConsentCommand
@@ -41,6 +43,8 @@ from svoi_pravila.application.use_cases.list_rules import ListRules
 from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
+from svoi_pravila.application.use_cases.request_my_data_export import RequestMyDataExport
+from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from svoi_pravila.config import Environment, Settings
 from svoi_pravila.crypto import HmacPseudonymizer
@@ -50,7 +54,10 @@ from svoi_pravila.domain.rule_suggestion import RuleSuggestion
 from svoi_pravila.domain.text import RuleText
 from tests.factories import make_settings
 from tests.fakes.clock import FakeClock
+from tests.fakes.export_delivery import FakeExportDelivery
 from tests.fakes.ids import FakeIdGenerator
+from tests.fakes.inline_reuse import make_inline_reuse
+from tests.integration.test_user_rights_delete import _scan_has_uuid
 from tests.support.init_data import InitDataOptions, build_webapp_init_data
 
 _TOKEN = "14:INTEGRATION-MINIAPP"
@@ -126,6 +133,8 @@ def _build_app(world: _MiniappWorld) -> Any:
         get_user_by_telegram_id=GetUserByTelegramId(uow_factory),
         get_onboarding_step=GetOnboardingStep(uow_factory, catalog),
     )
+    pepper = HmacPseudonymizer(settings.pseudonym_pepper_bytes())
+    reuse = make_inline_reuse(clock)
     bindings = MiniappRouterBindings(
         auth=auth,
         list_contacts=ListContacts(uow_factory, catalog),
@@ -138,6 +147,15 @@ def _build_app(world: _MiniappWorld) -> Any:
         list_suggestions=ListSuggestions(uow_factory, catalog),
         accept_suggestion=AcceptSuggestion(uow_factory, catalog, ids, clock),
         dismiss_suggestion=DismissSuggestion(uow_factory, catalog, clock),
+        request_my_data_export=RequestMyDataExport(
+            ExportMyData(uow_factory, clock),
+            FakeExportDelivery(),
+        ),
+        revoke_all_consents=RevokeAllConsents(uow_factory, clock, reuse),
+        delete_my_account=DeleteMyAccount(uow_factory, ids, pepper, clock, reuse),
+        export_rate_limiter=ValkeyRateLimiter(
+            valkey, limit=3, window_seconds=3600, key_prefix="miniapp:export"
+        ),
         display_timezone=settings.display_timezone,
     )
     return create_app(
@@ -271,3 +289,59 @@ async def test_miniapp_api_happy_path_idor_privacy(
     assert "pii_user" not in blob
     assert "int-qid" not in blob
     assert str(_TG_A) not in blob
+
+
+@pytest.mark.integration
+async def test_miniapp_delete_shreds_user_and_keys(
+    uow_factory_postgres: SqlAlchemyUnitOfWorkFactory,
+    miniapp_valkey: Redis,
+    settings: Settings,
+    engine: AsyncEngine,
+) -> None:
+    world = _MiniappWorld(
+        uow_factory=uow_factory_postgres,
+        valkey=miniapp_valkey,
+        settings=settings,
+        clock=FakeClock(start=_NOW),
+        ids=FakeIdGenerator(),
+        catalog=PackageConsentCatalog(),
+    )
+    await _grant_user(world, _TG_A)
+    app = _build_app(world)
+    headers = _auth(_TG_A)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            "/api/v1/contacts",
+            headers=headers,
+            json={"label": _LABEL_SENTINEL, "relationship": "friend"},
+        )
+        assert created.status_code == 201
+        async with uow_factory_postgres() as uow:
+            user = await uow.users.get_by_telegram_id(TelegramUserId(_TG_A))
+            assert user is not None
+            user_id = user.id
+        deleted = await client.post("/api/v1/me/delete", headers=headers, json={"confirm": True})
+        assert deleted.status_code == 204
+        me = await client.get("/api/v1/me", headers=headers)
+        assert me.status_code == 200
+        assert me.json()["onboarding_step"] == "age"
+        contacts = await client.get("/api/v1/contacts", headers=headers)
+        assert contacts.status_code == 403
+        assert contacts.json()["code"] == MiniappErrorCode.ONBOARDING_REQUIRED
+
+    assert await _scan_has_uuid(engine, user_id) is False
+    async with engine.connect() as conn:
+        key_count = (
+            await conn.execute(
+                text("SELECT count(*) FROM user_keys WHERE user_id = :id"), {"id": user_id}
+            )
+        ).scalar_one()
+    assert key_count == 0
+    remaining = [key async for key in miniapp_valkey.scan_iter(match="*")]
+    for key in remaining:
+        assert str(user_id) not in str(key)
+        assert _LABEL_SENTINEL not in str(key)
+        value = await miniapp_valkey.get(key)
+        if value is not None:
+            assert str(user_id) not in str(value)
+            assert _LABEL_SENTINEL not in str(value)

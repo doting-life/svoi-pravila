@@ -225,6 +225,8 @@ class Settings(BaseSettings):
     rule_source_ttl_seconds: int = Field(default=600, ge=60, le=600)
     dialog_ttl_seconds: int = Field(default=600, ge=1, le=86_400)
     display_timezone: str = Field(default="Europe/Moscow")
+    miniapp_initdata_max_age_seconds: int = Field(default=3600, ge=60, le=86_400)
+    miniapp_requests_per_minute: int = Field(default=120, ge=1, le=600)
 
     @field_validator("display_timezone")
     @classmethod

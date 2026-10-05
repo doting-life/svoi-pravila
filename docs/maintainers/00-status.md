@@ -4,7 +4,9 @@
 
 ## Текущее
 - Дата: 2026-10-04 · Спринт 0 (Фундамент)
-- Активная задача: **0016.2 — общий свод в мини-приложении** · ветка `task/0016-2-pair-miniapp` · GigaChat 0 токенов; старт после мержа 0016.1
+- Активная задача: **0016.3 — локальный паритет с CI** (`make ci`, хуки, workflow только из целей `make`) · ветка `task/0016-3-ci-parity` · GigaChat 0 токенов; старт после мержа 0016.2
+- В `master`: 0016.1 (`c2d68c0`, squash #19)
+- Правило с 05.10 (владелец): тестировать всё локально, в GitHub отправлять только проверенный код; push только после зелёного `make ci` (04-workflow ред. 1.1, правило исполнителя)
 - В `master`: 0015.3 (`99d985f`, squash #18)
 - В `master`: 0015.2 (`80f3261`, squash #17)
 - В `master`: 0015.1 (`a60f168`, squash #16)
@@ -96,7 +98,8 @@
 | 0015.3-a | Crisis and citation copy from one source | `task/0015-3-miniapp-decode` | проверен 05.10 | **ACCEPT** (бэкенд 952, мини-приложение 87 тестов); 0015 закрыт целиком. CTO: при проверке оставил `.git/index.lock` в папке владельца — удалён в той же сессии |
 | 0016.1 | Pair invite and shared rules in the bot | `task/0016-1-pair-bot` | проверен 05.10 | **CHANGES** → 0016.1-a: `except Exception` в слое приложения (`_pair_notify`) и 4× в адаптере уведомлений; покрытие обработчиков ниже 95 % (`contacts.py` 82 %, `onboarding.py` 87 %, `rules.py` 92 %), в отчёте — среднее по пакету; отзыв приглашения сделан удалением без отметки в отклонениях |
 | 0016.1-a | Typed notifier errors; handler coverage | `task/0016-1-pair-bot` | проверен 05.10 | **ACCEPT** (974 теста; обработчики 96–97 % по файлам, гейты по файлам в Makefile). Промах CTO в 0015.3: `except BaseException` в `api/miniapp/decode_sse.py` — в 0016.2, часть 0 |
-| 0016.2 | Shared rulebook in the mini-app | `task/0016-2-pair-miniapp` | выдан | — |
+| 0016.2 | Shared rulebook in the mini-app | `task/0016-2-pair-miniapp` | проверен 05.10 | **ACCEPT** (бэкенд 980, мини-приложение 93 теста; IDOR по всем новым точкам); в 0016.3 часть 0: «Выйти из общего свода» — вниз экрана, подальше от основных действий |
+| 0016.3 | Local CI parity | `task/0016-3-ci-parity` | выдан | — |
 | 0006.1-b | Image gate: Debian security updates, base digest pin, Dependabot | `task/0006-telegram-channel` | проверен 04.10 | **ACCEPT** (Trivy: 21 CVE → 0) |
 
 ## Решения

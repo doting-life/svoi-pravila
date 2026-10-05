@@ -46,6 +46,11 @@ Thumbs.db
 .pre-commit-cache/
 *.log
 
+# Mini-app
+miniapp/node_modules/
+miniapp/dist/
+miniapp/coverage/
+
 # Benchmark / eval output (C0 markdown tables)
 backend/benchmarks/out/
 backend/evals/out/

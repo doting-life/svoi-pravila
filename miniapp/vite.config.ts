@@ -1,0 +1,13 @@
+import react from "@vitejs/plugin-react";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+    plugins: [react()],
+    build: {
+        modulePreload: {
+            polyfill: false,
+        },
+        cssCodeSplit: true,
+        assetsInlineLimit: 0,
+    },
+});

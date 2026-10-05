@@ -32,6 +32,7 @@ env:
   SP_GIGACHAT_MODEL_DECODE: GigaChat-2
   SP_GIGACHAT_TIMEOUT_SECONDS: "5"
   SP_GIGACHAT_MAX_RETRIES: "0"
+  MINIAPP_CSP: "default-src 'none'; script-src 'self' https://telegram.org; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors https://web.telegram.org https://webk.telegram.org https://webz.telegram.org"
 
 jobs:
   backend:
@@ -99,6 +100,49 @@ jobs:
       - name: Audit
         run: make audit
 
+  miniapp:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.22"
+          enable-cache: true
+
+      - name: Sync backend (OpenAPI export)
+        working-directory: backend
+        run: uv sync --frozen
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version-file: miniapp/.nvmrc
+
+      - name: Enable pnpm
+        run: corepack enable && corepack prepare pnpm@12.9.1 --activate
+
+      - name: Get pnpm store path
+        id: pnpm-store
+        run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache pnpm store
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('miniapp/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-${{ runner.os }}-
+
+      - name: Install mini-app dependencies
+        run: make miniapp-install
+
+      - name: Mini-app check
+        run: make miniapp-check
+
   secrets:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
@@ -123,7 +167,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - name: Build image
+      - name: Build API image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: backend
@@ -133,10 +177,29 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Trivy scan
+      - name: Trivy scan API image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: svoi-pravila:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: Build mini-app image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: miniapp
+          push: false
+          load: true
+          tags: svoi-pravila-miniapp:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Trivy scan mini-app image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: svoi-pravila-miniapp:ci
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
@@ -188,6 +251,21 @@ jobs:
           code="$(curl -s -o /tmp/readyz.json -w '%{http_code}' http://127.0.0.1:8000/readyz)"
           test "$code" = "200"
 
+      - name: Assert mini-app CSP and assets
+        run: |
+          set -euo pipefail
+          headers="$(mktemp)"
+          code="$(curl -sD "$headers" -o /tmp/miniapp-index.html -w '%{http_code}' http://127.0.0.1:8080/)"
+          test "$code" = "200"
+          csp="$(awk -F': ' 'tolower($1)=="content-security-policy"{sub(/\r$/,"",$2); print $2; exit}' "$headers")"
+          test "$csp" = "$MINIAPP_CSP"
+          asset_path="$(grep -oE '/assets/[^"]+' /tmp/miniapp-index.html | head -n1)"
+          test -n "$asset_path"
+          asset_code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080${asset_path}")"
+          test "$asset_code" = "200"
+          health_code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz)"
+          test "$health_code" = "404"
+
       - name: Stop local stack
         if: always()
         run: make down
@@ -210,4 +288,3 @@ jobs:
             echo "Task branches must not modify CTO-owned paths." >&2
             exit 1
           fi
-

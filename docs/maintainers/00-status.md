@@ -4,7 +4,8 @@
 
 ## Текущее
 - Дата: 2026-10-04 · Спринт 0 (Фундамент)
-- Активная задача: **0015.2 — приватность в мини-приложении** (экспорт в чат с ботом, отзыв согласий, удаление аккаунта) · ветка `task/0015-2-miniapp-privacy` · GigaChat 0 токенов; старт после мержа 0015.1
+- Активная задача: **0015.2-a — права пользователя после отзыва согласий** (экспорт и удаление доступны, тексты раскрытия) · ветка `task/0015-2-miniapp-privacy` · GigaChat 0 токенов
+- В `master`: 0015.1 (`a60f168`, squash #16)
 - В `master`: 0014 (`e8f6539`, squash #15)
 - В `master`: 0013 (`e274171`, squash #14)
 - В `master`: 0011.2 (`2be0872`, squash #13)
@@ -86,7 +87,8 @@
 | 0014-a | Mini-app API fixes | `task/0014-miniapp-api` | проверен 05.10 | **CHANGES** → 0014-b: проекция правил, ошибки, логи приняты; вместо `app.state` — модульный глобальный слот `_auth_slot`; после превышения лимита тело дочитывается до конца |
 | 0014-b | Auth binding without globals; body limit without draining | `task/0014-miniapp-api` | проверен 05.10 | **ACCEPT** (900 тестов, 98,77 %; `api/` 100 %) |
 | 0015.1 | Mini-app UI: contacts, rules, suggestions | `task/0015-1-miniapp-ui` | проверен 05.10 | **ACCEPT** (бэкенд 908, мини-приложение 49 тестов); в 0015.2 часть 0: заголовок карточки контакта — «Контакт» вместо имени, кнопка «Отправить» → «Сохранить правило», Playwright 1.56.1 → актуальная |
-| 0015.2 | Mini-app privacy: export to bot chat, revoke, delete | `task/0015-2-miniapp-privacy` | выдан | — |
+| 0015.2 | Mini-app privacy: export to bot chat, revoke, delete | `task/0015-2-miniapp-privacy` | проверен 05.10 | **CHANGES** → 0015.2-a: после отзыва согласий экспорт в мини-приложении закрыт (в боте `/export` работает), а экран-заглушка не даёт ни выгрузить, ни удалить; текст экспорта не упоминает предложения правил и сигналы тона; в тексте отзыва лишнее «Подтвердите отзыв.» |
+| 0015.2-a | Rights after consent revocation; disclosure copy | `task/0015-2-miniapp-privacy` | выдан | — |
 | 0006.1-b | Image gate: Debian security updates, base digest pin, Dependabot | `task/0006-telegram-channel` | проверен 04.10 | **ACCEPT** (Trivy: 21 CVE → 0) |
 
 ## Решения

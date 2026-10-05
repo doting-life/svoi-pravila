@@ -4,7 +4,8 @@
 
 ## Текущее
 - Дата: 2026-10-04 · Спринт 0 (Фундамент)
-- Активная задача: **0014 — API мини-приложения** (initData, авторизация по владельцу, контакты, правила, предложения) · ветка `task/0014-miniapp-api` · GigaChat 0 токенов; старт после мержа 0013
+- Активная задача: **0014-a — доработка API мини-приложения** (список правил, лимит тела запроса, единая обработка ошибок) · ветка `task/0014-miniapp-api` · GigaChat 0 токенов
+- В `master`: 0013 (`e274171`, squash #14)
 - В `master`: 0011.2 (`2be0872`, squash #13)
 - Решение по 0012: «Расшифровать» в группах не делаем в MVP — ADR-0007
 - В `master`: 0011.1 (`66bf03e`, squash #12)
@@ -80,7 +81,8 @@
 | 0013 | Mini-app bootstrap (Vite/React/TS, OpenAPI client, CSP, gates) | `task/0013-miniapp-bootstrap` | проверен 05.10 | **CHANGES** → 0013-a: Caddy 2.10.2 вместо актуального 2.11.4, уязвимости stdlib скрыты флагом `--ignore-unfixed`; клиент API допускает чужой `baseUrl`; образ 136 МБ без объяснения |
 | 0013-a | Mini-app bootstrap fixes | `task/0013-miniapp-bootstrap` | проверен 05.10 | **CHANGES** → 0013-b: клиент и размер образа (136 → 75 МБ) приняты; официальный Caddy 2.11.4 несёт 17 HIGH с доступными исправлениями — CI красный → ADR-0008 |
 | 0013-b | Caddy built from source on current Go | `task/0013-miniapp-bootstrap` | проверен 05.10 | **ACCEPT** (Dockerfile по ADR-0008, distroless, 75 МБ; Trivy 0 HIGH и CI #14 — по отчёту и PR, у CTO нет доступа к GitHub); исполнитель запушил `master` с документами CTO без поручения — отмечено; Caddyfile и `/srv` доступны на запись процессу — в 0014, часть 0 |
-| 0014 | Mini-app API: initData auth, contacts, rules, suggestions | `task/0014-miniapp-api` | выдан | — |
+| 0014 | Mini-app API: initData auth, contacts, rules, suggestions | `task/0014-miniapp-api` | проверен 05.10 | **CHANGES** → 0014-a: `GET …/rules` отдаёт архивные и отклонённые правила и для действующего правила с правкой — текст правки вместо действующего; лимит 16 КиБ проверяется после чтения и разбора тела; зависимости через `app.state` с защитными ветками; повтор обработки ошибок в каждом маршруте; логи строками вместо структурных полей |
+| 0014-a | Mini-app API fixes | `task/0014-miniapp-api` | выдан | — |
 | 0006.1-b | Image gate: Debian security updates, base digest pin, Dependabot | `task/0006-telegram-channel` | проверен 04.10 | **ACCEPT** (Trivy: 21 CVE → 0) |
 
 ## Решения

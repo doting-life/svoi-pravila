@@ -14,14 +14,16 @@ from svoi_pravila.application.ports.generation import (
     HelpSayRequest,
     RuleContext,
     SoftenRequest,
+    SuggestRuleRequest,
 )
 from svoi_pravila.domain.enums import RelationshipKind, RuleCategory
 
-JSONL_OPERATIONS = ("soften", "help_say", "decode")
-RUN_OPERATIONS = ("soften", "help_say", "decode_stream")
-JsonlOperation = Literal["soften", "help_say", "decode"]
-RunOperation = Literal["soften", "help_say", "decode_stream"]
+JSONL_OPERATIONS = ("soften", "help_say", "decode", "suggest_rule")
+RUN_OPERATIONS = ("soften", "help_say", "decode_stream", "suggest_rule")
+JsonlOperation = Literal["soften", "help_say", "decode", "suggest_rule"]
+RunOperation = Literal["soften", "help_say", "decode_stream", "suggest_rule"]
 ExpectedSafety = Literal["ok", "crisis"]
+ExpectedVerdict = Literal["ok", "none"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +37,9 @@ class BenchCase:
     soften: SoftenRequest | None = None
     help_say: HelpSayRequest | None = None
     decode: DecodeRequest | None = None
+    suggest_rule: SuggestRuleRequest | None = None
+    expected_verdict: ExpectedVerdict | None = None
+    expected_category: RuleCategory | None = None
 
 
 def _rules(raw: object) -> tuple[RuleContext, ...]:
@@ -104,6 +109,34 @@ def parse_case(raw: object) -> BenchCase:
                 relationship=relationship,
                 deadline_seconds=1.0,
             ),
+        )
+    if operation == "suggest_rule":
+        verdict = raw.get("expected_verdict")
+        if verdict not in ("ok", "none"):
+            msg = f"expected_verdict must be 'ok' or 'none', got {verdict!r}"
+            raise ValueError(msg)
+        category_raw = raw.get("expected_category")
+        category: RuleCategory | None
+        if verdict == "ok":
+            if category_raw is None:
+                msg = "expected_category required when expected_verdict is ok"
+                raise ValueError(msg)
+            category = RuleCategory(str(category_raw))
+        else:
+            category = None
+        return BenchCase(
+            id=ident,
+            operation="suggest_rule",
+            expected_safety=expected_safety,
+            smoke=smoke,
+            suggest_rule=SuggestRuleRequest(
+                incoming=str(raw["incoming"]),
+                rules=rules,
+                relationship=relationship,
+                deadline_seconds=1.0,
+            ),
+            expected_verdict=verdict,
+            expected_category=category,
         )
     return BenchCase(
         id=ident,
@@ -178,6 +211,8 @@ def with_deadline(case: BenchCase, deadline: float) -> BenchCase:
                 relationship=req.relationship,
                 deadline_seconds=deadline,
             ),
+            expected_verdict=case.expected_verdict,
+            expected_category=case.expected_category,
         )
     if case.operation == "help_say" and case.help_say is not None:
         req_help = case.help_say
@@ -193,6 +228,24 @@ def with_deadline(case: BenchCase, deadline: float) -> BenchCase:
                 relationship=req_help.relationship,
                 deadline_seconds=deadline,
             ),
+            expected_verdict=case.expected_verdict,
+            expected_category=case.expected_category,
+        )
+    if case.operation == "suggest_rule" and case.suggest_rule is not None:
+        req_s = case.suggest_rule
+        return BenchCase(
+            id=case.id,
+            operation=case.operation,
+            expected_safety=case.expected_safety,
+            smoke=case.smoke,
+            suggest_rule=SuggestRuleRequest(
+                incoming=req_s.incoming,
+                rules=req_s.rules,
+                relationship=req_s.relationship,
+                deadline_seconds=deadline,
+            ),
+            expected_verdict=case.expected_verdict,
+            expected_category=case.expected_category,
         )
     req_d = case.decode
     if req_d is None:
@@ -209,4 +262,6 @@ def with_deadline(case: BenchCase, deadline: float) -> BenchCase:
             relationship=req_d.relationship,
             deadline_seconds=deadline,
         ),
+        expected_verdict=case.expected_verdict,
+        expected_category=case.expected_category,
     )

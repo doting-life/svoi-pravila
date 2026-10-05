@@ -22,6 +22,8 @@ from svoi_pravila.application.ports.generation import (
     DecodeResult,
     HelpSayRequest,
     SoftenRequest,
+    SuggestRuleRequest,
+    SuggestRuleResult,
     TextGenerator,
     TokenUsage,
 )
@@ -62,6 +64,11 @@ class CallRecord:
     phase_b_ms: float | None = None
     actual_safety: str | None = None
     output_line: str | None = None
+    actual_verdict: str | None = None
+    actual_category: str | None = None
+    text_length: int | None = None
+    overlap_violation: bool = False
+    schema_valid_first_attempt: bool | None = None
 
 
 @dataclass
@@ -196,6 +203,11 @@ class _AttemptResult:
     ttfc_ms: float | None = None
     phase_a_ms: float | None = None
     phase_b_ms: float | None = None
+    actual_verdict: str | None = None
+    actual_category: str | None = None
+    text_length: int | None = None
+    overlap_violation: bool = False
+    schema_valid_first_attempt: bool | None = None
 
 
 def _empty_stream_result() -> InvalidGenerationOutput:
@@ -257,6 +269,56 @@ async def _run_help_say(
         billable_tokens=billable,
         actual_safety=help_say.safety.value,
         output_line=output_line,
+    )
+
+
+def _has_verbatim_overlap(incoming: str, text: str | None, *, window: int = 30) -> bool:
+    if text is None or len(incoming) < window:
+        return False
+    haystack = text.casefold()
+    source = incoming.casefold()
+    for index in range(0, len(source) - window + 1):
+        if source[index : index + window] in haystack:
+            return True
+    return False
+
+
+async def _run_suggest_rule(
+    gen: TextGenerator,
+    request: SuggestRuleRequest,
+    *,
+    case_id: str,
+    show_outputs: bool,
+) -> _AttemptResult:
+    result: SuggestRuleResult = await gen.suggest_rule(request)
+    output_line = None
+    if show_outputs:
+        output_line = json.dumps(
+            {
+                "id": case_id,
+                "verdict": result.verdict.value,
+                "category": None if result.category is None else result.category.value,
+                "text": result.text,
+            },
+            ensure_ascii=False,
+        )
+    inp, out, billable = _usage_fields(result.meta.usage)
+    text = result.text
+    return _AttemptResult(
+        outcome="ok",
+        attempts=result.meta.attempts,
+        reasons=(),
+        unavailable_kind=None,
+        input_tokens=inp,
+        output_tokens=out,
+        billable_tokens=billable,
+        actual_safety="ok",
+        output_line=output_line,
+        actual_verdict=result.verdict.value,
+        actual_category=None if result.category is None else result.category.value,
+        text_length=None if text is None else len(text),
+        overlap_violation=_has_verbatim_overlap(request.incoming, text),
+        schema_valid_first_attempt=result.meta.attempts == 1,
     )
 
 
@@ -385,11 +447,20 @@ async def run_case(
                 show_outputs=options.show_outputs,
                 started=started,
             )
+        elif options.operation == "suggest_rule" and timed.suggest_rule is not None:
+            attempt = await _run_suggest_rule(
+                gen,
+                timed.suggest_rule,
+                case_id=timed.id,
+                show_outputs=options.show_outputs,
+            )
         else:
             msg = "validated case missing request for operation"
             raise ValueError(msg)
     except (GenerationRefusedByProvider, InvalidGenerationOutput, GenerationUnavailable) as exc:
         _apply_error(attempt, exc)
+        if isinstance(exc, InvalidGenerationOutput):
+            attempt.schema_valid_first_attempt = False
     latency_ms = (time.perf_counter() - started) * 1000
     ok = attempt.outcome == "ok"
     record = CallRecord(
@@ -407,6 +478,11 @@ async def run_case(
         billable_tokens=attempt.billable_tokens,
         actual_safety=attempt.actual_safety if ok else None,
         output_line=attempt.output_line,
+        actual_verdict=attempt.actual_verdict if ok else None,
+        actual_category=attempt.actual_category if ok else None,
+        text_length=attempt.text_length if ok else None,
+        overlap_violation=attempt.overlap_violation if ok else False,
+        schema_valid_first_attempt=attempt.schema_valid_first_attempt,
     )
     _raise_if_fail_fast(record, rate_limits=options.rate_limits)
     return record

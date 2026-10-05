@@ -9,6 +9,7 @@ from svoi_pravila.adapters.llm.gigachat.prepared import (
     prepare_decode_analysis,
     prepare_help_say,
     prepare_soften,
+    prepare_suggest_rule,
 )
 from svoi_pravila.adapters.llm.gigachat.validation import (
     MAX_ANALYSIS_CHARS,
@@ -16,6 +17,7 @@ from svoi_pravila.adapters.llm.gigachat.validation import (
     MAX_TOKENS_DECODE,
     MAX_TOKENS_HELP_SAY,
     MAX_TOKENS_SOFTEN,
+    MAX_TOKENS_SUGGEST,
 )
 from svoi_pravila.benchmarks.cases import BenchCase, RunOperation, cases_for_operation
 
@@ -55,6 +57,12 @@ def estimate_case_tokens(case: BenchCase, operation: RunOperation) -> int:
             structured.system, structured.user, output_cap=MAX_TOKENS_DECODE
         )
         return 2 * phase_a + 2 * phase_b
+    if operation == "suggest_rule" and case.suggest_rule is not None:
+        prepared = prepare_suggest_rule(case.suggest_rule)
+        one = estimate_prepared_tokens(
+            prepared.system, prepared.user, output_cap=MAX_TOKENS_SUGGEST
+        )
+        return 2 * one
     msg = f"case {case.id} missing request for {operation}"
     raise ValueError(msg)
 

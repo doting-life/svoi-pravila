@@ -172,3 +172,5 @@ class SuggestFromDecodeResponse(BaseModel):
         "pending_exists",
     ]
     suggestion: SuggestionItem | None = None
+    lead: str | None = None
+    resources: list[str] | None = None

@@ -44,6 +44,7 @@ from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.rate_limiter import RateLimiter
 from svoi_pravila.application.ports.rule_sources import RuleSources
 from svoi_pravila.application.rule_view import RuleListItemView, project_rules_for_list
+from svoi_pravila.application.support_resources import load_crisis_lead, load_support_resources
 from svoi_pravila.application.use_cases.accept_suggestion import (
     AcceptSuggestion,
     AcceptSuggestionCommand,
@@ -89,6 +90,7 @@ from svoi_pravila.application.use_cases.set_active_contact import (
 from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
     SuggestRuleFromDecode,
     SuggestRuleFromDecodeCommand,
+    SuggestRuleFromDecodeOutcome,
 )
 from svoi_pravila.domain.contact import MAX_CONTACTS_PER_USER, Contact
 from svoi_pravila.domain.enums import RelationshipKind, RuleCategory, UsageSurface
@@ -311,9 +313,14 @@ def _register_decode(
                     "created_at": s.created_at,
                 }
             )
-        return SuggestFromDecodeResponse.model_validate(
-            {"outcome": result.outcome.value, "suggestion": suggestion}
-        )
+        payload: dict[str, object] = {
+            "outcome": result.outcome.value,
+            "suggestion": suggestion,
+        }
+        if result.outcome is SuggestRuleFromDecodeOutcome.CRISIS:
+            payload["lead"] = load_crisis_lead()
+            payload["resources"] = list(load_support_resources())
+        return SuggestFromDecodeResponse.model_validate(payload)
 
 
 def _register_me(

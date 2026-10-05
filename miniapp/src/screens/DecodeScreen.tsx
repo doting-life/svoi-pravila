@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useApiClient } from "../api/ApiContext";
 import { unwrapApiResult } from "../api/request";
 import { consumeDecodeSse, type DecodeCompletedPayload } from "../api/sse";
+import { formatAppliedRuleCitation } from "../decode/formatAppliedRuleCitation";
 import { formatDisplayDate } from "../dates/formatDisplayDate";
 import { ru, type CategoryKey } from "../localization/ru";
 import type { TelegramAdapter } from "../telegram/webapp";
@@ -25,7 +26,11 @@ type Phase =
           readonly analysis: string;
           readonly payload: DecodeCompletedPayload;
       }
-    | { readonly kind: "crisis"; readonly resources: readonly string[] }
+    | {
+          readonly kind: "crisis";
+          readonly lead: string;
+          readonly resources: readonly string[];
+      }
     | { readonly kind: "refused" }
     | { readonly kind: "error"; readonly message: string };
 
@@ -134,8 +139,12 @@ export function DecodeScreen({
                         setPhase({ kind: "completed", analysis, payload });
                         telegram.hapticNotification("success");
                     },
-                    onCrisis: (resources) => {
-                        setPhase({ kind: "crisis", resources });
+                    onCrisis: (payload) => {
+                        setPhase({
+                            kind: "crisis",
+                            lead: payload.lead,
+                            resources: payload.resources,
+                        });
                     },
                     onRefused: () => {
                         setPhase({ kind: "refused" });
@@ -193,10 +202,15 @@ export function DecodeScreen({
             telegram.hapticNotification("success");
             return;
         }
+        if (outcome === "crisis") {
+            const lead = unwrapped.data.lead ?? "";
+            const resources = unwrapped.data.resources ?? [];
+            setPhase({ kind: "crisis", lead, resources });
+            return;
+        }
         const messages: Record<string, string> = {
             none: ru.decodeSuggestNone,
             unavailable: ru.decodeSuggestUnavailable,
-            crisis: ru.decodeSuggestCrisis,
             quota_exceeded: ru.decodeSuggestQuota,
             pending_exists: ru.decodeSuggestPending,
         };
@@ -325,15 +339,16 @@ export function DecodeScreen({
                                     key={`${rule.category}-${rule.text}`}
                                     className="list-item-meta"
                                 >
-                                    {ru.decodeRuleCited
-                                        .replace(
-                                            "{date}",
-                                            formatDisplayDate(
+                                    {formatAppliedRuleCitation(
+                                        phase.payload.applied_rule_template,
+                                        {
+                                            date: formatDisplayDate(
                                                 rule.effective_since,
                                                 displayTimezone,
                                             ),
-                                        )
-                                        .replace("{text}", rule.text)}
+                                            text: rule.text,
+                                        },
+                                    )}
                                 </li>
                             ))}
                         </ul>
@@ -355,7 +370,7 @@ export function DecodeScreen({
 
             {phase.kind === "crisis" ? (
                 <section className="block">
-                    <p>{ru.decodeCrisisLead}</p>
+                    <p>{phase.lead}</p>
                     <ul className="list">
                         {phase.resources.map((line) => (
                             <li key={line} className="list-item-meta">

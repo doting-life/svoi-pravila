@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from importlib import resources
 
 from svoi_pravila.application.ports.generation import HelpSayIntent
-from svoi_pravila.application.support_resources import load_support_resources
+from svoi_pravila.application.support_resources import (
+    load_applied_rule_template,
+    load_crisis_lead,
+    load_support_resources,
+)
 from svoi_pravila.domain.enums import Firmness, RelationshipKind, RuleCategory
 from svoi_pravila.privacy import load_privacy_catalog
 
@@ -52,7 +56,6 @@ class TelegramStrings:
     decode_quota: str
     decode_too_short: str
     decode_too_long: str
-    decode_crisis: str
     decode_refuse_manipulation: str
     decode_refused: str
     decode_invalid: str
@@ -111,9 +114,7 @@ class TelegramStrings:
     suggestion_decode_none: str
     suggestion_decode_expired: str
     suggestion_decode_quota: str
-    suggestion_decode_crisis: str
     suggestion_decode_edit_prompt: str
-    decode_rule_cited: str
     inline_rule_cited_prefix: str
     rights_revoke_explain: str
     rights_delete_explain: str
@@ -163,7 +164,6 @@ _KEYS: dict[str, str] = {
     "decode.quota": "decode_quota",
     "decode.too_short": "decode_too_short",
     "decode.too_long": "decode_too_long",
-    "decode.crisis": "decode_crisis",
     "decode.refuse_manipulation": "decode_refuse_manipulation",
     "decode.refused": "decode_refused",
     "decode.invalid": "decode_invalid",
@@ -222,9 +222,7 @@ _KEYS: dict[str, str] = {
     "suggestion.decode_none": "suggestion_decode_none",
     "suggestion.decode_expired": "suggestion_decode_expired",
     "suggestion.decode_quota": "suggestion_decode_quota",
-    "suggestion.decode_crisis": "suggestion_decode_crisis",
     "suggestion.decode_edit_prompt": "suggestion_decode_edit_prompt",
-    "decode.rule_cited": "decode_rule_cited",
     "inline.rule_cited_prefix": "inline_rule_cited_prefix",
     "rights.confirm": "rights_confirm",
     "rights.cancel": "rights_cancel",
@@ -317,10 +315,15 @@ def suggestion_firmness_adjective(strings: TelegramStrings, firmness: Firmness) 
     return strings.suggestion_firmness_firm
 
 
-def render_crisis_message(strings: TelegramStrings) -> str:
-    """Careful crisis copy plus versioned help contacts. No diagnosis or advice."""
+def render_crisis_message() -> str:
+    """Careful crisis lead plus versioned help contacts. No diagnosis or advice."""
     resources_block = "\n".join(load_support_resources())
-    return f"{strings.decode_crisis}\n\n{resources_block}"
+    return f"{load_crisis_lead()}\n\n{resources_block}"
+
+
+def format_applied_rule_citation(*, date: str, text: str) -> str:
+    """Format one decode citation line from the shared C0 template."""
+    return load_applied_rule_template().format(date=date, text=text)
 
 
 def render_refuse_manipulation(strings: TelegramStrings) -> str:

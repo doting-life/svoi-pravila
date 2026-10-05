@@ -31,7 +31,7 @@ describe("consumeDecodeSse", () => {
         const body = [
             'event: analysis\ndata: {"chunk":"a"}\n\n',
             "event: weird\ndata: {}\n\n",
-            'event: completed\ndata: {"safety":"ok","variants":[],"applied_rules":[],"rule_source_token":null}\n\n',
+            'event: completed\ndata: {"safety":"ok","variants":[],"applied_rules":[],"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":null}\n\n',
         ].join("");
         const stream = new ReadableStream<Uint8Array>({
             start(controller) {
@@ -116,7 +116,7 @@ describe("consumeDecodeSse", () => {
     it("defaults missing chunk, resources and error code fields", async () => {
         const body = [
             "event: analysis\ndata: {}\n\n",
-            "event: crisis\ndata: {}\n\n",
+            'event: crisis\ndata: {}\n\n',
             "event: error\ndata: {}\n\n",
         ].join("");
         const stream = new ReadableStream<Uint8Array>({
@@ -139,7 +139,7 @@ describe("consumeDecodeSse", () => {
             },
         );
         expect(onAnalysis).toHaveBeenCalledWith("");
-        expect(onCrisis).toHaveBeenCalledWith([]);
+        expect(onCrisis).toHaveBeenCalledWith({ lead: "", resources: [] });
         expect(onError).toHaveBeenCalledWith("generation_unavailable");
     });
 });

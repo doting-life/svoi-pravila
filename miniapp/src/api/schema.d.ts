@@ -547,11 +547,15 @@ export interface components {
          * @description POST /suggestions/from-decode outcomes (same as the bot).
          */
         SuggestFromDecodeResponse: {
+            /** Lead */
+            lead?: string | null;
             /**
              * Outcome
              * @enum {string}
              */
             outcome: "ok" | "none" | "unavailable" | "crisis" | "quota_exceeded" | "pending_exists";
+            /** Resources */
+            resources?: string[] | null;
             suggestion?: components["schemas"]["SuggestionItem"] | null;
         };
         /**

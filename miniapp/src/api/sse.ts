@@ -61,9 +61,14 @@ function parseBlock(raw: string): SseEvent | null {
 export type DecodeStreamHandlers = {
     readonly onAnalysis: (chunk: string) => void;
     readonly onCompleted: (payload: DecodeCompletedPayload) => void;
-    readonly onCrisis: (resources: readonly string[]) => void;
+    readonly onCrisis: (payload: DecodeCrisisPayload) => void;
     readonly onRefused: () => void;
     readonly onError: (code: string) => void;
+};
+
+export type DecodeCrisisPayload = {
+    readonly lead: string;
+    readonly resources: readonly string[];
 };
 
 export type DecodeCompletedPayload = {
@@ -78,6 +83,7 @@ export type DecodeCompletedPayload = {
         readonly text: string;
         readonly effective_since: string;
     }[];
+    readonly applied_rule_template: string;
     readonly rule_source_token: string | null;
 };
 
@@ -128,8 +134,11 @@ function dispatchDecodeEvent(event: SseEvent, handlers: DecodeStreamHandlers): v
         return;
     }
     if (event.event === "crisis") {
-        const body = JSON.parse(event.data) as { resources?: string[] };
-        handlers.onCrisis(body.resources ?? []);
+        const body = JSON.parse(event.data) as { lead?: string; resources?: string[] };
+        handlers.onCrisis({
+            lead: body.lead ?? "",
+            resources: body.resources ?? [],
+        });
         return;
     }
     if (event.event === "refused") {

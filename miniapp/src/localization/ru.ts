@@ -57,7 +57,6 @@ export const ru = {
     decodeMakeRule: "Сделать правилом",
     decodeSuggestionEdit: "Изменить",
     decodeRefused: "С этим лучше не помогать. Могу помочь сказать это уважительно.",
-    decodeCrisisLead: "Сейчас важнее живой человек рядом, а не бот.",
     decodeErrorBusy: "Расшифровка уже выполняется. Дождитесь окончания.",
     decodeErrorQuota: "Лимит расшифровок на час исчерпан. Попробуйте позже.",
     decodeErrorUnavailable: "Сейчас не получилось расшифровать. Попробуйте позже.",
@@ -66,10 +65,8 @@ export const ru = {
     decodeErrorLong: "Слишком длинный текст.",
     decodeSuggestNone: "Подходящего правила не нашлось.",
     decodeSuggestUnavailable: "Предложение больше недоступно.",
-    decodeSuggestCrisis: "Сейчас важнее живой человек рядом, а не бот.",
     decodeSuggestQuota: "Лимит предложений на час исчерпан.",
     decodeSuggestPending: "Уже есть предложение из расшифровки.",
-    decodeRuleCited: "Учтено правило с {date}: {text}",
     firmness: {
         gentle: "мягко",
         balanced: "ровно",

@@ -540,6 +540,17 @@
       "SuggestFromDecodeResponse": {
         "description": "POST /suggestions/from-decode outcomes (same as the bot).",
         "properties": {
+          "lead": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead"
+          },
           "outcome": {
             "enum": [
               "ok",
@@ -551,6 +562,20 @@
             ],
             "title": "Outcome",
             "type": "string"
+          },
+          "resources": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resources"
           },
           "suggestion": {
             "anyOf": [

@@ -17,6 +17,7 @@ from svoi_pravila.adapters.channels.telegram.keyboards import (
 )
 from svoi_pravila.adapters.channels.telegram.localization import (
     TelegramStrings,
+    format_applied_rule_citation,
     render_crisis_message,
     render_refuse_manipulation,
     suggestion_firmness_adjective,
@@ -91,7 +92,7 @@ def render_decode_completed(
     """Final decode messages: analysis, hypotheses, then one message per variant."""
     result = completed.result
     if result.safety is SafetyVerdict.CRISIS:
-        return ((render_crisis_message(strings)[:TELEGRAM_MESSAGE_MAX], None),)
+        return ((render_crisis_message()[:TELEGRAM_MESSAGE_MAX], None),)
     if result.safety is SafetyVerdict.REFUSE_MANIPULATION:
         return ((render_refuse_manipulation(strings)[:TELEGRAM_MESSAGE_MAX], None),)
     messages: list[tuple[str, InlineKeyboardMarkup | None]] = []
@@ -127,7 +128,6 @@ def render_decode_completed(
 
 
 def render_applied_rule_citations(
-    strings: TelegramStrings,
     views: tuple[AppliedRuleView, ...],
     *,
     now: datetime,
@@ -137,7 +137,7 @@ def render_applied_rule_citations(
     messages: list[str] = []
     for view in views[:_MAX_CITED_RULES]:
         date = format_display_date(view.effective_since, now, tz)
-        text = strings.decode_rule_cited.format(date=date, text=view.text)
+        text = format_applied_rule_citation(date=date, text=view.text)
         messages.append(text[:TELEGRAM_MESSAGE_MAX])
     return tuple(messages)
 

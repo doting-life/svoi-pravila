@@ -26,6 +26,7 @@ from svoi_pravila.adapters.channels.telegram.keyboards import (
     rule_category_keyboard,
     suggestion_decision_keyboard,
 )
+from svoi_pravila.adapters.channels.telegram.localization import render_crisis_message
 from svoi_pravila.adapters.channels.telegram.presenters import (
     display_rule_text,
     render_rules_list,
@@ -422,9 +423,11 @@ async def _reply_suggest_from_decode(
     chat_id: int,
     result: SuggestRuleFromDecodeResult,
 ) -> None:
+    if result.outcome is SuggestRuleFromDecodeOutcome.CRISIS:
+        await reply_callback(bot, callback, render_crisis_message())
+        return
     simple = {
         SuggestRuleFromDecodeOutcome.UNAVAILABLE: tg_deps.strings.suggestion_decode_expired,
-        SuggestRuleFromDecodeOutcome.CRISIS: tg_deps.strings.suggestion_decode_crisis,
         SuggestRuleFromDecodeOutcome.QUOTA_EXCEEDED: tg_deps.strings.suggestion_decode_quota,
         SuggestRuleFromDecodeOutcome.NONE: tg_deps.strings.suggestion_decode_none,
     }

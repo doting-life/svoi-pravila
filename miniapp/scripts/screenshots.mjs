@@ -270,7 +270,7 @@ async function mockApi(page, mode) {
                     status: 200,
                     contentType: "text/event-stream",
                     headers: { "Cache-Control": "no-store" },
-                    body: 'event: crisis\ndata: {"resources":["Телефон доверия: 8-800-2000-122"]}\n\n',
+                    body: 'event: crisis\ndata: {"lead":"Сейчас важнее живой человек рядом, а не текст. Если вам или кому-то рядом угрожает опасность — обратитесь за помощью. Ниже — контакты служб.","resources":["Телефон доверия: 8-800-2000-122"]}\n\n',
                 });
                 return;
             }
@@ -280,7 +280,7 @@ async function mockApi(page, mode) {
                 headers: { "Cache-Control": "no-store" },
                 body:
                     'event: analysis\ndata: {"chunk":"Собеседник звучит раздражённо, но суть просьбы можно сохранить."}\n\n' +
-                    'event: completed\ndata: {"safety":"ok","variants":[{"firmness":"gentle","text":"Давай спокойно разберём, что важно каждому.","insert_query":"p_demo"},{"firmness":"firm","text":"Мне важно продолжить разговор без повышения тона.","insert_query":null}],"applied_rules":[{"category":"other","text":"не повышать голос","effective_since":"2026-10-03T12:00:00.000Z"}],"rule_source_token":"tok"}\n\n',
+                    'event: completed\ndata: {"safety":"ok","variants":[{"firmness":"gentle","text":"Давай спокойно разберём, что важно каждому.","insert_query":"p_demo"},{"firmness":"firm","text":"Мне важно продолжить разговор без повышения тона.","insert_query":null}],"applied_rules":[{"category":"other","text":"не повышать голос","effective_since":"2026-10-03T12:00:00.000Z"}],"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":"tok"}\n\n',
             });
             return;
         }

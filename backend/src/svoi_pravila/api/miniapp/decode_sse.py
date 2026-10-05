@@ -31,7 +31,11 @@ from svoi_pravila.application.ports.generation import (
 from svoi_pravila.application.ports.prepared_results import PreparedResults
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.rule_sources import RuleSources
-from svoi_pravila.application.support_resources import load_support_resources
+from svoi_pravila.application.support_resources import (
+    load_applied_rule_template,
+    load_crisis_lead,
+    load_support_resources,
+)
 from svoi_pravila.application.use_cases.decode_incoming import (
     DecodeIncoming,
     DecodeIncomingCommand,
@@ -98,6 +102,7 @@ def _completed_payload(
         "safety": completed.result.safety.value,
         "variants": variants,
         "applied_rules": applied,
+        "applied_rule_template": load_applied_rule_template(),
         "rule_source_token": rule_source_token,
     }
 
@@ -141,7 +146,10 @@ async def iter_decode_sse(
             if safety is SafetyVerdict.CRISIS:
                 yield format_sse(
                     "crisis",
-                    {"resources": list(load_support_resources())},
+                    {
+                        "lead": load_crisis_lead(),
+                        "resources": list(load_support_resources()),
+                    },
                 )
                 return
             if safety is SafetyVerdict.REFUSE_MANIPULATION:

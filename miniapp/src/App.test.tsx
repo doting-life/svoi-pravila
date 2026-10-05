@@ -941,7 +941,7 @@ describe("App", () => {
     it("opens decode and prefills addRule from a suggestion edit", async () => {
         const sse =
             'event: analysis\ndata: {"chunk":"разбор"}\n\n' +
-            'event: completed\ndata: {"safety":"ok","variants":[{"firmness":"gentle","text":"вариант","insert_query":null}],"applied_rules":[],"rule_source_token":"tok"}\n\n';
+            'event: completed\ndata: {"safety":"ok","variants":[{"firmness":"gentle","text":"вариант","insert_query":null}],"applied_rules":[],"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":"tok"}\n\n';
         const base = mockFetch([
             { path: "/api/v1/me", body: meDone },
             { path: "/api/v1/contacts", body: { contacts: [contact] } },

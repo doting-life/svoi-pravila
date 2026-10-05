@@ -332,7 +332,7 @@ def test_render_decode_safety_and_copy_truncation() -> None:
         ),
     )
     rendered = render_decode_completed(strings, crisis, copy_max=256)
-    assert rendered == ((render_crisis_message(strings), None),)
+    assert rendered == ((render_crisis_message(), None),)
     assert "112" in rendered[0][0]
     refuse = DecodeCompleted(
         analysis="a",

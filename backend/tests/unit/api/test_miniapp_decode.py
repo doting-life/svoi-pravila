@@ -31,6 +31,7 @@ from tests.support.miniapp_decode import MiniappDecodeBundle, build_miniapp_deco
 from tests.unit.application.conftest import AppWorld
 
 from svoi_pravila.adapters.channels.telegram.init_data import AiogramInitDataVerifier
+from svoi_pravila.adapters.channels.telegram.localization import render_crisis_message
 from svoi_pravila.api.app import AppLifecycleHooks, create_app
 from svoi_pravila.api.miniapp import MiniappDeps, MiniappRouterBindings, build_miniapp_router
 from svoi_pravila.api.miniapp.decode_sse import _completed_payload, format_sse
@@ -66,7 +67,11 @@ from svoi_pravila.application.ports.generation import (
     Variant,
 )
 from svoi_pravila.application.rule_source import RuleSourcePayload, rule_source_callback_data
-from svoi_pravila.application.support_resources import load_support_resources
+from svoi_pravila.application.support_resources import (
+    load_applied_rule_template,
+    load_crisis_lead,
+    load_support_resources,
+)
 from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
@@ -184,7 +189,12 @@ def _parse_sse(body: str) -> list[tuple[str, dict[str, Any]]]:
     return events
 
 
-def _bindings(world: AppWorld, bundle: MiniappDecodeBundle) -> MiniappRouterBindings:
+def _bindings(
+    world: AppWorld,
+    bundle: MiniappDecodeBundle,
+    *,
+    enable_test_routes: bool = True,
+) -> MiniappRouterBindings:
     reuse = make_inline_reuse(world.clock)
     auth = MiniappDeps(
         init_data_verifier=AiogramInitDataVerifier(
@@ -228,15 +238,30 @@ def _bindings(world: AppWorld, bundle: MiniappDecodeBundle) -> MiniappRouterBind
         prepared_results=bundle.prepared_results,
         rule_sources=bundle.rule_sources,
         pseudonymizer=bundle.pseudonymizer,
-        enable_test_routes=True,
+        enable_test_routes=enable_test_routes,
     )
 
 
-def _app(world: AppWorld, bundle: MiniappDecodeBundle) -> Any:
+def _app(
+    world: AppWorld,
+    bundle: MiniappDecodeBundle,
+    *,
+    environment: Environment = Environment.TEST,
+    enable_test_routes: bool | None = None,
+) -> Any:
+    routes_enabled = (
+        enable_test_routes if enable_test_routes is not None else environment is Environment.TEST
+    )
     return create_app(
         CheckReadiness(probes=(), timeout_seconds=1.0),
-        Environment.TEST,
-        AppLifecycleHooks(extra_routers=(build_miniapp_router(_bindings(world, bundle)),)),
+        environment,
+        AppLifecycleHooks(
+            extra_routers=(
+                build_miniapp_router(
+                    _bindings(world, bundle, enable_test_routes=routes_enabled),
+                ),
+            ),
+        ),
     )
 
 
@@ -291,6 +316,7 @@ async def test_decode_completed_event_order_and_miniapp_surface(world: AppWorld)
     assert len(completed["variants"]) == 2
     assert all(v["insert_query"] for v in completed["variants"])
     assert completed["rule_source_token"] is not None
+    assert completed["applied_rule_template"] == load_applied_rule_template()
     assert bundle.sink.events
     assert all(event.surface is UsageSurface.MINIAPP for event in bundle.sink.events)
 
@@ -309,8 +335,25 @@ async def test_decode_crisis_terminal(world: AppWorld) -> None:
             json={"text": crisis_text},
         )
     assert _parse_sse(response.text) == [
-        ("crisis", {"resources": list(load_support_resources())}),
+        (
+            "crisis",
+            {
+                "lead": load_crisis_lead(),
+                "resources": list(load_support_resources()),
+            },
+        ),
     ]
+
+
+@pytest.mark.unit
+def test_crisis_copy_shared_between_bot_and_api() -> None:
+    lead = load_crisis_lead()
+    resources = list(load_support_resources())
+    bot_message = render_crisis_message()
+    assert bot_message == f"{lead}\n\n" + "\n".join(resources)
+    assert lead
+    assert resources
+    assert all(line in bot_message for line in resources)
 
 
 @pytest.mark.unit
@@ -686,3 +729,16 @@ async def test_sse_flush_probe_endpoint(world: AppWorld, monkeypatch: pytest.Mon
         ("probe", {"phase": "first"}),
         ("probe", {"phase": "done"}),
     ]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("environment", [Environment.LOCAL, Environment.PRODUCTION])
+async def test_sse_flush_absent_outside_test(world: AppWorld, environment: Environment) -> None:
+    """LOCAL/PRODUCTION use the same enable_test_routes flag as bootstrap."""
+    assert (environment is Environment.TEST) is False
+    app = _app(world, build_miniapp_decode_bundle(world), environment=environment)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/v1/_test/sse-flush")
+    assert response.status_code == 404
+    paths = app.openapi().get("paths", {})
+    assert "/api/v1/_test/sse-flush" not in paths

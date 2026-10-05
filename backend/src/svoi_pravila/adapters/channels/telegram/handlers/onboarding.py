@@ -48,7 +48,7 @@ def build_router() -> Router:
             await message.answer(render_help(tg_deps.strings))
             return
         if command.args == "support":
-            await message.answer(render_crisis_message(tg_deps.strings))
+            await message.answer(render_crisis_message())
             return
         if command.args == "why":
             await message.answer(render_refuse_manipulation(tg_deps.strings))

@@ -159,7 +159,6 @@ async def _stream_decode(
                 await message.answer(text, reply_markup=keyboard)
             if event.result.safety is SafetyVerdict.OK:
                 for citation in render_applied_rule_citations(
-                    tg_deps.strings,
                     event.applied_rules,
                     now=tg_deps.clock.now(),
                     tz=tg_deps.display_timezone,

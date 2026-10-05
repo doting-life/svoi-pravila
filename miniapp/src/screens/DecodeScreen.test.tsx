@@ -70,7 +70,7 @@ function completedSse(options?: {
         : "[]";
     return (
         'event: analysis\ndata: {"chunk":"x"}\n\n' +
-        `event: completed\ndata: {"safety":"ok","variants":[{"firmness":"${firmness}","text":"вариант","insert_query":${insertQueryJson}}],"applied_rules":${rules},"rule_source_token":${tokenJson}}\n\n`
+        `event: completed\ndata: {"safety":"ok","variants":[{"firmness":"${firmness}","text":"вариант","insert_query":${insertQueryJson}}],"applied_rules":${rules},"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":${tokenJson}}\n\n`
     );
 }
 
@@ -93,7 +93,7 @@ describe("DecodeScreen", () => {
         const sse = [
             'event: analysis\ndata: {"chunk":"часть "}\n\n',
             'event: analysis\ndata: {"chunk":"анализа"}\n\n',
-            'event: completed\ndata: {"safety":"ok","variants":[{"firmness":"gentle","text":"вариант","insert_query":"p_token"}],"applied_rules":[{"category":"other","text":"правило","effective_since":"2026-01-01T00:00:00Z"}],"rule_source_token":"sn-token"}\n\n',
+            'event: completed\ndata: {"safety":"ok","variants":[{"firmness":"gentle","text":"вариант","insert_query":"p_token"}],"applied_rules":[{"category":"other","text":"правило","effective_since":"2026-01-01T00:00:00Z"}],"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":"sn-token"}\n\n',
         ].join("");
         const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
             const url = requestUrl(input);
@@ -127,7 +127,8 @@ describe("DecodeScreen", () => {
     });
 
     it("shows crisis resources and keeps text on error", async () => {
-        const crisis = 'event: crisis\ndata: {"resources":["линия помощи"]}\n\n';
+        const crisis =
+            'event: crisis\ndata: {"lead":"SERVER_CRISIS_LEAD","resources":["линия помощи"]}\n\n';
         const fetchImpl = vi.fn((input: RequestInfo | URL) => {
             const url = requestUrl(input);
             if (url.includes("/api/v1/decode")) {
@@ -138,7 +139,8 @@ describe("DecodeScreen", () => {
         renderDecode(fetchImpl);
         fireEvent.change(screen.getByRole("textbox"), { target: { value: "кризисный текст" } });
         fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
-        expect(await screen.findByText("линия помощи")).toBeInTheDocument();
+        expect(await screen.findByText("SERVER_CRISIS_LEAD")).toBeInTheDocument();
+        expect(screen.getByText("линия помощи")).toBeInTheDocument();
         expect(screen.getByRole("textbox")).toHaveValue("кризисный текст");
     });
 
@@ -312,7 +314,7 @@ describe("DecodeScreen", () => {
 
     it("maps suggest non-ok outcomes and accept/dismiss failures", async () => {
         const sse =
-            'event: completed\ndata: {"safety":"ok","variants":[{"firmness":"weird","text":"v","insert_query":""}],"applied_rules":[],"rule_source_token":"tok"}\n\n';
+            'event: completed\ndata: {"safety":"ok","variants":[{"firmness":"weird","text":"v","insert_query":""}],"applied_rules":[],"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":"tok"}\n\n';
         let suggestCalls = 0;
         const fetchImpl = vi.fn((input: RequestInfo | URL) => {
             const url = requestUrl(input);
@@ -405,7 +407,7 @@ describe("DecodeScreen", () => {
             },
         });
         const sse =
-            'event: completed\ndata: {"safety":"ok","variants":[{"firmness":"gentle","text":"вариант","insert_query":null}],"applied_rules":[],"rule_source_token":null}\n\n';
+            'event: completed\ndata: {"safety":"ok","variants":[{"firmness":"gentle","text":"вариант","insert_query":null}],"applied_rules":[],"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":null}\n\n';
         const fetchImpl: typeof fetch = vi.fn(() => Promise.resolve(sseResponse(sse)));
         const { telegram } = renderDecode(fetchImpl);
         fireEvent.change(screen.getByRole("textbox"), { target: { value: "текст" } });

@@ -24,7 +24,8 @@ export const ru = {
     contactAddRule: "Добавить правило",
     contactPairedBadge: "Общий свод",
     contactInvite: "Пригласить в общий свод",
-    contactInviteExplain: "Отправьте ссылку партнёру — после принятия у вас появится общий свод правил.",
+    contactInviteExplain:
+        "Отправьте ссылку партнёру — после принятия у вас появится общий свод правил.",
     contactInviteShare: "Поделиться",
     contactInviteCopy: "Копировать",
     contactInviteCopied: "Ссылка скопирована",

@@ -245,8 +245,7 @@ async function mockApi(page, mode) {
             return;
         }
         if (path === "/api/v1/contacts") {
-            const contacts =
-                mode === "paired" ? [contact, pairedContact] : [contact];
+            const contacts = mode === "paired" ? [contact, pairedContact] : [contact];
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
@@ -255,8 +254,7 @@ async function mockApi(page, mode) {
             return;
         }
         if (path.endsWith("/rules")) {
-            const rules =
-                mode === "paired" ? [rule, sharedPending] : [rule];
+            const rules = mode === "paired" ? [rule, sharedPending] : [rule];
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",

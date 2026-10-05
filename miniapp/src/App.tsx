@@ -193,10 +193,7 @@ function MiniappShell({
                             return current;
                         }
                         return {
-                            stack: [
-                                ...current.stack.slice(0, -1),
-                                { ...top, paired },
-                            ],
+                            stack: [...current.stack.slice(0, -1), { ...top, paired }],
                         };
                     });
                 }}

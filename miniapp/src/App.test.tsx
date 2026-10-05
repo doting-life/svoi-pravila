@@ -1019,9 +1019,7 @@ describe("App", () => {
         );
         fireEvent.click(screen.getByRole("button", { name: ru.contactInviteCopy }));
         await waitFor(() => {
-            expect(adapter.copyText).toHaveBeenCalledWith(
-                "https://t.me/test_bot?start=inv_token",
-            );
+            expect(adapter.copyText).toHaveBeenCalledWith("https://t.me/test_bot?start=inv_token");
         });
         expect(await screen.findByText(ru.contactInviteCopied)).toBeInTheDocument();
     });
@@ -1137,7 +1135,9 @@ describe("App", () => {
             ).toBe(true);
         });
 
-        expect(await screen.findByRole("button", { name: ru.contactLeavePair })).toBeInTheDocument();
+        expect(
+            await screen.findByRole("button", { name: ru.contactLeavePair }),
+        ).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: ru.contactLeavePair }));
         await waitFor(() => {
             expect(adapter.showConfirm).toHaveBeenCalledWith("TEST_LEAVE_PAIR_CONFIRM");

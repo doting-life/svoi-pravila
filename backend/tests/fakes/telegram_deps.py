@@ -37,6 +37,10 @@ from svoi_pravila.application.use_cases.record_inline_choice import (
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
+from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
+    SuggestRuleFromDecode,
+    SuggestRuleFromDecodePorts,
+)
 from tests.fakes.clock import FakeClock
 from tests.fakes.concurrency import FakeConcurrencyGuard
 from tests.fakes.confirmation import FakeConfirmationTokens
@@ -47,6 +51,7 @@ from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
 from tests.fakes.prepared import FakePreparedResults
 from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter, FakeUpdateDeduplicator
+from tests.fakes.rule_sources import FakeRuleSources
 from tests.fakes.sleeper import GateSleeper, ImmediateSleeper
 from tests.fakes.uow import InMemoryUnitOfWorkFactory
 from tests.fakes.usage_sink import FailingUsageEventSink, RecordingUsageEventSink
@@ -68,6 +73,7 @@ class TelegramTestDeps:
     sink: RecordingUsageEventSink | FailingUsageEventSink | None = None
     confirmation: FakeConfirmationTokens | None = None
     prepared: FakePreparedResults | None = None
+    rule_sources: FakeRuleSources | None = None
     dialog: FakeDialogState | None = None
     sleeper: ImmediateSleeper | GateSleeper | None = None
     draft_min_interval_ms: int = 50
@@ -76,6 +82,7 @@ class TelegramTestDeps:
     inline_deadline_seconds: float = 8.0
     debounce_seconds: float = 0.0
     inline_cache_seconds: int = 30
+    suggest_quota_limit: int = 10
 
 
 def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
@@ -125,6 +132,23 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             intent_prefixes=help_say_intent_prefixes(strings),
         )
     )
+    rule_sources = chosen.rule_sources or FakeRuleSources()
+    suggest = SuggestRuleFromDecode(
+        SuggestRuleFromDecodePorts(
+            uow_factory=uow,
+            catalog=catalog,
+            rule_sources=rule_sources,
+            generator=generator,
+            quota=FakeRateLimiter(limit=chosen.suggest_quota_limit),
+            sink=sink,
+            clock=clock,
+            monotonic=clock,
+            ids=ids,
+            pseudonymizer=pseudonymizer,
+            crisis_screen=CrisisScreen.load_ru_v2(),
+            deadline_seconds=chosen.deadline_seconds,
+        )
+    )
     return TelegramDeps(
         strings=strings,
         get_onboarding_step=GetOnboardingStep(uow, catalog),
@@ -146,6 +170,8 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             )
         ),
         prepared_results=chosen.prepared or FakePreparedResults(),
+        rule_sources=rule_sources,
+        suggest_rule_from_decode=suggest,
         inline_queries=InlineQueryCoordinator(
             chosen.sleeper or ImmediateSleeper(),
             debounce_seconds=chosen.debounce_seconds,

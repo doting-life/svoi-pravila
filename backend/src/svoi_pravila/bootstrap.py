@@ -18,6 +18,7 @@ from svoi_pravila.adapters.cache.dialog_state import ValkeyDialogState
 from svoi_pravila.adapters.cache.prepared_results import ValkeyPreparedResults
 from svoi_pravila.adapters.cache.probe import ValkeyProbe
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
+from svoi_pravila.adapters.cache.rule_sources import ValkeyRuleSources
 from svoi_pravila.adapters.channels.telegram import build_telegram_lifecycle
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.inline_scheduler import InlineQueryCoordinator
@@ -69,6 +70,10 @@ from svoi_pravila.application.use_cases.record_inline_choice import (
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
+from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
+    SuggestRuleFromDecode,
+    SuggestRuleFromDecodePorts,
+)
 from svoi_pravila.config import (
     DatabaseSettings,
     Settings,
@@ -177,6 +182,31 @@ def create_application(settings: Settings) -> FastAPI:
                 intent_prefixes=help_say_intent_prefixes(strings),
             )
         )
+        rule_sources = ValkeyRuleSources(
+            valkey,
+            ttl_seconds=settings.rule_source_ttl_seconds,
+        )
+        suggest_rule_from_decode = SuggestRuleFromDecode(
+            SuggestRuleFromDecodePorts(
+                uow_factory=uow_factory,
+                catalog=catalog,
+                rule_sources=rule_sources,
+                generator=generator,
+                quota=ValkeyRateLimiter(
+                    valkey,
+                    limit=settings.suggest_per_hour,
+                    window_seconds=3600,
+                    key_prefix="tg:suggest:quota",
+                ),
+                sink=sink,
+                clock=clock,
+                monotonic=monotonic,
+                ids=ids,
+                pseudonymizer=pseudonymizer,
+                crisis_screen=crisis_screen,
+                deadline_seconds=settings.decode_deadline_seconds,
+            )
+        )
         deps = TelegramDeps(
             strings=strings,
             get_onboarding_step=GetOnboardingStep(uow_factory, catalog),
@@ -201,6 +231,8 @@ def create_application(settings: Settings) -> FastAPI:
                 valkey,
                 ttl_seconds=settings.prepared_result_ttl_seconds,
             ),
+            rule_sources=rule_sources,
+            suggest_rule_from_decode=suggest_rule_from_decode,
             inline_queries=InlineQueryCoordinator(
                 AsyncioSleeper(),
                 debounce_seconds=settings.inline_debounce_ms / 1000.0,

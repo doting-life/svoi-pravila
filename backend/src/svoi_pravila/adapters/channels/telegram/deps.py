@@ -14,6 +14,7 @@ from svoi_pravila.application.ports.monotonic import MonotonicClock
 from svoi_pravila.application.ports.prepared_results import PreparedResults
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.rate_limiter import RateLimiter
+from svoi_pravila.application.ports.rule_sources import RuleSources
 from svoi_pravila.application.ports.update_deduplicator import UpdateDeduplicator
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
 from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
@@ -36,6 +37,7 @@ from svoi_pravila.application.use_cases.record_inline_choice import RecordInline
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
+from svoi_pravila.application.use_cases.suggest_rule_from_decode import SuggestRuleFromDecode
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +54,8 @@ class TelegramDeps:
     inline_compose: InlineCompose
     record_inline_choice: RecordInlineChoice
     prepared_results: PreparedResults
+    rule_sources: RuleSources
+    suggest_rule_from_decode: SuggestRuleFromDecode
     inline_queries: InlineQueryCoordinator
     revoke_all_consents: RevokeAllConsents
     delete_my_account: DeleteMyAccount

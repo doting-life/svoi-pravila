@@ -25,6 +25,7 @@ from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
 from svoi_pravila.adapters.cache.dialog_state import ValkeyDialogState
 from svoi_pravila.adapters.cache.prepared_results import ValkeyPreparedResults
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
+from svoi_pravila.adapters.cache.rule_sources import ValkeyRuleSources
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
 from svoi_pravila.adapters.channels.telegram.inline_scheduler import InlineQueryCoordinator
@@ -73,6 +74,10 @@ from svoi_pravila.application.use_cases.record_inline_choice import (
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
+from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
+    SuggestRuleFromDecode,
+    SuggestRuleFromDecodePorts,
+)
 from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
 from svoi_pravila.crypto import HmacPseudonymizer
 from svoi_pravila.domain.enums import ConsentKind, Firmness
@@ -243,6 +248,25 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             intent_prefixes=help_say_intent_prefixes(strings),
         )
     )
+    rule_sources = ValkeyRuleSources(valkey, ttl_seconds=600)
+    suggest_rule_from_decode = SuggestRuleFromDecode(
+        SuggestRuleFromDecodePorts(
+            uow_factory=uow_factory,
+            catalog=catalog,
+            rule_sources=rule_sources,
+            generator=FakeTextGenerator(),
+            quota=ValkeyRateLimiter(
+                valkey, limit=10, window_seconds=3600, key_prefix="tg:suggest:quota"
+            ),
+            sink=sink,
+            clock=clock,
+            monotonic=monotonic,
+            ids=ids,
+            pseudonymizer=pepper,
+            crisis_screen=CrisisScreen.load_ru_v2(),
+            deadline_seconds=45.0,
+        )
+    )
     deps = TelegramDeps(
         strings=strings,
         get_onboarding_step=GetOnboardingStep(uow_factory, catalog),
@@ -264,6 +288,8 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             )
         ),
         prepared_results=ValkeyPreparedResults(valkey, ttl_seconds=600),
+        rule_sources=rule_sources,
+        suggest_rule_from_decode=suggest_rule_from_decode,
         inline_queries=InlineQueryCoordinator(AsyncioSleeper(), debounce_seconds=0.0),
         revoke_all_consents=RevokeAllConsents(uow_factory, clock, reuse),
         delete_my_account=DeleteMyAccount(uow_factory, ids, pepper, clock, reuse),
@@ -502,6 +528,25 @@ def _contact_privacy_lifecycle(
             intent_prefixes=help_say_intent_prefixes(strings),
         )
     )
+    rule_sources = ValkeyRuleSources(valkey, ttl_seconds=600)
+    suggest_rule_from_decode = SuggestRuleFromDecode(
+        SuggestRuleFromDecodePorts(
+            uow_factory=uow_factory,
+            catalog=catalog,
+            rule_sources=rule_sources,
+            generator=generator,
+            quota=ValkeyRateLimiter(
+                valkey, limit=10, window_seconds=3600, key_prefix="tg:suggest:quota"
+            ),
+            sink=sink,
+            clock=clock,
+            monotonic=monotonic,
+            ids=ids,
+            pseudonymizer=pepper,
+            crisis_screen=CrisisScreen.load_ru_v2(),
+            deadline_seconds=45.0,
+        )
+    )
     deps = TelegramDeps(
         strings=strings,
         get_onboarding_step=GetOnboardingStep(uow_factory, catalog),
@@ -523,6 +568,8 @@ def _contact_privacy_lifecycle(
             )
         ),
         prepared_results=ValkeyPreparedResults(valkey, ttl_seconds=600),
+        rule_sources=rule_sources,
+        suggest_rule_from_decode=suggest_rule_from_decode,
         inline_queries=InlineQueryCoordinator(AsyncioSleeper(), debounce_seconds=0.0),
         revoke_all_consents=RevokeAllConsents(uow_factory, clock, reuse),
         delete_my_account=DeleteMyAccount(uow_factory, ids, pepper, clock, reuse),

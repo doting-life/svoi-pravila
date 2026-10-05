@@ -1,30 +1,76 @@
+import type { components } from "./schema";
+
+export type MiniappErrorCode = components["schemas"]["MiniappErrorCode"];
+
 export type ApiErrorKind =
-    "network" | "unauthorized" | "forbidden" | "not_found" | "validation" | "server" | "unknown";
+    | "network"
+    | "unauthorized"
+    | "forbidden"
+    | "not_found"
+    | "validation"
+    | "conflict"
+    | "server"
+    | "unknown";
 
 export type ApiError = {
     readonly kind: ApiErrorKind;
     readonly status: number | undefined;
     readonly message: string;
+    readonly code: MiniappErrorCode | undefined;
 };
 
-export function mapHttpError(status: number | undefined, bodyMessage?: string): ApiError {
-    if (status === undefined) {
-        return { kind: "network", status: undefined, message: bodyMessage ?? "network error" };
-    }
+function kindFromStatus(status: number): ApiErrorKind {
     if (status === 401) {
-        return { kind: "unauthorized", status, message: bodyMessage ?? "unauthorized" };
+        return "unauthorized";
     }
     if (status === 403) {
-        return { kind: "forbidden", status, message: bodyMessage ?? "forbidden" };
+        return "forbidden";
     }
     if (status === 404) {
-        return { kind: "not_found", status, message: bodyMessage ?? "not found" };
+        return "not_found";
+    }
+    if (status === 409) {
+        return "conflict";
     }
     if (status === 422) {
-        return { kind: "validation", status, message: bodyMessage ?? "validation error" };
+        return "validation";
     }
     if (status >= 500) {
-        return { kind: "server", status, message: bodyMessage ?? "server error" };
+        return "server";
     }
-    return { kind: "unknown", status, message: bodyMessage ?? "unknown error" };
+    return "unknown";
+}
+
+export function mapHttpError(
+    status: number | undefined,
+    bodyMessage?: string,
+    code?: MiniappErrorCode,
+): ApiError {
+    if (status === undefined) {
+        return {
+            kind: "network",
+            status: undefined,
+            message: bodyMessage ?? "network error",
+            code: undefined,
+        };
+    }
+    return {
+        kind: kindFromStatus(status),
+        status,
+        message: bodyMessage ?? "request failed",
+        code,
+    };
+}
+
+export function parseErrorBody(body: unknown): {
+    message: string | undefined;
+    code: MiniappErrorCode | undefined;
+} {
+    if (typeof body !== "object" || body === null) {
+        return { message: undefined, code: undefined };
+    }
+    const record = body as { message?: unknown; code?: unknown };
+    const message = typeof record.message === "string" ? record.message : undefined;
+    const code = typeof record.code === "string" ? (record.code as MiniappErrorCode) : undefined;
+    return { message, code };
 }

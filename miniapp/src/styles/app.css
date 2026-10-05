@@ -4,8 +4,10 @@
     --tg-text-color: #1a1a1a;
     --tg-hint-color: #6b6b6b;
     --tg-secondary-bg-color: #f4f4f5;
-    --tg-button-color: #2aabee;
+    --tg-button-color: #1565a8;
     --tg-button-text-color: #ffffff;
+    --tg-destructive-text-color: #b71c1c;
+    --tg-link-color: #1565a8;
     font-family:
         system-ui,
         -apple-system,
@@ -18,8 +20,12 @@
     color-scheme: dark;
     --tg-bg-color: #17212b;
     --tg-text-color: #f5f5f5;
-    --tg-hint-color: #708499;
+    --tg-hint-color: #9aabbc;
     --tg-secondary-bg-color: #232e3c;
+    --tg-button-color: #1565a8;
+    --tg-button-text-color: #ffffff;
+    --tg-destructive-text-color: #ff8a80;
+    --tg-link-color: #7ec8f0;
 }
 
 *,
@@ -38,6 +44,11 @@ body,
 body {
     background: var(--tg-bg-color);
     color: var(--tg-text-color);
+}
+
+:focus-visible {
+    outline: 2px solid var(--tg-link-color);
+    outline-offset: 2px;
 }
 
 .app-shell {
@@ -64,15 +75,208 @@ body {
     padding: 1.25rem;
 }
 
-.app-message {
+.app-message,
+.status-message {
     margin: 0;
     color: var(--tg-hint-color);
 }
 
-.app-placeholder {
+.screen,
+.gate,
+.block {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.screen-header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.screen-title,
+.block-title {
     margin: 0;
-    padding: 1rem;
-    border: 1px dashed var(--tg-hint-color);
-    border-radius: 0.5rem;
+    font-size: 1.1rem;
+    font-weight: 650;
+}
+
+.block-title {
+    font-size: 1rem;
     color: var(--tg-hint-color);
+}
+
+.btn {
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0.65rem 1rem;
+    border: 0;
+    border-radius: 0.5rem;
+    font: inherit;
+    cursor: pointer;
+}
+
+.btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.btn-primary {
+    background: var(--tg-button-color);
+    color: var(--tg-button-text-color);
+}
+
+.btn-secondary {
+    background: var(--tg-secondary-bg-color);
+    color: var(--tg-text-color);
+}
+
+.btn-danger {
+    background: transparent;
+    color: var(--tg-destructive-text-color);
+    border: 1px solid var(--tg-destructive-text-color);
+}
+
+.list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.list-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.85rem;
+    background: var(--tg-secondary-bg-color);
+    border-radius: 0.5rem;
+}
+
+.list-item-main {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+    min-height: 44px;
+    width: 100%;
+    padding: 0.25rem 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.list-item-title {
+    margin: 0;
+    font-weight: 600;
+}
+
+.list-item-meta {
+    margin: 0;
+    color: var(--tg-hint-color);
+    font-size: 0.95rem;
+}
+
+.list-item-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.badge {
+    margin: 0;
+    color: var(--tg-link-color);
+    font-size: 0.9rem;
+}
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin: 0;
+    border: 0;
+    padding: 0;
+}
+
+.field-label {
+    color: var(--tg-hint-color);
+    font-size: 0.95rem;
+}
+
+.field-input,
+.field-textarea {
+    min-height: 44px;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--tg-hint-color);
+    border-radius: 0.5rem;
+    background: var(--tg-bg-color);
+    color: var(--tg-text-color);
+    font: inherit;
+}
+
+.field-textarea {
+    min-height: 120px;
+    resize: vertical;
+}
+
+.field-counter {
+    color: var(--tg-hint-color);
+    font-size: 0.85rem;
+    align-self: flex-end;
+}
+
+.choice-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.choice {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-height: 44px;
+}
+
+.modal {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    padding: 1rem;
+    background: color-mix(in srgb, var(--tg-text-color) 35%, transparent);
+}
+
+.modal-panel {
+    width: min(100%, 28rem);
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    padding: 1.1rem;
+    border-radius: 0.75rem;
+    background: var(--tg-bg-color);
+    color: var(--tg-text-color);
+}
+
+.modal-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: flex-end;
+}
+
+.status-block {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    align-items: flex-start;
 }

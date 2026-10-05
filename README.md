@@ -1,6 +1,6 @@
 # Svoi Pravila
 
-AI helper for difficult conversations: a Telegram inline bot and mini-app that remembers the agreements between two people. This repository holds the backend service and (later) the mini-app; see `AGENTS.md` for executor workflow and ownership boundaries.
+AI helper for difficult conversations: a Telegram inline bot and mini-app that remembers the agreements between two people. This repository holds the backend service and the mini-app; see `AGENTS.md` for executor workflow and ownership boundaries.
 
 ## Prerequisites
 
@@ -35,11 +35,24 @@ The supported way to run the application locally is the Docker stack (same image
 Prerequisites: Docker Compose v2, and a repo-root `.env` (from `cp .env.example .env` then `make dev-env` to fill `SP_DATA_KEK`).
 
 ```bash
-make up      # build images, migrate, start API; wait until healthy; print URL
-make logs    # follow api and migrate logs
+make up      # build images, migrate, start API + mini-app; wait until healthy; print URLs
+make logs    # follow api, migrate, and miniapp logs
 make ps      # compose status
 make down    # stop the full stack; keep named volumes
 ```
+
+### Mini-app over HTTPS (Telegram menu button)
+
+Telegram requires HTTPS for the Web App menu button. For local checks, use the Compose `tunnel` profile (Cloudflare quick tunnel to the `miniapp` service):
+
+```bash
+make up
+make miniapp-tunnel
+```
+
+In the tunnel logs, copy the printed `https://….trycloudflare.com` origin into **your own** `.env` as `SP_MINIAPP_URL` (no path or query). Restart the API so the bot can call `setChatMenuButton` on startup, then open the bot’s chat menu button «Мои правила».
+
+The trycloudflare URL **changes every run**. Stop the tunnel with `make miniapp-tunnel-down`. The executor never edits the owner’s `.env`.
 
 Data lives in Docker named volumes (`postgres_data`, `valkey_data`). To reset local data:
 
@@ -57,10 +70,13 @@ Tests never write to the manual-testing database: they use a dedicated PostgreSQ
 |--------|---------|
 | `install` | Sync backend deps with uv (incl. dev group) and install pre-commit hooks |
 | `build` | Build app images (`svoi-pravila-api:local`) |
-| `up` | Build and start the full stack (profile `app`); wait until API is healthy |
+| `up` | Build and start the full stack (profile `app`); wait until API/mini-app are healthy |
 | `down` | Stop the full stack; keep volumes |
-| `logs` | Follow `api` and `migrate` logs |
+| `logs` | Follow `api`, `migrate`, and `miniapp` logs |
 | `ps` | Show compose service status |
+| `miniapp-check` | OpenAPI drift check + mini-app lint/test/build |
+| `miniapp-tunnel` | Start Cloudflare quick tunnel to the mini-app (profile `tunnel`) |
+| `miniapp-tunnel-down` | Stop the tunnel service |
 | `fmt` | Ruff format |
 | `lint` | Ruff lint |
 | `typecheck` | mypy |

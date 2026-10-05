@@ -125,6 +125,20 @@ services:
       - no-new-privileges:true
     stop_grace_period: 20s
 
+  tunnel:
+    profiles: ["tunnel"]
+    image: cloudflare/cloudflared:2026.9.3@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "--url", "http://miniapp:8080"]
+    depends_on:
+      miniapp:
+        condition: service_started
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 20s
+
 volumes:
   postgres_data:
   valkey_data:

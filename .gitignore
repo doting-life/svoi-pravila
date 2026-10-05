@@ -50,6 +50,7 @@ Thumbs.db
 miniapp/node_modules/
 miniapp/dist/
 miniapp/coverage/
+miniapp/screenshots/
 
 # Benchmark / eval output (C0 markdown tables)
 backend/benchmarks/out/

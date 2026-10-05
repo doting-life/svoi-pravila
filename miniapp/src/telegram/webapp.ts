@@ -2,13 +2,26 @@ export type ColorScheme = "light" | "dark";
 
 export type ThemeCssVariables = Readonly<Record<`--tg-${string}`, string>>;
 
+export type HapticNotificationType = "error" | "success" | "warning";
+
+export type TelegramBackButtonControls = {
+    show: () => void;
+    hide: () => void;
+    onClick: (callback: () => void) => () => void;
+};
+
 export type TelegramAdapter = {
     readonly initData: string;
     readonly colorScheme: ColorScheme;
     readonly themeCssVariables: ThemeCssVariables;
     readonly isInsideTelegram: boolean;
+    readonly BackButton: TelegramBackButtonControls;
     ready: () => void;
     expand: () => void;
+    close: () => void;
+    showConfirm: (message: string) => Promise<boolean>;
+    hapticNotification: (type: HapticNotificationType) => void;
+    onColorSchemeChanged: (callback: (scheme: ColorScheme) => void) => () => void;
 };
 
 const THEME_PARAM_TO_CSS: ReadonlyArray<readonly [keyof TelegramThemeParams, `--tg-${string}`]> = [
@@ -42,22 +55,58 @@ function readWebApp(): TelegramWebApp | undefined {
     return window.Telegram?.WebApp;
 }
 
+function readColorScheme(webApp: TelegramWebApp | undefined): ColorScheme {
+    return webApp?.colorScheme === "dark" ? "dark" : "light";
+}
+
 let readyCalled = false;
 let expandCalled = false;
+
+function noopBackButton(): TelegramBackButtonControls {
+    return {
+        show: () => undefined,
+        hide: () => undefined,
+        onClick: () => () => undefined,
+    };
+}
+
+function createBackButtonControls(webApp: TelegramWebApp | undefined): TelegramBackButtonControls {
+    const back = webApp?.BackButton;
+    if (back === undefined) {
+        return noopBackButton();
+    }
+    return {
+        show: () => {
+            back.show();
+        },
+        hide: () => {
+            back.hide();
+        },
+        onClick: (callback: () => void) => {
+            back.onClick(callback);
+            return () => {
+                back.offClick(callback);
+            };
+        },
+    };
+}
 
 /** Build a typed adapter over `window.Telegram.WebApp`. Safe outside Telegram. */
 export function createTelegramAdapter(): TelegramAdapter {
     const webApp = readWebApp();
     const initData = webApp?.initData ?? "";
     const isInsideTelegram = initData.length > 0;
-    const colorScheme: ColorScheme = webApp?.colorScheme === "dark" ? "dark" : "light";
-    const themeCssVariables = mapThemeParams(webApp?.themeParams ?? {});
 
     return {
         initData,
-        colorScheme,
-        themeCssVariables,
+        get colorScheme() {
+            return readColorScheme(readWebApp());
+        },
+        get themeCssVariables() {
+            return mapThemeParams(readWebApp()?.themeParams ?? {});
+        },
         isInsideTelegram,
+        BackButton: createBackButtonControls(webApp),
         ready: () => {
             if (!isInsideTelegram || readyCalled) {
                 return;
@@ -71,6 +120,37 @@ export function createTelegramAdapter(): TelegramAdapter {
             }
             webApp?.expand();
             expandCalled = true;
+        },
+        close: () => {
+            webApp?.close();
+        },
+        showConfirm: (message: string) =>
+            new Promise<boolean>((resolve) => {
+                const current = readWebApp();
+                if (current === undefined || typeof current.showConfirm !== "function") {
+                    resolve(false);
+                    return;
+                }
+                current.showConfirm(message, (confirmed) => {
+                    resolve(confirmed);
+                });
+            }),
+        hapticNotification: (type: HapticNotificationType) => {
+            readWebApp()?.HapticFeedback?.notificationOccurred(type);
+        },
+        onColorSchemeChanged: (callback: (scheme: ColorScheme) => void) => {
+            const current = readWebApp();
+            if (current === undefined || typeof current.onEvent !== "function") {
+                return () => undefined;
+            }
+            const handler = () => {
+                callback(readColorScheme(readWebApp()));
+            };
+            current.onEvent("themeChanged", handler);
+            return () => {
+                const latest = readWebApp();
+                latest?.offEvent?.("themeChanged", handler);
+            };
         },
     };
 }

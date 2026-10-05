@@ -21,6 +21,7 @@
         "audit": "pnpm audit --prod --audit-level=high",
         "openapi:types": "openapi-typescript src/api/openapi.json -o src/api/schema.d.ts",
         "lint:storage-ban": "node scripts/assert-storage-ban.mjs",
+        "screenshots": "node scripts/screenshots.mjs",
         "check": "pnpm format:check && pnpm lint && pnpm lint:storage-ban && pnpm typecheck && pnpm test && pnpm build && pnpm audit"
     },
     "dependencies": {
@@ -43,6 +44,7 @@
         "globals": "17.13.0",
         "jsdom": "30.1.2",
         "openapi-typescript": "7.13.0",
+        "playwright": "1.56.1",
         "prettier": "3.9.9",
         "typescript": "5.9.3",
         "typescript-eslint": "8.71.0",

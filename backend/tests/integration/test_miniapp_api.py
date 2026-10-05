@@ -139,13 +139,11 @@ def _build_app(world: _MiniappWorld) -> Any:
         accept_suggestion=AcceptSuggestion(uow_factory, catalog, ids, clock),
         dismiss_suggestion=DismissSuggestion(uow_factory, catalog, clock),
     )
-    app = create_app(
+    return create_app(
         CheckReadiness(probes=(), timeout_seconds=1.0),
         Environment.TEST,
         AppLifecycleHooks(extra_routers=(build_miniapp_router(bindings),)),
     )
-    app.state.miniapp_deps = auth
-    return app
 
 
 @pytest.mark.integration

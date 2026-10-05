@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -12,7 +11,6 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
-from starlette.requests import Request
 from tests.fakes.clock import FakeClock
 from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.ids import FakeIdGenerator
@@ -25,14 +23,9 @@ from tests.unit.application.conftest import AppWorld
 from svoi_pravila.adapters.channels.telegram.init_data import AiogramInitDataVerifier
 from svoi_pravila.api.app import AppLifecycleHooks, create_app
 from svoi_pravila.api.miniapp import MiniappDeps, MiniappRouterBindings, build_miniapp_router
-from svoi_pravila.api.miniapp.deps import (
-    MAX_BODY_BYTES,
-    enforce_body_limit,
-    get_miniapp_deps,
-    map_access_error,
-)
+from svoi_pravila.api.miniapp.body_limit import MAX_BODY_BYTES
 from svoi_pravila.api.miniapp.errors import MiniappErrorCode, error_body
-from svoi_pravila.api.miniapp.http import MiniappHttpError, register_miniapp_exception_handlers
+from svoi_pravila.api.miniapp.http import map_access_error, register_miniapp_exception_handlers
 from svoi_pravila.application.errors import AccessNotGranted
 from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
@@ -100,13 +93,11 @@ def _build_app(world: AppWorld, *, rate_limit: int = 120) -> Any:
         ),
         dismiss_suggestion=DismissSuggestion(world.uow_factory, world.catalog, world.clock),
     )
-    app = create_app(
+    return create_app(
         CheckReadiness(probes=(), timeout_seconds=1.0),
         Environment.TEST,
         AppLifecycleHooks(extra_routers=(build_miniapp_router(bindings),)),
     )
-    app.state.miniapp_deps = auth
-    return app
 
 
 @pytest.fixture
@@ -254,9 +245,13 @@ async def test_happy_path_contacts_rules_suggestions(
 
         rules = await client.get(f"/api/v1/contacts/{contact_id}/rules", headers=headers)
         assert len(rules.json()["rules"]) == 1
+        assert rules.json()["rules"][0]["has_pending_edit"] is False
+        assert rules.json()["rules"][0]["text"] == rule_sentinel
 
         archived = await client.post(f"/api/v1/rules/{rule_id}/archive", headers=headers)
         assert archived.json()["status"] == "archived"
+        listed_after = await client.get(f"/api/v1/contacts/{contact_id}/rules", headers=headers)
+        assert listed_after.json()["rules"] == []
 
         again = await client.post(f"/api/v1/rules/{rule_id}/archive", headers=headers)
         assert again.status_code == 409
@@ -436,48 +431,34 @@ async def test_contact_and_open_rule_limits(mini_world: AppWorld) -> None:
 
 
 @pytest.mark.unit
-async def test_enforce_body_limit_helpers() -> None:
-    bad_cl = Request(
-        {
-            "type": "http",
-            "asgi": {"version": "3.0"},
-            "http_version": "1.1",
-            "method": "POST",
-            "scheme": "http",
-            "path": "/api/v1/contacts",
-            "raw_path": b"/api/v1/contacts",
-            "query_string": b"",
-            "headers": [(b"content-length", b"abc")],
-            "client": ("127.0.0.1", 123),
-            "server": ("test", 80),
-        }
-    )
-    with pytest.raises(MiniappHttpError) as exc:
-        await enforce_body_limit(bad_cl)
-    assert exc.value.code is MiniappErrorCode.VALIDATION_ERROR
+def test_rule_item_fallback_for_rejected_without_effective() -> None:
+    from datetime import UTC, datetime
+    from uuid import UUID
 
-    async def receive() -> dict[str, object]:
-        return {"type": "http.request", "body": b"x" * (MAX_BODY_BYTES + 1), "more_body": False}
+    from svoi_pravila.api.miniapp.router import _rule_item
+    from svoi_pravila.domain.enums import RuleCategory, RuleStatus
+    from svoi_pravila.domain.ids import PairId, RuleId, UserId
+    from svoi_pravila.domain.rules import PairScope, Rule
+    from svoi_pravila.domain.text import RuleText
 
-    oversized = Request(
-        {
-            "type": "http",
-            "asgi": {"version": "3.0"},
-            "http_version": "1.1",
-            "method": "POST",
-            "scheme": "http",
-            "path": "/api/v1/contacts",
-            "raw_path": b"/api/v1/contacts",
-            "query_string": b"",
-            "headers": [],
-            "client": ("127.0.0.1", 123),
-            "server": ("test", 80),
-        },
-        receive,
+    owner = UserId(UUID(int=1))
+    partner = UserId(UUID(int=2))
+    now = datetime(2026, 10, 3, 12, tzinfo=UTC)
+    proposed = Rule.propose(
+        rule_id=RuleId(UUID(int=99)),
+        scope=PairScope(pair_id=PairId(UUID(int=21))),
+        category=RuleCategory.OTHER,
+        approvers=frozenset({owner, partner}),
+        author_id=owner,
+        text=RuleText("pending only"),
+        now=now,
     )
-    with pytest.raises(MiniappHttpError) as exc2:
-        await enforce_body_limit(oversized)
-    assert exc2.value.code is MiniappErrorCode.BODY_TOO_LARGE
+    rejected = proposed.reject_pending(partner, now)
+    assert rejected.status is RuleStatus.REJECTED
+    item = _rule_item(rejected)
+    assert item.status == "rejected"
+    assert item.text == "pending only"
+    assert item.has_pending_edit is False
 
 
 @pytest.mark.unit
@@ -515,45 +496,36 @@ def test_map_access_error_and_catalog() -> None:
 
 
 @pytest.mark.unit
-def test_get_miniapp_deps_requires_state() -> None:
-    empty = type("App", (), {"state": type("State", (), {})()})()
-    request = Request(
-        {
-            "type": "http",
-            "asgi": {"version": "3.0"},
-            "http_version": "1.1",
-            "method": "GET",
-            "scheme": "http",
-            "path": "/api/v1/me",
-            "raw_path": b"/api/v1/me",
-            "query_string": b"",
-            "headers": [],
-            "client": ("127.0.0.1", 123),
-            "server": ("test", 80),
-            "app": empty,
-        }
-    )
-    with pytest.raises(RuntimeError, match="miniapp_deps"):
-        get_miniapp_deps(request)
-    wrong = type("App", (), {"state": type("State", (), {"miniapp_deps": object()})()})()
-    request.scope["app"] = wrong
-    with pytest.raises(TypeError, match="unexpected type"):
-        get_miniapp_deps(request)
-
-
-@pytest.mark.unit
 async def test_auth_logs_c0_reason_only(
     mini_world: AppWorld,
-    caplog: pytest.LogCaptureFixture,
+    capture_log_events: Callable[[], list[dict[str, Any]]],
 ) -> None:
     app = _build_app(mini_world)
     transport = ASGITransport(app=app)
-    caplog.set_level(logging.INFO)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         await client.get("/api/v1/me")
-    joined = "\n".join(caplog.messages)
-    assert "missing_or_malformed_header" in joined
-    assert "tma " not in joined
+        await client.get(
+            "/api/v1/me",
+            headers={"Authorization": "tma auth_date=1&hash=00"},
+        )
+        await client.get(
+            "/api/v1/me",
+            headers=_auth_header(_TG_A, auth_date=_NOW - timedelta(seconds=4000)),
+        )
+    app_rl = _build_app(mini_world, rate_limit=1)
+    transport_rl = ASGITransport(app=app_rl)
+    async with AsyncClient(transport=transport_rl, base_url="http://test") as client:
+        await client.get("/api/v1/me", headers=_auth_header(_TG_A))
+        await client.get("/api/v1/me", headers=_auth_header(_TG_A))
+    events = capture_log_events()
+    rejected = [e for e in events if e.get("event") == "miniapp_auth_rejected"]
+    assert any(e.get("reason") == "missing_or_malformed_header" for e in rejected)
+    assert any(e.get("reason") == "init_data_invalid" for e in rejected)
+    assert any(e.get("reason") == "init_data_expired" for e in rejected)
+    assert any(e.get("event") == "miniapp_rate_limited" for e in events)
+    blob = str(events)
+    assert "tma " not in blob
+    assert "unit-qid" not in blob
 
 
 @pytest.mark.unit

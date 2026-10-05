@@ -54,7 +54,7 @@ test:
 	$(UV) coverage report --include='*/svoi_pravila/domain/*' --fail-under=100
 	$(UV) coverage report --include='*/svoi_pravila/application/*' --fail-under=100
 	$(UV) coverage report --include='*/svoi_pravila/crypto/*' --fail-under=100
-	$(UV) coverage report --include='*/svoi_pravila/api/*' --fail-under=98
+	$(UV) coverage report --include='*/svoi_pravila/api/*' --fail-under=100
 	$(UV) coverage report --include='*/svoi_pravila/adapters/channels/telegram/init_data.py' --fail-under=100
 	$(UV) coverage report --include='*/svoi_pravila/adapters/persistence/*' --fail-under=95
 	$(UV) coverage report --include='*/svoi_pravila/adapters/llm/*' --fail-under=100

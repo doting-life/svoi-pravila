@@ -110,13 +110,11 @@ class _CorePorts:
     pseudonymizer: HmacPseudonymizer
 
 
-def _build_miniapp_mount(
-    settings: Settings, ports: _CorePorts
-) -> tuple[APIRouter | None, MiniappDeps | None]:
+def _build_miniapp_mount(settings: Settings, ports: _CorePorts) -> APIRouter | None:
     """Wire mini-app `/api/v1` when a bot token is configured."""
     bot_token = settings.telegram_bot_token
     if bot_token is None or not bot_token.get_secret_value():
-        return None, None
+        return None
     auth = MiniappDeps(
         init_data_verifier=AiogramInitDataVerifier(
             bot_token,
@@ -133,7 +131,7 @@ def _build_miniapp_mount(
         get_user_by_telegram_id=GetUserByTelegramId(ports.uow_factory),
         get_onboarding_step=GetOnboardingStep(ports.uow_factory, ports.catalog),
     )
-    router = build_miniapp_router(
+    return build_miniapp_router(
         MiniappRouterBindings(
             auth=auth,
             list_contacts=ListContacts(ports.uow_factory, ports.catalog),
@@ -150,7 +148,6 @@ def _build_miniapp_mount(
             dismiss_suggestion=DismissSuggestion(ports.uow_factory, ports.catalog, ports.clock),
         )
     )
-    return router, auth
 
 
 def load_database_settings() -> DatabaseSettings:
@@ -210,7 +207,7 @@ def create_application(settings: Settings) -> FastAPI:
     )
     lifecycle: TelegramLifecycle | None = None
     routers: list[APIRouter] = []
-    miniapp_router, miniapp_auth_deps = _build_miniapp_mount(settings, core)
+    miniapp_router = _build_miniapp_mount(settings, core)
     if miniapp_router is not None:
         routers.append(miniapp_router)
     if settings.telegram_updates_mode is not TelegramUpdatesMode.DISABLED:
@@ -378,7 +375,7 @@ def create_application(settings: Settings) -> FastAPI:
                 )
             )
 
-    app = create_app(
+    return create_app(
         check_readiness,
         settings.environment,
         _app_lifecycle_hooks(
@@ -389,9 +386,6 @@ def create_application(settings: Settings) -> FastAPI:
             routers=tuple(routers),
         ),
     )
-    if miniapp_auth_deps is not None:
-        app.state.miniapp_deps = miniapp_auth_deps
-    return app
 
 
 def _app_lifecycle_hooks(

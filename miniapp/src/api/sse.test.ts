@@ -116,7 +116,7 @@ describe("consumeDecodeSse", () => {
     it("defaults missing chunk, resources and error code fields", async () => {
         const body = [
             "event: analysis\ndata: {}\n\n",
-            'event: crisis\ndata: {}\n\n',
+            "event: crisis\ndata: {}\n\n",
             "event: error\ndata: {}\n\n",
         ].join("");
         const stream = new ReadableStream<Uint8Array>({

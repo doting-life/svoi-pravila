@@ -21,8 +21,8 @@ describe("formatAppliedRuleCitation", () => {
             "Europe/Moscow",
             new Date("2026-10-04T12:00:00.000Z"),
         );
-        expect(
-            formatAppliedRuleCitation(template, { date, text: "не повышать голос" }),
-        ).toBe(fixture);
+        expect(formatAppliedRuleCitation(template, { date, text: "не повышать голос" })).toBe(
+            fixture,
+        );
     });
 });

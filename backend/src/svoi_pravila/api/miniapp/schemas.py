@@ -17,6 +17,7 @@ class MeResponse(BaseModel):
     active_contact_id: str | None = None
     max_contacts: int = Field(ge=1)
     max_open_rules: int = Field(ge=1)
+    display_timezone: str = Field(min_length=1)
 
 
 class ContactItem(BaseModel):

@@ -92,6 +92,7 @@ def _build_app(world: AppWorld, *, rate_limit: int = 120) -> Any:
             world.uow_factory, world.catalog, world.ids, world.clock
         ),
         dismiss_suggestion=DismissSuggestion(world.uow_factory, world.catalog, world.clock),
+        display_timezone="Europe/Moscow",
     )
     return create_app(
         CheckReadiness(probes=(), timeout_seconds=1.0),
@@ -147,7 +148,9 @@ async def test_me_unknown_user_age_step(mini_world: AppWorld) -> None:
         response = await client.get("/api/v1/me", headers=_auth_header(_TG_A))
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
-    assert response.json()["onboarding_step"] == "age"
+    body = response.json()
+    assert body["onboarding_step"] == "age"
+    assert body["display_timezone"] == "Europe/Moscow"
 
 
 @pytest.mark.unit
@@ -229,6 +232,7 @@ async def test_happy_path_contacts_rules_suggestions(
         me = await client.get("/api/v1/me", headers=headers)
         assert me.status_code == 200
         assert me.json()["onboarding_step"] == "done"
+        assert me.json()["display_timezone"] == "Europe/Moscow"
 
         created = await client.post(
             "/api/v1/contacts",

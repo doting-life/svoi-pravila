@@ -239,6 +239,11 @@
             ],
             "title": "Consent Version"
           },
+          "display_timezone": {
+            "minLength": 1,
+            "title": "Display Timezone",
+            "type": "string"
+          },
           "max_contacts": {
             "minimum": 1.0,
             "title": "Max Contacts",
@@ -262,7 +267,8 @@
         "required": [
           "onboarding_step",
           "max_contacts",
-          "max_open_rules"
+          "max_open_rules",
+          "display_timezone"
         ],
         "title": "MeResponse",
         "type": "object"

@@ -90,6 +90,7 @@ class MiniappRouterBindings:
     list_suggestions: ListSuggestions
     accept_suggestion: AcceptSuggestion
     dismiss_suggestion: DismissSuggestion
+    display_timezone: str
 
 
 def _contact_item(contact: Contact) -> ContactItem:
@@ -197,6 +198,7 @@ def _register_me(
                 "active_contact_id": active,
                 "max_contacts": MAX_CONTACTS_PER_USER,
                 "max_open_rules": MAX_OPEN_RULES_PER_SCOPE,
+                "display_timezone": bindings.display_timezone,
             }
         )
 

@@ -8,6 +8,7 @@ import re
 from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, Self
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -225,6 +226,7 @@ class Settings(BaseSettings):
     rule_source_ttl_seconds: int = Field(default=600, ge=60, le=600)
     dialog_ttl_seconds: int = Field(default=600, ge=1, le=86_400)
     display_timezone: str = Field(default="Europe/Moscow")
+    miniapp_url: str | None = None
     miniapp_initdata_max_age_seconds: int = Field(default=3600, ge=60, le=86_400)
     miniapp_requests_per_minute: int = Field(default=120, ge=1, le=600)
 
@@ -238,6 +240,30 @@ class Settings(BaseSettings):
             msg = "display_timezone must be a valid IANA time zone"
             raise ValueError(msg) from exc
         return value
+
+    @field_validator("miniapp_url")
+    @classmethod
+    def miniapp_url_must_be_https_origin(cls, value: str | None) -> str | None:
+        """Accept only https origins with empty or root path and no query/fragment."""
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            return None
+        parsed = urlparse(stripped)
+        if parsed.scheme != "https":
+            msg = "miniapp_url must use https"
+            raise ValueError(msg)
+        if not parsed.netloc or parsed.username is not None or parsed.password is not None:
+            msg = "miniapp_url must include a host and no userinfo"
+            raise ValueError(msg)
+        if parsed.path not in {"", "/"}:
+            msg = "miniapp_url must not include a path"
+            raise ValueError(msg)
+        if parsed.query or parsed.fragment or parsed.params:
+            msg = "miniapp_url must not include query, fragment, or params"
+            raise ValueError(msg)
+        return f"https://{parsed.netloc}"
 
     @field_validator("database_url")
     @classmethod

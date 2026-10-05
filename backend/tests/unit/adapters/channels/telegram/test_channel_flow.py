@@ -7,14 +7,24 @@ from datetime import UTC, datetime
 
 import pytest
 from aiogram import Bot
+from aiogram.exceptions import TelegramAPIError
 from aiogram.methods import (
     DeleteWebhook,
     EditMessageReplyMarkup,
     SendMessage,
+    SetChatMenuButton,
     SetMyCommands,
     SetWebhook,
 )
-from aiogram.types import CallbackQuery, Chat, Message, PhotoSize, Update, User
+from aiogram.types import (
+    CallbackQuery,
+    Chat,
+    MenuButtonWebApp,
+    Message,
+    PhotoSize,
+    Update,
+    User,
+)
 from tests.factories import make_settings
 from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.telegram_deps import TelegramTestDeps, make_telegram_deps
@@ -83,6 +93,54 @@ async def test_polling_startup_calls() -> None:
         environment=Environment.LOCAL,
         telegram_updates_mode=TelegramUpdatesMode.POLLING,
         telegram_bot_token="1:TEST",
+    )
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(settings, deps, bot=bot)
+    await lifecycle.start()
+    await lifecycle.shutdown()
+    kinds = [type(req) for req in session.requests]
+    assert SetMyCommands in kinds
+    assert DeleteWebhook in kinds
+    assert SetChatMenuButton not in kinds
+    assert session.closed is True
+
+
+@pytest.mark.unit
+async def test_polling_startup_sets_menu_button_when_miniapp_url_configured() -> None:
+    deps, _uow, _catalog = _world()
+    session = FakeTelegramSession()
+    settings = make_settings(
+        environment=Environment.LOCAL,
+        telegram_updates_mode=TelegramUpdatesMode.POLLING,
+        telegram_bot_token="1:TEST",
+        miniapp_url="https://example.trycloudflare.com",
+    )
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(settings, deps, bot=bot)
+    await lifecycle.start()
+    await lifecycle.shutdown()
+    menu_calls = [req for req in session.requests if isinstance(req, SetChatMenuButton)]
+    assert len(menu_calls) == 1
+    button = menu_calls[0].menu_button
+    assert isinstance(button, MenuButtonWebApp)
+    assert button.text == "Мои правила"
+    assert button.web_app.url == "https://example.trycloudflare.com"
+    assert SetMyCommands in [type(req) for req in session.requests]
+
+
+@pytest.mark.unit
+async def test_menu_button_telegram_failure_does_not_stop_startup() -> None:
+    deps, _uow, _catalog = _world()
+    session = FakeTelegramSession()
+    session.set_error(
+        SetChatMenuButton,
+        TelegramAPIError(method=SetChatMenuButton(), message="boom"),
+    )
+    settings = make_settings(
+        environment=Environment.LOCAL,
+        telegram_updates_mode=TelegramUpdatesMode.POLLING,
+        telegram_bot_token="1:TEST",
+        miniapp_url="https://example.trycloudflare.com",
     )
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(settings, deps, bot=bot)

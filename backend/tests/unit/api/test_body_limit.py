@@ -109,6 +109,7 @@ def _app(world: AppWorld, *, create_contact: CreateContact | _CountingCreateCont
             world.uow_factory, world.catalog, world.ids, world.clock
         ),
         dismiss_suggestion=DismissSuggestion(world.uow_factory, world.catalog, world.clock),
+        display_timezone="Europe/Moscow",
     )
     return create_app(
         CheckReadiness(probes=(), timeout_seconds=1.0),

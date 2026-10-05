@@ -301,6 +301,8 @@ export interface components {
             consent_kind?: ("personal_data" | "special_category") | null;
             /** Consent Version */
             consent_version?: string | null;
+            /** Display Timezone */
+            display_timezone: string;
             /** Max Contacts */
             max_contacts: number;
             /** Max Open Rules */

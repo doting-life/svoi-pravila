@@ -136,6 +136,7 @@ def _app_with_bindings(
             DismissSuggestion,
             dismiss_suggestion or DismissSuggestion(world.uow_factory, world.catalog, world.clock),
         ),
+        display_timezone="Europe/Moscow",
     )
     return create_app(
         CheckReadiness(probes=(), timeout_seconds=1.0),

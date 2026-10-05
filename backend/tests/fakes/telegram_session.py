@@ -21,11 +21,16 @@ class FakeTelegramSession(BaseSession):
         super().__init__()
         self.requests: list[TelegramMethod[Any]] = []
         self._results: dict[type[Any], Any] = {}
+        self._errors: dict[type[Any], BaseException] = {}
         self.closed = False
 
     def set_result(self, method_type: type[Any], result: Any) -> None:
         """Configure the return value for a TelegramMethod subclass."""
         self._results[method_type] = result
+
+    def set_error(self, method_type: type[Any], error: BaseException) -> None:
+        """Configure make_request to raise for a TelegramMethod subclass."""
+        self._errors[method_type] = error
 
     @override
     async def close(self) -> None:
@@ -40,6 +45,8 @@ class FakeTelegramSession(BaseSession):
     ) -> TelegramType:
         self.requests.append(method)
         method_type = type(method)
+        if method_type in self._errors:
+            raise self._errors[method_type]
         if method_type in self._results:
             return cast(TelegramType, self._results[method_type])
         returning = method.__returning__

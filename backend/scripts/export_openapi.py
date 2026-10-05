@@ -45,6 +45,7 @@ def _openapi_bindings() -> MiniappRouterBindings:
         list_suggestions=cast(ListSuggestions, _stub()),
         accept_suggestion=cast(AcceptSuggestion, _stub()),
         dismiss_suggestion=cast(DismissSuggestion, _stub()),
+        display_timezone="Europe/Moscow",
     )
 
 

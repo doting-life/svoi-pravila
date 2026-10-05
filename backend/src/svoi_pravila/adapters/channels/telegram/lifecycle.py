@@ -10,13 +10,16 @@ from typing import Any
 
 import structlog
 from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand
+from aiogram.exceptions import TelegramAPIError
+from aiogram.types import BotCommand, MenuButtonWebApp, WebAppInfo
 
 from svoi_pravila.adapters.channels.telegram.inline_scheduler import InlineQueryCoordinator
 from svoi_pravila.adapters.channels.telegram.localization import TelegramStrings
 from svoi_pravila.config import TelegramUpdatesMode
 
 logger = structlog.get_logger(__name__)
+
+_MENU_BUTTON_TEXT = "Мои правила"
 
 ALLOWED_UPDATES = ("message", "callback_query", "inline_query", "chosen_inline_result")
 
@@ -33,6 +36,7 @@ class TelegramRuntimeConfig:
     webhook_secret_token: str | None
     shutdown_grace_seconds: float
     inline_queries: InlineQueryCoordinator
+    miniapp_url: str | None = None
     extra_tasks: ExtraTasks | None = None
 
 
@@ -54,6 +58,7 @@ class TelegramLifecycle:
         self._webhook_secret_token = config.webhook_secret_token
         self._shutdown_grace_seconds = config.shutdown_grace_seconds
         self._inline_queries = config.inline_queries
+        self._miniapp_url = config.miniapp_url
         self._extra_tasks = config.extra_tasks
         self._polling_task: asyncio.Task[None] | None = None
         self._update_tasks: set[asyncio.Task[None]] = set()
@@ -92,6 +97,7 @@ class TelegramLifecycle:
                 BotCommand(command="delete", description=self._strings.commands_delete),
             ]
         )
+        await self._install_menu_button()
         if self._mode is TelegramUpdatesMode.POLLING:
             await self._bot.delete_webhook(drop_pending_updates=False)
             self._polling_task = asyncio.create_task(
@@ -112,6 +118,23 @@ class TelegramLifecycle:
                 url=self._webhook_url,
                 secret_token=self._webhook_secret_token,
                 allowed_updates=list(ALLOWED_UPDATES),
+            )
+
+    async def _install_menu_button(self) -> None:
+        """Set the chat menu Web App button when SP_MINIAPP_URL is configured."""
+        if self._miniapp_url is None:
+            return
+        try:
+            await self._bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text=_MENU_BUTTON_TEXT,
+                    web_app=WebAppInfo(url=self._miniapp_url),
+                )
+            )
+        except TelegramAPIError as exc:
+            logger.warning(
+                "telegram_set_chat_menu_button_failed",
+                error_type=type(exc).__name__,
             )
 
     def schedule_update(self, coro: Coroutine[Any, Any, None]) -> None:

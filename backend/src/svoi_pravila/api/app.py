@@ -11,6 +11,8 @@ from fastapi import APIRouter, FastAPI, Response, status
 from fastapi.responses import JSONResponse
 
 from svoi_pravila.api.middleware import RequestLoggingMiddleware
+from svoi_pravila.api.miniapp.body_limit import BodyLimitMiddleware
+from svoi_pravila.api.miniapp.http import register_miniapp_exception_handlers
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.config import Environment
 
@@ -55,6 +57,8 @@ def create_app(
         openapi_url="/openapi.json" if docs_enabled else None,
     )
     app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(BodyLimitMiddleware)
+    register_miniapp_exception_handlers(app)
     for router in lifecycle.extra_routers:
         app.include_router(router)
 

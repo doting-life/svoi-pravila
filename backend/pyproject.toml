@@ -56,6 +56,7 @@ packages = ["src/svoi_pravila"]
 "src/svoi_pravila/adapters/consents/personal_data/v1.txt" = "svoi_pravila/adapters/consents/personal_data/v1.txt"
 "src/svoi_pravila/adapters/consents/special_category/v1.txt" = "svoi_pravila/adapters/consents/special_category/v1.txt"
 "src/svoi_pravila/adapters/channels/telegram/localization/ru.json" = "svoi_pravila/adapters/channels/telegram/localization/ru.json"
+"src/svoi_pravila/api/miniapp/localization/ru.json" = "svoi_pravila/api/miniapp/localization/ru.json"
 "src/svoi_pravila/domain/safety/crisis_patterns/ru/v2.txt" = "svoi_pravila/domain/safety/crisis_patterns/ru/v2.txt"
 "src/svoi_pravila/domain/safety/support_resources/ru/v1.txt" = "svoi_pravila/domain/safety/support_resources/ru/v1.txt"
 
@@ -74,8 +75,21 @@ select = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "PLR2004", "DTZ001", "RUF001", "TRY003", "S105", "S106"]
+"tests/**" = [
+    "S101",
+    "PLR2004",
+    "PLR0913",
+    "PLR0915",
+    "PLR0917",
+    "PLC0415",
+    "DTZ001",
+    "RUF001",
+    "TRY003",
+    "S105",
+    "S106",
+]
 "src/svoi_pravila/application/errors.py" = ["N818"]
+"src/svoi_pravila/application/ports/init_data.py" = ["N818"]
 "src/svoi_pravila/domain/rules.py" = ["PLR0913"]
 "src/svoi_pravila/domain/rule_suggestion.py" = ["PLR0913"]
 "src/svoi_pravila/domain/pair.py" = ["PLR2004"]

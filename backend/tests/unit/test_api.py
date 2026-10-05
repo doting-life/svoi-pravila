@@ -97,6 +97,16 @@ async def test_dispose_hook_runs_on_shutdown() -> None:
 
 
 @pytest.mark.unit
+async def test_lifespan_without_optional_hooks() -> None:
+    app = create_app(CheckReadiness([], 1.0), Environment.TEST)
+    async with app.router.lifespan_context(app):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.get("/healthz")
+            assert response.status_code == 200
+
+
+@pytest.mark.unit
 async def test_middleware_passes_through_non_http_scope() -> None:
     calls: list[str] = []
 

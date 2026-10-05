@@ -168,6 +168,12 @@ async def test_webhook_size_and_bad_json() -> None:
             headers={"X-Telegram-Bot-Api-Secret-Token": _SECRET},
         )
         assert invalid.status_code == 400
+        not_object = await client.post(
+            f"/telegram/webhook/{_PATH}",
+            content=json.dumps([1, 2, 3]),
+            headers={"X-Telegram-Bot-Api-Secret-Token": _SECRET},
+        )
+        assert not_object.status_code == 400
 
 
 @pytest.mark.unit

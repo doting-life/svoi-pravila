@@ -26,6 +26,7 @@ from svoi_pravila.application.ports.generation import (
     DecodeCompleted,
     SafetyVerdict,
 )
+from svoi_pravila.application.rule_view import project_rules_for_list
 from svoi_pravila.application.use_cases.get_onboarding_step import (
     OnboardingStep,
     OnboardingStepKind,
@@ -200,26 +201,19 @@ def render_rules_list(
     if suggestions:
         lines.append(strings.suggestion_header)
         lines.extend(f"• {suggestion.text.value}" for suggestion in suggestions)
-    visible: list[Rule] = []
+    views = project_rules_for_list(rules)
     lines.append(strings.rules_header)
-    number = 0
-    for rule in rules:
-        if rule.status is RuleStatus.ACTIVE:
-            revision = rule.require_effective_revision()
-            date = format_display_date(revision.require_effective_since(), now, tz)
-            number += 1
-            lines.append(f"{number}. {revision.text.value} — {date}")
-            visible.append(rule)
-        elif rule.status is RuleStatus.PROPOSED:
-            revision = rule.pending_revision or rule.revisions[-1]
-            number += 1
-            lines.append(f"{number}. {revision.text.value} — {strings.rules_proposed_mark}")
-            visible.append(rule)
-    if number == 0:
+    for number, view in enumerate(views, start=1):
+        if view.status is RuleStatus.ACTIVE and view.effective_since is not None:
+            date = format_display_date(view.effective_since, now, tz)
+            lines.append(f"{number}. {view.text.value} — {date}")
+        else:
+            lines.append(f"{number}. {view.text.value} — {strings.rules_proposed_mark}")
+    if not views:
         lines.append(strings.rules_empty)
     keyboard = rules_keyboard(
         strings,
-        tuple(rule.id for rule in visible),
+        tuple(view.rule_id for view in views),
         tuple(s.id for s in suggestions),
     )
     return pack_message_lines(tuple(lines)), keyboard

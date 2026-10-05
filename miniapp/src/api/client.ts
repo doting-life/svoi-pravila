@@ -3,8 +3,11 @@ import createClient, { type Middleware } from "openapi-fetch";
 import type { paths } from "./schema";
 import { mapHttpError, type ApiError } from "./errors";
 
-/** Path prefix on the same origin (Caddy reverse-proxies `/api/*`). */
-export const API_BASE_PATH = "/api";
+/**
+ * Same-origin base for openapi-fetch. OpenAPI paths already include `/api/v1/…`;
+ * Caddy reverse-proxies `/api/*` to the backend.
+ */
+export const API_BASE_PATH = "";
 
 export type ApiClient = ReturnType<typeof createClient<paths>>;
 
@@ -14,7 +17,7 @@ export type CreateApiClientOptions = {
 };
 
 function sameOriginApiBaseUrl(): string {
-    return `${window.location.origin}${API_BASE_PATH}`;
+    return window.location.origin;
 }
 
 function authMiddleware(initData: string): Middleware {

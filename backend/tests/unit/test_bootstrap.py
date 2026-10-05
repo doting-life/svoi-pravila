@@ -209,6 +209,20 @@ async def test_create_application_disabled_skips_telegram(
     assert not any(
         getattr(route, "path", "").startswith("/telegram/webhook") for route in app.routes
     )
+    assert not any(getattr(route, "path", "") == "/api/v1/me" for route in app.routes)
+
+
+@pytest.mark.unit
+async def test_create_application_mounts_miniapp_when_bot_token_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = make_settings(
+        telegram_updates_mode=TelegramUpdatesMode.DISABLED,
+        telegram_bot_token="1:TEST",
+    )
+    _patch_infrastructure(monkeypatch)
+    app = create_application(settings)
+    assert app.url_path_for("get_me") == "/api/v1/me"
 
 
 @pytest.mark.unit

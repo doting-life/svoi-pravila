@@ -266,6 +266,17 @@ jobs:
           health_code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz)"
           test "$health_code" = "404"
 
+      - name: Assert mini-app API body limit (413)
+        run: |
+          set -euo pipefail
+          # ~20 KiB through Caddy → API; Content-Length over 16 KiB must be 413.
+          code="$(dd if=/dev/zero bs=1024 count=20 2>/dev/null \
+            | curl -s -o /tmp/body-limit.json -w '%{http_code}' \
+              -X POST http://127.0.0.1:8080/api/v1/contacts \
+              -H 'Content-Type: application/json' \
+              --data-binary @-)"
+          test "$code" = "413"
+
       - name: Stop local stack
         if: always()
         run: make down

@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import http.client
 import sys
+from dataclasses import dataclass
 from zoneinfo import ZoneInfo
 
 import uvicorn
 from aiogram.types import Update
 from fastapi import APIRouter, FastAPI
+from gigachat import GigaChat
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from svoi_pravila.adapters.cache.client import close_client, create_client
 from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
@@ -21,7 +25,9 @@ from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
 from svoi_pravila.adapters.cache.rule_sources import ValkeyRuleSources
 from svoi_pravila.adapters.channels.telegram import build_telegram_lifecycle
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
+from svoi_pravila.adapters.channels.telegram.init_data import AiogramInitDataVerifier
 from svoi_pravila.adapters.channels.telegram.inline_scheduler import InlineQueryCoordinator
+from svoi_pravila.adapters.channels.telegram.lifecycle import TelegramLifecycle
 from svoi_pravila.adapters.channels.telegram.localization import (
     help_say_intent_prefixes,
     load_ru_strings,
@@ -40,6 +46,11 @@ from svoi_pravila.adapters.system.inline_result_reuse import InProcessInlineResu
 from svoi_pravila.adapters.system.monotonic import SystemMonotonicClock
 from svoi_pravila.adapters.system.tone_suggestion_catalog import StaticToneSuggestionCatalog
 from svoi_pravila.api.app import AppLifecycleHooks, create_app
+from svoi_pravila.api.miniapp import (
+    MiniappDeps,
+    MiniappRouterBindings,
+    build_miniapp_router,
+)
 from svoi_pravila.api.telegram_webhook import (
     TelegramWebhookBindings,
     build_telegram_webhook_router,
@@ -85,6 +96,58 @@ from svoi_pravila.observability import configure_logging
 
 _HEALTHCHECK_TIMEOUT_SECONDS = 2.0
 _HTTP_OK = 200
+
+
+@dataclass(frozen=True, slots=True)
+class _CorePorts:
+    """Shared composition-root ports used by mini-app and Telegram wiring."""
+
+    uow_factory: SqlAlchemyUnitOfWorkFactory
+    catalog: PackageConsentCatalog
+    ids: Uuid7IdGenerator
+    clock: SystemClock
+    valkey: Redis
+    pseudonymizer: HmacPseudonymizer
+
+
+def _build_miniapp_mount(settings: Settings, ports: _CorePorts) -> APIRouter | None:
+    """Wire mini-app `/api/v1` when a bot token is configured."""
+    bot_token = settings.telegram_bot_token
+    if bot_token is None or not bot_token.get_secret_value():
+        return None
+    auth = MiniappDeps(
+        init_data_verifier=AiogramInitDataVerifier(
+            bot_token,
+            ports.clock,
+            max_age_seconds=settings.miniapp_initdata_max_age_seconds,
+        ),
+        rate_limiter=ValkeyRateLimiter(
+            ports.valkey,
+            limit=settings.miniapp_requests_per_minute,
+            window_seconds=60,
+            key_prefix="miniapp:rl",
+        ),
+        pseudonymizer=ports.pseudonymizer,
+        get_user_by_telegram_id=GetUserByTelegramId(ports.uow_factory),
+        get_onboarding_step=GetOnboardingStep(ports.uow_factory, ports.catalog),
+    )
+    return build_miniapp_router(
+        MiniappRouterBindings(
+            auth=auth,
+            list_contacts=ListContacts(ports.uow_factory, ports.catalog),
+            create_contact=CreateContact(ports.uow_factory, ports.catalog, ports.ids, ports.clock),
+            rename_contact=RenameContact(ports.uow_factory, ports.catalog),
+            set_active_contact=SetActiveContact(ports.uow_factory, ports.catalog),
+            list_rules=ListRules(ports.uow_factory, ports.catalog),
+            propose_rule=ProposeRule(ports.uow_factory, ports.catalog, ports.ids, ports.clock),
+            archive_rule=ArchiveRule(ports.uow_factory, ports.catalog, ports.clock),
+            list_suggestions=ListSuggestions(ports.uow_factory, ports.catalog),
+            accept_suggestion=AcceptSuggestion(
+                ports.uow_factory, ports.catalog, ports.ids, ports.clock
+            ),
+            dismiss_suggestion=DismissSuggestion(ports.uow_factory, ports.catalog, ports.clock),
+        )
+    )
 
 
 def load_database_settings() -> DatabaseSettings:
@@ -134,8 +197,19 @@ def create_application(settings: Settings) -> FastAPI:
         max_entries=settings.inline_reuse_max_entries,
     )
 
-    lifecycle = None
-    extra_routers: tuple[APIRouter, ...] = ()
+    core = _CorePorts(
+        uow_factory=uow_factory,
+        catalog=catalog,
+        ids=ids,
+        clock=clock,
+        valkey=valkey,
+        pseudonymizer=pseudonymizer,
+    )
+    lifecycle: TelegramLifecycle | None = None
+    routers: list[APIRouter] = []
+    miniapp_router = _build_miniapp_mount(settings, core)
+    if miniapp_router is not None:
+        routers.append(miniapp_router)
     if settings.telegram_updates_mode is not TelegramUpdatesMode.DISABLED:
         strings = load_ru_strings()
         decode_incoming = DecodeIncoming(
@@ -288,7 +362,7 @@ def create_application(settings: Settings) -> FastAPI:
             async def _feed(update: Update) -> None:
                 await bound_lifecycle.dispatcher.feed_update(bound_lifecycle.bot, update)
 
-            extra_routers = (
+            routers.append(
                 build_telegram_webhook_router(
                     TelegramWebhookBindings(
                         is_accepting=lambda: bound_lifecycle.accepting,
@@ -298,8 +372,31 @@ def create_application(settings: Settings) -> FastAPI:
                         feed_update=_feed,
                         schedule=bound_lifecycle.schedule_update,
                     )
-                ),
+                )
             )
+
+    return create_app(
+        check_readiness,
+        settings.environment,
+        _app_lifecycle_hooks(
+            lifecycle=lifecycle,
+            gigachat=gigachat,
+            valkey=valkey,
+            engine=engine,
+            routers=tuple(routers),
+        ),
+    )
+
+
+def _app_lifecycle_hooks(
+    *,
+    lifecycle: TelegramLifecycle | None,
+    gigachat: GigaChat,
+    valkey: Redis,
+    engine: AsyncEngine,
+    routers: tuple[APIRouter, ...],
+) -> AppLifecycleHooks:
+    """Build FastAPI lifespan hooks for optional Telegram lifecycle and I/O clients."""
 
     async def on_startup() -> None:
         if lifecycle is not None:
@@ -314,15 +411,11 @@ def create_application(settings: Settings) -> FastAPI:
         await close_client(valkey)
         await dispose_engine(engine)
 
-    return create_app(
-        check_readiness,
-        settings.environment,
-        AppLifecycleHooks(
-            dispose=dispose,
-            on_startup=on_startup,
-            on_shutdown=on_shutdown,
-            extra_routers=extra_routers,
-        ),
+    return AppLifecycleHooks(
+        dispose=dispose,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+        extra_routers=routers,
     )
 
 

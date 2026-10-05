@@ -19,6 +19,7 @@ from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.dialog import FakeDialogState
 from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.ids import FakeIdGenerator
+from tests.fakes.pair_notifier import FakePairNotifier
 from tests.fakes.rate_limit import FakePseudonymizer
 from tests.fakes.telegram_deps import TelegramTestDeps, make_telegram_deps
 from tests.fakes.telegram_session import FakeTelegramSession
@@ -390,7 +391,7 @@ async def test_rules_edges_parse_inaccessible_and_limit() -> None:
     ).user
     assert user is not None
     assert user.active_contact_id is not None
-    propose = ProposeRule(uow, catalog, ids, deps.clock)
+    propose = ProposeRule(uow, catalog, ids, deps.clock, FakePairNotifier())
 
     for i in range(MAX_OPEN_RULES_PER_SCOPE):
         await propose.execute(
@@ -565,6 +566,8 @@ def test_rules_keyboards_and_presenter_hides_closed() -> None:
     )
     text = "\n".join(chunks)
     joined = " ".join(btn.callback_data or "" for row in keyboard.inline_keyboard for btn in row)
+    assert strings.rules_private_header in text
+    assert strings.rules_shared_header in text
     assert "1. active text — 3 октября" in text
     assert "2. pending text — " in text
     buttons = [btn.text for row in keyboard.inline_keyboard for btn in row]
@@ -639,7 +642,7 @@ async def test_rule_limit_clears_dialog_then_decode() -> None:
     ).user
     assert user is not None
     assert user.active_contact_id is not None
-    propose = ProposeRule(uow, catalog, ids, deps.clock)
+    propose = ProposeRule(uow, catalog, ids, deps.clock, FakePairNotifier())
     body = "я" * 280
     for _i in range(MAX_OPEN_RULES_PER_SCOPE):
         await propose.execute(

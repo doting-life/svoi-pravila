@@ -25,6 +25,7 @@ from svoi_pravila.adapters.cache.probe import ValkeyProbe
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
 from svoi_pravila.adapters.cache.rule_sources import ValkeyRuleSources
 from svoi_pravila.adapters.channels.telegram import build_telegram_lifecycle
+from svoi_pravila.adapters.channels.telegram.bot_username import BotUsernameCache
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.export_document import TelegramExportDelivery
 from svoi_pravila.adapters.channels.telegram.init_data import AiogramInitDataVerifier
@@ -34,6 +35,7 @@ from svoi_pravila.adapters.channels.telegram.localization import (
     help_say_intent_prefixes,
     load_ru_strings,
 )
+from svoi_pravila.adapters.channels.telegram.pair_notifier import TelegramPairNotifier
 from svoi_pravila.adapters.channels.telegram.sleeper import AsyncioSleeper
 from svoi_pravila.adapters.consents import PackageConsentCatalog
 from svoi_pravila.adapters.llm.gigachat.adapter import GigaChatTextGenerator
@@ -46,6 +48,7 @@ from svoi_pravila.adapters.system.clock import SystemClock
 from svoi_pravila.adapters.system.ids import Uuid7IdGenerator
 from svoi_pravila.adapters.system.inline_result_reuse import InProcessInlineResultReuse
 from svoi_pravila.adapters.system.monotonic import SystemMonotonicClock
+from svoi_pravila.adapters.system.tokens import SecretsInviteTokenGenerator
 from svoi_pravila.adapters.system.tone_suggestion_catalog import StaticToneSuggestionCatalog
 from svoi_pravila.api.app import AppLifecycleHooks, DisposeHook, create_app
 from svoi_pravila.api.miniapp import (
@@ -59,13 +62,20 @@ from svoi_pravila.api.telegram_webhook import (
 )
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.ports.inline_result_reuse import InlineResultReuse
+from svoi_pravila.application.ports.pair_notifier import PairNotifier
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
+from svoi_pravila.application.use_cases.accept_invite import AcceptInvite
 from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
+from svoi_pravila.application.use_cases.approve_rule import ApproveRule
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.create_contact import CreateContact
+from svoi_pravila.application.use_cases.create_invite import CreateInvite
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
-from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
+from svoi_pravila.application.use_cases.delete_my_account import (
+    DeleteMyAccount,
+    DeleteMyAccountPorts,
+)
 from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggestion
 from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocument
@@ -73,6 +83,7 @@ from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboarding
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose, InlineComposePorts
+from svoi_pravila.application.use_cases.leave_pair import LeavePair
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
 from svoi_pravila.application.use_cases.list_rules import ListRules
 from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
@@ -81,8 +92,10 @@ from svoi_pravila.application.use_cases.record_inline_choice import (
     RecordInlineChoice,
     RecordInlineChoicePorts,
 )
+from svoi_pravila.application.use_cases.reject_pending_rule import RejectPendingRule
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.request_my_data_export import RequestMyDataExport
+from svoi_pravila.application.use_cases.resolve_invite import ResolveInvite
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
@@ -125,13 +138,20 @@ class _DecodeWire:
     rule_sources: ValkeyRuleSources
 
 
+@dataclass(frozen=True, slots=True)
+class _MiniappWire:
+    """Bot-side collaborators for the mini-app mount."""
+
+    bot: Bot
+    inline_reuse: InlineResultReuse
+    decode: _DecodeWire
+    pair_notifier: PairNotifier
+
+
 def _build_miniapp_mount(
     settings: Settings,
     ports: _CorePorts,
-    *,
-    bot: Bot,
-    inline_reuse: InlineResultReuse,
-    decode: _DecodeWire,
+    wire: _MiniappWire,
 ) -> APIRouter:
     """Wire mini-app `/api/v1` (caller ensures a bot token is configured)."""
     bot_token = settings.telegram_bot_token
@@ -164,7 +184,13 @@ def _build_miniapp_mount(
             rename_contact=RenameContact(ports.uow_factory, ports.catalog),
             set_active_contact=SetActiveContact(ports.uow_factory, ports.catalog),
             list_rules=ListRules(ports.uow_factory, ports.catalog),
-            propose_rule=ProposeRule(ports.uow_factory, ports.catalog, ports.ids, ports.clock),
+            propose_rule=ProposeRule(
+                ports.uow_factory,
+                ports.catalog,
+                ports.ids,
+                ports.clock,
+                wire.pair_notifier,
+            ),
             archive_rule=ArchiveRule(ports.uow_factory, ports.catalog, ports.clock),
             list_suggestions=ListSuggestions(ports.uow_factory, ports.catalog),
             accept_suggestion=AcceptSuggestion(
@@ -174,18 +200,23 @@ def _build_miniapp_mount(
             request_my_data_export=RequestMyDataExport(
                 export_my_data,
                 TelegramExportDelivery(
-                    bot,
+                    wire.bot,
                     clock=ports.clock,
                     caption=strings.rights_export_caption,
                 ),
             ),
-            revoke_all_consents=RevokeAllConsents(ports.uow_factory, ports.clock, inline_reuse),
+            revoke_all_consents=RevokeAllConsents(
+                ports.uow_factory, ports.clock, wire.inline_reuse
+            ),
             delete_my_account=DeleteMyAccount(
-                ports.uow_factory,
-                ports.ids,
-                ports.pseudonymizer,
-                ports.clock,
-                inline_reuse,
+                DeleteMyAccountPorts(
+                    ports.uow_factory,
+                    ports.ids,
+                    ports.pseudonymizer,
+                    ports.clock,
+                    wire.inline_reuse,
+                    wire.pair_notifier,
+                )
             ),
             export_rate_limiter=ValkeyRateLimiter(
                 ports.valkey,
@@ -194,10 +225,10 @@ def _build_miniapp_mount(
                 key_prefix="miniapp:export",
             ),
             display_timezone=settings.display_timezone,
-            decode_incoming=decode.decode_incoming,
-            suggest_rule_from_decode=decode.suggest_rule_from_decode,
-            prepared_results=decode.prepared_results,
-            rule_sources=decode.rule_sources,
+            decode_incoming=wire.decode.decode_incoming,
+            suggest_rule_from_decode=wire.decode.suggest_rule_from_decode,
+            prepared_results=wire.decode.prepared_results,
+            rule_sources=wire.decode.rule_sources,
             pseudonymizer=ports.pseudonymizer,
             enable_test_routes=settings.environment is Environment.TEST,
         )
@@ -316,19 +347,29 @@ def create_application(settings: Settings) -> FastAPI:
     lifecycle: TelegramLifecycle | None = None
     routers: list[APIRouter] = []
     shared_bot: Bot | None = None
+    pair_notifier: TelegramPairNotifier | None = None
+    bot_username = BotUsernameCache()
+    invite_tokens = SecretsInviteTokenGenerator()
     bot_token = settings.telegram_bot_token
     if bot_token is not None and bot_token.get_secret_value():
         shared_bot = Bot(token=bot_token.get_secret_value())
+        pair_notifier = TelegramPairNotifier(shared_bot, uow_factory, load_ru_strings())
         routers.append(
             _build_miniapp_mount(
                 settings,
                 core,
-                bot=shared_bot,
-                inline_reuse=inline_reuse,
-                decode=decode_wire,
+                _MiniappWire(
+                    bot=shared_bot,
+                    inline_reuse=inline_reuse,
+                    decode=decode_wire,
+                    pair_notifier=pair_notifier,
+                ),
             )
         )
     if settings.telegram_updates_mode is not TelegramUpdatesMode.DISABLED:
+        if shared_bot is None or pair_notifier is None:
+            msg = "telegram updates require telegram_bot_token"
+            raise RuntimeError(msg)
         strings = load_ru_strings()
         inline_compose = InlineCompose(
             InlineComposePorts(
@@ -381,14 +422,24 @@ def create_application(settings: Settings) -> FastAPI:
                 debounce_seconds=settings.inline_debounce_ms / 1000.0,
             ),
             revoke_all_consents=RevokeAllConsents(uow_factory, clock, inline_reuse),
-            delete_my_account=DeleteMyAccount(uow_factory, ids, pseudonymizer, clock, inline_reuse),
+            delete_my_account=DeleteMyAccount(
+                DeleteMyAccountPorts(
+                    uow_factory, ids, pseudonymizer, clock, inline_reuse, pair_notifier
+                )
+            ),
             export_my_data=ExportMyData(uow_factory, clock),
             confirmation_tokens=ValkeyConfirmationTokens(valkey),
             create_contact=CreateContact(uow_factory, catalog, ids, clock),
             list_contacts=ListContacts(uow_factory, catalog),
             rename_contact=RenameContact(uow_factory, catalog),
             set_active_contact=SetActiveContact(uow_factory, catalog),
-            propose_rule=ProposeRule(uow_factory, catalog, ids, clock),
+            create_invite=CreateInvite(uow_factory, catalog, ids, invite_tokens, clock),
+            resolve_invite=ResolveInvite(uow_factory, catalog, clock),
+            accept_invite=AcceptInvite(uow_factory, catalog, ids, clock, pair_notifier),
+            leave_pair=LeavePair(uow_factory, ids, clock, pair_notifier),
+            propose_rule=ProposeRule(uow_factory, catalog, ids, clock, pair_notifier),
+            approve_rule=ApproveRule(uow_factory, catalog, clock, pair_notifier),
+            reject_pending_rule=RejectPendingRule(uow_factory, catalog, clock, pair_notifier),
             list_rules=ListRules(uow_factory, catalog),
             archive_rule=ArchiveRule(uow_factory, catalog, clock),
             list_suggestions=ListSuggestions(uow_factory, catalog),
@@ -398,6 +449,7 @@ def create_application(settings: Settings) -> FastAPI:
                 valkey,
                 ttl_seconds=settings.dialog_ttl_seconds,
             ),
+            bot_username=bot_username,
             clock=clock,
             display_timezone=ZoneInfo(settings.display_timezone),
             deduplicator=ValkeyUpdateDeduplicator(

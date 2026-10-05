@@ -61,9 +61,9 @@ from svoi_pravila.application.use_cases.rename_contact import (
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsentsCommand
 from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
 from svoi_pravila.domain.access import AccessStatus
-from svoi_pravila.domain.contact import MAX_CONTACTS_PER_USER
+from svoi_pravila.domain.contact import MAX_CONTACTS_PER_USER, Contact
 from svoi_pravila.domain.enums import ConsentKind, RelationshipKind
-from svoi_pravila.domain.ids import ContactId, TelegramUserId
+from svoi_pravila.domain.ids import ContactId, PairId, TelegramUserId, UserId
 from svoi_pravila.domain.text import ContactLabel
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -317,9 +317,9 @@ async def test_contacts_callback_parse_and_corrupt_dialog() -> None:
     assert _parse_relationship(None) is None
     assert _parse_relationship("ct:rel:nope") is None
     assert _parse_relationship("x:rel:friend") is None
-    assert _parse_contact_id(None) is None
-    assert _parse_contact_id("ct:a:nope") is None
-    assert _parse_contact_id("ct:z:" + str(UUID(int=1))) is None
+    assert _parse_contact_id(None, "a") is None
+    assert _parse_contact_id("ct:a:nope", "a") is None
+    assert _parse_contact_id("ct:z:" + str(UUID(int=1)), "a") is None
     uow = InMemoryUnitOfWorkFactory()
     catalog = FakeConsentCatalog()
     dialog = FakeDialogState()
@@ -460,11 +460,32 @@ async def test_polling_commands_include_contacts_and_cancel() -> None:
 def test_contact_keyboards_and_relationship_labels() -> None:
     strings = load_ru_strings()
     ident = ContactId(UUID(int=1))
-    keyboard = contacts_keyboard(strings, (ident,))
+    unpaired = Contact(
+        id=ident,
+        owner_id=UserId(UUID(int=2)),
+        label=ContactLabel("Sam"),
+        relationship=RelationshipKind.FRIEND,
+        pair_id=None,
+        created_at=_NOW,
+    )
+    keyboard = contacts_keyboard(strings, (unpaired,))
     payloads = [btn.callback_data for row in keyboard.inline_keyboard for btn in row]
     assert "ct:n" in payloads
+    assert f"ct:i:{ident}" in payloads
     assert all(item is not None and "Sam" not in item for item in payloads)
     assert all(len(item.encode()) <= 64 for item in payloads if item is not None)
+    paired = Contact(
+        id=ContactId(UUID(int=3)),
+        owner_id=UserId(UUID(int=2)),
+        label=ContactLabel("Pat"),
+        relationship=RelationshipKind.PARTNER,
+        pair_id=PairId(UUID(int=4)),
+        created_at=_NOW,
+    )
+    leave_kb = contacts_keyboard(strings, (paired,))
+    leave_payloads = [btn.callback_data for row in leave_kb.inline_keyboard for btn in row]
+    assert f"ct:l:{paired.id}" in leave_payloads
+    assert f"ct:i:{paired.id}" not in leave_payloads
     rel = relationship_keyboard(strings)
     kinds = {kind.value for kind in RelationshipKind}
     found = {

@@ -27,7 +27,7 @@ from svoi_pravila.application.ports.generation import (
     DecodeCompleted,
     SafetyVerdict,
 )
-from svoi_pravila.application.rule_view import project_rules_for_list
+from svoi_pravila.application.rule_view import RuleListItemView, project_rules_for_list
 from svoi_pravila.application.use_cases.get_onboarding_step import (
     OnboardingStep,
     OnboardingStepKind,
@@ -196,27 +196,49 @@ def render_rules_list(
     now: datetime,
     tz: ZoneInfo,
 ) -> tuple[tuple[str, ...], InlineKeyboardMarkup]:
-    """Pending suggestions above ACTIVE/PROPOSED rules; ARCHIVED/REJECTED stay hidden."""
+    """Pending suggestions above private/shared ACTIVE/PROPOSED sections."""
     lines: list[str] = []
     if suggestions:
         lines.append(strings.suggestion_header)
         lines.extend(f"• {suggestion.text.value}" for suggestion in suggestions)
     views = project_rules_for_list(rules)
+    private_views = tuple(view for view in views if not view.shared)
+    shared_views = tuple(view for view in views if view.shared)
+    ordered = (*private_views, *shared_views)
     lines.append(strings.rules_header)
-    for number, view in enumerate(views, start=1):
-        if view.status is RuleStatus.ACTIVE and view.effective_since is not None:
-            date = format_display_date(view.effective_since, now, tz)
-            lines.append(f"{number}. {view.text.value} — {date}")
-        else:
-            lines.append(f"{number}. {view.text.value} — {strings.rules_proposed_mark}")
-    if not views:
+    number = 1
+    if private_views:
+        lines.append(strings.rules_private_header)
+        for view in private_views:
+            lines.append(_format_rule_list_line(strings, number, view, now=now, tz=tz))
+            number += 1
+    if shared_views:
+        lines.append(strings.rules_shared_header)
+        for view in shared_views:
+            lines.append(_format_rule_list_line(strings, number, view, now=now, tz=tz))
+            number += 1
+    if not ordered:
         lines.append(strings.rules_empty)
     keyboard = rules_keyboard(
         strings,
-        tuple(view.rule_id for view in views),
+        tuple(view.rule_id for view in ordered),
         tuple(s.id for s in suggestions),
     )
     return pack_message_lines(tuple(lines)), keyboard
+
+
+def _format_rule_list_line(
+    strings: TelegramStrings,
+    number: int,
+    view: RuleListItemView,
+    *,
+    now: datetime,
+    tz: ZoneInfo,
+) -> str:
+    if view.status is RuleStatus.ACTIVE and view.effective_since is not None:
+        date = format_display_date(view.effective_since, now, tz)
+        return f"{number}. {view.text.value} — {date}"
+    return f"{number}. {view.text.value} — {strings.rules_proposed_mark}"
 
 
 def render_contacts_list(
@@ -230,10 +252,15 @@ def render_contacts_list(
     else:
         lines = [strings.contacts_header]
         for contact in contacts:
+            marks: list[str] = []
             if contact.id == active_contact_id:
-                lines.append(f"{contact.label.value} — {strings.contacts_active_mark}")
+                marks.append(strings.contacts_active_mark)
+            if contact.pair_id is not None:
+                marks.append(strings.contacts_paired_mark)
+            if marks:
+                lines.append(f"{contact.label.value} — {', '.join(marks)}")
             else:
                 lines.append(contact.label.value)
         text = "\n".join(lines)
-    keyboard = contacts_keyboard(strings, tuple(contact.id for contact in contacts))
+    keyboard = contacts_keyboard(strings, contacts)
     return text, keyboard

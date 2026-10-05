@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from aiogram.types import (
     CopyTextButton,
     InlineKeyboardButton,
@@ -14,8 +16,9 @@ from svoi_pravila.adapters.channels.telegram.localization import (
     relationship_label,
     rule_category_label,
 )
+from svoi_pravila.domain.contact import Contact
 from svoi_pravila.domain.enums import ConsentKind, RelationshipKind, RuleCategory
-from svoi_pravila.domain.ids import ContactId, RuleId, RuleSuggestionId
+from svoi_pravila.domain.ids import ContactId, InviteId, RuleId, RuleSuggestionId
 
 _CALLBACK_DATA_MAX_BYTES = 64
 
@@ -139,21 +142,26 @@ def variant_reply_markup(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def _require_callback_bytes(data: str) -> str:
+def require_callback_bytes(data: str) -> str:
+    """Assert callback_data fits the Bot API 64-byte limit."""
     if len(data.encode("utf-8")) > _CALLBACK_DATA_MAX_BYTES:
-        msg = "contacts callback_data exceeds 64 bytes"
+        msg = "callback_data exceeds 64 bytes"
         raise ValueError(msg)
     return data
 
 
+def _require_callback_bytes(data: str) -> str:
+    return require_callback_bytes(data)
+
+
 def contacts_keyboard(
     strings: TelegramStrings,
-    contact_ids: tuple[ContactId, ...],
+    contacts: tuple[Contact, ...],
 ) -> InlineKeyboardMarkup:
     """Per-contact actions plus add. Callback data carries ids only."""
     rows: list[list[InlineKeyboardButton]] = []
-    for contact_id in contact_ids:
-        ident = str(contact_id)
+    for contact in contacts:
+        ident = str(contact.id)
         active = _require_callback_bytes(f"ct:a:{ident}")
         rename = _require_callback_bytes(f"ct:r:{ident}")
         rows.append(
@@ -162,6 +170,14 @@ def contacts_keyboard(
                 InlineKeyboardButton(text=strings.contacts_rename, callback_data=rename),
             ]
         )
+        if contact.pair_id is None:
+            invite = _require_callback_bytes(f"ct:i:{ident}")
+            rows.append([InlineKeyboardButton(text=strings.contacts_invite, callback_data=invite)])
+        else:
+            leave = _require_callback_bytes(f"ct:l:{ident}")
+            rows.append(
+                [InlineKeyboardButton(text=strings.contacts_leave_pair, callback_data=leave)]
+            )
     rows.append(
         [
             InlineKeyboardButton(
@@ -170,6 +186,45 @@ def contacts_keyboard(
             )
         ]
     )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def invite_share_keyboard(deep_link: str, strings: TelegramStrings) -> InlineKeyboardMarkup:
+    """Share-URL button for an invite deep link."""
+    share = f"https://t.me/share/url?url={quote(deep_link, safe='')}"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=strings.contacts_invite_share, url=share)]]
+    )
+
+
+def leave_confirm_keyboard(
+    contact_id: ContactId,
+    strings: TelegramStrings,
+) -> InlineKeyboardMarkup:
+    """Yes/no leave-pair confirmation. Callback data carries the contact id only."""
+    yes = _require_callback_bytes(f"ct:ly:{contact_id}")
+    no = _require_callback_bytes("ct:lx")
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=strings.rights_confirm, callback_data=yes),
+                InlineKeyboardButton(text=strings.rights_cancel, callback_data=no),
+            ]
+        ]
+    )
+
+
+def invite_relationship_keyboard(
+    invite_id: InviteId,
+    strings: TelegramStrings,
+) -> InlineKeyboardMarkup:
+    """Relationship kinds when accepting an invite."""
+    rows: list[list[InlineKeyboardButton]] = []
+    for kind in RelationshipKind:
+        data = _require_callback_bytes(f"iv:rel:{invite_id}:{kind.value}")
+        rows.append(
+            [InlineKeyboardButton(text=relationship_label(strings, kind), callback_data=data)]
+        )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -182,6 +237,24 @@ def relationship_keyboard(strings: TelegramStrings) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=relationship_label(strings, kind), callback_data=data)]
         )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def rule_scope_keyboard(strings: TelegramStrings) -> InlineKeyboardMarkup:
+    """Private vs shared scope before category for a paired contact."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=strings.rules_scope_private,
+                    callback_data=_require_callback_bytes("ru:sp"),
+                ),
+                InlineKeyboardButton(
+                    text=strings.rules_scope_shared,
+                    callback_data=_require_callback_bytes("ru:ss"),
+                ),
+            ]
+        ]
+    )
 
 
 def rule_category_keyboard(strings: TelegramStrings) -> InlineKeyboardMarkup:

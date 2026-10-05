@@ -12,6 +12,7 @@ from tests.fakes.clock import FakeClock
 from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.export_delivery import FakeExportDelivery
 from tests.fakes.ids import FakeIdGenerator
+from tests.fakes.pair_notifier import FakePairNotifier
 from tests.fakes.tokens import FakeTokenGenerator
 from tests.fakes.uow import InMemoryUnitOfWorkFactory
 from tests.unit.api.test_miniapp_api import _auth_header, _build_app
@@ -39,6 +40,7 @@ def mini_world() -> AppWorld:
         ids=FakeIdGenerator(),
         tokens=FakeTokenGenerator(),
         catalog=FakeConsentCatalog(),
+        notifier=FakePairNotifier(),
     )
 
 

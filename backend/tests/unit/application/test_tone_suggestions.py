@@ -267,7 +267,7 @@ async def test_accept_creates_active_rule(world: AppWorld) -> None:
 @pytest.mark.unit
 async def test_open_rule_limit_keeps_suggestion_pending(world: AppWorld) -> None:
     user, contact = await _user_with_active_contact(world, 517)
-    propose = ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock)
+    propose = ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock, world.notifier)
     for index in range(MAX_OPEN_RULES_PER_SCOPE):
         await propose.execute(
             ProposeRuleCommand(

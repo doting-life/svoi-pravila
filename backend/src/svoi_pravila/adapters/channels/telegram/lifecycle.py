@@ -13,6 +13,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramAPIError
 from aiogram.types import BotCommand, MenuButtonWebApp, WebAppInfo
 
+from svoi_pravila.adapters.channels.telegram.bot_username import BotUsernameCache
 from svoi_pravila.adapters.channels.telegram.inline_scheduler import InlineQueryCoordinator
 from svoi_pravila.adapters.channels.telegram.localization import TelegramStrings
 from svoi_pravila.config import TelegramUpdatesMode
@@ -36,6 +37,7 @@ class TelegramRuntimeConfig:
     webhook_secret_token: str | None
     shutdown_grace_seconds: float
     inline_queries: InlineQueryCoordinator
+    bot_username: BotUsernameCache
     miniapp_url: str | None = None
     extra_tasks: ExtraTasks | None = None
 
@@ -58,6 +60,7 @@ class TelegramLifecycle:
         self._webhook_secret_token = config.webhook_secret_token
         self._shutdown_grace_seconds = config.shutdown_grace_seconds
         self._inline_queries = config.inline_queries
+        self._bot_username = config.bot_username
         self._miniapp_url = config.miniapp_url
         self._extra_tasks = config.extra_tasks
         self._polling_task: asyncio.Task[None] | None = None
@@ -84,7 +87,10 @@ class TelegramLifecycle:
         return self._dispatcher
 
     async def start(self) -> None:
-        """Install commands and start polling or set the webhook."""
+        """Install commands, cache getMe username, and start polling or set the webhook."""
+        me = await self._bot.get_me()
+        if me.username:
+            self._bot_username.username = me.username
         await self._bot.set_my_commands(
             [
                 BotCommand(command="start", description=self._strings.commands_start),

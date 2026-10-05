@@ -32,7 +32,10 @@ from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestio
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.create_contact import CreateContact
-from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
+from svoi_pravila.application.use_cases.delete_my_account import (
+    DeleteMyAccount,
+    DeleteMyAccountPorts,
+)
 from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggestion
 from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
@@ -57,6 +60,7 @@ from tests.fakes.clock import FakeClock
 from tests.fakes.export_delivery import FakeExportDelivery
 from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
+from tests.fakes.pair_notifier import FakePairNotifier
 from tests.integration.test_user_rights_delete import _scan_has_uuid
 from tests.support.init_data import InitDataOptions, build_webapp_init_data
 from tests.support.miniapp_decode import build_miniapp_decode_bundle
@@ -144,7 +148,7 @@ def _build_app(world: _MiniappWorld) -> Any:
         rename_contact=RenameContact(uow_factory, catalog),
         set_active_contact=SetActiveContact(uow_factory, catalog),
         list_rules=ListRules(uow_factory, catalog),
-        propose_rule=ProposeRule(uow_factory, catalog, ids, clock),
+        propose_rule=ProposeRule(uow_factory, catalog, ids, clock, FakePairNotifier()),
         archive_rule=ArchiveRule(uow_factory, catalog, clock),
         list_suggestions=ListSuggestions(uow_factory, catalog),
         accept_suggestion=AcceptSuggestion(uow_factory, catalog, ids, clock),
@@ -154,7 +158,9 @@ def _build_app(world: _MiniappWorld) -> Any:
             FakeExportDelivery(),
         ),
         revoke_all_consents=RevokeAllConsents(uow_factory, clock, reuse),
-        delete_my_account=DeleteMyAccount(uow_factory, ids, pepper, clock, reuse),
+        delete_my_account=DeleteMyAccount(
+            DeleteMyAccountPorts(uow_factory, ids, pepper, clock, reuse, FakePairNotifier())
+        ),
         export_rate_limiter=ValkeyRateLimiter(
             valkey, limit=3, window_seconds=3600, key_prefix="miniapp:export"
         ),

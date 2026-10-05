@@ -15,6 +15,7 @@ from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.export_delivery import FakeExportDelivery
 from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
+from tests.fakes.pair_notifier import FakePairNotifier
 from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
 from tests.fakes.tokens import FakeTokenGenerator
 from tests.fakes.uow import InMemoryUnitOfWorkFactory
@@ -32,7 +33,10 @@ from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestio
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.create_contact import CreateContact
-from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
+from svoi_pravila.application.use_cases.delete_my_account import (
+    DeleteMyAccount,
+    DeleteMyAccountPorts,
+)
 from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggestion
 from svoi_pravila.application.use_cases.ensure_user import EnsureUser, EnsureUserCommand
 from svoi_pravila.application.use_cases.export_my_data import ExportMyData
@@ -126,7 +130,10 @@ def _app_with_bindings(
         list_rules=cast(ListRules, list_rules or ListRules(world.uow_factory, world.catalog)),
         propose_rule=cast(
             ProposeRule,
-            propose_rule or ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock),
+            propose_rule
+            or ProposeRule(
+                world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+            ),
         ),
         archive_rule=cast(
             ArchiveRule,
@@ -151,11 +158,14 @@ def _app_with_bindings(
         ),
         revoke_all_consents=RevokeAllConsents(world.uow_factory, world.clock, reuse),
         delete_my_account=DeleteMyAccount(
-            world.uow_factory,
-            world.ids,
-            FakePseudonymizer(),
-            world.clock,
-            reuse,
+            DeleteMyAccountPorts(
+                world.uow_factory,
+                world.ids,
+                FakePseudonymizer(),
+                world.clock,
+                reuse,
+                world.notifier,
+            )
         ),
         export_rate_limiter=FakeRateLimiter(limit=3),
         display_timezone="Europe/Moscow",
@@ -181,6 +191,7 @@ def world() -> AppWorld:
         ids=FakeIdGenerator(),
         tokens=FakeTokenGenerator(),
         catalog=FakeConsentCatalog(),
+        notifier=FakePairNotifier(),
     )
 
 

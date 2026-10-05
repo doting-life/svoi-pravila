@@ -145,7 +145,14 @@ async def test_dialog_state_round_trip_and_ttl(valkey_db15: Redis) -> None:
     assert value is not None
     payload = json.loads(value)
     assert "label" not in payload
-    assert set(payload) <= {"step", "contact_id", "relationship", "category"}
+    assert set(payload) <= {
+        "step",
+        "contact_id",
+        "relationship",
+        "category",
+        "shared",
+        "invite_id",
+    }
     rule_record = DialogRecord(
         step="awaiting_rule_text",
         contact_id=ContactId(UUID(int=4)),
@@ -155,7 +162,14 @@ async def test_dialog_state_round_trip_and_ttl(valkey_db15: Redis) -> None:
     rule_value = await valkey_db15.get("tg:dialog:pseudo-rule")
     assert rule_value is not None
     rule_payload = json.loads(rule_value)
-    assert set(rule_payload) <= {"step", "contact_id", "relationship", "category"}
+    assert set(rule_payload) <= {
+        "step",
+        "contact_id",
+        "relationship",
+        "category",
+        "shared",
+        "invite_id",
+    }
     assert "text" not in rule_payload
     await store.clear("pseudo-rule")
     ttl = await valkey_db15.ttl(keys[0])

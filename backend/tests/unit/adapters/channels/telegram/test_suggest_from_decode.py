@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from typing import Any, cast
+from uuid import UUID
+
 import pytest
 from aiogram import Bot
 from tests.fakes.consent_catalog import FakeConsentCatalog
@@ -21,18 +25,30 @@ from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifec
 from svoi_pravila.adapters.channels.telegram.handlers.helpers import FEATURE_CALLBACK_PREFIXES
 from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
 from svoi_pravila.adapters.channels.telegram.presenters import render_decode_completed
+from svoi_pravila.application.errors import AccessNotGranted, NotFound
 from svoi_pravila.application.ports.generation import (
     DecodeCompleted,
     DecodeResult,
     GenerationMeta,
     SafetyVerdict,
-    SuggestRuleResult,
-    SuggestRuleVerdict,
+    SuggestRuleNothing,
     TokenUsage,
     Variant,
 )
 from svoi_pravila.application.rule_source import RuleSourcePayload, rule_source_callback_data
-from svoi_pravila.application.use_cases.suggest_rule_from_decode import RULE_SOURCE_PURPOSE
+from svoi_pravila.application.use_cases.dismiss_suggestion import (
+    DismissSuggestionCommand,
+    DismissSuggestionOutcome,
+    DismissSuggestionResult,
+)
+from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramIdResult
+from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
+    RULE_SOURCE_PURPOSE,
+    SuggestRuleFromDecodeCommand,
+    SuggestRuleFromDecodeOutcome,
+    SuggestRuleFromDecodeResult,
+)
+from svoi_pravila.domain.access import AccessStatus
 from svoi_pravila.domain.enums import Firmness, SuggestionStatus
 from svoi_pravila.domain.ids import TelegramUserId
 
@@ -136,10 +152,7 @@ async def test_sn_callback_expired_none_crisis_quota() -> None:
     uow = InMemoryUnitOfWorkFactory()
     catalog = FakeConsentCatalog()
     none_gen = FakeTextGenerator()
-    none_gen.suggest_rule_result = SuggestRuleResult(
-        verdict=SuggestRuleVerdict.NONE,
-        category=None,
-        text=None,
+    none_gen.suggest_rule_result = SuggestRuleNothing(
         meta=GenerationMeta(
             model="fake",
             prompt_version="suggest_rule@v1",
@@ -199,3 +212,108 @@ async def test_sn_callback_expired_none_crisis_quota() -> None:
         bot_q, _callback(903, 7102, rule_source_callback_data(token_q))
     )
     assert deps_q.strings.suggestion_decode_quota in _sent_texts(session_q)
+
+
+@pytest.mark.unit
+async def test_sn_and_sg_e_error_branches() -> None:
+    uow = InMemoryUnitOfWorkFactory()
+    catalog = FakeConsentCatalog()
+    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+
+    session.requests.clear()
+    await lifecycle.dispatcher.feed_update(bot, _callback(950, 7201, "sn:token"))
+    await lifecycle.dispatcher.feed_update(bot, _callback(951, 7201, f"sg:e:{UUID(int=1)}"))
+    assert deps.strings.suggestion_decode_edit_prompt not in _sent_texts(session)
+
+    await _onboard(bot, lifecycle, 7201, catalog)
+    await _add_contact(bot, lifecycle, 7201, "Мама")
+    async with uow() as active:
+        user = await active.users.get_by_telegram_id(TelegramUserId(7201))
+        assert user is not None and user.active_contact_id is not None
+        contact_id = user.active_contact_id
+
+    class _HideUser:
+        def __init__(self, inner: object) -> None:
+            self._inner = inner
+
+        async def execute(self, query: object) -> object:
+            await cast(Any, self._inner).execute(query)
+            return GetUserByTelegramIdResult(user=None)
+
+    class _DeniedSuggest:
+        async def execute(self, command: SuggestRuleFromDecodeCommand) -> None:
+            raise AccessNotGranted(
+                AccessStatus(age_confirmed=True, missing_consents=frozenset(), granted=False)
+            )
+
+    class _MissingSuggest:
+        async def execute(self, command: SuggestRuleFromDecodeCommand) -> None:
+            raise NotFound()
+
+    class _OkMissingSuggestion:
+        async def execute(
+            self, command: SuggestRuleFromDecodeCommand
+        ) -> SuggestRuleFromDecodeResult:
+            return SuggestRuleFromDecodeResult(outcome=SuggestRuleFromDecodeOutcome.OK)
+
+    class _DeniedDismiss:
+        async def execute(self, command: DismissSuggestionCommand) -> None:
+            raise AccessNotGranted(
+                AccessStatus(age_confirmed=True, missing_consents=frozenset(), granted=False)
+            )
+
+    class _MissingDismiss:
+        async def execute(self, command: DismissSuggestionCommand) -> None:
+            raise NotFound()
+
+    class _DismissOkNoSuggestion:
+        async def execute(self, command: DismissSuggestionCommand) -> DismissSuggestionResult:
+            return DismissSuggestionResult(
+                outcome=DismissSuggestionOutcome.DISMISSED, suggestion=None
+            )
+
+    hidden = replace(
+        deps, get_user_by_telegram_id=cast(Any, _HideUser(deps.get_user_by_telegram_id))
+    )
+    lifecycle_h = build_telegram_lifecycle(_settings(), hidden, bot=bot)
+    token = await deps.rule_sources.store(
+        deps.pseudonymizer.pseudonymize(RULE_SOURCE_PURPOSE, "7201"),
+        RuleSourcePayload(contact_id=contact_id, incoming_text="скрытый пользователь"),
+    )
+    session.requests.clear()
+    await lifecycle_h.dispatcher.feed_update(
+        bot, _callback(952, 7201, rule_source_callback_data(token))
+    )
+
+    for index, raiser in enumerate((_DeniedSuggest(), _MissingSuggest())):
+        d = replace(deps, suggest_rule_from_decode=cast(Any, raiser))
+        life = build_telegram_lifecycle(_settings(), d, bot=bot)
+        tok = await deps.rule_sources.store(
+            deps.pseudonymizer.pseudonymize(RULE_SOURCE_PURPOSE, "7201"),
+            RuleSourcePayload(contact_id=contact_id, incoming_text="ошибка доступа"),
+        )
+        session.requests.clear()
+        await life.dispatcher.feed_update(
+            bot, _callback(960 + index, 7201, rule_source_callback_data(tok))
+        )
+
+    d_ok = replace(deps, suggest_rule_from_decode=cast(Any, _OkMissingSuggestion()))
+    life_ok = build_telegram_lifecycle(_settings(), d_ok, bot=bot)
+    session.requests.clear()
+    await life_ok.dispatcher.feed_update(bot, _callback(970, 7201, "sn:placeholder-token"))
+    assert deps.strings.error_generic in _sent_texts(session)
+
+    session.requests.clear()
+    await lifecycle_h.dispatcher.feed_update(bot, _callback(971, 7201, f"sg:e:{UUID(int=9)}"))
+
+    for index, raiser in enumerate((_DeniedDismiss(), _MissingDismiss(), _DismissOkNoSuggestion())):
+        d = replace(deps, dismiss_suggestion=cast(Any, raiser))
+        life = build_telegram_lifecycle(_settings(), d, bot=bot)
+        session.requests.clear()
+        await life.dispatcher.feed_update(
+            bot, _callback(980 + index, 7201, f"sg:e:{UUID(int=11 + index)}")
+        )
+        assert deps.strings.error_generic in _sent_texts(session)

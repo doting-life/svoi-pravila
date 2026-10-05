@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from redis.asyncio import Redis
 
-from svoi_pravila.adapters.cache.sealed_token import SealedTokenCodec, SealedValkeyStore
+from svoi_pravila.adapters.cache.sealed_token import (
+    SealedTokenCodec,
+    SealedTokenUnavailableError,
+    SealedValkeyStore,
+)
 from svoi_pravila.application.errors import RuleSourceUnavailable
 from svoi_pravila.application.rule_source import (
     RULE_SOURCE_ID_LEN,
@@ -43,7 +47,7 @@ class ValkeyRuleSources:
         """Delete the Valkey record atomically, then decrypt for the owning user."""
         try:
             plaintext = await self._store.getdel(user_pseudonym, token)
-        except LookupError as exc:
+        except SealedTokenUnavailableError as exc:
             raise RuleSourceUnavailable() from exc
         try:
             return decode_rule_source_payload(plaintext)

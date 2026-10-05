@@ -14,6 +14,10 @@ KEY_LEN = 32
 MIN_ID_LEN = 8
 
 
+class SealedTokenUnavailableError(Exception):
+    """Token missing, malformed, tampered, or bound to a different user."""
+
+
 class SealedTokenCodec:
     """Encode/decode ``id || key`` into a URL-safe token body (optional prefix)."""
 
@@ -98,14 +102,14 @@ class SealedValkeyStore:
         return token
 
     async def get(self, user_pseudonym: str, token: str) -> bytes:
-        """Decrypt without deleting; miss/tamper → ``LookupError``."""
+        """Decrypt without deleting; miss/tamper → ``SealedTokenUnavailableError``."""
         try:
             token_id, key = self._codec.parse(token)
         except (ValueError, TypeError) as exc:
-            raise LookupError from exc
+            raise SealedTokenUnavailableError from exc
         stored = await self._client.get(self._redis_key(token_id))
         if stored is None:
-            raise LookupError
+            raise SealedTokenUnavailableError
         try:
             return decrypt_stored(
                 key=key,
@@ -117,17 +121,17 @@ class SealedValkeyStore:
                 ),
             )
         except (ValueError, TypeError, DecryptionError) as exc:
-            raise LookupError from exc
+            raise SealedTokenUnavailableError from exc
 
     async def getdel(self, user_pseudonym: str, token: str) -> bytes:
         """Atomically fetch-and-delete ciphertext, then decrypt (single-use)."""
         try:
             token_id, key = self._codec.parse(token)
         except (ValueError, TypeError) as exc:
-            raise LookupError from exc
+            raise SealedTokenUnavailableError from exc
         stored = await self._client.getdel(self._redis_key(token_id))
         if stored is None:
-            raise LookupError
+            raise SealedTokenUnavailableError
         try:
             return decrypt_stored(
                 key=key,
@@ -139,12 +143,12 @@ class SealedValkeyStore:
                 ),
             )
         except (ValueError, TypeError, DecryptionError) as exc:
-            raise LookupError from exc
+            raise SealedTokenUnavailableError from exc
 
     async def delete(self, token: str) -> None:
         """Drop ciphertext by token id (after a successful same-user redeem)."""
         try:
             token_id, _key = self._codec.parse(token)
         except (ValueError, TypeError) as exc:
-            raise LookupError from exc
+            raise SealedTokenUnavailableError from exc
         await self._client.delete(self._redis_key(token_id))

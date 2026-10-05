@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from redis.asyncio import Redis
 
-from svoi_pravila.adapters.cache.sealed_token import SealedTokenCodec, SealedValkeyStore
+from svoi_pravila.adapters.cache.sealed_token import (
+    SealedTokenCodec,
+    SealedTokenUnavailableError,
+    SealedValkeyStore,
+)
 from svoi_pravila.application.errors import PreparedResultUnavailable
 from svoi_pravila.application.ports.prepared_results import PreparedVariant
 from svoi_pravila.application.prepared_ref import PREPARED_REF_PREFIX, is_prepared_ref
@@ -44,7 +48,7 @@ class ValkeyPreparedResults:
             raise PreparedResultUnavailable()
         try:
             plaintext = await self._store.get(user_pseudonym, token)
-        except LookupError as exc:
+        except SealedTokenUnavailableError as exc:
             raise PreparedResultUnavailable() from exc
         return _parse_plaintext(plaintext)
 

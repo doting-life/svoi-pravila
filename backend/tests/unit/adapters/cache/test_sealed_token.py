@@ -9,6 +9,7 @@ from redis.asyncio import Redis
 
 from svoi_pravila.adapters.cache.sealed_token import (
     SealedTokenCodec,
+    SealedTokenUnavailableError,
     SealedValkeyStore,
     decrypt_stored,
     encrypt_plaintext,
@@ -65,24 +66,24 @@ async def test_sealed_store_get_getdel_delete_error_paths() -> None:
     )
     token = await store.store("owner", b"secret")
     assert await store.get("owner", token) == b"secret"
-    with pytest.raises(LookupError):
+    with pytest.raises(SealedTokenUnavailableError):
         await store.get("owner", "not-a-token")
-    with pytest.raises(LookupError):
+    with pytest.raises(SealedTokenUnavailableError):
         await store.get("other", token)
     memory.data[next(iter(memory.data))] = "%%%"
-    with pytest.raises(LookupError):
+    with pytest.raises(SealedTokenUnavailableError):
         await store.get("owner", token)
 
     token2 = await store.store("owner", b"once")
     assert await store.getdel("owner", token2) == b"once"
-    with pytest.raises(LookupError):
+    with pytest.raises(SealedTokenUnavailableError):
         await store.getdel("owner", token2)
-    with pytest.raises(LookupError):
+    with pytest.raises(SealedTokenUnavailableError):
         await store.getdel("owner", "bad")
 
     token3 = await store.store("owner", b"del")
     await store.delete(token3)
-    with pytest.raises(LookupError):
+    with pytest.raises(SealedTokenUnavailableError):
         await store.delete("bad-token")
 
     key = b"k" * 32

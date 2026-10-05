@@ -10,10 +10,16 @@ import pytest
 from redis.asyncio import Redis
 
 from svoi_pravila.adapters.cache.rule_sources import ValkeyRuleSources
+from svoi_pravila.adapters.cache.sealed_token import (
+    SealedTokenCodec,
+    encrypt_plaintext,
+    seal_aad,
+)
 from svoi_pravila.application.errors import RuleSourceUnavailable
 from svoi_pravila.application.rule_source import (
     RULE_SOURCE_CALLBACK_MAX_BYTES,
     RULE_SOURCE_CALLBACK_PREFIX,
+    RULE_SOURCE_ID_LEN,
     RuleSourcePayload,
     rule_source_callback_data,
 )
@@ -106,3 +112,36 @@ async def test_rule_source_concurrent_redeem_once() -> None:
     results = await asyncio.gather(_redeem(), _redeem())
     assert results.count("ok:once") == 1
     assert results.count("miss") == 1
+
+
+@pytest.mark.unit
+async def test_rule_source_corrupt_ciphertext_and_payload() -> None:
+    store, memory = _store()
+    owner = "ab" * 32
+    token = await store.store(
+        owner,
+        RuleSourcePayload(contact_id=ContactId(UUID(int=5)), incoming_text="ok"),
+    )
+    key = next(iter(memory.data))
+    memory.data[key] = "%%%"
+    with pytest.raises(RuleSourceUnavailable):
+        await store.redeem_once(owner, token)
+
+    token2 = await store.store(
+        owner,
+        RuleSourcePayload(contact_id=ContactId(UUID(int=6)), incoming_text="ok"),
+    )
+    codec = SealedTokenCodec(id_len=RULE_SOURCE_ID_LEN, prefix="")
+    token_id, aes_key = codec.parse(token2)
+    redis_key = f"tg:rule_source:{token_id.hex()}"
+    aad = seal_aad(aad_version="rule_source:v1", token_id=token_id, user_pseudonym=owner)
+    memory.data[redis_key] = encrypt_plaintext(key=aes_key, plaintext=b"not-a-uuid\ntext", aad=aad)
+    with pytest.raises(RuleSourceUnavailable):
+        await store.redeem_once(owner, token2)
+
+
+@pytest.mark.unit
+async def test_rule_source_malformed_token() -> None:
+    store, _memory = _store()
+    with pytest.raises(RuleSourceUnavailable):
+        await store.redeem_once("ab" * 32, "%%%")

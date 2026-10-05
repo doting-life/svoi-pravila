@@ -22,15 +22,23 @@ from svoi_pravila.adapters.llm.gigachat.prepared import (
     prepare_decode_analysis,
     prepare_help_say,
     prepare_soften,
+    prepare_suggest_rule,
 )
-from svoi_pravila.adapters.llm.gigachat.schemas import DecodeOut, HelpSayOut, SoftenOut
+from svoi_pravila.adapters.llm.gigachat.schemas import (
+    DecodeOut,
+    HelpSayOut,
+    SoftenOut,
+    SuggestRuleOut,
+)
 from svoi_pravila.adapters.llm.gigachat.structured import StructuredCallParams, structured_call
 from svoi_pravila.adapters.llm.gigachat.validation import (
     MAX_TOKENS_DECODE,
     MAX_TOKENS_HELP_SAY,
     MAX_TOKENS_SOFTEN,
+    MAX_TOKENS_SUGGEST,
     VariantValidation,
     to_decode_result,
+    to_suggest_rule_result,
     validate_variants,
 )
 from svoi_pravila.application.errors import (
@@ -49,6 +57,8 @@ from svoi_pravila.application.ports.generation import (
     HelpSayResult,
     SoftenRequest,
     SoftenResult,
+    SuggestRuleRequest,
+    SuggestRuleResult,
     TokenUsage,
 )
 from svoi_pravila.config import GigaChatRuntimeSettings
@@ -131,6 +141,10 @@ class GigaChatTextGenerator:
     def prepare_decode_analysis(self, request: DecodeRequest) -> PreparedMessages:
         """Build rendered system/user messages for phase-A analysis."""
         return prepare_decode_analysis(request)
+
+    def prepare_suggest_rule(self, request: SuggestRuleRequest) -> PreparedMessages:
+        """Build rendered system/user messages for suggest_rule."""
+        return prepare_suggest_rule(request)
 
     async def soften(self, request: SoftenRequest) -> SoftenResult:
         prepared = self.prepare_soften(request)
@@ -322,3 +336,31 @@ class GigaChatTextGenerator:
                     _timeout_unavailable(phase_b_state),
                 ) from None
             raise _timeout_unavailable(phase.state) from None
+
+    async def suggest_rule(self, request: SuggestRuleRequest) -> SuggestRuleResult:
+        prepared = self.prepare_suggest_rule(request)
+        state = AttemptState(
+            started=time.perf_counter(),
+            model=self._settings.gigachat_model_suggest,
+            prompt_version=prepared.prompt_version,
+        )
+
+        def build(parsed: SuggestRuleOut, meta: GenerationMeta) -> SuggestRuleResult:
+            return to_suggest_rule_result(parsed, meta)
+
+        try:
+            async with asyncio.timeout_at(_deadline_at(request.deadline_seconds)):
+                return await structured_call(
+                    StructuredCallParams(
+                        client=self._client,
+                        operation="suggest_rule",
+                        model=self._settings.gigachat_model_suggest,
+                        prepared=prepared,
+                        response_format=SuggestRuleOut,
+                        max_tokens=MAX_TOKENS_SUGGEST,
+                    ),
+                    build,
+                    state=state,
+                )
+        except TimeoutError:
+            raise _timeout_unavailable(state) from None

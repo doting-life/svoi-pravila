@@ -14,6 +14,7 @@ from svoi_pravila.application.ports.generation import (
     DecodeRequest,
     HelpSayRequest,
     SoftenRequest,
+    SuggestRuleRequest,
 )
 
 
@@ -105,6 +106,26 @@ def prepare_decode_analysis(request: DecodeRequest) -> PreparedMessages:
         untrusted_texts(request.incoming, request.relationship.value, rules=request.rules)
     )
     template, prompt_version = load_prompt_template("decode_analysis", "v1")
+    system = render_system_prompt(template, boundary_marker=marker)
+    user = wrap_untrusted_payload(
+        marker,
+        (
+            ("incoming", request.incoming),
+            ("rules", rules_text(request.rules)),
+            ("relationship", request.relationship.value),
+        ),
+    )
+    return PreparedMessages(
+        system=system, user=user, prompt_version=prompt_version, boundary_marker=marker
+    )
+
+
+def prepare_suggest_rule(request: SuggestRuleRequest) -> PreparedMessages:
+    """Build rendered system/user messages for suggest_rule."""
+    marker = allocate_boundary_marker(
+        untrusted_texts(request.incoming, request.relationship.value, rules=request.rules)
+    )
+    template, prompt_version = load_prompt_template("suggest_rule", "v1")
     system = render_system_prompt(template, boundary_marker=marker)
     user = wrap_untrusted_payload(
         marker,

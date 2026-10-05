@@ -465,7 +465,7 @@ class UsageEventRow(Base):
             name="user_pseudonym_hex",
         ),
         CheckConstraint(
-            "scenario IN ('decode', 'soften', 'help_say')",
+            "scenario IN ('decode', 'soften', 'help_say', 'suggest_rule')",
             name="usage_scenario",
         ),
         CheckConstraint(

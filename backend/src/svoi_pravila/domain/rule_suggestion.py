@@ -120,6 +120,31 @@ class RuleSuggestion:
             decided_at=None,
         )
 
+    @classmethod
+    def create_decode(
+        cls,
+        *,
+        suggestion_id: RuleSuggestionId,
+        user_id: UserId,
+        contact_id: ContactId,
+        category: RuleCategory,
+        text: RuleText,
+        now: datetime,
+    ) -> RuleSuggestion:
+        """Create a pending decode-source suggestion."""
+        return cls(
+            id=suggestion_id,
+            user_id=user_id,
+            contact_id=contact_id,
+            source=SuggestionSource.DECODE,
+            category=category,
+            text=text,
+            firmness=None,
+            status=SuggestionStatus.PENDING,
+            created_at=now,
+            decided_at=None,
+        )
+
     def accept(self, now: datetime) -> RuleSuggestion:
         """Transition pending → accepted."""
         if self.status is not SuggestionStatus.PENDING:

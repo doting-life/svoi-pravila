@@ -97,6 +97,36 @@ class DecodeRequest:
         _validate_bounded_text("incoming", self.incoming)
 
 
+class SuggestRuleVerdict(StrEnum):
+    """Whether the model proposed a rule candidate."""
+
+    OK = "ok"
+    NONE = "none"
+
+
+@dataclass(frozen=True, slots=True)
+class SuggestRuleRequest:
+    """Input for suggesting a rule from an incoming message."""
+
+    incoming: str
+    rules: tuple[RuleContext, ...]
+    relationship: RelationshipKind
+    deadline_seconds: float
+
+    def __post_init__(self) -> None:
+        _validate_bounded_text("incoming", self.incoming)
+
+
+@dataclass(frozen=True, slots=True)
+class SuggestRuleResult:
+    """Structured suggest-rule response."""
+
+    verdict: SuggestRuleVerdict
+    category: RuleCategory | None
+    text: str | None
+    meta: GenerationMeta
+
+
 @dataclass(frozen=True, slots=True)
 class Variant:
     """One suggested reply with firmness."""
@@ -204,3 +234,6 @@ class TextGenerator(Protocol):
 
     def decode_stream(self, request: DecodeRequest) -> AsyncIterator[DecodeEvent]:
         """Stream decode analysis chunks, then a completed structured result."""
+
+    async def suggest_rule(self, request: SuggestRuleRequest) -> SuggestRuleResult:
+        """Propose a rule candidate from an incoming message, or none."""

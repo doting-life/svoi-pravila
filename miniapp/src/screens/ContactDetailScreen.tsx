@@ -79,7 +79,9 @@ export function ContactDetailScreen({
                         {label}
                     </h2>
                     <p className="screen-subtitle">
-                        {ru.relationships[relationship as RelationshipKey] ?? relationship}
+                        {relationship in ru.relationships
+                            ? ru.relationships[relationship as RelationshipKey]
+                            : relationship}
                     </p>
                 </div>
                 <button type="button" className="btn btn-primary" onClick={onAddRule}>

@@ -214,7 +214,7 @@ describe("App", () => {
         click(/Аня/);
         expect(await screen.findByText(ru.rulesEmpty)).toBeInTheDocument();
         expect(backCallback).toBeTypeOf("function");
-        await act(async () => {
+        act(() => {
             backCallback?.();
         });
         expect(await screen.findByRole("heading", { name: ru.contactsTitle })).toBeInTheDocument();

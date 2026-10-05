@@ -6,7 +6,7 @@ from typing import Protocol
 
 from svoi_pravila.domain.consent import Consent
 from svoi_pravila.domain.contact import Contact
-from svoi_pravila.domain.enums import Firmness
+from svoi_pravila.domain.enums import Firmness, SuggestionSource
 from svoi_pravila.domain.ids import (
     ContactId,
     InviteId,
@@ -234,6 +234,15 @@ class RuleSuggestionRepository(Protocol):
         """Return the tone suggestion for ``(user, contact, firmness)`` in any status."""
         ...
 
+    async def has_pending_for_source(
+        self,
+        user_id: UserId,
+        contact_id: ContactId,
+        source: SuggestionSource,
+    ) -> bool:
+        """True when a pending suggestion already exists for ``(user, contact, source)``."""
+        ...
+
     async def add(self, suggestion: RuleSuggestion) -> None:
         """Insert a new suggestion."""
         ...
@@ -250,8 +259,18 @@ class RuleSuggestionRepository(Protocol):
 class ToneSignalRepository(Protocol):
     """Persistence for tone signals."""
 
-    async def get(self, user_id: UserId, contact_id: ContactId) -> ToneSignal | None:
-        """Return the signal for ``(user_id, contact_id)`` or None."""
+    async def get(
+        self,
+        user_id: UserId,
+        contact_id: ContactId,
+        *,
+        for_update: bool = False,
+    ) -> ToneSignal | None:
+        """Return the signal for ``(user_id, contact_id)`` or None.
+
+        When ``for_update`` is true, ensure a row exists and lock it for the
+        remainder of the unit of work (Postgres ``FOR UPDATE``).
+        """
         ...
 
     async def list_for_user(self, user_id: UserId) -> list[ToneSignal]:

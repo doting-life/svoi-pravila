@@ -300,6 +300,20 @@ class InMemoryRuleSuggestionRepository:
                 return suggestion
         return None
 
+    async def has_pending_for_source(
+        self,
+        user_id: UserId,
+        contact_id: ContactId,
+        source: SuggestionSource,
+    ) -> bool:
+        return any(
+            s.user_id == user_id
+            and s.contact_id == contact_id
+            and s.source is source
+            and s.status is SuggestionStatus.PENDING
+            for s in self._working.rule_suggestions.values()
+        )
+
     async def add(self, suggestion: RuleSuggestion) -> None:
         self._working.rule_suggestions[suggestion.id] = suggestion
 
@@ -322,8 +336,19 @@ class InMemoryToneSignalRepository:
     def __init__(self, working: _DurableState) -> None:
         self._working = working
 
-    async def get(self, user_id: UserId, contact_id: ContactId) -> ToneSignal | None:
-        return self._working.tone_signals.get((user_id, contact_id))
+    async def get(
+        self,
+        user_id: UserId,
+        contact_id: ContactId,
+        *,
+        for_update: bool = False,
+    ) -> ToneSignal | None:
+        existing = self._working.tone_signals.get((user_id, contact_id))
+        if for_update and existing is None:
+            empty = ToneSignal(user_id=user_id, contact_id=contact_id, values=())
+            self._working.tone_signals[(user_id, contact_id)] = empty
+            return empty
+        return existing
 
     async def list_for_user(self, user_id: UserId) -> list[ToneSignal]:
         return [s for (uid, _), s in self._working.tone_signals.items() if uid == user_id]

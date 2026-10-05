@@ -6,6 +6,7 @@ from typing import cast
 from uuid import UUID
 
 from sqlalchemy import Select, delete, func, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -739,6 +740,24 @@ class SqlAlchemyRuleSuggestionRepository:
             return None
         return await self._to_domain(row)
 
+    async def has_pending_for_source(
+        self,
+        user_id: UserId,
+        contact_id: ContactId,
+        source: SuggestionSource,
+    ) -> bool:
+        result = await self._session.execute(
+            select(func.count())
+            .select_from(RuleSuggestionRow)
+            .where(
+                RuleSuggestionRow.user_id == user_id,
+                RuleSuggestionRow.contact_id == contact_id,
+                RuleSuggestionRow.source == source.value,
+                RuleSuggestionRow.status == SuggestionStatus.PENDING.value,
+            )
+        )
+        return int(result.scalar_one()) > 0
+
     async def add(self, suggestion: RuleSuggestion) -> None:
         ciphertext = await self._encrypt_text(suggestion)
         row = RuleSuggestionRow(
@@ -787,11 +806,33 @@ class SqlAlchemyToneSignalRepository:
             values=tuple(Firmness(v) for v in row.values),
         )
 
-    async def get(self, user_id: UserId, contact_id: ContactId) -> ToneSignal | None:
-        row = await self._session.get(ToneSignalRow, (user_id, contact_id))
-        if row is None:
+    async def get(
+        self,
+        user_id: UserId,
+        contact_id: ContactId,
+        *,
+        for_update: bool = False,
+    ) -> ToneSignal | None:
+        if for_update:
+            await self._session.execute(
+                pg_insert(ToneSignalRow)
+                .values(user_id=user_id, contact_id=contact_id, values=[])
+                .on_conflict_do_nothing(index_elements=["user_id", "contact_id"])
+            )
+            result = await self._session.execute(
+                select(ToneSignalRow)
+                .where(
+                    ToneSignalRow.user_id == user_id,
+                    ToneSignalRow.contact_id == contact_id,
+                )
+                .with_for_update()
+            )
+            locked = result.scalar_one()
+            return self._to_domain(locked)
+        existing = await self._session.get(ToneSignalRow, (user_id, contact_id))
+        if existing is None:
             return None
-        return self._to_domain(row)
+        return self._to_domain(existing)
 
     async def list_for_user(self, user_id: UserId) -> list[ToneSignal]:
         result = await self._session.execute(

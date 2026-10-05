@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import dataclass
+from enum import StrEnum
 
 from svoi_pravila.application.errors import (
     AccessNotGranted,
@@ -22,6 +23,7 @@ from svoi_pravila.application.use_cases._access import require_access
 from svoi_pravila.domain.enums import (
     Firmness,
     RuleCategory,
+    SuggestionSource,
     UsageEventKind,
     UsageOutcome,
     UsageSurface,
@@ -37,6 +39,16 @@ from svoi_pravila.domain.usage import UsageEvent
 _ANALYTICS_PURPOSE = "analytics"
 
 
+class ToneSignalOutcome(StrEnum):
+    """Typed outcome of the tone-signal path (independent of usage-event txn)."""
+
+    RECORDED = "recorded"
+    SUGGESTION_CREATED = "suggestion_created"
+    SKIPPED_NO_CONTACT = "skipped_no_contact"
+    SKIPPED_NO_ACCESS = "skipped_no_access"
+    SKIPPED_CONFLICT = "skipped_conflict"
+
+
 @dataclass(frozen=True, slots=True)
 class RecordInlineChoiceCommand:
     """Input for RecordInlineChoice. Never includes query text."""
@@ -47,8 +59,9 @@ class RecordInlineChoiceCommand:
 
 @dataclass(frozen=True, slots=True)
 class RecordInlineChoiceResult:
-    """Outcome of recording a choice; suggestion id when a new tone candidate was created."""
+    """Outcome of recording a choice and the independent tone-signal path."""
 
+    tone_outcome: ToneSignalOutcome
     suggestion_id: RuleSuggestionId | None
 
 
@@ -71,7 +84,8 @@ class RecordInlineChoice:
     The firmness is attributed to the user's **active contact at choice time**.
     Usage-event recording (txn 1 via ``UsageEventSink``) and the tone-signal path
     (txn 2 via its own unit of work) are independent: failure of either does not
-    roll back the other, and signal-path failures never break choice recording.
+    roll back the other. Unexpected signal-path errors propagate after the usage
+    event is already recorded; the channel adapter logs the typed ``ToneSignalOutcome``.
     """
 
     def __init__(self, ports: RecordInlineChoicePorts) -> None:
@@ -106,61 +120,75 @@ class RecordInlineChoice:
         with contextlib.suppress(UsageEventWriteFailed):
             await self._ports.sink.record(event)
 
-        suggestion_id = await self._try_tone_signal(command, firmness)
-        return RecordInlineChoiceResult(suggestion_id=suggestion_id)
-
-    async def _try_tone_signal(
-        self,
-        command: RecordInlineChoiceCommand,
-        firmness: Firmness,
-    ) -> RuleSuggestionId | None:
         try:
             return await self._append_tone_signal(command, firmness)
-        except (ConflictError, OSError, TimeoutError, RuntimeError):
-            return None
+        except ConflictError:
+            return RecordInlineChoiceResult(
+                tone_outcome=ToneSignalOutcome.SKIPPED_CONFLICT,
+                suggestion_id=None,
+            )
 
     async def _append_tone_signal(
         self,
         command: RecordInlineChoiceCommand,
         firmness: Firmness,
-    ) -> RuleSuggestionId | None:
+    ) -> RecordInlineChoiceResult:
         async with self._ports.uow_factory() as uow:
             user = await uow.users.get_by_telegram_id(command.telegram_user_id)
             if user is None or user.active_contact_id is None:
-                return None
+                return RecordInlineChoiceResult(
+                    tone_outcome=ToneSignalOutcome.SKIPPED_NO_CONTACT,
+                    suggestion_id=None,
+                )
             try:
                 await require_access(uow, self._ports.catalog, user.id)
             except AccessNotGranted:
-                return None
+                return RecordInlineChoiceResult(
+                    tone_outcome=ToneSignalOutcome.SKIPPED_NO_ACCESS,
+                    suggestion_id=None,
+                )
             contact_id = user.active_contact_id
             contact = await uow.contacts.get(contact_id)
             if contact is None or contact.owner_id != user.id:
-                return None
+                return RecordInlineChoiceResult(
+                    tone_outcome=ToneSignalOutcome.SKIPPED_NO_CONTACT,
+                    suggestion_id=None,
+                )
 
-            existing = await uow.tone_signals.get(user.id, contact_id)
-            signal = existing or ToneSignal(
-                user_id=user.id,
-                contact_id=contact_id,
-                values=(),
-            )
-            signal = signal.append(firmness)
+            existing = await uow.tone_signals.get(user.id, contact_id, for_update=True)
+            signal = (
+                existing
+                or ToneSignal(
+                    user_id=user.id,
+                    contact_id=contact_id,
+                    values=(),
+                )
+            ).append(firmness)
             await uow.tone_signals.upsert(signal)
 
             created_id: RuleSuggestionId | None = None
+            outcome = ToneSignalOutcome.RECORDED
             dominant = dominant_firmness(signal)
             if dominant is not None:
                 prior = await uow.rule_suggestions.get_tone(user.id, contact_id, dominant)
                 if prior is None:
-                    suggestion = RuleSuggestion.create_tone(
-                        suggestion_id=RuleSuggestionId(self._ports.ids.new_id()),
-                        user_id=user.id,
-                        contact_id=contact_id,
-                        category=RuleCategory.HOW_TO_ASK,
-                        text=self._ports.tone_catalog.template(dominant),
-                        firmness=dominant,
-                        now=self._ports.clock.now(),
+                    pending = await uow.rule_suggestions.has_pending_for_source(
+                        user.id,
+                        contact_id,
+                        SuggestionSource.TONE,
                     )
-                    await uow.rule_suggestions.add(suggestion)
-                    created_id = suggestion.id
+                    if not pending:
+                        suggestion = RuleSuggestion.create_tone(
+                            suggestion_id=RuleSuggestionId(self._ports.ids.new_id()),
+                            user_id=user.id,
+                            contact_id=contact_id,
+                            category=RuleCategory.HOW_TO_ASK,
+                            text=self._ports.tone_catalog.template(dominant),
+                            firmness=dominant,
+                            now=self._ports.clock.now(),
+                        )
+                        await uow.rule_suggestions.add(suggestion)
+                        created_id = suggestion.id
+                        outcome = ToneSignalOutcome.SUGGESTION_CREATED
             await uow.commit()
-            return created_id
+            return RecordInlineChoiceResult(tone_outcome=outcome, suggestion_id=created_id)

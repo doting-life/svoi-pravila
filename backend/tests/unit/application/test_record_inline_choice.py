@@ -14,6 +14,7 @@ from svoi_pravila.application.use_cases.record_inline_choice import (
     RecordInlineChoice,
     RecordInlineChoiceCommand,
     RecordInlineChoicePorts,
+    ToneSignalOutcome,
 )
 from svoi_pravila.domain.enums import (
     Firmness,
@@ -70,6 +71,7 @@ async def test_record_inline_choice_writes_c0_event() -> None:
     ref = encode_inline_result_ref(UsageScenario.HELP_SAY, Firmness.FIRM)
     result = await use_case.execute(RecordInlineChoiceCommand(TelegramUserId(9), ref))
     assert result.suggestion_id is None
+    assert result.tone_outcome is ToneSignalOutcome.SKIPPED_NO_CONTACT
     event = sink.events[0]
     assert event.event_kind is UsageEventKind.RESULT_CHOSEN
     assert event.surface is UsageSurface.INLINE
@@ -97,3 +99,4 @@ async def test_record_inline_choice_swallows_sink_failure() -> None:
         )
     )
     assert result.suggestion_id is None
+    assert result.tone_outcome is ToneSignalOutcome.SKIPPED_NO_CONTACT

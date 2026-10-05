@@ -115,6 +115,7 @@ def build_inline_router() -> Router:
             )
         except InvalidInlineResultRef:
             return
+        logger.info("tone_signal", outcome=recorded.tone_outcome.value)
         if recorded.suggestion_id is not None:
             await _send_tone_suggestion_dm(bot, tg_deps, user_id, recorded.suggestion_id)
 

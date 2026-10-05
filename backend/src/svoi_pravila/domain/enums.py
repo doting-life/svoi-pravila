@@ -80,3 +80,18 @@ class Firmness(StrEnum):
     GENTLE = "gentle"
     BALANCED = "balanced"
     FIRM = "firm"
+
+
+class SuggestionSource(StrEnum):
+    """How a rule suggestion was produced."""
+
+    TONE = "tone"
+    DECODE = "decode"
+
+
+class SuggestionStatus(StrEnum):
+    """Lifecycle status of a rule suggestion."""
+
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    DISMISSED = "dismissed"

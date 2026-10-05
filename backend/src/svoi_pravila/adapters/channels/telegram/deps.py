@@ -16,10 +16,12 @@ from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.rate_limiter import RateLimiter
 from svoi_pravila.application.ports.update_deduplicator import UpdateDeduplicator
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
+from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.create_contact import CreateContact
 from svoi_pravila.application.use_cases.decode_incoming import IncomingDecoder
 from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
+from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggestion
 from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocument
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
@@ -28,6 +30,7 @@ from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
 from svoi_pravila.application.use_cases.list_rules import ListRules
+from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoice
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
@@ -61,6 +64,9 @@ class TelegramDeps:
     propose_rule: ProposeRule
     list_rules: ListRules
     archive_rule: ArchiveRule
+    list_suggestions: ListSuggestions
+    accept_suggestion: AcceptSuggestion
+    dismiss_suggestion: DismissSuggestion
     dialog_state: DialogState
     clock: Clock
     display_timezone: ZoneInfo

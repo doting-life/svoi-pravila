@@ -95,6 +95,15 @@ class TelegramStrings:
     rules_category_apology: str
     rules_category_conflict_protocol: str
     rules_category_other: str
+    suggestion_dm: str
+    suggestion_accept: str
+    suggestion_dismiss: str
+    suggestion_dismissed: str
+    suggestion_already_decided: str
+    suggestion_header: str
+    suggestion_firmness_gentle: str
+    suggestion_firmness_balanced: str
+    suggestion_firmness_firm: str
     decode_rule_cited: str
     inline_rule_cited_prefix: str
     rights_revoke_explain: str
@@ -189,6 +198,15 @@ _KEYS: dict[str, str] = {
     "rules.category.apology": "rules_category_apology",
     "rules.category.conflict_protocol": "rules_category_conflict_protocol",
     "rules.category.other": "rules_category_other",
+    "suggestion.dm": "suggestion_dm",
+    "suggestion.accept": "suggestion_accept",
+    "suggestion.dismiss": "suggestion_dismiss",
+    "suggestion.dismissed": "suggestion_dismissed",
+    "suggestion.already_decided": "suggestion_already_decided",
+    "suggestion.header": "suggestion_header",
+    "suggestion.firmness.gentle": "suggestion_firmness_gentle",
+    "suggestion.firmness.balanced": "suggestion_firmness_balanced",
+    "suggestion.firmness.firm": "suggestion_firmness_firm",
     "decode.rule_cited": "decode_rule_cited",
     "inline.rule_cited_prefix": "inline_rule_cited_prefix",
     "rights.revoke_explain": "rights_revoke_explain",
@@ -270,6 +288,15 @@ def firmness_label(strings: TelegramStrings, firmness: Firmness) -> str:
     if firmness is Firmness.BALANCED:
         return strings.inline_firmness_balanced
     return strings.inline_firmness_firm
+
+
+def suggestion_firmness_adjective(strings: TelegramStrings, firmness: Firmness) -> str:
+    """Adjective used in the tone-suggestion DM («мягкий вариант»)."""
+    if firmness is Firmness.GENTLE:
+        return strings.suggestion_firmness_gentle
+    if firmness is Firmness.BALANCED:
+        return strings.suggestion_firmness_balanced
+    return strings.suggestion_firmness_firm
 
 
 def load_support_resources() -> tuple[str, ...]:

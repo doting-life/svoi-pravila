@@ -11,12 +11,15 @@ from svoi_pravila.adapters.channels.telegram.localization import (
     help_say_intent_prefixes,
     load_ru_strings,
 )
+from svoi_pravila.adapters.system.tone_suggestion_catalog import StaticToneSuggestionCatalog
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
+from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.create_contact import CreateContact
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
 from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
+from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggestion
 from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocument
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
@@ -25,8 +28,12 @@ from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose, InlineComposePorts
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
 from svoi_pravila.application.use_cases.list_rules import ListRules
+from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
-from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoice
+from svoi_pravila.application.use_cases.record_inline_choice import (
+    RecordInlineChoice,
+    RecordInlineChoicePorts,
+)
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
@@ -82,6 +89,7 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
     pseudonymizer = FakePseudonymizer()
     sink = chosen.sink or RecordingUsageEventSink()
     generator = chosen.generator or FakeTextGenerator()
+    tone_catalog = StaticToneSuggestionCatalog()
     decode = DecodeIncoming(
         DecodeIncomingPorts(
             uow_factory=uow,
@@ -126,7 +134,17 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
         get_consent_document=GetConsentDocument(catalog),
         decode_incoming=decode,
         inline_compose=compose,
-        record_inline_choice=RecordInlineChoice(sink, clock, ids, pseudonymizer),
+        record_inline_choice=RecordInlineChoice(
+            RecordInlineChoicePorts(
+                sink=sink,
+                uow_factory=uow,
+                catalog=catalog,
+                tone_catalog=tone_catalog,
+                clock=clock,
+                ids=ids,
+                pseudonymizer=pseudonymizer,
+            )
+        ),
         prepared_results=chosen.prepared or FakePreparedResults(),
         inline_queries=InlineQueryCoordinator(
             chosen.sleeper or ImmediateSleeper(),
@@ -143,6 +161,9 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
         propose_rule=ProposeRule(uow, catalog, ids, clock),
         list_rules=ListRules(uow, catalog),
         archive_rule=ArchiveRule(uow, catalog, clock),
+        list_suggestions=ListSuggestions(uow, catalog),
+        accept_suggestion=AcceptSuggestion(uow, catalog, ids, clock),
+        dismiss_suggestion=DismissSuggestion(uow, catalog, clock),
         dialog_state=chosen.dialog or FakeDialogState(),
         clock=clock,
         display_timezone=ZoneInfo("Europe/Moscow"),

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from aiogram import Bot, F, Router
-from aiogram.filters import Command, CommandObject, CommandStart
+from aiogram.filters import Command, CommandObject, CommandStart, Filter
 from aiogram.types import CallbackQuery, Message
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.handlers.helpers import (
     callback_chat_id,
     clear_callback_keyboard,
+    is_feature_callback,
     render_current_step,
     send_current_step,
 )
@@ -100,7 +101,7 @@ def build_router() -> Router:
         await tg_deps.grant_consent.execute(GrantConsentCommand(lookup.user.id, kind, version))
         await send_current_step(bot, callback, tg_deps, callback.from_user.id)
 
-    @router.callback_query(~F.data.startswith("ct:") & ~F.data.startswith("ru:"))
+    @router.callback_query(NonFeatureCallbackFilter())
     async def any_callback_while_onboarding(
         callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot
     ) -> None:
@@ -112,6 +113,13 @@ def build_router() -> Router:
             await send_current_step(bot, callback, tg_deps, callback.from_user.id)
 
     return router
+
+
+class NonFeatureCallbackFilter(Filter):
+    """Match callbacks outside the feature-prefix registry (``ct``, ``ru``, ``sg``)."""
+
+    async def __call__(self, callback: CallbackQuery) -> bool:
+        return not is_feature_callback(callback.data)
 
 
 _CONSENT_CALLBACK_PARTS = 4

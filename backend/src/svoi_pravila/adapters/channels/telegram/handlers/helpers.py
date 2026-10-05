@@ -23,6 +23,16 @@ from svoi_pravila.domain.user import User
 
 logger = structlog.get_logger(__name__)
 
+# Feature callback prefixes that must reach their routers during onboarding.
+FEATURE_CALLBACK_PREFIXES: tuple[str, ...] = ("ct", "ru", "sg")
+
+
+def is_feature_callback(data: str | None) -> bool:
+    """True when ``data`` starts with a registered feature prefix (``ct:``, ``ru:``, …)."""
+    if data is None:
+        return False
+    return any(data.startswith(f"{prefix}:") for prefix in FEATURE_CALLBACK_PREFIXES)
+
 
 def dialog_pseudonym(tg_deps: TelegramDeps, telegram_user_id: int) -> str:
     """HMAC dialog key for a Telegram user id."""

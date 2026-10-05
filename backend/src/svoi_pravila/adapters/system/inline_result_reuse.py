@@ -7,12 +7,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from svoi_pravila.application.errors import (
-    GenerationRefusedByProvider,
-    GenerationUnavailable,
-    InvalidGenerationOutput,
-    ScenarioQuotaExceeded,
-)
 from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
 from svoi_pravila.application.ports.generation import SafetyVerdict
 from svoi_pravila.application.ports.inline_result_reuse import (
@@ -25,13 +19,6 @@ from svoi_pravila.application.ports.inline_result_reuse import (
 from svoi_pravila.application.ports.monotonic import MonotonicClock
 
 _MAX_PER_USER = 4
-
-_PRODUCE_ERRORS = (
-    ScenarioQuotaExceeded,
-    GenerationUnavailable,
-    GenerationRefusedByProvider,
-    InvalidGenerationOutput,
-)
 
 
 class CancelHandle(Protocol):
@@ -156,9 +143,9 @@ class InProcessInlineResultReuse:
             status = InlineReuseStatus.MISS
 
         outcome = await self._await_flight(task)
-        if isinstance(outcome, _PRODUCE_ERRORS):
-            return ReuseFailed(status=status, error=outcome)
-        return ReuseSucceeded(status=status, value=outcome)
+        if isinstance(outcome, InlineReuseValue):
+            return ReuseSucceeded(status=status, value=outcome)
+        return ReuseFailed(status=status, error=outcome)
 
     async def _await_flight(self, task: asyncio.Task[ProduceOutcome]) -> ProduceOutcome:
         """Await ``task`` without linking waiter cancellation to the shared produce."""

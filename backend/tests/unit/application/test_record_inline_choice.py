@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from svoi_pravila.adapters.system.tone_suggestion_catalog import StaticToneSuggestionCatalog
 from svoi_pravila.application.errors import InvalidInlineResultRef
 from svoi_pravila.application.inline_result_ref import (
     encode_inline_result_ref,
@@ -12,6 +13,8 @@ from svoi_pravila.application.inline_result_ref import (
 from svoi_pravila.application.use_cases.record_inline_choice import (
     RecordInlineChoice,
     RecordInlineChoiceCommand,
+    RecordInlineChoicePorts,
+    ToneSignalOutcome,
 )
 from svoi_pravila.domain.enums import (
     Firmness,
@@ -21,9 +24,27 @@ from svoi_pravila.domain.enums import (
 )
 from svoi_pravila.domain.ids import TelegramUserId
 from tests.fakes.clock import FakeClock
+from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.rate_limit import FakePseudonymizer
+from tests.fakes.uow import InMemoryUnitOfWorkFactory
 from tests.fakes.usage_sink import FailingUsageEventSink, RecordingUsageEventSink
+
+
+def _choice(
+    sink: RecordingUsageEventSink | FailingUsageEventSink,
+) -> RecordInlineChoice:
+    return RecordInlineChoice(
+        RecordInlineChoicePorts(
+            sink=sink,
+            uow_factory=InMemoryUnitOfWorkFactory(),
+            catalog=FakeConsentCatalog(),
+            tone_catalog=StaticToneSuggestionCatalog(),
+            clock=FakeClock(),
+            ids=FakeIdGenerator(),
+            pseudonymizer=FakePseudonymizer(),
+        )
+    )
 
 
 @pytest.mark.unit
@@ -46,9 +67,11 @@ def test_inline_result_ref_rejects_text_and_junk() -> None:
 @pytest.mark.unit
 async def test_record_inline_choice_writes_c0_event() -> None:
     sink = RecordingUsageEventSink()
-    use_case = RecordInlineChoice(sink, FakeClock(), FakeIdGenerator(), FakePseudonymizer())
+    use_case = _choice(sink)
     ref = encode_inline_result_ref(UsageScenario.HELP_SAY, Firmness.FIRM)
-    await use_case.execute(RecordInlineChoiceCommand(TelegramUserId(9), ref))
+    result = await use_case.execute(RecordInlineChoiceCommand(TelegramUserId(9), ref))
+    assert result.suggestion_id is None
+    assert result.tone_outcome is ToneSignalOutcome.SKIPPED_NO_CONTACT
     event = sink.events[0]
     assert event.event_kind is UsageEventKind.RESULT_CHOSEN
     assert event.surface is UsageSurface.INLINE
@@ -60,7 +83,7 @@ async def test_record_inline_choice_writes_c0_event() -> None:
 @pytest.mark.unit
 async def test_record_inline_choice_invalid_ref_does_not_write() -> None:
     sink = RecordingUsageEventSink()
-    use_case = RecordInlineChoice(sink, FakeClock(), FakeIdGenerator(), FakePseudonymizer())
+    use_case = _choice(sink)
     with pytest.raises(InvalidInlineResultRef):
         await use_case.execute(RecordInlineChoiceCommand(TelegramUserId(9), "nope"))
     assert sink.events == []
@@ -68,12 +91,12 @@ async def test_record_inline_choice_invalid_ref_does_not_write() -> None:
 
 @pytest.mark.unit
 async def test_record_inline_choice_swallows_sink_failure() -> None:
-    use_case = RecordInlineChoice(
-        FailingUsageEventSink(), FakeClock(), FakeIdGenerator(), FakePseudonymizer()
-    )
-    await use_case.execute(
+    use_case = _choice(FailingUsageEventSink())
+    result = await use_case.execute(
         RecordInlineChoiceCommand(
             TelegramUserId(9),
             encode_inline_result_ref(UsageScenario.DECODE, Firmness.BALANCED),
         )
     )
+    assert result.suggestion_id is None
+    assert result.tone_outcome is ToneSignalOutcome.SKIPPED_NO_CONTACT

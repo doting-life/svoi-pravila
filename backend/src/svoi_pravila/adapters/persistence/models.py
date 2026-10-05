@@ -18,6 +18,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column, relationship
@@ -329,6 +330,109 @@ class InviteRow(Base):
     @classmethod
     def __mapper_args__(cls) -> dict[str, object]:
         return {"version_id_col": cls.__table__.c.version}
+
+
+class RuleSuggestionRow(Base):
+    """Persistence row for ``RuleSuggestion`` (C2 text ciphertext)."""
+
+    __tablename__ = "rule_suggestions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    contact_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("contacts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(Text, nullable=False)
+    text_ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    firmness: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('tone', 'decode')",
+            name="source",
+        ),
+        CheckConstraint(
+            "category IN ('taboo_topic', 'how_to_ask', 'apology', 'conflict_protocol', 'other')",
+            name="category",
+        ),
+        CheckConstraint(
+            "status IN ('pending', 'accepted', 'dismissed')",
+            name="status",
+        ),
+        CheckConstraint(
+            "firmness IS NULL OR firmness IN ('gentle', 'balanced', 'firm')",
+            name="firmness",
+        ),
+        CheckConstraint(
+            "(source = 'tone' AND firmness IS NOT NULL) OR "
+            "(source = 'decode' AND firmness IS NULL)",
+            name="source_firmness",
+        ),
+        CheckConstraint(
+            "(status = 'pending' AND decided_at IS NULL) OR "
+            "(status <> 'pending' AND decided_at IS NOT NULL)",
+            name="decided_shape",
+        ),
+        Index(
+            "uq_rule_suggestions_tone_user_contact_firmness",
+            "user_id",
+            "contact_id",
+            "firmness",
+            unique=True,
+            postgresql_where=text("source = 'tone'"),
+        ),
+        Index(
+            "uq_rule_suggestions_pending_user_contact_source",
+            "user_id",
+            "contact_id",
+            "source",
+            unique=True,
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
+
+    @declared_attr.directive
+    @classmethod
+    def __mapper_args__(cls) -> dict[str, object]:
+        return {"version_id_col": cls.__table__.c.version}
+
+
+class ToneSignalRow(Base):
+    """Persistence row for ``ToneSignal`` (C0 firmness values, no text)."""
+
+    __tablename__ = "tone_signals"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    contact_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("contacts.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    values: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "cardinality(values) <= 10",
+            name="window",
+        ),
+    )
 
 
 class UsageEventRow(Base):

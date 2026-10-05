@@ -40,6 +40,7 @@ from svoi_pravila.adapters.persistence.usage_sink import UnitOfWorkUsageEventSin
 from svoi_pravila.adapters.system.clock import SystemClock
 from svoi_pravila.adapters.system.ids import Uuid7IdGenerator
 from svoi_pravila.adapters.system.monotonic import SystemMonotonicClock
+from svoi_pravila.adapters.system.tone_suggestion_catalog import StaticToneSuggestionCatalog
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.ports.generation import (
     DecodeResult,
@@ -49,10 +50,12 @@ from svoi_pravila.application.ports.generation import (
     Variant,
 )
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
+from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.create_contact import CreateContact
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
 from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
+from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggestion
 from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocument
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
@@ -61,8 +64,12 @@ from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose, InlineComposePorts
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
 from svoi_pravila.application.use_cases.list_rules import ListRules
+from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
-from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoice
+from svoi_pravila.application.use_cases.record_inline_choice import (
+    RecordInlineChoice,
+    RecordInlineChoicePorts,
+)
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
@@ -245,7 +252,17 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
         get_consent_document=GetConsentDocument(catalog),
         decode_incoming=decode,
         inline_compose=compose,
-        record_inline_choice=RecordInlineChoice(sink, clock, ids, pepper),
+        record_inline_choice=RecordInlineChoice(
+            RecordInlineChoicePorts(
+                sink=sink,
+                uow_factory=uow_factory,
+                catalog=catalog,
+                tone_catalog=StaticToneSuggestionCatalog(),
+                clock=clock,
+                ids=ids,
+                pseudonymizer=pepper,
+            )
+        ),
         prepared_results=ValkeyPreparedResults(valkey, ttl_seconds=600),
         inline_queries=InlineQueryCoordinator(AsyncioSleeper(), debounce_seconds=0.0),
         revoke_all_consents=RevokeAllConsents(uow_factory, clock, reuse),
@@ -259,6 +276,9 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
         propose_rule=ProposeRule(uow_factory, catalog, ids, clock),
         list_rules=ListRules(uow_factory, catalog),
         archive_rule=ArchiveRule(uow_factory, catalog, clock),
+        list_suggestions=ListSuggestions(uow_factory, catalog),
+        accept_suggestion=AcceptSuggestion(uow_factory, catalog, ids, clock),
+        dismiss_suggestion=DismissSuggestion(uow_factory, catalog, clock),
         dialog_state=ValkeyDialogState(valkey, ttl_seconds=600),
         clock=clock,
         display_timezone=ZoneInfo("Europe/Moscow"),
@@ -491,7 +511,17 @@ def _contact_privacy_lifecycle(
         get_consent_document=GetConsentDocument(catalog),
         decode_incoming=decode,
         inline_compose=compose,
-        record_inline_choice=RecordInlineChoice(sink, clock, ids, pepper),
+        record_inline_choice=RecordInlineChoice(
+            RecordInlineChoicePorts(
+                sink=sink,
+                uow_factory=uow_factory,
+                catalog=catalog,
+                tone_catalog=StaticToneSuggestionCatalog(),
+                clock=clock,
+                ids=ids,
+                pseudonymizer=pepper,
+            )
+        ),
         prepared_results=ValkeyPreparedResults(valkey, ttl_seconds=600),
         inline_queries=InlineQueryCoordinator(AsyncioSleeper(), debounce_seconds=0.0),
         revoke_all_consents=RevokeAllConsents(uow_factory, clock, reuse),
@@ -505,6 +535,9 @@ def _contact_privacy_lifecycle(
         propose_rule=ProposeRule(uow_factory, catalog, ids, clock),
         list_rules=ListRules(uow_factory, catalog),
         archive_rule=ArchiveRule(uow_factory, catalog, clock),
+        list_suggestions=ListSuggestions(uow_factory, catalog),
+        accept_suggestion=AcceptSuggestion(uow_factory, catalog, ids, clock),
+        dismiss_suggestion=DismissSuggestion(uow_factory, catalog, clock),
         dialog_state=ValkeyDialogState(valkey, ttl_seconds=600),
         clock=clock,
         display_timezone=ZoneInfo("Europe/Moscow"),

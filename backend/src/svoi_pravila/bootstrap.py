@@ -37,6 +37,7 @@ from svoi_pravila.adapters.system.clock import SystemClock
 from svoi_pravila.adapters.system.ids import Uuid7IdGenerator
 from svoi_pravila.adapters.system.inline_result_reuse import InProcessInlineResultReuse
 from svoi_pravila.adapters.system.monotonic import SystemMonotonicClock
+from svoi_pravila.adapters.system.tone_suggestion_catalog import StaticToneSuggestionCatalog
 from svoi_pravila.api.app import AppLifecycleHooks, create_app
 from svoi_pravila.api.telegram_webhook import (
     TelegramWebhookBindings,
@@ -44,11 +45,13 @@ from svoi_pravila.api.telegram_webhook import (
 )
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
+from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.create_contact import CreateContact
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
 from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
+from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggestion
 from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocument
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
@@ -57,8 +60,12 @@ from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose, InlineComposePorts
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
 from svoi_pravila.application.use_cases.list_rules import ListRules
+from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
-from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoice
+from svoi_pravila.application.use_cases.record_inline_choice import (
+    RecordInlineChoice,
+    RecordInlineChoicePorts,
+)
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
@@ -111,6 +118,7 @@ def create_application(settings: Settings) -> FastAPI:
     monotonic = SystemMonotonicClock()
     ids = Uuid7IdGenerator()
     catalog = PackageConsentCatalog()
+    tone_catalog = StaticToneSuggestionCatalog()
     generator = GigaChatTextGenerator(gigachat, settings)
     sink = UnitOfWorkUsageEventSink(uow_factory)
     pseudonymizer = HmacPseudonymizer(settings.pseudonym_pepper_bytes())
@@ -178,7 +186,17 @@ def create_application(settings: Settings) -> FastAPI:
             get_consent_document=GetConsentDocument(catalog),
             decode_incoming=decode_incoming,
             inline_compose=inline_compose,
-            record_inline_choice=RecordInlineChoice(sink, clock, ids, pseudonymizer),
+            record_inline_choice=RecordInlineChoice(
+                RecordInlineChoicePorts(
+                    sink=sink,
+                    uow_factory=uow_factory,
+                    catalog=catalog,
+                    tone_catalog=tone_catalog,
+                    clock=clock,
+                    ids=ids,
+                    pseudonymizer=pseudonymizer,
+                )
+            ),
             prepared_results=ValkeyPreparedResults(
                 valkey,
                 ttl_seconds=settings.prepared_result_ttl_seconds,
@@ -198,6 +216,9 @@ def create_application(settings: Settings) -> FastAPI:
             propose_rule=ProposeRule(uow_factory, catalog, ids, clock),
             list_rules=ListRules(uow_factory, catalog),
             archive_rule=ArchiveRule(uow_factory, catalog, clock),
+            list_suggestions=ListSuggestions(uow_factory, catalog),
+            accept_suggestion=AcceptSuggestion(uow_factory, catalog, ids, clock),
+            dismiss_suggestion=DismissSuggestion(uow_factory, catalog, clock),
             dialog_state=ValkeyDialogState(
                 valkey,
                 ttl_seconds=settings.dialog_ttl_seconds,

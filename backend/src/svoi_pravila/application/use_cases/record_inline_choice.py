@@ -29,11 +29,7 @@ from svoi_pravila.domain.enums import (
     UsageSurface,
 )
 from svoi_pravila.domain.ids import RuleSuggestionId, TelegramUserId, UsageEventId
-from svoi_pravila.domain.rule_suggestion import (
-    RuleSuggestion,
-    ToneSignal,
-    dominant_firmness,
-)
+from svoi_pravila.domain.rule_suggestion import RuleSuggestion, dominant_firmness
 from svoi_pravila.domain.usage import UsageEvent
 
 _ANALYTICS_PURPOSE = "analytics"
@@ -155,15 +151,7 @@ class RecordInlineChoice:
                     suggestion_id=None,
                 )
 
-            existing = await uow.tone_signals.get(user.id, contact_id, for_update=True)
-            signal = (
-                existing
-                or ToneSignal(
-                    user_id=user.id,
-                    contact_id=contact_id,
-                    values=(),
-                )
-            ).append(firmness)
+            signal = (await uow.tone_signals.lock_for_append(user.id, contact_id)).append(firmness)
             await uow.tone_signals.upsert(signal)
 
             created_id: RuleSuggestionId | None = None

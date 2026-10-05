@@ -223,8 +223,7 @@ async def test_suggestion_and_tone_repository_crud(
         await uow.users.add(owner)
         await uow.contacts.add(contact)
         assert await uow.tone_signals.get(owner.id, contact_id) is None
-        locked = await uow.tone_signals.get(owner.id, contact_id, for_update=True)
-        assert locked is not None
+        locked = await uow.tone_signals.lock_for_append(owner.id, contact_id)
         assert locked.values == ()
         await uow.tone_signals.upsert(
             ToneSignal(user_id=owner.id, contact_id=contact_id, values=(Firmness.GENTLE,))

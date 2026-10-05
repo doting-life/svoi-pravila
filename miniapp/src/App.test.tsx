@@ -137,7 +137,9 @@ describe("App", () => {
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
         expect(await screen.findByText(ru.gateIncomplete)).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: ru.privacyExportAction })).toBeInTheDocument();
+        expect(
+            await screen.findByRole("button", { name: ru.privacyExportAction }),
+        ).toBeInTheDocument();
         expect(screen.getByRole("button", { name: ru.privacyDeleteAction })).toBeInTheDocument();
     });
 
@@ -149,7 +151,9 @@ describe("App", () => {
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
         expect(await screen.findByText(ru.gateIncomplete)).toBeInTheDocument();
         expect(screen.getByText(ru.gateConsentExtra)).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: ru.privacyExportAction })).toBeInTheDocument();
+        expect(
+            await screen.findByRole("button", { name: ru.privacyExportAction }),
+        ).toBeInTheDocument();
         expect(screen.getByRole("button", { name: ru.privacyDeleteAction })).toBeInTheDocument();
         click(ru.close);
         expect(adapter.close).toHaveBeenCalled();
@@ -184,7 +188,9 @@ describe("App", () => {
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
         expect(await screen.findByText(ru.gateIncomplete)).toBeInTheDocument();
         expect(screen.getByText(ru.gateConsentExtra)).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: ru.privacyExportAction })).toBeInTheDocument();
+        expect(
+            await screen.findByRole("button", { name: ru.privacyExportAction }),
+        ).toBeInTheDocument();
         expect(screen.getByRole("button", { name: ru.privacyDeleteAction })).toBeInTheDocument();
     });
 

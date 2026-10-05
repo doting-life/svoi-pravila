@@ -150,14 +150,11 @@ export function createTelegramAdapter(): TelegramAdapter {
         },
         copyText: async (text: string) => {
             try {
-                if (navigator.clipboard?.writeText !== undefined) {
-                    await navigator.clipboard.writeText(text);
-                    return true;
-                }
+                await navigator.clipboard.writeText(text);
+                return true;
             } catch {
                 return false;
             }
-            return false;
         },
         hapticNotification: (type: HapticNotificationType) => {
             readWebApp()?.HapticFeedback?.notificationOccurred(type);

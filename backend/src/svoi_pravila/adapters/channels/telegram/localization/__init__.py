@@ -9,6 +9,7 @@ from importlib import resources
 from svoi_pravila.application.ports.generation import HelpSayIntent
 from svoi_pravila.domain.enums import Firmness, RelationshipKind, RuleCategory
 from svoi_pravila.domain.safety import load_data_lines
+from svoi_pravila.privacy import load_privacy_catalog
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,15 +226,12 @@ _KEYS: dict[str, str] = {
     "suggestion.decode_edit_prompt": "suggestion_decode_edit_prompt",
     "decode.rule_cited": "decode_rule_cited",
     "inline.rule_cited_prefix": "inline_rule_cited_prefix",
-    "rights.revoke_explain": "rights_revoke_explain",
-    "rights.delete_explain": "rights_delete_explain",
     "rights.confirm": "rights_confirm",
     "rights.cancel": "rights_cancel",
     "rights.cancelled": "rights_cancelled",
     "rights.confirm_rejected": "rights_confirm_rejected",
     "rights.deleted": "rights_deleted",
     "rights.export_empty": "rights_export_empty",
-    "rights.export_caption": "rights_export_caption",
 }
 
 
@@ -249,6 +247,10 @@ def load_ru_strings() -> TelegramStrings:
         msg = f"missing localization keys: {', '.join(sorted(missing))}"
         raise KeyError(msg)
     values = {attr: str(data[key]) for key, attr in _KEYS.items()}
+    privacy = load_privacy_catalog()
+    values["rights_export_caption"] = privacy.export.description
+    values["rights_revoke_explain"] = privacy.revoke.confirm
+    values["rights_delete_explain"] = privacy.delete.description
     return TelegramStrings(**values)
 
 

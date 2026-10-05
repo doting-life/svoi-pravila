@@ -11,39 +11,33 @@ from svoi_pravila.application.use_cases._effective_rules import collect_visible_
 from svoi_pravila.domain.ids import TelegramUserId, UserId
 from svoi_pravila.domain.rules import RuleRevision
 
-# Canonical mini-app disclosure string for export contents (must match UI catalog).
-# Preposition U+0441 is via chr() to avoid RUF001 confusable-literal false positive.
-EXPORT_DISCLOSURE_BLURB = (
-    "Выгрузка содержит контакты, согласия, правила, предложения правил и историю выбора тона. "
-    f"Файл придёт в чат {chr(0x0441)} ботом и не хранится на сервере."
+# Content-section keys in the export payload (schema identifiers, not UI copy).
+EXPORT_SECTION_CONSENTS = "согласия"
+EXPORT_SECTION_CONTACTS = "контакты"
+EXPORT_SECTION_RULES = "правила"
+EXPORT_SECTION_SHARED_RULES = "общие_правила"
+EXPORT_SECTION_SUGGESTIONS = "предложения"
+EXPORT_SECTION_TONE_SIGNALS = "сигналы_тона"
+
+EXPORT_CONTENT_SECTION_KEYS: frozenset[str] = frozenset(
+    {
+        EXPORT_SECTION_CONSENTS,
+        EXPORT_SECTION_CONTACTS,
+        EXPORT_SECTION_RULES,
+        EXPORT_SECTION_SHARED_RULES,
+        EXPORT_SECTION_SUGGESTIONS,
+        EXPORT_SECTION_TONE_SIGNALS,
+    }
 )
 
-_SECTION_DISCLOSURE_PHRASES: dict[str, str] = {
-    "согласия": "согласия",
-    "контакты": "контакты",
-    "правила": "правила",
-    "общие_правила": "правила",
-    "предложения": "предложения правил",
-    "сигналы_тона": "историю выбора тона",
-}
-
-
-def disclosure_phrases_from_export_payload(payload: dict[str, object]) -> frozenset[str]:
-    """Map content section keys present in an export payload to disclosure substrings."""
-    phrases: set[str] = set()
-    if "согласия" in payload:
-        phrases.add(_SECTION_DISCLOSURE_PHRASES["согласия"])
-    if "контакты" in payload:
-        phrases.add(_SECTION_DISCLOSURE_PHRASES["контакты"])
-        contacts = payload["контакты"]
-        if isinstance(contacts, list):
-            for contact in contacts:
-                if not isinstance(contact, dict):
-                    continue
-                for key in ("правила", "общие_правила", "предложения", "сигналы_тона"):
-                    if key in contact:
-                        phrases.add(_SECTION_DISCLOSURE_PHRASES[key])
-    return frozenset(phrases)
+EXPORT_CONTACT_SECTION_KEYS: frozenset[str] = frozenset(
+    {
+        EXPORT_SECTION_RULES,
+        EXPORT_SECTION_SHARED_RULES,
+        EXPORT_SECTION_SUGGESTIONS,
+        EXPORT_SECTION_TONE_SIGNALS,
+    }
+)
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -110,7 +104,7 @@ class ExportMyData:
                         "отношение": contact.relationship.value,
                         "создан": _iso(contact.created_at),
                         "в_паре": contact.pair_id is not None,
-                        "правила": [
+                        EXPORT_SECTION_RULES: [
                             {
                                 "категория": view.category.value,
                                 "статус": view.status.value,
@@ -122,7 +116,7 @@ class ExportMyData:
                             }
                             for view in private
                         ],
-                        "общие_правила": [
+                        EXPORT_SECTION_SHARED_RULES: [
                             {
                                 "категория": view.category.value,
                                 "статус": view.status.value,
@@ -134,7 +128,7 @@ class ExportMyData:
                             }
                             for view in shared
                         ],
-                        "предложения": [
+                        EXPORT_SECTION_SUGGESTIONS: [
                             {
                                 "источник": suggestion.source.value,
                                 "категория": suggestion.category.value,
@@ -150,7 +144,7 @@ class ExportMyData:
                             }
                             for suggestion in contact_suggestions
                         ],
-                        "сигналы_тона": [
+                        EXPORT_SECTION_TONE_SIGNALS: [
                             {"значения": [v.value for v in signal.values]}
                             for signal in contact_tones
                         ],
@@ -163,7 +157,7 @@ class ExportMyData:
                     "создан": _iso(user.created_at),
                     "возраст_подтверждён": _iso(user.age_confirmed_at),
                 },
-                "согласия": [
+                EXPORT_SECTION_CONSENTS: [
                     {
                         "вид": consent.kind.value,
                         "версия": consent.text_version,
@@ -173,6 +167,6 @@ class ExportMyData:
                     }
                     for consent in consents
                 ],
-                "контакты": contacts_payload,
+                EXPORT_SECTION_CONTACTS: contacts_payload,
             }
             return ExportMyDataResult(found=True, payload=payload)

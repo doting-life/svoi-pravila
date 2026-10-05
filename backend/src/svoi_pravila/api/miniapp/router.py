@@ -24,6 +24,7 @@ from svoi_pravila.api.miniapp.schemas import (
     DismissSuggestionResponse,
     ExportDeliveryResponse,
     MeResponse,
+    PrivacyTextsResponse,
     RenameContactRequest,
     RuleItem,
     RuleListResponse,
@@ -80,6 +81,7 @@ from svoi_pravila.domain.ids import ContactId, RuleId, RuleSuggestionId
 from svoi_pravila.domain.rules import MAX_OPEN_RULES_PER_SCOPE, PairScope, Rule
 from svoi_pravila.domain.text import ContactLabel, RuleText
 from svoi_pravila.domain.user import User
+from svoi_pravila.privacy import load_privacy_catalog
 
 _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     401: {"model": ErrorBody},
@@ -253,6 +255,36 @@ def _register_me(
             RequestMyDataExportCommand(telegram_user_id=auth.telegram_user_id)
         )
         return ExportDeliveryResponse.model_validate({"delivered_to": result.delivered_to})
+
+    @router.get(
+        "/privacy/texts",
+        operation_id="getPrivacyTexts",
+        response_model=PrivacyTextsResponse,
+        responses=_ERROR_RESPONSES,
+    )
+    async def get_privacy_texts(
+        response: Response,
+        auth: auth_dep,
+    ) -> PrivacyTextsResponse:
+        _ = auth
+        no_store(response)
+        catalog = load_privacy_catalog()
+        return PrivacyTextsResponse.model_validate(
+            {
+                "export": {
+                    "description": catalog.export.description,
+                    "sections": catalog.export.sections,
+                },
+                "revoke": {
+                    "description": catalog.revoke.description,
+                    "confirm": catalog.revoke.confirm,
+                },
+                "delete": {
+                    "description": catalog.delete.description,
+                    "confirm": catalog.delete.confirm,
+                },
+            }
+        )
 
     @router.post(
         "/me/consents/revoke",

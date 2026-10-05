@@ -1,6 +1,8 @@
 import { useState } from "react";
 
+import { ErrorView, LoadingView } from "../components/StatusViews";
 import { usePrivacyActions } from "../hooks/usePrivacyActions";
+import { usePrivacyTexts } from "../hooks/usePrivacyTexts";
 import { ru } from "../localization/ru";
 import type { TelegramAdapter } from "../telegram/webapp";
 
@@ -11,11 +13,21 @@ export type PrivacyScreenProps = {
 };
 
 export function PrivacyScreen({ telegram, onRevoked, onDeleteRequested }: PrivacyScreenProps) {
+    const texts = usePrivacyTexts();
     const actions = usePrivacyActions();
     const [exportBusy, setExportBusy] = useState(false);
     const [exportMessage, setExportMessage] = useState<string | null>(null);
     const [exportError, setExportError] = useState<string | null>(null);
     const [revokeBusy, setRevokeBusy] = useState(false);
+
+    if (texts.status === "loading") {
+        return <LoadingView />;
+    }
+    if (texts.status === "error") {
+        return <ErrorView message={ru.errorGeneric} onRetry={texts.refetch} />;
+    }
+
+    const catalog = texts.data;
 
     const exportData = async () => {
         setExportBusy(true);
@@ -41,7 +53,7 @@ export function PrivacyScreen({ telegram, onRevoked, onDeleteRequested }: Privac
     };
 
     const revoke = async () => {
-        const confirmed = await telegram.showConfirm(ru.privacyRevokeConfirm);
+        const confirmed = await telegram.showConfirm(catalog.revoke.confirm);
         if (!confirmed) {
             return;
         }
@@ -57,7 +69,7 @@ export function PrivacyScreen({ telegram, onRevoked, onDeleteRequested }: Privac
     };
 
     const beginDelete = async () => {
-        const confirmed = await telegram.showConfirm(ru.privacyDeleteConfirm);
+        const confirmed = await telegram.showConfirm(catalog.delete.confirm);
         if (!confirmed) {
             return;
         }
@@ -76,7 +88,7 @@ export function PrivacyScreen({ telegram, onRevoked, onDeleteRequested }: Privac
                 <h3 id="export-title" className="block-title">
                     {ru.privacyExportAction}
                 </h3>
-                <p className="status-message">{ru.privacyExportBlurb}</p>
+                <p className="status-message">{catalog.export.description}</p>
                 <button
                     type="button"
                     className="btn btn-primary"
@@ -103,7 +115,7 @@ export function PrivacyScreen({ telegram, onRevoked, onDeleteRequested }: Privac
                 <h3 id="revoke-title" className="block-title">
                     {ru.privacyRevokeAction}
                 </h3>
-                <p className="status-message">{ru.privacyRevokeBlurb}</p>
+                <p className="status-message">{catalog.revoke.description}</p>
                 <button
                     type="button"
                     className="btn btn-secondary"
@@ -120,7 +132,7 @@ export function PrivacyScreen({ telegram, onRevoked, onDeleteRequested }: Privac
                 <h3 id="delete-title" className="block-title">
                     {ru.privacyDeleteAction}
                 </h3>
-                <p className="status-message">{ru.privacyDeleteBlurb}</p>
+                <p className="status-message">{catalog.delete.description}</p>
                 <button
                     type="button"
                     className="btn btn-danger"

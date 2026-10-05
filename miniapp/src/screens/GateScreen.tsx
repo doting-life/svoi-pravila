@@ -1,6 +1,8 @@
 import { useState } from "react";
 
+import { ErrorView, LoadingView } from "../components/StatusViews";
 import { usePrivacyActions } from "../hooks/usePrivacyActions";
+import { usePrivacyTexts } from "../hooks/usePrivacyTexts";
 import { ru } from "../localization/ru";
 import type { TelegramAdapter } from "../telegram/webapp";
 
@@ -11,12 +13,14 @@ export type GateScreenProps = {
     readonly onAccountDeleted?: () => void;
 };
 
-export function GateScreen({
-    kind,
+function GateRightsActions({
     telegram,
-    showRightsActions = false,
     onAccountDeleted,
-}: GateScreenProps) {
+}: {
+    readonly telegram: TelegramAdapter;
+    readonly onAccountDeleted?: () => void;
+}) {
+    const texts = usePrivacyTexts();
     const actions = usePrivacyActions();
     const [exportBusy, setExportBusy] = useState(false);
     const [exportMessage, setExportMessage] = useState<string | null>(null);
@@ -25,14 +29,11 @@ export function GateScreen({
     const [deleteBusy, setDeleteBusy] = useState(false);
     const [deleteError, setDeleteError] = useState<string | null>(null);
 
-    if (kind === "unauthorized") {
-        return (
-            <section className="gate" aria-labelledby="gate-title">
-                <h2 id="gate-title" className="screen-title">
-                    {ru.gateUnauthorized}
-                </h2>
-            </section>
-        );
+    if (texts.status === "loading") {
+        return <LoadingView />;
+    }
+    if (texts.status === "error") {
+        return <ErrorView message={ru.errorGeneric} onRetry={texts.refetch} />;
     }
 
     const exportData = async () => {
@@ -59,7 +60,7 @@ export function GateScreen({
     };
 
     const beginDelete = async () => {
-        const confirmed = await telegram.showConfirm(ru.privacyDeleteConfirm);
+        const confirmed = await telegram.showConfirm(texts.data.delete.confirm);
         if (!confirmed) {
             return;
         }
@@ -82,6 +83,90 @@ export function GateScreen({
     };
 
     return (
+        <>
+            {deleteStep === "idle" ? (
+                <div className="list-item-actions">
+                    <button
+                        type="button"
+                        className="btn btn-secondary"
+                        disabled={exportBusy}
+                        onClick={() => {
+                            void exportData();
+                        }}
+                    >
+                        {exportBusy ? ru.loading : ru.privacyExportAction}
+                    </button>
+                    <button
+                        type="button"
+                        className="btn btn-danger"
+                        onClick={() => {
+                            void beginDelete();
+                        }}
+                    >
+                        {ru.privacyDeleteAction}
+                    </button>
+                </div>
+            ) : (
+                <div className="list-item-actions">
+                    <button
+                        type="button"
+                        className="btn btn-danger"
+                        disabled={deleteBusy}
+                        onClick={() => {
+                            void confirmDelete();
+                        }}
+                    >
+                        {deleteBusy ? ru.loading : ru.privacyDeleteForever}
+                    </button>
+                    <button
+                        type="button"
+                        className="btn btn-secondary"
+                        disabled={deleteBusy}
+                        onClick={() => {
+                            setDeleteStep("idle");
+                            setDeleteError(null);
+                        }}
+                    >
+                        {ru.cancel}
+                    </button>
+                </div>
+            )}
+            {exportMessage !== null ? (
+                <p className="status-message" role="status">
+                    {exportMessage}
+                </p>
+            ) : null}
+            {exportError !== null ? (
+                <p className="status-message" role="alert">
+                    {exportError}
+                </p>
+            ) : null}
+            {deleteError !== null ? (
+                <p className="status-message" role="alert">
+                    {deleteError}
+                </p>
+            ) : null}
+        </>
+    );
+}
+
+export function GateScreen({
+    kind,
+    telegram,
+    showRightsActions = false,
+    onAccountDeleted,
+}: GateScreenProps) {
+    if (kind === "unauthorized") {
+        return (
+            <section className="gate" aria-labelledby="gate-title">
+                <h2 id="gate-title" className="screen-title">
+                    {ru.gateUnauthorized}
+                </h2>
+            </section>
+        );
+    }
+
+    return (
         <section className="gate" aria-labelledby="gate-title">
             <h2 id="gate-title" className="screen-title">
                 {ru.gateIncomplete}
@@ -97,70 +182,7 @@ export function GateScreen({
                 {ru.close}
             </button>
             {showRightsActions ? (
-                <>
-                    {deleteStep === "idle" ? (
-                        <div className="list-item-actions">
-                            <button
-                                type="button"
-                                className="btn btn-secondary"
-                                disabled={exportBusy}
-                                onClick={() => {
-                                    void exportData();
-                                }}
-                            >
-                                {exportBusy ? ru.loading : ru.privacyExportAction}
-                            </button>
-                            <button
-                                type="button"
-                                className="btn btn-danger"
-                                onClick={() => {
-                                    void beginDelete();
-                                }}
-                            >
-                                {ru.privacyDeleteAction}
-                            </button>
-                        </div>
-                    ) : (
-                        <div className="list-item-actions">
-                            <button
-                                type="button"
-                                className="btn btn-danger"
-                                disabled={deleteBusy}
-                                onClick={() => {
-                                    void confirmDelete();
-                                }}
-                            >
-                                {deleteBusy ? ru.loading : ru.privacyDeleteForever}
-                            </button>
-                            <button
-                                type="button"
-                                className="btn btn-secondary"
-                                disabled={deleteBusy}
-                                onClick={() => {
-                                    setDeleteStep("idle");
-                                    setDeleteError(null);
-                                }}
-                            >
-                                {ru.cancel}
-                            </button>
-                        </div>
-                    )}
-                    {exportMessage !== null ? (
-                        <p className="status-message" role="status">
-                            {exportMessage}
-                        </p>
-                    ) : null}
-                    {exportError !== null ? (
-                        <p className="status-message" role="alert">
-                            {exportError}
-                        </p>
-                    ) : null}
-                    {deleteError !== null ? (
-                        <p className="status-message" role="alert">
-                            {deleteError}
-                        </p>
-                    ) : null}
-                </>
+                <GateRightsActions telegram={telegram} onAccountDeleted={onAccountDeleted} />
             ) : null}
         </section>
     );

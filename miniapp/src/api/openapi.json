@@ -329,6 +329,71 @@
         "title": "MiniappErrorCode",
         "type": "string"
       },
+      "PrivacyActionTextsResponse": {
+        "description": "Revoke or delete blurb and confirm copy (C0).",
+        "properties": {
+          "confirm": {
+            "minLength": 1,
+            "title": "Confirm",
+            "type": "string"
+          },
+          "description": {
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "confirm"
+        ],
+        "title": "PrivacyActionTextsResponse",
+        "type": "object"
+      },
+      "PrivacyExportTextsResponse": {
+        "description": "Export disclosure copy from the shared privacy catalog (C0).",
+        "properties": {
+          "description": {
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "sections": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Sections",
+            "type": "object"
+          }
+        },
+        "required": [
+          "description",
+          "sections"
+        ],
+        "title": "PrivacyExportTextsResponse",
+        "type": "object"
+      },
+      "PrivacyTextsResponse": {
+        "description": "GET /privacy/texts — shared privacy copy for the mini-app (C0).",
+        "properties": {
+          "delete": {
+            "$ref": "#/components/schemas/PrivacyActionTextsResponse"
+          },
+          "export": {
+            "$ref": "#/components/schemas/PrivacyExportTextsResponse"
+          },
+          "revoke": {
+            "$ref": "#/components/schemas/PrivacyActionTextsResponse"
+          }
+        },
+        "required": [
+          "export",
+          "revoke",
+          "delete"
+        ],
+        "title": "PrivacyTextsResponse",
+        "type": "object"
+      },
       "RenameContactRequest": {
         "description": "PATCH /contacts/{id}.",
         "properties": {
@@ -1779,6 +1844,115 @@
           }
         },
         "summary": "Export My Data",
+        "tags": [
+          "miniapp"
+        ]
+      }
+    },
+    "/api/v1/privacy/texts": {
+      "get": {
+        "operationId": "getPrivacyTexts",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrivacyTextsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Get Privacy Texts",
         "tags": [
           "miniapp"
         ]

@@ -1,6 +1,8 @@
 import { useState } from "react";
 
+import { ErrorView, LoadingView } from "../components/StatusViews";
 import { usePrivacyActions } from "../hooks/usePrivacyActions";
+import { usePrivacyTexts } from "../hooks/usePrivacyTexts";
 import { ru } from "../localization/ru";
 import type { TelegramAdapter } from "../telegram/webapp";
 
@@ -15,9 +17,17 @@ export function DeleteConfirmScreen({
     onCancelled,
     onDeleted,
 }: DeleteConfirmScreenProps) {
+    const texts = usePrivacyTexts();
     const actions = usePrivacyActions();
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
+
+    if (texts.status === "loading") {
+        return <LoadingView />;
+    }
+    if (texts.status === "error") {
+        return <ErrorView message={ru.errorGeneric} onRetry={texts.refetch} />;
+    }
 
     const confirmDelete = async () => {
         setBusy(true);
@@ -40,7 +50,7 @@ export function DeleteConfirmScreen({
                     {ru.privacyDeleteAction}
                 </h2>
             </header>
-            <p className="status-message">{ru.privacyDeleteConfirm}</p>
+            <p className="status-message">{texts.data.delete.confirm}</p>
             <div className="list-item-actions">
                 <button
                     type="button"

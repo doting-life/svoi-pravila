@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import { ru } from "./localization/ru";
-import { fakeAdapter, jsonResponse, mockFetch } from "./test/fakeTelegram";
+import { fakeAdapter, jsonResponse, mockFetch, privacyTexts } from "./test/fakeTelegram";
 import type { TelegramAdapter } from "./telegram/webapp";
 
 const meDone = {
@@ -223,6 +223,9 @@ describe("App", () => {
             const path = new URL(request.url).pathname;
             if (path === "/api/v1/me") {
                 return Promise.resolve(jsonResponse({ ...meDone, onboarding_step: "consent" }));
+            }
+            if (path === "/api/v1/privacy/texts") {
+                return Promise.resolve(jsonResponse(privacyTexts));
             }
             if (path === "/api/v1/me/export" && request.method === "POST") {
                 exportCalls += 1;
@@ -755,6 +758,9 @@ describe("App", () => {
             if (path === "/api/v1/me") {
                 return Promise.resolve(jsonResponse(meDone));
             }
+            if (path === "/api/v1/privacy/texts") {
+                return Promise.resolve(jsonResponse(privacyTexts));
+            }
             if (path === "/api/v1/contacts") {
                 return Promise.resolve(jsonResponse({ contacts: [contact] }));
             }
@@ -776,8 +782,8 @@ describe("App", () => {
         }) as typeof fetch;
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
         fireEvent.click(await screen.findByRole("button", { name: ru.privacyTitle }));
-        expect(await screen.findByText(ru.privacyExportBlurb)).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: ru.privacyExportAction }));
+        expect(await screen.findByText(privacyTexts.export.description)).toBeInTheDocument();
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyExportAction }));
         expect(await screen.findByText(ru.privacyExportDone)).toBeInTheDocument();
         expect(adapter.hapticNotification).toHaveBeenCalledWith("success");
         fireEvent.click(screen.getByRole("button", { name: ru.privacyExportAction }));
@@ -838,7 +844,7 @@ describe("App", () => {
             await screen.findByRole("button", { name: ru.privacyDeleteForever }),
         ).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: ru.cancel }));
-        expect(await screen.findByText(ru.privacyExportBlurb)).toBeInTheDocument();
+        expect(await screen.findByText(privacyTexts.export.description)).toBeInTheDocument();
 
         showConfirm.mockResolvedValueOnce(true);
         fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
@@ -858,6 +864,9 @@ describe("App", () => {
             const path = new URL(request.url).pathname;
             if (path === "/api/v1/me") {
                 return Promise.resolve(jsonResponse(meDone));
+            }
+            if (path === "/api/v1/privacy/texts") {
+                return Promise.resolve(jsonResponse(privacyTexts));
             }
             if (path === "/api/v1/contacts") {
                 return Promise.resolve(jsonResponse({ contacts: [contact] }));
@@ -882,14 +891,14 @@ describe("App", () => {
         }) as typeof fetch;
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
         fireEvent.click(await screen.findByRole("button", { name: ru.privacyTitle }));
-        fireEvent.click(screen.getByRole("button", { name: ru.privacyExportAction }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyExportAction }));
         expect(await screen.findByText("export failed")).toBeInTheDocument();
 
         fireEvent.click(screen.getByRole("button", { name: ru.privacyRevokeAction }));
         await waitFor(() => {
             expect(adapter.hapticNotification).toHaveBeenCalledWith("error");
         });
-        expect(screen.getByText(ru.privacyExportBlurb)).toBeInTheDocument();
+        expect(screen.getByText(privacyTexts.export.description)).toBeInTheDocument();
 
         fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
         fireEvent.click(await screen.findByRole("button", { name: ru.privacyDeleteForever }));
@@ -917,7 +926,7 @@ describe("App", () => {
         ]);
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
         fireEvent.click(await screen.findByRole("button", { name: ru.privacyTitle }));
-        expect(await screen.findByText(ru.privacyExportBlurb)).toBeInTheDocument();
+        expect(await screen.findByText(privacyTexts.export.description)).toBeInTheDocument();
         expect(adapter.BackButton.show).toHaveBeenCalled();
         backCallback?.();
         expect(await screen.findByText("Аня")).toBeInTheDocument();

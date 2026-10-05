@@ -84,6 +84,33 @@ const suggestion = {
     created_at: "2026-10-04T12:00:00.000Z",
 };
 
+const privacyTexts = {
+    export: {
+        description:
+            "Выгрузка содержит контакты, согласия, правила, предложения правил и историю выбора тона. Файл придёт в чат с ботом и не хранится на сервере.",
+        sections: {
+            согласия: "согласия",
+            контакты: "контакты",
+            правила: "правила",
+            общие_правила: "правила",
+            предложения: "предложения правил",
+            сигналы_тона: "историю выбора тона",
+        },
+    },
+    revoke: {
+        description:
+            "Отзыв согласий остановит обработку сообщений. Сохранённые правила и контакты останутся, пока вы не удалите аккаунт.",
+        confirm:
+            "Отзыв согласий остановит обработку сообщений. Сохранённые правила и контакты останутся, пока вы не удалите аккаунт. Подтвердите отзыв.",
+    },
+    delete: {
+        description:
+            "Удаление сотрёт ваш аккаунт, согласия, контакты и ваши правила. Общие правила, которые написал партнёр, останутся у него. Это нельзя отменить.",
+        confirm:
+            "Удаление сотрёт ваш аккаунт, согласия, контакты и ваши правила. Общие правила, которые написал партнёр, останутся у него. Это нельзя отменить.",
+    },
+};
+
 async function installTelegram(page, scheme) {
     await page.route("https://telegram.org/**", (route) => route.abort());
     await page.addInitScript((colorScheme) => {
@@ -178,6 +205,14 @@ async function mockApi(page, mode) {
                 status: 200,
                 contentType: "application/json",
                 body: JSON.stringify(meDone),
+            });
+            return;
+        }
+        if (path === "/api/v1/privacy/texts") {
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify(privacyTexts),
             });
             return;
         }

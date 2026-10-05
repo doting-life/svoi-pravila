@@ -24,6 +24,7 @@ from svoi_pravila.application.use_cases.ensure_user import EnsureUser, EnsureUse
 from svoi_pravila.domain.enums import RelationshipKind
 from svoi_pravila.domain.ids import TelegramUserId
 from svoi_pravila.domain.text import ContactLabel
+from svoi_pravila.privacy import load_privacy_catalog
 
 _NOW = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
 _TG = 10_015
@@ -167,6 +168,23 @@ async def test_export_unknown_user_not_found(mini_world: AppWorld) -> None:
         response = await client.post("/api/v1/me/export", headers=_auth_header(_TG))
     assert response.status_code == 404
     assert response.json()["code"] == MiniappErrorCode.NOT_FOUND
+
+
+@pytest.mark.unit
+async def test_privacy_texts_match_catalog(mini_world: AppWorld) -> None:
+    catalog = load_privacy_catalog()
+    app = _build_app(mini_world)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/v1/privacy/texts", headers=_auth_header(_TG))
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    body = response.json()
+    assert body["export"]["description"] == catalog.export.description
+    assert body["export"]["sections"] == catalog.export.sections
+    assert body["revoke"]["description"] == catalog.revoke.description
+    assert body["revoke"]["confirm"] == catalog.revoke.confirm
+    assert body["delete"]["description"] == catalog.delete.description
+    assert body["delete"]["confirm"] == catalog.delete.confirm
 
 
 @pytest.mark.unit

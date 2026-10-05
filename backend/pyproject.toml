@@ -57,6 +57,7 @@ packages = ["src/svoi_pravila"]
 "src/svoi_pravila/adapters/consents/special_category/v1.txt" = "svoi_pravila/adapters/consents/special_category/v1.txt"
 "src/svoi_pravila/adapters/channels/telegram/localization/ru.json" = "svoi_pravila/adapters/channels/telegram/localization/ru.json"
 "src/svoi_pravila/api/miniapp/localization/ru.json" = "svoi_pravila/api/miniapp/localization/ru.json"
+"src/svoi_pravila/privacy/ru.json" = "svoi_pravila/privacy/ru.json"
 "src/svoi_pravila/domain/safety/crisis_patterns/ru/v2.txt" = "svoi_pravila/domain/safety/crisis_patterns/ru/v2.txt"
 "src/svoi_pravila/domain/safety/support_resources/ru/v1.txt" = "svoi_pravila/domain/safety/support_resources/ru/v1.txt"
 

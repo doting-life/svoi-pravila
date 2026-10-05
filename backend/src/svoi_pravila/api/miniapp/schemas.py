@@ -35,6 +35,28 @@ class ExportDeliveryResponse(BaseModel):
     delivered_to: Literal["bot_chat"]
 
 
+class PrivacyExportTextsResponse(BaseModel):
+    """Export disclosure copy from the shared privacy catalog (C0)."""
+
+    description: str = Field(min_length=1)
+    sections: dict[str, str]
+
+
+class PrivacyActionTextsResponse(BaseModel):
+    """Revoke or delete blurb and confirm copy (C0)."""
+
+    description: str = Field(min_length=1)
+    confirm: str = Field(min_length=1)
+
+
+class PrivacyTextsResponse(BaseModel):
+    """GET /privacy/texts — shared privacy copy for the mini-app (C0)."""
+
+    export: PrivacyExportTextsResponse
+    revoke: PrivacyActionTextsResponse
+    delete: PrivacyActionTextsResponse
+
+
 class ContactItem(BaseModel):
     """Contact list/detail item."""
 

@@ -285,6 +285,8 @@ jobs:
           set -euo pipefail
           # TEST-only probe: first event, sleep 2s, final event. First bytes must arrive
           # before the stream ends (proves reverse_proxy flush_interval -1).
+          # Read fewer bytes than the first event (~40B); urllib read(n) waits until n
+          # bytes or EOF, so read(64) falsely waited for the post-sleep second event.
           python3 - <<'PY'
           import time
           import urllib.request
@@ -293,9 +295,9 @@ jobs:
           started = time.monotonic()
           with urllib.request.urlopen(url, timeout=10) as resp:
               assert resp.headers.get_content_type() == "text/event-stream"
-              first = resp.read(64)
+              first = resp.read(16)
               first_at = time.monotonic() - started
-          assert b"event: probe" in first or b"data:" in first, first
+          assert b"event:" in first or b"data:" in first, first
           assert first_at < 1.5, f"first SSE bytes arrived too late: {first_at:.3f}s"
           print(f"sse_flush_ok first_bytes_at={first_at:.3f}s")
           PY

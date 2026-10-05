@@ -142,3 +142,33 @@ class DismissSuggestionResponse(BaseModel):
 
     outcome: Literal["dismissed", "already_decided"]
     suggestion_id: str
+
+
+class DecodeRequest(BaseModel):
+    """POST /decode — incoming text to decode (same limits as DM)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class SuggestFromDecodeRequest(BaseModel):
+    """POST /suggestions/from-decode — one-shot rule-source token."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=1, max_length=128)
+
+
+class SuggestFromDecodeResponse(BaseModel):
+    """POST /suggestions/from-decode outcomes (same as the bot)."""
+
+    outcome: Literal[
+        "ok",
+        "none",
+        "unavailable",
+        "crisis",
+        "quota_exceeded",
+        "pending_exists",
+    ]
+    suggestion: SuggestionItem | None = None

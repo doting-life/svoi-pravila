@@ -25,6 +25,12 @@ class MiniappErrorCode(StrEnum):
     INVALID_TRANSITION = "invalid_transition"
     VALIDATION_ERROR = "validation_error"
     BODY_TOO_LARGE = "body_too_large"
+    TEXT_TOO_SHORT = "text_too_short"
+    TEXT_TOO_LONG = "text_too_long"
+    QUOTA_EXCEEDED = "quota_exceeded"
+    GENERATION_UNAVAILABLE = "generation_unavailable"
+    INVALID_OUTPUT = "invalid_output"
+    BUSY = "busy"
 
 
 class ErrorBody(BaseModel):

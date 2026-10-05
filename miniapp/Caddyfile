@@ -16,7 +16,9 @@
 		request_body {
 			max_size 16KB
 		}
-		reverse_proxy api:8000
+		reverse_proxy api:8000 {
+			flush_interval -1
+		}
 	}
 
 	@healthz path /healthz /readyz

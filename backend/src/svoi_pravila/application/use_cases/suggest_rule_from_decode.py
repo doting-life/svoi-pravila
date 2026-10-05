@@ -76,6 +76,7 @@ class SuggestRuleFromDecodeCommand:
 
     telegram_user_id: TelegramUserId
     token: str
+    surface: UsageSurface
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,7 +137,11 @@ class SuggestRuleFromDecode:
         quota_pseudonym = self._ports.pseudonymizer.pseudonymize(_QUOTA_PURPOSE, user_key)
         if not (await self._ports.quota.check(quota_pseudonym)).allowed:
             return SuggestRuleFromDecodeResult(outcome=SuggestRuleFromDecodeOutcome.QUOTA_EXCEEDED)
-        return await self._generate_and_store(user_key=user_key, prepared=prepared)
+        return await self._generate_and_store(
+            user_key=user_key,
+            surface=command.surface,
+            prepared=prepared,
+        )
 
     async def _redeem_and_screen(
         self, token: str, user_key: str
@@ -192,7 +197,7 @@ class SuggestRuleFromDecode:
             )
 
     async def _generate_and_store(
-        self, *, user_key: str, prepared: _PreparedCall
+        self, *, user_key: str, surface: UsageSurface, prepared: _PreparedCall
     ) -> SuggestRuleFromDecodeResult:
         started = self._ports.monotonic.monotonic()
         try:
@@ -209,9 +214,11 @@ class SuggestRuleFromDecode:
             GenerationRefusedByProvider,
             InvalidGenerationOutput,
         ) as exc:
-            await self._persist_error(user_key=user_key, started=started, error=exc)
+            await self._persist_error(
+                user_key=user_key, surface=surface, started=started, error=exc
+            )
             raise
-        await self._persist_ok(user_key=user_key, result=generated)
+        await self._persist_ok(user_key=user_key, surface=surface, result=generated)
         if isinstance(generated, SuggestRuleNothing):
             return SuggestRuleFromDecodeResult(outcome=SuggestRuleFromDecodeOutcome.NONE)
         return await self._persist_suggestion(prepared=prepared, proposed=generated)
@@ -257,7 +264,9 @@ class SuggestRuleFromDecode:
                 suggestion=decode_pending,
             )
 
-    async def _persist_ok(self, *, user_key: str, result: SuggestRuleResult) -> None:
+    async def _persist_ok(
+        self, *, user_key: str, surface: UsageSurface, result: SuggestRuleResult
+    ) -> None:
         meta = result.meta
         analytics = self._ports.pseudonymizer.pseudonymize(_ANALYTICS_PURPOSE, user_key)
         event = UsageEvent(
@@ -265,7 +274,7 @@ class SuggestRuleFromDecode:
             occurred_at=self._ports.clock.now().replace(microsecond=0),
             user_pseudonym=analytics,
             scenario=UsageScenario.SUGGEST_RULE,
-            surface=UsageSurface.DM,
+            surface=surface,
             outcome=UsageOutcome.OK,
             unavailable_kind=None,
             safety=None,
@@ -285,6 +294,7 @@ class SuggestRuleFromDecode:
         self,
         *,
         user_key: str,
+        surface: UsageSurface,
         started: float,
         error: GenerationUnavailable | GenerationRefusedByProvider | InvalidGenerationOutput,
     ) -> None:
@@ -306,7 +316,7 @@ class SuggestRuleFromDecode:
             occurred_at=self._ports.clock.now().replace(microsecond=0),
             user_pseudonym=analytics,
             scenario=UsageScenario.SUGGEST_RULE,
-            surface=UsageSurface.DM,
+            surface=surface,
             outcome=outcome,
             unavailable_kind=unavailable_kind,
             safety=None,

@@ -65,6 +65,7 @@ class DecodeIncomingCommand:
 
     telegram_user_id: TelegramUserId
     incoming_text: str
+    surface: UsageSurface
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +99,7 @@ class _UsageDraft:
     """C0 fields for a usage event before timestamps are filled in."""
 
     user_key: str
+    surface: UsageSurface
     started: float
     first_chunk_at: float | None
     outcome: UsageOutcome
@@ -126,9 +128,10 @@ class DecodeIncoming:
 
         relationship, rules = await self._load_context(command.telegram_user_id)
         user_key = str(command.telegram_user_id.value)
+        surface = command.surface
         if self._ports.crisis_screen.hit(text):
             completed = _screened_decode_completed()
-            await self._persist(self._event_from_screened(user_key))
+            await self._persist(self._event_from_screened(user_key, surface))
             yield completed
             return
         lock_pseudonym = self._ports.pseudonymizer.pseudonymize(_RATE_LIMIT_PURPOSE, user_key)
@@ -164,6 +167,7 @@ class DecodeIncoming:
                     await self._persist(
                         self._event_from_completed(
                             user_key=user_key,
+                            surface=surface,
                             started=started,
                             first_chunk_at=first_chunk_at,
                             completed=completed,
@@ -177,6 +181,7 @@ class DecodeIncoming:
             await self._persist(
                 self._event_from_failure(
                     user_key=user_key,
+                    surface=surface,
                     started=started,
                     first_chunk_at=first_chunk_at,
                     error=exc,
@@ -211,7 +216,7 @@ class DecodeIncoming:
             occurred_at=occurred,
             user_pseudonym=analytics,
             scenario=UsageScenario.DECODE,
-            surface=UsageSurface.DM,
+            surface=draft.surface,
             outcome=draft.outcome,
             unavailable_kind=draft.unavailable_kind,
             safety=draft.safety,
@@ -229,10 +234,11 @@ class DecodeIncoming:
             billable_tokens=draft.usage.billable,
         )
 
-    def _event_from_screened(self, user_key: str) -> UsageEvent:
+    def _event_from_screened(self, user_key: str, surface: UsageSurface) -> UsageEvent:
         return self._base_event(
             _UsageDraft(
                 user_key=user_key,
+                surface=surface,
                 started=self._ports.monotonic.monotonic(),
                 first_chunk_at=None,
                 outcome=UsageOutcome.SCREENED,
@@ -250,6 +256,7 @@ class DecodeIncoming:
         self,
         *,
         user_key: str,
+        surface: UsageSurface,
         started: float,
         first_chunk_at: float | None,
         completed: DecodeCompleted,
@@ -258,6 +265,7 @@ class DecodeIncoming:
         return self._base_event(
             _UsageDraft(
                 user_key=user_key,
+                surface=surface,
                 started=started,
                 first_chunk_at=first_chunk_at,
                 outcome=UsageOutcome.OK,
@@ -275,6 +283,7 @@ class DecodeIncoming:
         self,
         *,
         user_key: str,
+        surface: UsageSurface,
         started: float,
         first_chunk_at: float | None,
         error: GenerationUnavailable | GenerationRefusedByProvider | InvalidGenerationOutput,
@@ -282,6 +291,7 @@ class DecodeIncoming:
         if isinstance(error, GenerationUnavailable):
             return self._event_from_unavailable(
                 user_key=user_key,
+                surface=surface,
                 started=started,
                 first_chunk_at=first_chunk_at,
                 error=error,
@@ -289,12 +299,14 @@ class DecodeIncoming:
         if isinstance(error, GenerationRefusedByProvider):
             return self._event_from_refused(
                 user_key=user_key,
+                surface=surface,
                 started=started,
                 first_chunk_at=first_chunk_at,
                 error=error,
             )
         return self._event_from_invalid(
             user_key=user_key,
+            surface=surface,
             started=started,
             first_chunk_at=first_chunk_at,
             error=error,
@@ -304,6 +316,7 @@ class DecodeIncoming:
         self,
         *,
         user_key: str,
+        surface: UsageSurface,
         started: float,
         first_chunk_at: float | None,
         error: GenerationUnavailable,
@@ -311,6 +324,7 @@ class DecodeIncoming:
         return self._base_event(
             _UsageDraft(
                 user_key=user_key,
+                surface=surface,
                 started=started,
                 first_chunk_at=first_chunk_at,
                 outcome=UsageOutcome.UNAVAILABLE,
@@ -328,6 +342,7 @@ class DecodeIncoming:
         self,
         *,
         user_key: str,
+        surface: UsageSurface,
         started: float,
         first_chunk_at: float | None,
         error: GenerationRefusedByProvider,
@@ -335,6 +350,7 @@ class DecodeIncoming:
         return self._base_event(
             _UsageDraft(
                 user_key=user_key,
+                surface=surface,
                 started=started,
                 first_chunk_at=first_chunk_at,
                 outcome=UsageOutcome.REFUSED,
@@ -352,6 +368,7 @@ class DecodeIncoming:
         self,
         *,
         user_key: str,
+        surface: UsageSurface,
         started: float,
         first_chunk_at: float | None,
         error: InvalidGenerationOutput,
@@ -359,6 +376,7 @@ class DecodeIncoming:
         return self._base_event(
             _UsageDraft(
                 user_key=user_key,
+                surface=surface,
                 started=started,
                 first_chunk_at=first_chunk_at,
                 outcome=UsageOutcome.INVALID_OUTPUT,

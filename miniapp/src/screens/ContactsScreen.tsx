@@ -13,6 +13,7 @@ export type ContactsScreenProps = {
     readonly telegram: TelegramAdapter;
     readonly onOpenContact: (contact: Contact) => void;
     readonly onOpenPrivacy: () => void;
+    readonly onOpenDecode: () => void;
     readonly onActivated: () => void;
 };
 
@@ -23,6 +24,7 @@ export function ContactsScreen({
     telegram,
     onOpenContact,
     onOpenPrivacy,
+    onOpenDecode,
     onActivated,
 }: ContactsScreenProps) {
     const contacts = useContacts();
@@ -110,6 +112,11 @@ export function ContactsScreen({
                     {ru.contactsTitle}
                 </h2>
                 <div className="screen-header-actions">
+                    {activeContactId !== null && activeContactId !== undefined ? (
+                        <button type="button" className="btn btn-primary" onClick={onOpenDecode}>
+                            {ru.decodeEntry}
+                        </button>
+                    ) : null}
                     <button type="button" className="btn btn-secondary" onClick={onOpenPrivacy}>
                         {ru.privacyTitle}
                     </button>

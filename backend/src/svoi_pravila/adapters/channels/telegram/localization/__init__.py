@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from importlib import resources
 
 from svoi_pravila.application.ports.generation import HelpSayIntent
+from svoi_pravila.application.support_resources import load_support_resources
 from svoi_pravila.domain.enums import Firmness, RelationshipKind, RuleCategory
-from svoi_pravila.domain.safety import load_data_lines
 from svoi_pravila.privacy import load_privacy_catalog
 
 
@@ -315,16 +315,6 @@ def suggestion_firmness_adjective(strings: TelegramStrings, firmness: Firmness) 
     if firmness is Firmness.BALANCED:
         return strings.suggestion_firmness_balanced
     return strings.suggestion_firmness_firm
-
-
-def load_support_resources() -> tuple[str, ...]:
-    """Load versioned support-resource lines, skipping comments."""
-    raw = (
-        resources.files("svoi_pravila.domain.safety")
-        .joinpath("support_resources/ru/v1.txt")
-        .read_text(encoding="utf-8")
-    )
-    return load_data_lines(raw)
 
 
 def render_crisis_message(strings: TelegramStrings) -> str:

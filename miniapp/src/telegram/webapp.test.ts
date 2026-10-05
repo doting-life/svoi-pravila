@@ -166,4 +166,53 @@ describe("createTelegramAdapter", () => {
         expect(document.documentElement.dataset.colorScheme).toBe("light");
         expect(document.documentElement.style.getPropertyValue("--tg-bg-color")).toBe("#abcdef");
     });
+
+    it("forwards switchInlineQuery when the WebApp method exists", () => {
+        const switchInlineQuery = vi.fn();
+        Object.defineProperty(window, "Telegram", {
+            configurable: true,
+            value: {
+                WebApp: {
+                    initData: "query_id=1",
+                    colorScheme: "light",
+                    themeParams: {},
+                    switchInlineQuery,
+                    ready: vi.fn(),
+                    expand: vi.fn(),
+                    close: vi.fn(),
+                    showConfirm: vi.fn(),
+                    onEvent: vi.fn(),
+                    offEvent: vi.fn(),
+                    HapticFeedback: { notificationOccurred: vi.fn() },
+                },
+            },
+        });
+        const adapter = createTelegramAdapter();
+        adapter.switchInlineQuery("token", ["users", "groups", "channels"]);
+        expect(switchInlineQuery).toHaveBeenCalledWith("token", ["users", "groups", "channels"]);
+    });
+
+    it("no-ops switchInlineQuery when WebApp is missing the method", () => {
+        Object.defineProperty(window, "Telegram", {
+            configurable: true,
+            value: undefined,
+        });
+        const adapter = createTelegramAdapter();
+        expect(() => {
+            adapter.switchInlineQuery("token", ["users"]);
+        }).not.toThrow();
+    });
+
+    it("invokes themeChanged callback with the current scheme", () => {
+        const mocks = installMockWebApp("query_id=1");
+        const adapter = createTelegramAdapter();
+        const seen: string[] = [];
+        adapter.onColorSchemeChanged((scheme) => {
+            seen.push(scheme);
+        });
+        const handler = mocks.onEvent.mock.calls[0]?.[1] as (() => void) | undefined;
+        expect(handler).toEqual(expect.any(Function));
+        handler?.();
+        expect(seen).toEqual(["dark"]);
+    });
 });

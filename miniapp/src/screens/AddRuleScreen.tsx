@@ -10,12 +10,20 @@ export type AddRuleScreenProps = {
     readonly contactId: string;
     readonly telegram: TelegramAdapter;
     readonly onCreated: () => void;
+    readonly initialCategory?: RuleCategory;
+    readonly initialText?: string;
 };
 
-export function AddRuleScreen({ contactId, telegram, onCreated }: AddRuleScreenProps) {
+export function AddRuleScreen({
+    contactId,
+    telegram,
+    onCreated,
+    initialCategory = "other",
+    initialText = "",
+}: AddRuleScreenProps) {
     const rules = useRules(contactId);
-    const [category, setCategory] = useState<RuleCategory>("other");
-    const [text, setText] = useState("");
+    const [category, setCategory] = useState<RuleCategory>(initialCategory);
+    const [text, setText] = useState(initialText);
     const [formError, setFormError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 

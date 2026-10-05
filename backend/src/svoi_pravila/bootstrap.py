@@ -91,6 +91,7 @@ from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
 )
 from svoi_pravila.config import (
     DatabaseSettings,
+    Environment,
     Settings,
     TelegramUpdatesMode,
     TestInfraSettings,
@@ -114,12 +115,23 @@ class _CorePorts:
     pseudonymizer: HmacPseudonymizer
 
 
+@dataclass(frozen=True, slots=True)
+class _DecodeWire:
+    """Shared decode stack for mini-app and Telegram."""
+
+    decode_incoming: DecodeIncoming
+    suggest_rule_from_decode: SuggestRuleFromDecode
+    prepared_results: ValkeyPreparedResults
+    rule_sources: ValkeyRuleSources
+
+
 def _build_miniapp_mount(
     settings: Settings,
     ports: _CorePorts,
     *,
     bot: Bot,
     inline_reuse: InlineResultReuse,
+    decode: _DecodeWire,
 ) -> APIRouter:
     """Wire mini-app `/api/v1` (caller ensures a bot token is configured)."""
     bot_token = settings.telegram_bot_token
@@ -182,6 +194,12 @@ def _build_miniapp_mount(
                 key_prefix="miniapp:export",
             ),
             display_timezone=settings.display_timezone,
+            decode_incoming=decode.decode_incoming,
+            suggest_rule_from_decode=decode.suggest_rule_from_decode,
+            prepared_results=decode.prepared_results,
+            rule_sources=decode.rule_sources,
+            pseudonymizer=ports.pseudonymizer,
+            enable_test_routes=settings.environment is Environment.TEST,
         )
     )
 
@@ -241,23 +259,16 @@ def create_application(settings: Settings) -> FastAPI:
         valkey=valkey,
         pseudonymizer=pseudonymizer,
     )
-    lifecycle: TelegramLifecycle | None = None
-    routers: list[APIRouter] = []
-    shared_bot: Bot | None = None
-    bot_token = settings.telegram_bot_token
-    if bot_token is not None and bot_token.get_secret_value():
-        shared_bot = Bot(token=bot_token.get_secret_value())
-        routers.append(
-            _build_miniapp_mount(
-                settings,
-                core,
-                bot=shared_bot,
-                inline_reuse=inline_reuse,
-            )
-        )
-    if settings.telegram_updates_mode is not TelegramUpdatesMode.DISABLED:
-        strings = load_ru_strings()
-        decode_incoming = DecodeIncoming(
+    prepared_results = ValkeyPreparedResults(
+        valkey,
+        ttl_seconds=settings.prepared_result_ttl_seconds,
+    )
+    rule_sources = ValkeyRuleSources(
+        valkey,
+        ttl_seconds=settings.rule_source_ttl_seconds,
+    )
+    decode_wire = _DecodeWire(
+        decode_incoming=DecodeIncoming(
             DecodeIncomingPorts(
                 uow_factory=uow_factory,
                 catalog=catalog,
@@ -277,7 +288,48 @@ def create_application(settings: Settings) -> FastAPI:
                 crisis_screen=crisis_screen,
                 deadline_seconds=settings.decode_deadline_seconds,
             )
+        ),
+        suggest_rule_from_decode=SuggestRuleFromDecode(
+            SuggestRuleFromDecodePorts(
+                uow_factory=uow_factory,
+                catalog=catalog,
+                rule_sources=rule_sources,
+                generator=generator,
+                quota=ValkeyRateLimiter(
+                    valkey,
+                    limit=settings.suggest_per_hour,
+                    window_seconds=3600,
+                    key_prefix="tg:suggest:quota",
+                ),
+                sink=sink,
+                clock=clock,
+                monotonic=monotonic,
+                ids=ids,
+                pseudonymizer=pseudonymizer,
+                crisis_screen=crisis_screen,
+                deadline_seconds=settings.decode_deadline_seconds,
+            )
+        ),
+        prepared_results=prepared_results,
+        rule_sources=rule_sources,
+    )
+    lifecycle: TelegramLifecycle | None = None
+    routers: list[APIRouter] = []
+    shared_bot: Bot | None = None
+    bot_token = settings.telegram_bot_token
+    if bot_token is not None and bot_token.get_secret_value():
+        shared_bot = Bot(token=bot_token.get_secret_value())
+        routers.append(
+            _build_miniapp_mount(
+                settings,
+                core,
+                bot=shared_bot,
+                inline_reuse=inline_reuse,
+                decode=decode_wire,
+            )
         )
+    if settings.telegram_updates_mode is not TelegramUpdatesMode.DISABLED:
+        strings = load_ru_strings()
         inline_compose = InlineCompose(
             InlineComposePorts(
                 uow_factory=uow_factory,
@@ -301,31 +353,6 @@ def create_application(settings: Settings) -> FastAPI:
                 intent_prefixes=help_say_intent_prefixes(strings),
             )
         )
-        rule_sources = ValkeyRuleSources(
-            valkey,
-            ttl_seconds=settings.rule_source_ttl_seconds,
-        )
-        suggest_rule_from_decode = SuggestRuleFromDecode(
-            SuggestRuleFromDecodePorts(
-                uow_factory=uow_factory,
-                catalog=catalog,
-                rule_sources=rule_sources,
-                generator=generator,
-                quota=ValkeyRateLimiter(
-                    valkey,
-                    limit=settings.suggest_per_hour,
-                    window_seconds=3600,
-                    key_prefix="tg:suggest:quota",
-                ),
-                sink=sink,
-                clock=clock,
-                monotonic=monotonic,
-                ids=ids,
-                pseudonymizer=pseudonymizer,
-                crisis_screen=crisis_screen,
-                deadline_seconds=settings.decode_deadline_seconds,
-            )
-        )
         deps = TelegramDeps(
             strings=strings,
             get_onboarding_step=GetOnboardingStep(uow_factory, catalog),
@@ -333,7 +360,7 @@ def create_application(settings: Settings) -> FastAPI:
             accept_age=AcceptAgeConfirmation(uow_factory, ids, clock),
             grant_consent=GrantConsent(uow_factory, catalog, ids, clock),
             get_consent_document=GetConsentDocument(catalog),
-            decode_incoming=decode_incoming,
+            decode_incoming=decode_wire.decode_incoming,
             inline_compose=inline_compose,
             record_inline_choice=RecordInlineChoice(
                 RecordInlineChoicePorts(
@@ -346,12 +373,9 @@ def create_application(settings: Settings) -> FastAPI:
                     pseudonymizer=pseudonymizer,
                 )
             ),
-            prepared_results=ValkeyPreparedResults(
-                valkey,
-                ttl_seconds=settings.prepared_result_ttl_seconds,
-            ),
-            rule_sources=rule_sources,
-            suggest_rule_from_decode=suggest_rule_from_decode,
+            prepared_results=decode_wire.prepared_results,
+            rule_sources=decode_wire.rule_sources,
+            suggest_rule_from_decode=decode_wire.suggest_rule_from_decode,
             inline_queries=InlineQueryCoordinator(
                 AsyncioSleeper(),
                 debounce_seconds=settings.inline_debounce_ms / 1000.0,

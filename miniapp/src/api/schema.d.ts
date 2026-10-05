@@ -91,6 +91,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/decode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decode Incoming */
+        post: operations["decodeIncoming"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me": {
         parameters: {
             query?: never;
@@ -187,6 +204,23 @@ export interface paths {
         put?: never;
         /** Archive Rule */
         post: operations["archiveRule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/suggestions/from-decode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Suggest From Decode */
+        post: operations["suggestFromDecode"];
         delete?: never;
         options?: never;
         head?: never;
@@ -348,6 +382,14 @@ export interface components {
             text: string;
         };
         /**
+         * DecodeRequest
+         * @description POST /decode — incoming text to decode (same limits as DM).
+         */
+        DecodeRequest: {
+            /** Text */
+            text: string;
+        };
+        /**
          * DismissSuggestionResponse
          * @description POST /suggestions/{id}/dismiss.
          */
@@ -410,7 +452,7 @@ export interface components {
          * @description Stable C0 error codes returned to the mini-app client.
          * @enum {string}
          */
-        MiniappErrorCode: "unauthorized" | "init_data_invalid" | "init_data_expired" | "rate_limited" | "onboarding_required" | "consent_required" | "not_found" | "contact_limit" | "open_rule_limit" | "bot_chat_unavailable" | "invalid_transition" | "validation_error" | "body_too_large";
+        MiniappErrorCode: "unauthorized" | "init_data_invalid" | "init_data_expired" | "rate_limited" | "onboarding_required" | "consent_required" | "not_found" | "contact_limit" | "open_rule_limit" | "bot_chat_unavailable" | "invalid_transition" | "validation_error" | "body_too_large" | "text_too_short" | "text_too_long" | "quota_exceeded" | "generation_unavailable" | "invalid_output" | "busy";
         /**
          * PrivacyActionTextsResponse
          * @description Revoke or delete blurb and confirm copy (C0).
@@ -491,6 +533,26 @@ export interface components {
         RuleListResponse: {
             /** Rules */
             rules: components["schemas"]["RuleItem"][];
+        };
+        /**
+         * SuggestFromDecodeRequest
+         * @description POST /suggestions/from-decode — one-shot rule-source token.
+         */
+        SuggestFromDecodeRequest: {
+            /** Token */
+            token: string;
+        };
+        /**
+         * SuggestFromDecodeResponse
+         * @description POST /suggestions/from-decode outcomes (same as the bot).
+         */
+        SuggestFromDecodeResponse: {
+            /**
+             * Outcome
+             * @enum {string}
+             */
+            outcome: "ok" | "none" | "unavailable" | "crisis" | "quota_exceeded" | "pending_exists";
+            suggestion?: components["schemas"]["SuggestionItem"] | null;
         };
         /**
          * SuggestionItem
@@ -1148,6 +1210,96 @@ export interface operations {
             };
         };
     };
+    decodeIncoming: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DecodeRequest"];
+            };
+        };
+        responses: {
+            /** @description Server-Sent Events stream (analysis, then one terminal event). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     getMe: {
         parameters: {
             query?: never;
@@ -1597,6 +1749,95 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RuleItem"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    suggestFromDecode: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuggestFromDecodeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestFromDecodeResponse"];
                 };
             };
             /** @description Unauthorized */

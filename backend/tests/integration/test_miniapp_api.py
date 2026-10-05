@@ -59,6 +59,7 @@ from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
 from tests.integration.test_user_rights_delete import _scan_has_uuid
 from tests.support.init_data import InitDataOptions, build_webapp_init_data
+from tests.support.miniapp_decode import build_miniapp_decode_bundle
 
 _TOKEN = "14:INTEGRATION-MINIAPP"
 _NOW = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
@@ -135,6 +136,7 @@ def _build_app(world: _MiniappWorld) -> Any:
     )
     pepper = HmacPseudonymizer(settings.pseudonym_pepper_bytes())
     reuse = make_inline_reuse(clock)
+    decode_bundle = build_miniapp_decode_bundle(world)
     bindings = MiniappRouterBindings(
         auth=auth,
         list_contacts=ListContacts(uow_factory, catalog),
@@ -157,6 +159,12 @@ def _build_app(world: _MiniappWorld) -> Any:
             valkey, limit=3, window_seconds=3600, key_prefix="miniapp:export"
         ),
         display_timezone=settings.display_timezone,
+        decode_incoming=decode_bundle.decode_incoming,
+        suggest_rule_from_decode=decode_bundle.suggest_rule_from_decode,
+        prepared_results=decode_bundle.prepared_results,
+        rule_sources=decode_bundle.rule_sources,
+        pseudonymizer=decode_bundle.pseudonymizer,
+        enable_test_routes=True,
     )
     return create_app(
         CheckReadiness(probes=(), timeout_seconds=1.0),

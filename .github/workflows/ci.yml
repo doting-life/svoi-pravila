@@ -277,6 +277,26 @@ jobs:
               --data-binary @-)"
           test "$code" = "413"
 
+      - name: Assert Caddy does not buffer SSE (flush_interval)
+        run: |
+          set -euo pipefail
+          # TEST-only probe: first event, sleep 2s, final event. First bytes must arrive
+          # before the stream ends (proves reverse_proxy flush_interval -1).
+          python3 - <<'PY'
+          import time
+          import urllib.request
+
+          url = "http://127.0.0.1:8080/api/v1/_test/sse-flush"
+          started = time.monotonic()
+          with urllib.request.urlopen(url, timeout=10) as resp:
+              assert resp.headers.get_content_type() == "text/event-stream"
+              first = resp.read(64)
+              first_at = time.monotonic() - started
+          assert b"event: probe" in first or b"data:" in first, first
+          assert first_at < 1.5, f"first SSE bytes arrived too late: {first_at:.3f}s"
+          print(f"sse_flush_ok first_bytes_at={first_at:.3f}s")
+          PY
+
       - name: Stop local stack
         if: always()
         run: make down

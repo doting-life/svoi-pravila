@@ -50,7 +50,7 @@ from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
     SuggestRuleFromDecodeOutcome,
     SuggestRuleFromDecodeResult,
 )
-from svoi_pravila.domain.enums import RuleCategory
+from svoi_pravila.domain.enums import RuleCategory, UsageSurface
 from svoi_pravila.domain.errors import InvalidTransitionError, InvalidValueError
 from svoi_pravila.domain.ids import RuleId, RuleSuggestionId, TelegramUserId
 from svoi_pravila.domain.rule_suggestion import RuleSuggestion
@@ -406,6 +406,7 @@ async def suggest_from_decode(callback: CallbackQuery, tg_deps: TelegramDeps, bo
             SuggestRuleFromDecodeCommand(
                 telegram_user_id=TelegramUserId(callback.from_user.id),
                 token=token,
+                surface=UsageSurface.DM,
             )
         )
     except (NotFound, AccessNotGranted):

@@ -1,10 +1,14 @@
 """FastAPI router for `/api/v1` mini-app endpoints."""
 
+import asyncio
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
+from fastapi.responses import StreamingResponse
 
+from svoi_pravila.api.miniapp.decode_sse import DecodeStreamPorts, format_sse, iter_decode_sse
 from svoi_pravila.api.miniapp.deps import (
     MiniappAuthContext,
     MiniappAuthenticator,
@@ -21,6 +25,7 @@ from svoi_pravila.api.miniapp.schemas import (
     ContactListResponse,
     CreateContactRequest,
     CreateRuleRequest,
+    DecodeRequest,
     DismissSuggestionResponse,
     ExportDeliveryResponse,
     MeResponse,
@@ -28,11 +33,16 @@ from svoi_pravila.api.miniapp.schemas import (
     RenameContactRequest,
     RuleItem,
     RuleListResponse,
+    SuggestFromDecodeRequest,
+    SuggestFromDecodeResponse,
     SuggestionItem,
     SuggestionListResponse,
 )
 from svoi_pravila.application.errors import NotFound
+from svoi_pravila.application.ports.prepared_results import PreparedResults
+from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.rate_limiter import RateLimiter
+from svoi_pravila.application.ports.rule_sources import RuleSources
 from svoi_pravila.application.rule_view import RuleListItemView, project_rules_for_list
 from svoi_pravila.application.use_cases.accept_suggestion import (
     AcceptSuggestion,
@@ -43,6 +53,7 @@ from svoi_pravila.application.use_cases.create_contact import (
     CreateContact,
     CreateContactCommand,
 )
+from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming
 from svoi_pravila.application.use_cases.delete_my_account import (
     DeleteMyAccount,
     DeleteMyAccountCommand,
@@ -75,13 +86,23 @@ from svoi_pravila.application.use_cases.set_active_contact import (
     SetActiveContact,
     SetActiveContactCommand,
 )
+from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
+    SuggestRuleFromDecode,
+    SuggestRuleFromDecodeCommand,
+)
 from svoi_pravila.domain.contact import MAX_CONTACTS_PER_USER, Contact
-from svoi_pravila.domain.enums import RelationshipKind, RuleCategory
+from svoi_pravila.domain.enums import RelationshipKind, RuleCategory, UsageSurface
 from svoi_pravila.domain.ids import ContactId, RuleId, RuleSuggestionId
 from svoi_pravila.domain.rules import MAX_OPEN_RULES_PER_SCOPE, PairScope, Rule
 from svoi_pravila.domain.text import ContactLabel, RuleText
 from svoi_pravila.domain.user import User
 from svoi_pravila.privacy import load_privacy_catalog
+
+_SSE_HEADERS = {
+    "Cache-Control": "no-store",
+    "Content-Type": "text/event-stream",
+    "X-Accel-Buffering": "no",
+}
 
 _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     401: {"model": ErrorBody},
@@ -117,6 +138,12 @@ class MiniappRouterBindings:
     delete_my_account: DeleteMyAccount
     export_rate_limiter: RateLimiter
     display_timezone: str
+    decode_incoming: DecodeIncoming
+    suggest_rule_from_decode: SuggestRuleFromDecode
+    prepared_results: PreparedResults
+    rule_sources: RuleSources
+    pseudonymizer: Pseudonymizer
+    enable_test_routes: bool = False
 
 
 def _contact_item(contact: Contact) -> ContactItem:
@@ -184,7 +211,109 @@ def build_miniapp_router(bindings: MiniappRouterBindings) -> APIRouter:
     _register_contacts(router, bindings, actor_dep)
     _register_rules(router, bindings, actor_dep)
     _register_suggestions(router, bindings, actor_dep)
+    _register_decode(router, bindings, actor_dep)
+    if bindings.enable_test_routes:
+        _register_test_routes(router)
     return router
+
+
+def _register_test_routes(router: APIRouter) -> None:
+    """TEST-only SSE probe for Caddy flush_interval smoke (no auth, no LLM)."""
+
+    @router.get(
+        "/_test/sse-flush",
+        operation_id="testSseFlush",
+        include_in_schema=False,
+    )
+    async def sse_flush_probe() -> StreamingResponse:
+        async def frames() -> AsyncIterator[str]:
+            yield format_sse("probe", {"phase": "first"})
+            await asyncio.sleep(2.0)
+            yield format_sse("probe", {"phase": "done"})
+
+        return StreamingResponse(frames(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+
+def _register_decode(
+    router: APIRouter,
+    bindings: MiniappRouterBindings,
+    actor_dep: Any,
+) -> None:
+    """Register decode SSE and suggest-from-decode routes."""
+
+    @router.post(
+        "/decode",
+        operation_id="decodeIncoming",
+        responses={
+            **_ERROR_RESPONSES,
+            200: {
+                "description": "Server-Sent Events stream (analysis, then one terminal event).",
+                "content": {"text/event-stream": {}},
+            },
+        },
+    )
+    async def decode_incoming(
+        body: DecodeRequest,
+        request: Request,
+        actor: actor_dep,
+    ) -> StreamingResponse:
+        stream_ports = DecodeStreamPorts(
+            decode_incoming=bindings.decode_incoming,
+            prepared_results=bindings.prepared_results,
+            rule_sources=bindings.rule_sources,
+            pseudonymizer=bindings.pseudonymizer,
+        )
+        _ = request  # ASGI cancels ``frames`` on client disconnect (no orphan tasks).
+
+        async def frames() -> AsyncIterator[str]:
+            # Do not poll ``is_disconnected`` between frames: after the terminal
+            # event the client may already look disconnected, and breaking would
+            # cancel DecodeIncoming before usage accounting runs.
+            async for frame in iter_decode_sse(
+                stream_ports,
+                actor=actor,
+                telegram_user_id=actor.telegram_user_id,
+                text=body.text,
+            ):
+                yield frame
+
+        return StreamingResponse(frames(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+    @router.post(
+        "/suggestions/from-decode",
+        operation_id="suggestFromDecode",
+        response_model=SuggestFromDecodeResponse,
+        responses=_ERROR_RESPONSES,
+    )
+    async def suggest_from_decode(
+        body: SuggestFromDecodeRequest,
+        response: Response,
+        actor: actor_dep,
+    ) -> SuggestFromDecodeResponse:
+        no_store(response)
+        result = await bindings.suggest_rule_from_decode.execute(
+            SuggestRuleFromDecodeCommand(
+                telegram_user_id=actor.telegram_user_id,
+                token=body.token,
+                surface=UsageSurface.MINIAPP,
+            )
+        )
+        suggestion = None
+        if result.suggestion is not None:
+            s = result.suggestion
+            suggestion = SuggestionItem.model_validate(
+                {
+                    "id": str(s.id),
+                    "category": s.category.value,
+                    "text": s.text.value,
+                    "source": s.source.value,
+                    "firmness": s.firmness.value if s.firmness is not None else None,
+                    "created_at": s.created_at,
+                }
+            )
+        return SuggestFromDecodeResponse.model_validate(
+            {"outcome": result.outcome.value, "suggestion": suggestion}
+        )
 
 
 def _register_me(

@@ -16,10 +16,12 @@ import {
 import { AddRuleScreen } from "./screens/AddRuleScreen";
 import { ContactDetailScreen } from "./screens/ContactDetailScreen";
 import { ContactsScreen } from "./screens/ContactsScreen";
+import { DecodeScreen } from "./screens/DecodeScreen";
 import { DeleteConfirmScreen } from "./screens/DeleteConfirmScreen";
 import { DeletedScreen } from "./screens/DeletedScreen";
 import { GateScreen } from "./screens/GateScreen";
 import { PrivacyScreen } from "./screens/PrivacyScreen";
+import type { RuleCategory } from "./hooks/useRules";
 import {
     applyThemeCssVariables,
     createTelegramAdapter,
@@ -34,9 +36,11 @@ export type AppProps = {
 function MiniappShell({
     telegram,
     onAccountDeleted,
+    fetchImpl,
 }: {
     readonly telegram: TelegramAdapter;
     readonly onAccountDeleted: () => void;
+    readonly fetchImpl?: typeof fetch;
 }) {
     const me = useMe();
     const [nav, setNav] = useState<NavigationState>(createInitialNavigation());
@@ -130,7 +134,34 @@ function MiniappShell({
                 onOpenPrivacy={() => {
                     setNav((current) => pushScreen(current, { name: "privacy" }));
                 }}
+                onOpenDecode={() => {
+                    setNav((current) => pushScreen(current, { name: "decode" }));
+                }}
                 onActivated={me.refetch}
+            />
+        );
+    }
+    if (screen.name === "decode") {
+        return (
+            <DecodeScreen
+                telegram={telegram}
+                displayTimezone={me.data.display_timezone}
+                activeContactId={me.data.active_contact_id ?? null}
+                {...(fetchImpl !== undefined ? { fetchImpl } : {})}
+                onEditSuggestion={(category, text) => {
+                    const contactId = me.data.active_contact_id;
+                    if (contactId == null) {
+                        return;
+                    }
+                    setNav((current) =>
+                        pushScreen(current, {
+                            name: "addRule",
+                            contactId,
+                            initialCategory: category,
+                            initialText: text,
+                        }),
+                    );
+                }}
             />
         );
     }
@@ -152,10 +183,16 @@ function MiniappShell({
         );
     }
     if (screen.name === "addRule") {
+        const initialCategory =
+            screen.initialCategory !== undefined
+                ? (screen.initialCategory as RuleCategory)
+                : undefined;
         return (
             <AddRuleScreen
                 contactId={screen.contactId}
                 telegram={telegram}
+                {...(initialCategory !== undefined ? { initialCategory } : {})}
+                {...(screen.initialText !== undefined ? { initialText: screen.initialText } : {})}
                 onCreated={() => {
                     setNav((current) => popScreen(current));
                 }}
@@ -229,7 +266,11 @@ export function App({ adapter, fetchImpl }: AppProps) {
                         initData={telegram.initData}
                         fetchImpl={fetchImpl}
                     >
-                        <MiniappShell telegram={telegram} onAccountDeleted={onAccountDeleted} />
+                        <MiniappShell
+                            telegram={telegram}
+                            onAccountDeleted={onAccountDeleted}
+                            fetchImpl={fetchImpl}
+                        />
                     </ApiProvider>
                 ) : (
                     <ApiProvider key={sessionKey} initData={telegram.initData}>

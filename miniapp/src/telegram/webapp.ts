@@ -10,6 +10,8 @@ export type TelegramBackButtonControls = {
     onClick: (callback: () => void) => () => void;
 };
 
+export type InlineQueryChatType = "users" | "bots" | "groups" | "channels";
+
 export type TelegramAdapter = {
     readonly initData: string;
     readonly colorScheme: ColorScheme;
@@ -21,6 +23,7 @@ export type TelegramAdapter = {
     close: () => void;
     showConfirm: (message: string) => Promise<boolean>;
     hapticNotification: (type: HapticNotificationType) => void;
+    switchInlineQuery: (query: string, chooseChatTypes: readonly InlineQueryChatType[]) => void;
     onColorSchemeChanged: (callback: (scheme: ColorScheme) => void) => () => void;
 };
 
@@ -137,6 +140,13 @@ export function createTelegramAdapter(): TelegramAdapter {
             }),
         hapticNotification: (type: HapticNotificationType) => {
             readWebApp()?.HapticFeedback?.notificationOccurred(type);
+        },
+        switchInlineQuery: (query: string, chooseChatTypes: readonly InlineQueryChatType[]) => {
+            const current = readWebApp();
+            if (current === undefined || typeof current.switchInlineQuery !== "function") {
+                return;
+            }
+            current.switchInlineQuery(query, [...chooseChatTypes]);
         },
         onColorSchemeChanged: (callback: (scheme: ColorScheme) => void) => {
             const current = readWebApp();

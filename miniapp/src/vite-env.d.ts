@@ -29,6 +29,8 @@ interface TelegramHapticFeedback {
     notificationOccurred: (type: TelegramHapticNotificationType) => void;
 }
 
+type TelegramInlineQueryChatType = "users" | "bots" | "groups" | "channels";
+
 interface TelegramWebApp {
     readonly initData: string;
     readonly colorScheme: "light" | "dark";
@@ -39,6 +41,7 @@ interface TelegramWebApp {
     expand: () => void;
     close: () => void;
     showConfirm?: (message: string, callback?: (confirmed: boolean) => void) => void;
+    switchInlineQuery?: (query: string, chooseChatTypes?: TelegramInlineQueryChatType[]) => void;
     onEvent?: (eventType: string, callback: () => void) => void;
     offEvent?: (eventType: string, callback: () => void) => void;
 }

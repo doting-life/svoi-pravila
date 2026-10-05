@@ -17,10 +17,19 @@ from svoi_pravila.application.errors import ConflictError
 from svoi_pravila.config import Settings
 from svoi_pravila.crypto import DecryptionError
 from svoi_pravila.domain.contact import Contact
-from svoi_pravila.domain.enums import RelationshipKind, RuleCategory
-from svoi_pravila.domain.ids import ContactId, InviteId, PairId, RuleId, TelegramUserId, UserId
+from svoi_pravila.domain.enums import Firmness, RelationshipKind, RuleCategory
+from svoi_pravila.domain.ids import (
+    ContactId,
+    InviteId,
+    PairId,
+    RuleId,
+    RuleSuggestionId,
+    TelegramUserId,
+    UserId,
+)
 from svoi_pravila.domain.invite import Invite, InviteTokenHash
 from svoi_pravila.domain.pair import Pair
+from svoi_pravila.domain.rule_suggestion import RuleSuggestion, ToneSignal
 from svoi_pravila.domain.rules import ContactScope, PairScope, Rule
 from svoi_pravila.domain.text import ContactLabel, RuleText
 from svoi_pravila.domain.user import User
@@ -34,6 +43,7 @@ from tests.support.postgres import (
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 MARKER_LABEL = "PLAINTEXT-LABEL-MARKER-ZZZ"
 MARKER_RULE = "PLAINTEXT-RULE-MARKER-ZZZ"
+MARKER_SUGGESTION = "PLAINTEXT-SUGGESTION-MARKER-ZZZ"
 
 
 def _user(n: int) -> User:
@@ -69,10 +79,26 @@ async def test_database_has_no_plaintext_c2_markers(
         text=RuleText(MARKER_RULE),
         now=NOW,
     )
+    suggestion = RuleSuggestion.create_tone(
+        suggestion_id=RuleSuggestionId(UUID(int=30)),
+        user_id=owner.id,
+        contact_id=contact.id,
+        category=RuleCategory.HOW_TO_ASK,
+        text=RuleText(MARKER_SUGGESTION),
+        firmness=Firmness.GENTLE,
+        now=NOW,
+    )
+    signal = ToneSignal(
+        user_id=owner.id,
+        contact_id=contact.id,
+        values=(Firmness.GENTLE,) * 5,
+    )
     async with uow_factory() as uow:
         await uow.users.add(owner)
         await uow.contacts.add(contact)
         await uow.rules.add(rule)
+        await uow.rule_suggestions.add(suggestion)
+        await uow.tone_signals.upsert(signal)
         await uow.commit()
 
     async with engine.connect() as conn:
@@ -90,9 +116,23 @@ async def test_database_has_no_plaintext_c2_markers(
             .scalars()
             .all()
         )
-    joined = " ".join([*labels, *texts])
+        suggestions = (
+            (
+                await conn.execute(
+                    text("SELECT encode(text_ciphertext, 'escape') FROM rule_suggestions")
+                )
+            )
+            .scalars()
+            .all()
+        )
+        tone_values = (
+            (await conn.execute(text("SELECT values::text FROM tone_signals"))).scalars().all()
+        )
+    joined = " ".join([*labels, *texts, *suggestions])
     assert MARKER_LABEL not in joined
     assert MARKER_RULE not in joined
+    assert MARKER_SUGGESTION not in joined
+    assert any("gentle" in row for row in tone_values)
 
 
 @pytest.mark.integration

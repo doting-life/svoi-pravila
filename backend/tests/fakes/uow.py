@@ -13,24 +13,28 @@ from svoi_pravila.application.ports.repositories import (
     InviteRepository,
     PairRepository,
     RuleRepository,
+    RuleSuggestionRepository,
+    ToneSignalRepository,
     UsageEventRepository,
     UserRepository,
 )
 from svoi_pravila.application.ports.unit_of_work import UnitOfWork
 from svoi_pravila.domain.consent import Consent
 from svoi_pravila.domain.contact import Contact
-from svoi_pravila.domain.enums import RuleStatus
+from svoi_pravila.domain.enums import Firmness, RuleStatus, SuggestionSource, SuggestionStatus
 from svoi_pravila.domain.ids import (
     ContactId,
     InviteId,
     PairId,
     RuleId,
+    RuleSuggestionId,
     TelegramUserId,
     UsageEventId,
     UserId,
 )
 from svoi_pravila.domain.invite import Invite, InviteTokenHash
 from svoi_pravila.domain.pair import Pair
+from svoi_pravila.domain.rule_suggestion import RuleSuggestion, ToneSignal
 from svoi_pravila.domain.rules import Rule, RuleScope
 from svoi_pravila.domain.usage import UsageEvent
 from svoi_pravila.domain.user import User
@@ -49,6 +53,8 @@ class _DurableState:
     invites: dict[InviteId, Invite] = field(default_factory=dict)
     invites_by_hash: dict[str, InviteId] = field(default_factory=dict)
     usage_events: dict[UsageEventId, UsageEvent] = field(default_factory=dict)
+    rule_suggestions: dict[RuleSuggestionId, RuleSuggestion] = field(default_factory=dict)
+    tone_signals: dict[tuple[UserId, ContactId], ToneSignal] = field(default_factory=dict)
 
 
 class InMemoryUserRepository:
@@ -253,6 +259,84 @@ class InMemoryUsageEventRepository:
             del self._working.usage_events[eid]
 
 
+class InMemoryRuleSuggestionRepository:
+    """Transactional rule suggestion repository."""
+
+    def __init__(self, working: _DurableState) -> None:
+        self._working = working
+
+    async def get(self, suggestion_id: RuleSuggestionId) -> RuleSuggestion | None:
+        return self._working.rule_suggestions.get(suggestion_id)
+
+    async def list_for_user(self, user_id: UserId) -> list[RuleSuggestion]:
+        return [s for s in self._working.rule_suggestions.values() if s.user_id == user_id]
+
+    async def list_pending_for_contact(
+        self,
+        user_id: UserId,
+        contact_id: ContactId,
+    ) -> list[RuleSuggestion]:
+        return [
+            s
+            for s in self._working.rule_suggestions.values()
+            if s.user_id == user_id
+            and s.contact_id == contact_id
+            and s.status is SuggestionStatus.PENDING
+        ]
+
+    async def get_tone(
+        self,
+        user_id: UserId,
+        contact_id: ContactId,
+        firmness: Firmness,
+    ) -> RuleSuggestion | None:
+        for suggestion in self._working.rule_suggestions.values():
+            if (
+                suggestion.user_id == user_id
+                and suggestion.contact_id == contact_id
+                and suggestion.source is SuggestionSource.TONE
+                and suggestion.firmness is firmness
+            ):
+                return suggestion
+        return None
+
+    async def add(self, suggestion: RuleSuggestion) -> None:
+        self._working.rule_suggestions[suggestion.id] = suggestion
+
+    async def update(self, suggestion: RuleSuggestion) -> None:
+        self._working.rule_suggestions[suggestion.id] = suggestion
+
+    async def delete_for_user(self, user_id: UserId) -> None:
+        to_drop = [
+            sid
+            for sid, suggestion in self._working.rule_suggestions.items()
+            if suggestion.user_id == user_id
+        ]
+        for sid in to_drop:
+            del self._working.rule_suggestions[sid]
+
+
+class InMemoryToneSignalRepository:
+    """Transactional tone signal repository."""
+
+    def __init__(self, working: _DurableState) -> None:
+        self._working = working
+
+    async def get(self, user_id: UserId, contact_id: ContactId) -> ToneSignal | None:
+        return self._working.tone_signals.get((user_id, contact_id))
+
+    async def list_for_user(self, user_id: UserId) -> list[ToneSignal]:
+        return [s for (uid, _), s in self._working.tone_signals.items() if uid == user_id]
+
+    async def upsert(self, signal: ToneSignal) -> None:
+        self._working.tone_signals[(signal.user_id, signal.contact_id)] = signal
+
+    async def delete_for_user(self, user_id: UserId) -> None:
+        to_drop = [key for key in self._working.tone_signals if key[0] == user_id]
+        for key in to_drop:
+            del self._working.tone_signals[key]
+
+
 class InMemoryUnitOfWork:
     """Unit of work that commits working copies into shared durable state."""
 
@@ -267,6 +351,8 @@ class InMemoryUnitOfWork:
         self.rules: RuleRepository
         self.invites: InviteRepository
         self.usage_events: UsageEventRepository
+        self.rule_suggestions: RuleSuggestionRepository
+        self.tone_signals: ToneSignalRepository
 
     async def __aenter__(self) -> InMemoryUnitOfWork:
         self._working = deepcopy(self._durable)
@@ -278,6 +364,8 @@ class InMemoryUnitOfWork:
         self.rules = InMemoryRuleRepository(self._working)
         self.invites = InMemoryInviteRepository(self._working)
         self.usage_events = InMemoryUsageEventRepository(self._working)
+        self.rule_suggestions = InMemoryRuleSuggestionRepository(self._working)
+        self.tone_signals = InMemoryToneSignalRepository(self._working)
         return self
 
     async def __aexit__(
@@ -302,6 +390,8 @@ class InMemoryUnitOfWork:
         self._durable.invites = self._working.invites
         self._durable.invites_by_hash = self._working.invites_by_hash
         self._durable.usage_events = self._working.usage_events
+        self._durable.rule_suggestions = self._working.rule_suggestions
+        self._durable.tone_signals = self._working.tone_signals
         self._committed = True
 
 

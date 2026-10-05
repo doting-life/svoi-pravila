@@ -6,17 +6,20 @@ from typing import Protocol
 
 from svoi_pravila.domain.consent import Consent
 from svoi_pravila.domain.contact import Contact
+from svoi_pravila.domain.enums import Firmness
 from svoi_pravila.domain.ids import (
     ContactId,
     InviteId,
     PairId,
     RuleId,
+    RuleSuggestionId,
     TelegramUserId,
     UsageEventId,
     UserId,
 )
 from svoi_pravila.domain.invite import Invite, InviteTokenHash
 from svoi_pravila.domain.pair import Pair
+from svoi_pravila.domain.rule_suggestion import RuleSuggestion, ToneSignal
 from svoi_pravila.domain.rules import Rule, RuleScope
 from svoi_pravila.domain.usage import UsageEvent
 from svoi_pravila.domain.user import User
@@ -200,4 +203,65 @@ class UsageEventRepository(Protocol):
 
     async def delete_for_pseudonym(self, user_pseudonym: str) -> None:
         """Delete usage events keyed by analytics HMAC hex, not a Telegram id."""
+        ...
+
+
+class RuleSuggestionRepository(Protocol):
+    """Persistence for rule suggestions."""
+
+    async def get(self, suggestion_id: RuleSuggestionId) -> RuleSuggestion | None:
+        """Return suggestion by id or None."""
+        ...
+
+    async def list_for_user(self, user_id: UserId) -> list[RuleSuggestion]:
+        """List all suggestions owned by ``user_id``."""
+        ...
+
+    async def list_pending_for_contact(
+        self,
+        user_id: UserId,
+        contact_id: ContactId,
+    ) -> list[RuleSuggestion]:
+        """List pending suggestions for ``(user_id, contact_id)``."""
+        ...
+
+    async def get_tone(
+        self,
+        user_id: UserId,
+        contact_id: ContactId,
+        firmness: Firmness,
+    ) -> RuleSuggestion | None:
+        """Return the tone suggestion for ``(user, contact, firmness)`` in any status."""
+        ...
+
+    async def add(self, suggestion: RuleSuggestion) -> None:
+        """Insert a new suggestion."""
+        ...
+
+    async def update(self, suggestion: RuleSuggestion) -> None:
+        """Persist an updated suggestion (status transition)."""
+        ...
+
+    async def delete_for_user(self, user_id: UserId) -> None:
+        """Delete every suggestion row for the user."""
+        ...
+
+
+class ToneSignalRepository(Protocol):
+    """Persistence for tone signals."""
+
+    async def get(self, user_id: UserId, contact_id: ContactId) -> ToneSignal | None:
+        """Return the signal for ``(user_id, contact_id)`` or None."""
+        ...
+
+    async def list_for_user(self, user_id: UserId) -> list[ToneSignal]:
+        """List all tone signals for ``user_id``."""
+        ...
+
+    async def upsert(self, signal: ToneSignal) -> None:
+        """Insert or replace the signal for ``(user_id, contact_id)``."""
+        ...
+
+    async def delete_for_user(self, user_id: UserId) -> None:
+        """Delete every tone signal row for the user."""
         ...

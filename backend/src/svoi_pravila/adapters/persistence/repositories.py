@@ -9,7 +9,11 @@ from sqlalchemy import Select, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from svoi_pravila.adapters.persistence.aad import contact_label_aad, rule_revision_text_aad
+from svoi_pravila.adapters.persistence.aad import (
+    contact_label_aad,
+    rule_revision_text_aad,
+    rule_suggestion_text_aad,
+)
 from svoi_pravila.adapters.persistence.errors import flush_or_raise
 from svoi_pravila.adapters.persistence.key_ring import KeyRing
 from svoi_pravila.adapters.persistence.models import (
@@ -19,6 +23,8 @@ from svoi_pravila.adapters.persistence.models import (
     PairRow,
     RuleRevisionRow,
     RuleRow,
+    RuleSuggestionRow,
+    ToneSignalRow,
     UsageEventRow,
     UserRow,
 )
@@ -32,6 +38,8 @@ from svoi_pravila.domain.enums import (
     RelationshipKind,
     RuleCategory,
     RuleStatus,
+    SuggestionSource,
+    SuggestionStatus,
     UsageEventKind,
     UsageOutcome,
     UsageScenario,
@@ -43,12 +51,14 @@ from svoi_pravila.domain.ids import (
     InviteId,
     PairId,
     RuleId,
+    RuleSuggestionId,
     TelegramUserId,
     UsageEventId,
     UserId,
 )
 from svoi_pravila.domain.invite import Invite, InviteTokenHash
 from svoi_pravila.domain.pair import Pair
+from svoi_pravila.domain.rule_suggestion import RuleSuggestion, ToneSignal
 from svoi_pravila.domain.rules import (
     ContactScope,
     PairScope,
@@ -642,4 +652,169 @@ class SqlAlchemyUsageEventRepository:
         await self._session.execute(
             delete(UsageEventRow).where(UsageEventRow.user_pseudonym == user_pseudonym)
         )
+        await flush_or_raise(self._session)
+
+
+class SqlAlchemyRuleSuggestionRepository:
+    """Rule suggestion repository with text encryption (user DEK)."""
+
+    def __init__(self, session: AsyncSession, keys: KeyRing, registry: RowRegistry) -> None:
+        self._session = session
+        self._keys = keys
+        self._registry = registry
+
+    async def _encrypt_text(self, suggestion: RuleSuggestion) -> bytes:
+        dek = await self._keys.user_dek(suggestion.user_id)
+        return FieldCipher(dek).encrypt(
+            suggestion.text.value.encode("utf-8"),
+            aad=rule_suggestion_text_aad(suggestion.id),
+        )
+
+    async def _to_domain(self, row: RuleSuggestionRow) -> RuleSuggestion:
+        dek = await self._keys.user_dek(row.user_id)
+        plaintext = (
+            FieldCipher(dek)
+            .decrypt(
+                row.text_ciphertext,
+                aad=rule_suggestion_text_aad(row.id),
+            )
+            .decode("utf-8")
+        )
+        self._registry.register(RuleSuggestionRow, row.id, row)
+        return RuleSuggestion(
+            id=RuleSuggestionId(row.id),
+            user_id=UserId(row.user_id),
+            contact_id=ContactId(row.contact_id),
+            source=SuggestionSource(row.source),
+            category=RuleCategory(row.category),
+            text=RuleText(plaintext),
+            firmness=None if row.firmness is None else Firmness(row.firmness),
+            status=SuggestionStatus(row.status),
+            created_at=row.created_at,
+            decided_at=row.decided_at,
+        )
+
+    async def get(self, suggestion_id: RuleSuggestionId) -> RuleSuggestion | None:
+        row = await self._session.get(RuleSuggestionRow, suggestion_id)
+        if row is None:
+            return None
+        return await self._to_domain(row)
+
+    async def list_for_user(self, user_id: UserId) -> list[RuleSuggestion]:
+        result = await self._session.execute(
+            select(RuleSuggestionRow).where(RuleSuggestionRow.user_id == user_id)
+        )
+        return [await self._to_domain(row) for row in result.scalars()]
+
+    async def list_pending_for_contact(
+        self,
+        user_id: UserId,
+        contact_id: ContactId,
+    ) -> list[RuleSuggestion]:
+        result = await self._session.execute(
+            select(RuleSuggestionRow).where(
+                RuleSuggestionRow.user_id == user_id,
+                RuleSuggestionRow.contact_id == contact_id,
+                RuleSuggestionRow.status == SuggestionStatus.PENDING.value,
+            )
+        )
+        return [await self._to_domain(row) for row in result.scalars()]
+
+    async def get_tone(
+        self,
+        user_id: UserId,
+        contact_id: ContactId,
+        firmness: Firmness,
+    ) -> RuleSuggestion | None:
+        result = await self._session.execute(
+            select(RuleSuggestionRow).where(
+                RuleSuggestionRow.user_id == user_id,
+                RuleSuggestionRow.contact_id == contact_id,
+                RuleSuggestionRow.source == SuggestionSource.TONE.value,
+                RuleSuggestionRow.firmness == firmness.value,
+            )
+        )
+        row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        return await self._to_domain(row)
+
+    async def add(self, suggestion: RuleSuggestion) -> None:
+        ciphertext = await self._encrypt_text(suggestion)
+        row = RuleSuggestionRow(
+            id=suggestion.id,
+            user_id=suggestion.user_id,
+            contact_id=suggestion.contact_id,
+            source=suggestion.source.value,
+            category=suggestion.category.value,
+            text_ciphertext=ciphertext,
+            firmness=None if suggestion.firmness is None else suggestion.firmness.value,
+            status=suggestion.status.value,
+            created_at=suggestion.created_at,
+            decided_at=suggestion.decided_at,
+            version=1,
+        )
+        self._session.add(row)
+        self._registry.register(RuleSuggestionRow, suggestion.id, row)
+        await flush_or_raise(self._session)
+
+    async def update(self, suggestion: RuleSuggestion) -> None:
+        row = self._registry.require(RuleSuggestionRow, suggestion.id)
+        row.status = suggestion.status.value
+        row.decided_at = suggestion.decided_at
+        await flush_or_raise(self._session)
+
+    async def delete_for_user(self, user_id: UserId) -> None:
+        await self._session.execute(
+            delete(RuleSuggestionRow).where(RuleSuggestionRow.user_id == user_id)
+        )
+        await flush_or_raise(self._session)
+
+
+class SqlAlchemyToneSignalRepository:
+    """Tone signal repository (C0 firmness values, no encryption)."""
+
+    def __init__(self, session: AsyncSession, registry: RowRegistry) -> None:
+        self._session = session
+        self._registry = registry
+
+    def _to_domain(self, row: ToneSignalRow) -> ToneSignal:
+        # Composite PK: contact_id is globally unique, used as registry key.
+        self._registry.register(ToneSignalRow, row.contact_id, row)
+        return ToneSignal(
+            user_id=UserId(row.user_id),
+            contact_id=ContactId(row.contact_id),
+            values=tuple(Firmness(v) for v in row.values),
+        )
+
+    async def get(self, user_id: UserId, contact_id: ContactId) -> ToneSignal | None:
+        row = await self._session.get(ToneSignalRow, (user_id, contact_id))
+        if row is None:
+            return None
+        return self._to_domain(row)
+
+    async def list_for_user(self, user_id: UserId) -> list[ToneSignal]:
+        result = await self._session.execute(
+            select(ToneSignalRow).where(ToneSignalRow.user_id == user_id)
+        )
+        return [self._to_domain(row) for row in result.scalars()]
+
+    async def upsert(self, signal: ToneSignal) -> None:
+        row = await self._session.get(ToneSignalRow, (signal.user_id, signal.contact_id))
+        values = [v.value for v in signal.values]
+        if row is None:
+            row = ToneSignalRow(
+                user_id=signal.user_id,
+                contact_id=signal.contact_id,
+                values=values,
+            )
+            self._session.add(row)
+        else:
+            row.values = values
+            flag_modified(row, "values")
+        self._registry.register(ToneSignalRow, signal.contact_id, row)
+        await flush_or_raise(self._session)
+
+    async def delete_for_user(self, user_id: UserId) -> None:
+        await self._session.execute(delete(ToneSignalRow).where(ToneSignalRow.user_id == user_id))
         await flush_or_raise(self._session)

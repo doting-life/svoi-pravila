@@ -11,6 +11,8 @@ from svoi_pravila.application.ports.repositories import (
     InviteRepository,
     PairRepository,
     RuleRepository,
+    RuleSuggestionRepository,
+    ToneSignalRepository,
     UsageEventRepository,
     UserRepository,
 )
@@ -26,6 +28,8 @@ class UnitOfWork(Protocol):
     rules: RuleRepository
     invites: InviteRepository
     usage_events: UsageEventRepository
+    rule_suggestions: RuleSuggestionRepository
+    tone_signals: ToneSignalRepository
 
     async def __aenter__(self) -> UnitOfWork:
         """Enter the unit of work."""

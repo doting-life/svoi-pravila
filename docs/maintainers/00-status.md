@@ -4,7 +4,7 @@
 
 ## Текущее
 - Дата: 2026-10-04 · Спринт 0 (Фундамент)
-- Активная задача: **0014-a — доработка API мини-приложения** (список правил, лимит тела запроса, единая обработка ошибок) · ветка `task/0014-miniapp-api` · GigaChat 0 токенов
+- Активная задача: **0014-b — зависимости без глобального состояния, лимит тела без дочитывания** · ветка `task/0014-miniapp-api` · GigaChat 0 токенов
 - В `master`: 0013 (`e274171`, squash #14)
 - В `master`: 0011.2 (`2be0872`, squash #13)
 - Решение по 0012: «Расшифровать» в группах не делаем в MVP — ADR-0007
@@ -82,7 +82,8 @@
 | 0013-a | Mini-app bootstrap fixes | `task/0013-miniapp-bootstrap` | проверен 05.10 | **CHANGES** → 0013-b: клиент и размер образа (136 → 75 МБ) приняты; официальный Caddy 2.11.4 несёт 17 HIGH с доступными исправлениями — CI красный → ADR-0008 |
 | 0013-b | Caddy built from source on current Go | `task/0013-miniapp-bootstrap` | проверен 05.10 | **ACCEPT** (Dockerfile по ADR-0008, distroless, 75 МБ; Trivy 0 HIGH и CI #14 — по отчёту и PR, у CTO нет доступа к GitHub); исполнитель запушил `master` с документами CTO без поручения — отмечено; Caddyfile и `/srv` доступны на запись процессу — в 0014, часть 0 |
 | 0014 | Mini-app API: initData auth, contacts, rules, suggestions | `task/0014-miniapp-api` | проверен 05.10 | **CHANGES** → 0014-a: `GET …/rules` отдаёт архивные и отклонённые правила и для действующего правила с правкой — текст правки вместо действующего; лимит 16 КиБ проверяется после чтения и разбора тела; зависимости через `app.state` с защитными ветками; повтор обработки ошибок в каждом маршруте; логи строками вместо структурных полей |
-| 0014-a | Mini-app API fixes | `task/0014-miniapp-api` | выдан | — |
+| 0014-a | Mini-app API fixes | `task/0014-miniapp-api` | проверен 05.10 | **CHANGES** → 0014-b: проекция правил, ошибки, логи приняты; вместо `app.state` — модульный глобальный слот `_auth_slot`; после превышения лимита тело дочитывается до конца |
+| 0014-b | Auth binding without globals; body limit without draining | `task/0014-miniapp-api` | выдан | — |
 | 0006.1-b | Image gate: Debian security updates, base digest pin, Dependabot | `task/0006-telegram-channel` | проверен 04.10 | **ACCEPT** (Trivy: 21 CVE → 0) |
 
 ## Решения

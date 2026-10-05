@@ -32,7 +32,7 @@ class CreateInviteResult:
 
 
 class CreateInvite:
-    """Create an invite; store only the token hash."""
+    """Create an invite; store only the token hash. One pending invite per contact."""
 
     def __init__(
         self,
@@ -49,7 +49,7 @@ class CreateInvite:
         self._clock = clock
 
     async def execute(self, command: CreateInviteCommand) -> CreateInviteResult:
-        """Create invite for an owned, unlinked contact."""
+        """Create invite for an owned, unlinked contact; revoke any prior pending invite."""
         async with self._uow_factory() as uow:
             await require_access(uow, self._catalog, command.actor_id)
             contact = await uow.contacts.get(command.contact_id)
@@ -57,6 +57,10 @@ class CreateInvite:
                 raise NotFound()
             if contact.pair_id is not None:
                 raise ContactAlreadyLinked()
+            for existing in await uow.invites.list_involving(command.actor_id):
+                if existing.contact_id == contact.id and existing.accepted_at is None:
+                    existing.require_pending()
+                    await uow.invites.delete(existing.id)
             raw_token = self._tokens.new_invite_token()
             invite = Invite.create(
                 invite_id=InviteId(self._ids.new_id()),

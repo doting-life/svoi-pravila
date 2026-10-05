@@ -11,6 +11,7 @@ from svoi_pravila.application.use_cases.approve_rule import ApproveRule, Approve
 from svoi_pravila.application.use_cases.delete_my_account import (
     DeleteMyAccount,
     DeleteMyAccountCommand,
+    DeleteMyAccountPorts,
 )
 from svoi_pravila.application.use_cases.export_my_data import ExportMyData, ExportMyDataCommand
 from svoi_pravila.application.use_cases.get_onboarding_step import (
@@ -38,6 +39,7 @@ from svoi_pravila.domain.enums import (
 from svoi_pravila.domain.ids import (
     ContactId,
     PairId,
+    RuleId,
     RuleSuggestionId,
     TelegramUserId,
     UsageEventId,
@@ -82,7 +84,9 @@ async def test_revoke_all_unknown_and_idempotent(world: AppWorld) -> None:
 @pytest.mark.unit
 async def test_leave_pair_rehomes_remaining_authored_rules(world: AppWorld) -> None:
     inviter, invitee, contact, accepted = await _pair_world(world)
-    private = await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    private = await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             inviter.id,
             contact.id,
@@ -91,7 +95,9 @@ async def test_leave_pair_rehomes_remaining_authored_rules(world: AppWorld) -> N
             shared=False,
         )
     )
-    shared = await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    shared = await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             inviter.id,
             contact.id,
@@ -100,11 +106,11 @@ async def test_leave_pair_rehomes_remaining_authored_rules(world: AppWorld) -> N
             shared=True,
         )
     )
-    await ApproveRule(world.uow_factory, world.catalog, world.clock).execute(
+    await ApproveRule(world.uow_factory, world.catalog, world.clock, world.notifier).execute(
         ApproveRuleCommand(invitee.id, shared.rule.id)
     )
     invitee_shared = await ProposeRule(
-        world.uow_factory, world.catalog, world.ids, world.clock
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
     ).execute(
         ProposeRuleCommand(
             invitee.id,
@@ -114,10 +120,10 @@ async def test_leave_pair_rehomes_remaining_authored_rules(world: AppWorld) -> N
             shared=True,
         )
     )
-    await ApproveRule(world.uow_factory, world.catalog, world.clock).execute(
+    await ApproveRule(world.uow_factory, world.catalog, world.clock, world.notifier).execute(
         ApproveRuleCommand(inviter.id, invitee_shared.rule.id)
     )
-    await LeavePair(world.uow_factory, world.ids, world.clock).execute(
+    await LeavePair(world.uow_factory, world.ids, world.clock, world.notifier).execute(
         LeavePairCommand(inviter.id, accepted.pair.id)
     )
     async with world.uow_factory() as uow:
@@ -140,11 +146,13 @@ async def test_leave_pair_rehomes_remaining_authored_rules(world: AppWorld) -> N
 @pytest.mark.unit
 async def test_leave_pair_not_found_and_open_limit(world: AppWorld) -> None:
     with pytest.raises(NotFound):
-        await LeavePair(world.uow_factory, world.ids, world.clock).execute(
+        await LeavePair(world.uow_factory, world.ids, world.clock, world.notifier).execute(
             LeavePairCommand(UserId(UUID(int=1)), PairId(UUID(int=2)))
         )
     inviter, invitee, _contact, accepted = await _pair_world(world)
-    shared = await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    shared = await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             invitee.id,
             accepted.invitee_contact.id,
@@ -153,11 +161,13 @@ async def test_leave_pair_not_found_and_open_limit(world: AppWorld) -> None:
             shared=True,
         )
     )
-    await ApproveRule(world.uow_factory, world.catalog, world.clock).execute(
+    await ApproveRule(world.uow_factory, world.catalog, world.clock, world.notifier).execute(
         ApproveRuleCommand(inviter.id, shared.rule.id)
     )
     for index in range(MAX_OPEN_RULES_PER_SCOPE):
-        await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        await ProposeRule(
+            world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+        ).execute(
             ProposeRuleCommand(
                 invitee.id,
                 accepted.invitee_contact.id,
@@ -167,7 +177,7 @@ async def test_leave_pair_not_found_and_open_limit(world: AppWorld) -> None:
             )
         )
     with pytest.raises(OpenRuleLimitReached):
-        await LeavePair(world.uow_factory, world.ids, world.clock).execute(
+        await LeavePair(world.uow_factory, world.ids, world.clock, world.notifier).execute(
             LeavePairCommand(inviter.id, accepted.pair.id)
         )
 
@@ -185,12 +195,12 @@ async def test_leave_pair_not_member_and_missing_remaining_contact(world: AppWor
         await uow.pairs.add(pair)
         await uow.commit()
     with pytest.raises(NotFound):
-        await LeavePair(world.uow_factory, world.ids, world.clock).execute(
+        await LeavePair(world.uow_factory, world.ids, world.clock, world.notifier).execute(
             LeavePairCommand(inviter.id, pair.id)
         )
     outsider = await world.ensure_granted_user(72)
     with pytest.raises(NotFound):
-        await LeavePair(world.uow_factory, world.ids, world.clock).execute(
+        await LeavePair(world.uow_factory, world.ids, world.clock, world.notifier).execute(
             LeavePairCommand(outsider.id, pair.id)
         )
     async with world.uow_factory() as uow:
@@ -206,7 +216,7 @@ async def test_leave_pair_not_member_and_missing_remaining_contact(world: AppWor
         )
         await uow.contacts.add(contact)
         await uow.commit()
-    await LeavePair(world.uow_factory, world.ids, world.clock).execute(
+    await LeavePair(world.uow_factory, world.ids, world.clock, world.notifier).execute(
         LeavePairCommand(inviter.id, pair.id)
     )
 
@@ -214,7 +224,9 @@ async def test_leave_pair_not_member_and_missing_remaining_contact(world: AppWor
 @pytest.mark.unit
 async def test_delete_and_export(world: AppWorld) -> None:
     inviter, invitee, contact, accepted = await _pair_world(world)
-    await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             inviter.id,
             contact.id,
@@ -224,7 +236,7 @@ async def test_delete_and_export(world: AppWorld) -> None:
         )
     )
     partner_private = await ProposeRule(
-        world.uow_factory, world.catalog, world.ids, world.clock
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
     ).execute(
         ProposeRuleCommand(
             invitee.id,
@@ -234,7 +246,9 @@ async def test_delete_and_export(world: AppWorld) -> None:
             shared=False,
         )
     )
-    shared = await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    shared = await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             inviter.id,
             contact.id,
@@ -243,7 +257,7 @@ async def test_delete_and_export(world: AppWorld) -> None:
             shared=True,
         )
     )
-    await ApproveRule(world.uow_factory, world.catalog, world.clock).execute(
+    await ApproveRule(world.uow_factory, world.catalog, world.clock, world.notifier).execute(
         ApproveRuleCommand(invitee.id, shared.rule.id)
     )
     pseudo = FakePseudonymizer()
@@ -333,7 +347,14 @@ async def test_delete_and_export(world: AppWorld) -> None:
     assert "gentle" in blob
 
     deleter = DeleteMyAccount(
-        world.uow_factory, world.ids, pseudo, world.clock, make_inline_reuse(world.clock)
+        DeleteMyAccountPorts(
+            world.uow_factory,
+            world.ids,
+            pseudo,
+            world.clock,
+            make_inline_reuse(world.clock),
+            world.notifier,
+        )
     )
     missing = await deleter.execute(DeleteMyAccountCommand(TelegramUserId(777)))
     assert missing.found is False
@@ -354,3 +375,86 @@ async def test_delete_and_export(world: AppWorld) -> None:
         assert partner_private.rule.id in {rule.id for rule in remaining_rules}
         statuses = {rule.status for rule in remaining_rules}
         assert RuleStatus.ACTIVE in statuses
+
+
+@pytest.mark.unit
+async def test_dissolve_pair_guards_and_delete_without_partner_contact(
+    world: AppWorld,
+) -> None:
+    from svoi_pravila.application.use_cases._leave_pair import dissolve_pair_for_leaving_member
+    from svoi_pravila.domain.rules import PairScope, Rule
+
+    inviter = await world.ensure_granted_user(76)
+    stranger = await world.ensure_granted_user(77)
+    outsider = await world.ensure_granted_user(78)
+    pair = Pair(
+        id=PairId(UUID(int=90)),
+        members=frozenset({inviter.id, stranger.id}),
+        created_at=world.clock.now(),
+    )
+    leaving = Contact(
+        id=ContactId(UUID(int=92)),
+        owner_id=inviter.id,
+        label=ContactLabel("orphan leave"),
+        relationship=RelationshipKind.FRIEND,
+        pair_id=pair.id,
+        created_at=world.clock.now(),
+    )
+    orphan_rule = Rule.propose(
+        rule_id=RuleId(UUID(int=93)),
+        scope=PairScope(pair_id=pair.id),
+        category=RuleCategory.OTHER,
+        approvers=frozenset({inviter.id, stranger.id}),
+        author_id=inviter.id,
+        text=RuleText("orphan shared"),
+        now=world.clock.now(),
+    )
+    async with world.uow_factory() as uow:
+        await uow.pairs.add(pair)
+        await uow.contacts.add(leaving)
+        await uow.rules.add(orphan_rule)
+        await uow.commit()
+        with pytest.raises(NotFound):
+            await dissolve_pair_for_leaving_member(
+                uow,
+                world.ids,
+                actor_id=outsider.id,
+                pair=pair,
+                now=world.clock.now(),
+            )
+        await dissolve_pair_for_leaving_member(
+            uow,
+            world.ids,
+            actor_id=inviter.id,
+            pair=pair,
+            now=world.clock.now(),
+        )
+        await uow.commit()
+        assert await uow.pairs.get(pair.id) is None
+        assert await uow.rules.get(orphan_rule.id) is None
+        stored_leaving = await uow.contacts.get(leaving.id)
+        assert stored_leaving is not None
+        assert stored_leaving.pair_id is None
+
+    orphan = Pair(
+        id=PairId(UUID(int=91)),
+        members=frozenset({inviter.id, stranger.id}),
+        created_at=world.clock.now(),
+    )
+    async with world.uow_factory() as uow:
+        await uow.pairs.add(orphan)
+        await uow.commit()
+
+    deleter = DeleteMyAccount(
+        DeleteMyAccountPorts(
+            world.uow_factory,
+            world.ids,
+            FakePseudonymizer(),
+            world.clock,
+            make_inline_reuse(world.clock),
+            world.notifier,
+        )
+    )
+    gone = await deleter.execute(DeleteMyAccountCommand(inviter.telegram_user_id))
+    assert gone.found is True
+    assert world.notifier.partner_left_calls == []

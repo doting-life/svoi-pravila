@@ -8,22 +8,23 @@ from svoi_pravila.application.errors import AlreadyPaired, ContactLimitReached, 
 from svoi_pravila.application.ports.clock import Clock
 from svoi_pravila.application.ports.consent_catalog import ConsentCatalog
 from svoi_pravila.application.ports.id_generator import IdGenerator
+from svoi_pravila.application.ports.pair_notifier import PairNotifier
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.use_cases._access import load_access_status, require_access
+from svoi_pravila.application.use_cases._pair_notify import notify_after_commit
 from svoi_pravila.domain.contact import MAX_CONTACTS_PER_USER, Contact
 from svoi_pravila.domain.enums import RelationshipKind
-from svoi_pravila.domain.ids import ContactId, PairId, UserId
-from svoi_pravila.domain.invite import InviteTokenHash
+from svoi_pravila.domain.ids import ContactId, InviteId, PairId, UserId
 from svoi_pravila.domain.pair import Pair
 from svoi_pravila.domain.text import ContactLabel
 
 
 @dataclass(frozen=True, slots=True)
 class AcceptInviteCommand:
-    """Input for AcceptInvite."""
+    """Input for AcceptInvite (invite already resolved; raw token not accepted)."""
 
     actor_id: UserId
-    raw_token: str
+    invite_id: InviteId
     label_for_inviter: ContactLabel
     relationship: RelationshipKind
 
@@ -45,18 +46,21 @@ class AcceptInvite:
         catalog: ConsentCatalog,
         ids: IdGenerator,
         clock: Clock,
+        notifier: PairNotifier,
     ) -> None:
         self._uow_factory = uow_factory
         self._catalog = catalog
         self._ids = ids
         self._clock = clock
+        self._notifier = notifier
 
     async def execute(self, command: AcceptInviteCommand) -> AcceptInviteResult:
-        """Validate invite and form the pair in one unit of work."""
+        """Re-validate invite and form the pair in one unit of work."""
+        inviter_id: UserId
+        inviter_contact_id: ContactId
         async with self._uow_factory() as uow:
             await require_access(uow, self._catalog, command.actor_id)
-            token_hash = InviteTokenHash.from_raw_token(command.raw_token)
-            invite = await uow.invites.get_by_token_hash(token_hash)
+            invite = await uow.invites.get(command.invite_id)
             if invite is None:
                 raise NotFound()
 
@@ -100,8 +104,19 @@ class AcceptInvite:
             await uow.contacts.update(linked_inviter)
             await uow.contacts.add(invitee_contact)
             await uow.invites.update(accepted)
+            invitee = await uow.users.get(command.actor_id)
+            if invitee is None:
+                raise NotFound()
+            if invitee.active_contact_id is None:
+                await uow.users.update(invitee.set_active_contact(invitee_contact.id))
+            inviter_id = invite.inviter_id
+            inviter_contact_id = invite.contact_id
             await uow.commit()
-            return AcceptInviteResult(
-                pair=pair,
-                invitee_contact=invitee_contact,
-            )
+
+        await notify_after_commit(
+            lambda: self._notifier.invite_accepted(inviter_id, inviter_contact_id),
+        )
+        return AcceptInviteResult(
+            pair=pair,
+            invitee_contact=invitee_contact,
+        )

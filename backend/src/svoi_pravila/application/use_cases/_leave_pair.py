@@ -26,9 +26,15 @@ async def dissolve_pair_for_leaving_member(
         raise NotFound()
     remaining_id = pair.other_member(actor_id)
     remaining_contact = await uow.contacts.get_for_owner_and_pair(remaining_id, pair.id)
-    if remaining_contact is None:
-        raise NotFound()
     pair_rules = await uow.rules.list_for_scope(PairScope(pair_id=pair.id))
+    if remaining_contact is None:
+        for source in pair_rules:
+            await uow.rules.delete(source.id)
+        leaving_contact = await uow.contacts.get_for_owner_and_pair(actor_id, pair.id)
+        if leaving_contact is not None:
+            await uow.contacts.update(leaving_contact.unlink_pair())
+        await uow.pairs.delete(pair.id)
+        return
     copies: list[Rule] = []
     for source in pair_rules:
         copy = Rule.rehome_authored_to_contact(

@@ -97,16 +97,24 @@ class Invite:
             accepted_at=None,
         )
 
-    def accept(self, user_id: UserId, now: datetime) -> Invite:
-        """Accept the invite if valid."""
-        require_utc(now)
+    def require_pending(self) -> None:
+        """Raise when the invite is no longer open (already accepted)."""
         if self.accepted_at is not None:
             msg = "invite already accepted"
             raise InviteAlreadyAcceptedError(msg)
+
+    def require_acceptable(self, user_id: UserId, now: datetime) -> None:
+        """Validate that ``user_id`` may accept this invite at ``now``."""
+        require_utc(now)
+        self.require_pending()
         if now >= self.expires_at:
             msg = "invite expired"
             raise InviteExpiredError(msg)
         if user_id == self.inviter_id:
             msg = "inviter cannot accept own invite"
             raise SelfInviteAcceptError(msg)
+
+    def accept(self, user_id: UserId, now: datetime) -> Invite:
+        """Accept the invite if valid."""
+        self.require_acceptable(user_id, now)
         return replace(self, accepted_by=user_id, accepted_at=now)

@@ -51,9 +51,52 @@ def test_catalog_covers_every_export_section_key() -> None:
 
 
 @pytest.mark.unit
+async def test_paired_export_shape_hides_partner_labels(world: AppWorld) -> None:
+    inviter, invitee, contact, accepted = await _pair_world(world)
+    shared = await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
+        ProposeRuleCommand(
+            inviter.id,
+            contact.id,
+            RuleCategory.OTHER,
+            RuleText("paired export shared"),
+            shared=True,
+        )
+    )
+    await ApproveRule(world.uow_factory, world.catalog, world.clock, world.notifier).execute(
+        ApproveRuleCommand(invitee.id, shared.rule.id)
+    )
+    dumped = await ExportMyData(world.uow_factory, world.clock).execute(
+        ExportMyDataCommand(inviter.telegram_user_id)
+    )
+    assert dumped.found is True
+    assert dumped.payload is not None
+    contacts = dumped.payload["контакты"]
+    assert isinstance(contacts, list)
+    assert len(contacts) == 1
+    row = contacts[0]
+    assert row["в_паре"] is True
+    assert row["подпись"] == "Partner"
+    assert "общие_правила" in row
+    shared_rules = row["общие_правила"]
+    assert isinstance(shared_rules, list)
+    assert shared_rules
+    authors = {rev["автор"] for rev in shared_rules[0]["редакции"]}
+    assert authors <= {"я", "партнёр"}
+    blob = str(dumped.payload)
+    assert "Inviter" not in blob
+    assert str(invitee.telegram_user_id.value) not in blob
+    assert str(accepted.pair.id) not in blob
+    assert str(invitee.id) not in blob
+
+
+@pytest.mark.unit
 async def test_rich_export_uses_only_declared_content_section_keys(world: AppWorld) -> None:
     inviter, invitee, contact, _accepted = await _pair_world(world)
-    await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             inviter.id,
             contact.id,
@@ -62,7 +105,9 @@ async def test_rich_export_uses_only_declared_content_section_keys(world: AppWor
             shared=False,
         )
     )
-    shared = await ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+    shared = await ProposeRule(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
         ProposeRuleCommand(
             inviter.id,
             contact.id,
@@ -71,7 +116,7 @@ async def test_rich_export_uses_only_declared_content_section_keys(world: AppWor
             shared=True,
         )
     )
-    await ApproveRule(world.uow_factory, world.catalog, world.clock).execute(
+    await ApproveRule(world.uow_factory, world.catalog, world.clock, world.notifier).execute(
         ApproveRuleCommand(invitee.id, shared.rule.id)
     )
     async with world.uow_factory() as uow:

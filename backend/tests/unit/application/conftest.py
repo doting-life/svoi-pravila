@@ -15,6 +15,7 @@ from svoi_pravila.domain.user import User
 from tests.fakes.clock import FakeClock
 from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.ids import FakeIdGenerator
+from tests.fakes.pair_notifier import FakePairNotifier
 from tests.fakes.tokens import FakeTokenGenerator
 from tests.fakes.uow import InMemoryUnitOfWorkFactory
 
@@ -28,6 +29,7 @@ class AppWorld:
     ids: FakeIdGenerator
     tokens: FakeTokenGenerator
     catalog: FakeConsentCatalog
+    notifier: FakePairNotifier
 
     async def ensure_granted_user(self, telegram_id: int = 100) -> User:
         """Create a user with age and both consents granted."""
@@ -55,4 +57,5 @@ def world() -> AppWorld:
         ids=FakeIdGenerator(),
         tokens=FakeTokenGenerator(),
         catalog=FakeConsentCatalog(),
+        notifier=FakePairNotifier(),
     )

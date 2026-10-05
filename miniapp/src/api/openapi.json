@@ -233,6 +233,10 @@
       "MeResponse": {
         "description": "Current user onboarding and limits (C0/C1).",
         "properties": {
+          "account_exists": {
+            "title": "Account Exists",
+            "type": "boolean"
+          },
           "active_contact_id": {
             "anyOf": [
               {
@@ -297,6 +301,7 @@
         },
         "required": [
           "onboarding_step",
+          "account_exists",
           "max_contacts",
           "max_open_rules",
           "display_timezone"

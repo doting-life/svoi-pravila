@@ -18,8 +18,11 @@ from tests.unit.api.test_miniapp_api import _auth_header, _build_app
 from tests.unit.application.conftest import AppWorld
 
 from svoi_pravila.api.miniapp.errors import MiniappErrorCode
+from svoi_pravila.application.use_cases.confirm_age import ConfirmAge, ConfirmAgeCommand
 from svoi_pravila.application.use_cases.create_contact import CreateContact, CreateContactCommand
+from svoi_pravila.application.use_cases.ensure_user import EnsureUser, EnsureUserCommand
 from svoi_pravila.domain.enums import RelationshipKind
+from svoi_pravila.domain.ids import TelegramUserId
 from svoi_pravila.domain.text import ContactLabel
 
 _NOW = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
@@ -112,7 +115,8 @@ async def test_revoke_confirm_validation(mini_world: AppWorld) -> None:
 @pytest.mark.unit
 async def test_revoke_then_me_consent_and_other_forbidden(mini_world: AppWorld) -> None:
     await mini_world.ensure_granted_user(_TG)
-    app = _build_app(mini_world)
+    delivery = FakeExportDelivery()
+    app = _build_app(mini_world, delivery=delivery)
     headers = _auth_header(_TG)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         revoked = await client.post(
@@ -122,9 +126,47 @@ async def test_revoke_then_me_consent_and_other_forbidden(mini_world: AppWorld) 
         me = await client.get("/api/v1/me", headers=headers)
         assert me.status_code == 200
         assert me.json()["onboarding_step"] == "consent"
+        assert me.json()["account_exists"] is True
         contacts = await client.get("/api/v1/contacts", headers=headers)
         assert contacts.status_code == 403
         assert contacts.json()["code"] == MiniappErrorCode.CONSENT_REQUIRED
+        exported = await client.post("/api/v1/me/export", headers=headers)
+        assert exported.status_code == 202
+        assert exported.json() == {"delivered_to": "bot_chat"}
+        assert len(delivery.deliveries) == 1
+        deleted = await client.post("/api/v1/me/delete", headers=headers, json={"confirm": True})
+        assert deleted.status_code == 204
+
+
+@pytest.mark.unit
+async def test_export_after_age_without_consents(mini_world: AppWorld) -> None:
+    user = (
+        await EnsureUser(mini_world.uow_factory, mini_world.ids, mini_world.clock).execute(
+            EnsureUserCommand(TelegramUserId(_TG))
+        )
+    ).user
+    await ConfirmAge(mini_world.uow_factory, mini_world.clock).execute(ConfirmAgeCommand(user.id))
+    delivery = FakeExportDelivery()
+    app = _build_app(mini_world, delivery=delivery)
+    headers = _auth_header(_TG)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        me = await client.get("/api/v1/me", headers=headers)
+        assert me.status_code == 200
+        assert me.json()["onboarding_step"] == "consent"
+        assert me.json()["account_exists"] is True
+        exported = await client.post("/api/v1/me/export", headers=headers)
+    assert exported.status_code == 202
+    assert exported.json() == {"delivered_to": "bot_chat"}
+    assert len(delivery.deliveries) == 1
+
+
+@pytest.mark.unit
+async def test_export_unknown_user_not_found(mini_world: AppWorld) -> None:
+    app = _build_app(mini_world, delivery=FakeExportDelivery())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post("/api/v1/me/export", headers=_auth_header(_TG))
+    assert response.status_code == 404
+    assert response.json()["code"] == MiniappErrorCode.NOT_FOUND
 
 
 @pytest.mark.unit
@@ -160,6 +202,7 @@ async def test_delete_idempotent_and_onboarding_reset(mini_world: AppWorld) -> N
         me = await client.get("/api/v1/me", headers=headers)
         assert me.status_code == 200
         assert me.json()["onboarding_step"] == "age"
+        assert me.json()["account_exists"] is False
         contacts = await client.get("/api/v1/contacts", headers=headers)
         assert contacts.status_code == 403
         assert contacts.json()["code"] == MiniappErrorCode.ONBOARDING_REQUIRED

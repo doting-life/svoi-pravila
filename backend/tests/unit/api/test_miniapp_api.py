@@ -177,6 +177,7 @@ async def test_me_unknown_user_age_step(mini_world: AppWorld) -> None:
     assert response.headers["cache-control"] == "no-store"
     body = response.json()
     assert body["onboarding_step"] == "age"
+    assert body["account_exists"] is False
     assert body["display_timezone"] == "Europe/Moscow"
 
 
@@ -259,6 +260,7 @@ async def test_happy_path_contacts_rules_suggestions(
         me = await client.get("/api/v1/me", headers=headers)
         assert me.status_code == 200
         assert me.json()["onboarding_step"] == "done"
+        assert me.json()["account_exists"] is True
         assert me.json()["display_timezone"] == "Europe/Moscow"
 
         created = await client.post(

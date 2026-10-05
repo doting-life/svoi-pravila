@@ -11,6 +11,40 @@ from svoi_pravila.application.use_cases._effective_rules import collect_visible_
 from svoi_pravila.domain.ids import TelegramUserId, UserId
 from svoi_pravila.domain.rules import RuleRevision
 
+# Canonical mini-app disclosure string for export contents (must match UI catalog).
+# Preposition U+0441 is via chr() to avoid RUF001 confusable-literal false positive.
+EXPORT_DISCLOSURE_BLURB = (
+    "Выгрузка содержит контакты, согласия, правила, предложения правил и историю выбора тона. "
+    f"Файл придёт в чат {chr(0x0441)} ботом и не хранится на сервере."
+)
+
+_SECTION_DISCLOSURE_PHRASES: dict[str, str] = {
+    "согласия": "согласия",
+    "контакты": "контакты",
+    "правила": "правила",
+    "общие_правила": "правила",
+    "предложения": "предложения правил",
+    "сигналы_тона": "историю выбора тона",
+}
+
+
+def disclosure_phrases_from_export_payload(payload: dict[str, object]) -> frozenset[str]:
+    """Map content section keys present in an export payload to disclosure substrings."""
+    phrases: set[str] = set()
+    if "согласия" in payload:
+        phrases.add(_SECTION_DISCLOSURE_PHRASES["согласия"])
+    if "контакты" in payload:
+        phrases.add(_SECTION_DISCLOSURE_PHRASES["контакты"])
+        contacts = payload["контакты"]
+        if isinstance(contacts, list):
+            for contact in contacts:
+                if not isinstance(contact, dict):
+                    continue
+                for key in ("правила", "общие_правила", "предложения", "сигналы_тона"):
+                    if key in contact:
+                        phrases.add(_SECTION_DISCLOSURE_PHRASES[key])
+    return frozenset(phrases)
+
 
 def _iso(value: datetime | None) -> str | None:
     if value is None:

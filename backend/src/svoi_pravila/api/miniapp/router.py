@@ -30,6 +30,7 @@ from svoi_pravila.api.miniapp.schemas import (
     SuggestionItem,
     SuggestionListResponse,
 )
+from svoi_pravila.application.errors import NotFound
 from svoi_pravila.application.ports.rate_limiter import RateLimiter
 from svoi_pravila.application.rule_view import RuleListItemView, project_rules_for_list
 from svoi_pravila.application.use_cases.accept_suggestion import (
@@ -220,6 +221,7 @@ def _register_me(
                 ),
                 "consent_version": step.consent_version,
                 "active_contact_id": active,
+                "account_exists": auth.user is not None,
                 "max_contacts": MAX_CONTACTS_PER_USER,
                 "max_open_rules": MAX_OPEN_RULES_PER_SCOPE,
                 "display_timezone": bindings.display_timezone,
@@ -235,18 +237,20 @@ def _register_me(
     )
     async def export_my_data(
         response: Response,
-        actor: actor_dep,
+        auth: auth_dep,
     ) -> ExportDeliveryResponse:
         no_store(response)
         pseudonym = bindings.auth.pseudonymizer.pseudonymize(
             _EXPORT_RATE_PURPOSE,
-            str(actor.telegram_user_id.value),
+            str(auth.telegram_user_id.value),
         )
         decision = await bindings.export_rate_limiter.check(pseudonym)
         if not decision.allowed:
             raise MiniappHttpError(MiniappErrorCode.RATE_LIMITED, 429)
+        if auth.user is None:
+            raise NotFound
         result = await bindings.request_my_data_export.execute(
-            RequestMyDataExportCommand(telegram_user_id=actor.telegram_user_id)
+            RequestMyDataExportCommand(telegram_user_id=auth.telegram_user_id)
         )
         return ExportDeliveryResponse.model_validate({"delivered_to": result.delivered_to})
 

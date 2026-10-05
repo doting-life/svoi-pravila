@@ -195,6 +195,7 @@ async def test_miniapp_api_happy_path_idor_privacy(
         assert me.status_code == 200
         assert me.headers["cache-control"] == "no-store"
         assert me.json()["onboarding_step"] == "done"
+        assert me.json()["account_exists"] is True
 
         created = await client.post(
             "/api/v1/contacts",
@@ -325,6 +326,7 @@ async def test_miniapp_delete_shreds_user_and_keys(
         me = await client.get("/api/v1/me", headers=headers)
         assert me.status_code == 200
         assert me.json()["onboarding_step"] == "age"
+        assert me.json()["account_exists"] is False
         contacts = await client.get("/api/v1/contacts", headers=headers)
         assert contacts.status_code == 403
         assert contacts.json()["code"] == MiniappErrorCode.ONBOARDING_REQUIRED

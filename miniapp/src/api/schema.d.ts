@@ -368,6 +368,8 @@ export interface components {
          * @description Current user onboarding and limits (C0/C1).
          */
         MeResponse: {
+            /** Account Exists */
+            account_exists: boolean;
             /** Active Contact Id */
             active_contact_id?: string | null;
             /** Consent Kind */

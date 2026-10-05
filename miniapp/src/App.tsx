@@ -93,12 +93,20 @@ function MiniappShell({
     if (me.data.onboarding_step !== "done") {
         const incomplete = me.data.onboarding_step === "age";
         const showRightsActions = incomplete ? me.data.account_exists : true;
+        if (showRightsActions) {
+            return (
+                <GateScreen
+                    kind={me.data.onboarding_step === "consent" ? "consent" : "incomplete"}
+                    telegram={telegram}
+                    showRightsActions
+                    onAccountDeleted={onAccountDeleted}
+                />
+            );
+        }
         return (
             <GateScreen
                 kind={me.data.onboarding_step === "consent" ? "consent" : "incomplete"}
                 telegram={telegram}
-                showRightsActions={showRightsActions}
-                onAccountDeleted={showRightsActions ? onAccountDeleted : undefined}
             />
         );
     }

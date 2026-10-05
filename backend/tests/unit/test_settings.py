@@ -42,6 +42,28 @@ def test_settings_rejects_invalid_display_timezone() -> None:
 
 
 @pytest.mark.unit
+def test_settings_accepts_https_miniapp_url_origin() -> None:
+    settings = make_settings(miniapp_url="https://example.trycloudflare.com/")
+    assert settings.miniapp_url == "https://example.trycloudflare.com"
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "value",
+    [
+        "http://example.trycloudflare.com",
+        "https://user:pass@example.trycloudflare.com",
+        "https://example.trycloudflare.com/path",
+        "https://example.trycloudflare.com?q=1",
+        "https://example.trycloudflare.com#frag",
+    ],
+)
+def test_settings_rejects_invalid_miniapp_url(value: str) -> None:
+    with pytest.raises(ValidationError, match="miniapp_url"):
+        make_settings(miniapp_url=value)
+
+
+@pytest.mark.unit
 def test_settings_rejects_missing_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("SP_ENVIRONMENT", raising=False)
     values = make_settings().model_dump()

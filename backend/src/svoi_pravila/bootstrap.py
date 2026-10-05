@@ -146,6 +146,7 @@ def _build_miniapp_mount(settings: Settings, ports: _CorePorts) -> APIRouter | N
                 ports.uow_factory, ports.catalog, ports.ids, ports.clock
             ),
             dismiss_suggestion=DismissSuggestion(ports.uow_factory, ports.catalog, ports.clock),
+            display_timezone=settings.display_timezone,
         )
     )
 

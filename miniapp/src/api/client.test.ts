@@ -9,6 +9,7 @@ const meBody = {
     active_contact_id: null,
     max_contacts: 20,
     max_open_rules: 50,
+    display_timezone: "Europe/Moscow",
 };
 
 describe("createApiClient", () => {

@@ -1,6 +1,7 @@
 .PHONY: install fmt fmt-check lint typecheck imports test-unit test-integration test \
 	audit secrets migrations-check image-scan openapi miniapp-install miniapp-api-check \
-	miniapp-check dev-env infra-up infra-down build up down logs ps bench-llm eval-llm check
+	miniapp-check miniapp-tunnel miniapp-tunnel-down \
+	dev-env infra-up infra-down build up down logs ps bench-llm eval-llm check
 
 BACKEND := backend
 MINIAPP := miniapp
@@ -102,6 +103,16 @@ miniapp-api-check: openapi
 
 miniapp-check: miniapp-api-check
 	$(PNPM) run check
+
+miniapp-tunnel:
+	$(COMPOSE) --profile app --profile tunnel up -d tunnel
+	@echo "Copy the https://….trycloudflare.com URL from the tunnel logs into SP_MINIAPP_URL, then restart api."
+	@echo "The URL changes every run."
+	$(COMPOSE) --profile app --profile tunnel logs -f tunnel
+
+miniapp-tunnel-down:
+	$(COMPOSE) --profile app --profile tunnel stop tunnel
+	$(COMPOSE) --profile app --profile tunnel rm -f tunnel
 
 migrations-check:
 	$(UV) alembic upgrade head

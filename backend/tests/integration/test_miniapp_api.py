@@ -138,6 +138,7 @@ def _build_app(world: _MiniappWorld) -> Any:
         list_suggestions=ListSuggestions(uow_factory, catalog),
         accept_suggestion=AcceptSuggestion(uow_factory, catalog, ids, clock),
         dismiss_suggestion=DismissSuggestion(uow_factory, catalog, clock),
+        display_timezone=settings.display_timezone,
     )
     return create_app(
         CheckReadiness(probes=(), timeout_seconds=1.0),

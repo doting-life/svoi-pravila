@@ -16,12 +16,31 @@ interface TelegramThemeParams {
     readonly destructive_text_color?: string;
 }
 
+type TelegramHapticNotificationType = "error" | "success" | "warning";
+
+interface TelegramBackButton {
+    show: () => void;
+    hide: () => void;
+    onClick: (callback: () => void) => void;
+    offClick: (callback: () => void) => void;
+}
+
+interface TelegramHapticFeedback {
+    notificationOccurred: (type: TelegramHapticNotificationType) => void;
+}
+
 interface TelegramWebApp {
     readonly initData: string;
     readonly colorScheme: "light" | "dark";
     readonly themeParams: TelegramThemeParams;
+    readonly BackButton?: TelegramBackButton;
+    readonly HapticFeedback?: TelegramHapticFeedback;
     ready: () => void;
     expand: () => void;
+    close: () => void;
+    showConfirm?: (message: string, callback?: (confirmed: boolean) => void) => void;
+    onEvent?: (eventType: string, callback: () => void) => void;
+    offEvent?: (eventType: string, callback: () => void) => void;
 }
 
 interface TelegramNamespace {

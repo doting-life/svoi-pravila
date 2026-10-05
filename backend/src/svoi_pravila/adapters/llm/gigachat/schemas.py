@@ -45,3 +45,22 @@ class DecodeOut(BaseModel):
     variants: list[VariantOut] = Field(default_factory=list, max_length=3)
     applied_rule_indexes: list[int]
     safety: SafetyOut
+
+
+class SuggestRuleVerdictOut(StrEnum):
+    OK = "ok"
+    NONE = "none"
+
+
+class RuleCategoryOut(StrEnum):
+    TABOO_TOPIC = "taboo_topic"
+    HOW_TO_ASK = "how_to_ask"
+    APOLOGY = "apology"
+    CONFLICT_PROTOCOL = "conflict_protocol"
+    OTHER = "other"
+
+
+class SuggestRuleOut(BaseModel):
+    verdict: SuggestRuleVerdictOut
+    category: RuleCategoryOut | None = None
+    text: str | None = Field(default=None, max_length=280)

@@ -263,14 +263,16 @@ class ToneSignalRepository(Protocol):
         self,
         user_id: UserId,
         contact_id: ContactId,
-        *,
-        for_update: bool = False,
     ) -> ToneSignal | None:
-        """Return the signal for ``(user_id, contact_id)`` or None.
+        """Return the signal for ``(user_id, contact_id)`` or None (read-only)."""
+        ...
 
-        When ``for_update`` is true, ensure a row exists and lock it for the
-        remainder of the unit of work (Postgres ``FOR UPDATE``).
-        """
+    async def lock_for_append(
+        self,
+        user_id: UserId,
+        contact_id: ContactId,
+    ) -> ToneSignal:
+        """Ensure a row exists, lock it (``FOR UPDATE``), and return the signal."""
         ...
 
     async def list_for_user(self, user_id: UserId) -> list[ToneSignal]:

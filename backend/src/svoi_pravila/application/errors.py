@@ -145,6 +145,10 @@ class PreparedResultUnavailable(ApplicationError):
     """Prepared-result token is missing, expired, tampered, or bound to another user."""
 
 
+class RuleSourceUnavailable(ApplicationError):
+    """Rule-source token is missing, expired, reused, tampered, or bound to another user."""
+
+
 class InvalidGenerationOutput(ApplicationError):
     """Model output failed schema or content validation."""
 

@@ -45,6 +45,7 @@ class TelegramStrings:
     error_generic: str
     decode_copy: str
     decode_insert: str
+    decode_make_rule: str
     decode_need_text: str
     decode_busy: str
     decode_quota: str
@@ -97,6 +98,7 @@ class TelegramStrings:
     rules_category_other: str
     suggestion_dm: str
     suggestion_accept: str
+    suggestion_edit: str
     suggestion_dismiss: str
     suggestion_dismissed: str
     suggestion_already_decided: str
@@ -104,6 +106,12 @@ class TelegramStrings:
     suggestion_firmness_gentle: str
     suggestion_firmness_balanced: str
     suggestion_firmness_firm: str
+    suggestion_decode_ok: str
+    suggestion_decode_none: str
+    suggestion_decode_expired: str
+    suggestion_decode_quota: str
+    suggestion_decode_crisis: str
+    suggestion_decode_edit_prompt: str
     decode_rule_cited: str
     inline_rule_cited_prefix: str
     rights_revoke_explain: str
@@ -148,6 +156,7 @@ _KEYS: dict[str, str] = {
     "error.generic": "error_generic",
     "decode.copy": "decode_copy",
     "decode.insert": "decode_insert",
+    "decode.make_rule": "decode_make_rule",
     "decode.need_text": "decode_need_text",
     "decode.busy": "decode_busy",
     "decode.quota": "decode_quota",
@@ -200,6 +209,7 @@ _KEYS: dict[str, str] = {
     "rules.category.other": "rules_category_other",
     "suggestion.dm": "suggestion_dm",
     "suggestion.accept": "suggestion_accept",
+    "suggestion.edit": "suggestion_edit",
     "suggestion.dismiss": "suggestion_dismiss",
     "suggestion.dismissed": "suggestion_dismissed",
     "suggestion.already_decided": "suggestion_already_decided",
@@ -207,6 +217,12 @@ _KEYS: dict[str, str] = {
     "suggestion.firmness.gentle": "suggestion_firmness_gentle",
     "suggestion.firmness.balanced": "suggestion_firmness_balanced",
     "suggestion.firmness.firm": "suggestion_firmness_firm",
+    "suggestion.decode_ok": "suggestion_decode_ok",
+    "suggestion.decode_none": "suggestion_decode_none",
+    "suggestion.decode_expired": "suggestion_decode_expired",
+    "suggestion.decode_quota": "suggestion_decode_quota",
+    "suggestion.decode_crisis": "suggestion_decode_crisis",
+    "suggestion.decode_edit_prompt": "suggestion_decode_edit_prompt",
     "decode.rule_cited": "decode_rule_cited",
     "inline.rule_cited_prefix": "inline_rule_cited_prefix",
     "rights.revoke_explain": "rights_revoke_explain",

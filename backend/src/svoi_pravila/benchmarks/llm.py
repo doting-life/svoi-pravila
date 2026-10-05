@@ -69,6 +69,8 @@ def _parse_ops(raw: list[str] | None) -> tuple[RunOperation, ...]:
             ordered.append("help_say")
         elif item == "decode_stream":
             ordered.append("decode_stream")
+        elif item == "suggest_rule":
+            ordered.append("suggest_rule")
         else:
             msg = f"unknown operations: {item}"
             raise SystemExit(msg)

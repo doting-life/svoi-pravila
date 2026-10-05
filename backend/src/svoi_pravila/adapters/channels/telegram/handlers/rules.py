@@ -24,6 +24,7 @@ from svoi_pravila.adapters.channels.telegram.handlers.helpers import (
 from svoi_pravila.adapters.channels.telegram.keyboards import (
     archive_rule_confirm_keyboard,
     rule_category_keyboard,
+    suggestion_decision_keyboard,
 )
 from svoi_pravila.adapters.channels.telegram.presenters import (
     display_rule_text,
@@ -31,6 +32,7 @@ from svoi_pravila.adapters.channels.telegram.presenters import (
 )
 from svoi_pravila.application.errors import AccessNotGranted, NotFound, OpenRuleLimitReached
 from svoi_pravila.application.ports.dialog_state import DialogRecord
+from svoi_pravila.application.rule_source import RULE_SOURCE_CALLBACK_PREFIX
 from svoi_pravila.application.use_cases.accept_suggestion import (
     AcceptSuggestionCommand,
     AcceptSuggestionOutcome,
@@ -43,9 +45,14 @@ from svoi_pravila.application.use_cases.dismiss_suggestion import (
 from svoi_pravila.application.use_cases.list_rules import ListRulesCommand
 from svoi_pravila.application.use_cases.list_suggestions import ListSuggestionsCommand
 from svoi_pravila.application.use_cases.propose_rule import ProposeRuleCommand
+from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
+    SuggestRuleFromDecodeCommand,
+    SuggestRuleFromDecodeOutcome,
+    SuggestRuleFromDecodeResult,
+)
 from svoi_pravila.domain.enums import RuleCategory
 from svoi_pravila.domain.errors import InvalidTransitionError, InvalidValueError
-from svoi_pravila.domain.ids import RuleId, RuleSuggestionId
+from svoi_pravila.domain.ids import RuleId, RuleSuggestionId, TelegramUserId
 from svoi_pravila.domain.rule_suggestion import RuleSuggestion
 from svoi_pravila.domain.rules import Rule
 from svoi_pravila.domain.text import RuleText
@@ -77,7 +84,12 @@ def build_rules_router() -> Router:
     router.callback_query.register(confirm_archive, F.data.startswith("ru:ay:"))
     router.callback_query.register(cancel_archive, F.data == "ru:ax")
     router.callback_query.register(accept_suggestion, F.data.startswith("sg:a:"))
+    router.callback_query.register(edit_suggestion, F.data.startswith("sg:e:"))
     router.callback_query.register(dismiss_suggestion, F.data.startswith("sg:d:"))
+    router.callback_query.register(
+        suggest_from_decode,
+        F.data.startswith(RULE_SOURCE_CALLBACK_PREFIX),
+    )
     router.message.register(dialog_text, AwaitingRuleText())
     return router
 
@@ -335,6 +347,101 @@ async def dismiss_suggestion(callback: CallbackQuery, tg_deps: TelegramDeps, bot
         await reply_callback(bot, callback, tg_deps.strings.suggestion_already_decided)
         return
     await reply_callback(bot, callback, tg_deps.strings.suggestion_dismissed)
+
+
+async def edit_suggestion(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> None:
+    """Dismiss a suggestion and start awaiting_rule_text with its category."""
+    await clear_callback_keyboard(bot, callback)
+    await callback.answer()
+    if not await require_done_callback(callback, tg_deps, bot):
+        return
+    suggestion_id = _parse_suggestion_id(callback.data, "e")
+    if suggestion_id is None:
+        return
+    user = await actor(tg_deps, callback.from_user.id)
+    if user is None:
+        await send_current_step(bot, callback, tg_deps, callback.from_user.id)
+        return
+    try:
+        result = await tg_deps.dismiss_suggestion.execute(
+            DismissSuggestionCommand(user.id, suggestion_id)
+        )
+    except (NotFound, AccessNotGranted):
+        await reply_callback(bot, callback, tg_deps.strings.error_generic)
+        return
+    if result.outcome is DismissSuggestionOutcome.ALREADY_DECIDED:
+        await reply_callback(bot, callback, tg_deps.strings.suggestion_already_decided)
+        return
+    suggestion = result.suggestion
+    if suggestion is None:
+        await reply_callback(bot, callback, tg_deps.strings.error_generic)
+        return
+    await tg_deps.dialog_state.set(
+        dialog_pseudonym(tg_deps, callback.from_user.id),
+        DialogRecord(
+            step="awaiting_rule_text",
+            contact_id=suggestion.contact_id,
+            category=suggestion.category,
+        ),
+    )
+    await reply_callback(bot, callback, tg_deps.strings.suggestion_decode_edit_prompt)
+
+
+async def suggest_from_decode(callback: CallbackQuery, tg_deps: TelegramDeps, bot: Bot) -> None:
+    """Redeem sn: token and show a decode-sourced suggestion outcome."""
+    await clear_callback_keyboard(bot, callback)
+    await callback.answer()
+    if not await require_done_callback(callback, tg_deps, bot):
+        return
+    data = callback.data or ""
+    if not data.startswith(RULE_SOURCE_CALLBACK_PREFIX):
+        return
+    token = data[len(RULE_SOURCE_CALLBACK_PREFIX) :]
+    chat_id = callback_chat_id(callback)
+    if chat_id is None:
+        return
+    await bot.send_chat_action(chat_id, action="typing")
+    try:
+        result = await tg_deps.suggest_rule_from_decode.execute(
+            SuggestRuleFromDecodeCommand(
+                telegram_user_id=TelegramUserId(callback.from_user.id),
+                token=token,
+            )
+        )
+    except (NotFound, AccessNotGranted):
+        await send_current_step(bot, callback, tg_deps, callback.from_user.id)
+        return
+    await _reply_suggest_from_decode(bot, callback, tg_deps, chat_id, result)
+
+
+async def _reply_suggest_from_decode(
+    bot: Bot,
+    callback: CallbackQuery,
+    tg_deps: TelegramDeps,
+    chat_id: int,
+    result: SuggestRuleFromDecodeResult,
+) -> None:
+    simple = {
+        SuggestRuleFromDecodeOutcome.UNAVAILABLE: tg_deps.strings.suggestion_decode_expired,
+        SuggestRuleFromDecodeOutcome.CRISIS: tg_deps.strings.suggestion_decode_crisis,
+        SuggestRuleFromDecodeOutcome.QUOTA_EXCEEDED: tg_deps.strings.suggestion_decode_quota,
+        SuggestRuleFromDecodeOutcome.NONE: tg_deps.strings.suggestion_decode_none,
+    }
+    text = simple.get(result.outcome)
+    if text is not None:
+        await reply_callback(bot, callback, text)
+        return
+    suggestion = result.suggestion
+    if suggestion is None:
+        await reply_callback(bot, callback, tg_deps.strings.error_generic)
+        return
+    await bot.send_message(
+        chat_id,
+        tg_deps.strings.suggestion_decode_ok.format(text=suggestion.text.value),
+        reply_markup=suggestion_decision_keyboard(
+            tg_deps.strings, suggestion.id, include_edit=True
+        ),
+    )
 
 
 async def _pending_suggestions(tg_deps: TelegramDeps, user: User) -> tuple[RuleSuggestion, ...]:

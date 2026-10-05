@@ -85,6 +85,7 @@ def render_decode_completed(
     *,
     copy_max: int,
     insert_queries: tuple[str | None, ...] | None = None,
+    make_rule_callback: str | None = None,
 ) -> tuple[tuple[str, InlineKeyboardMarkup | None], ...]:
     """Final decode messages: analysis, hypotheses, then one message per variant."""
     result = completed.result
@@ -102,10 +103,13 @@ def render_decode_completed(
     if inserts is not None and len(inserts) != len(result.variants):
         msg = "insert_queries must match variants"
         raise ValueError(msg)
+    variant_indexes = [index for index, variant in enumerate(result.variants) if variant.text]
+    last_variant_index = variant_indexes[-1] if variant_indexes else None
     for index, variant in enumerate(result.variants):
         if not variant.text:
             continue
         insert = None if inserts is None else inserts[index]
+        make_rule = make_rule_callback if index == last_variant_index else None
         messages.append(
             (
                 variant.text[:TELEGRAM_MESSAGE_MAX],
@@ -114,6 +118,7 @@ def render_decode_completed(
                     variant.text,
                     copy_max=copy_max,
                     insert_query=insert,
+                    make_rule_callback=make_rule,
                 ),
             )
         )

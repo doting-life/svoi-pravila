@@ -29,11 +29,14 @@ from svoi_pravila.application.errors import (
 )
 from svoi_pravila.application.ports.generation import AnalysisChunk, DecodeCompleted, SafetyVerdict
 from svoi_pravila.application.ports.prepared_results import PreparedVariant
+from svoi_pravila.application.rule_source import RuleSourcePayload, rule_source_callback_data
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncomingCommand
 from svoi_pravila.application.use_cases.get_onboarding_step import (
     GetOnboardingStepQuery,
     OnboardingStepKind,
 )
+from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramIdQuery
+from svoi_pravila.application.use_cases.suggest_rule_from_decode import RULE_SOURCE_PURPOSE
 from svoi_pravila.domain.ids import TelegramUserId
 
 _COPY_MAX = 256
@@ -119,11 +122,15 @@ async def _stream_decode(
         if isinstance(event, DecodeCompleted):
             await draft.consider(bot, tg_deps.monotonic.monotonic(), force=True)
             insert_queries = await _store_insert_tokens(tg_deps, message.from_user.id, event)
+            make_rule_callback = await _store_make_rule_callback(
+                tg_deps, message.from_user.id, incoming, event
+            )
             for text, keyboard in render_decode_completed(
                 tg_deps.strings,
                 event,
                 copy_max=_COPY_MAX,
                 insert_queries=insert_queries,
+                make_rule_callback=make_rule_callback,
             ):
                 await message.answer(text, reply_markup=keyboard)
             if event.result.safety is SafetyVerdict.OK:
@@ -175,3 +182,25 @@ async def _store_insert_tokens(
         )
         tokens.append(token)
     return tuple(tokens)
+
+
+async def _store_make_rule_callback(
+    tg_deps: TelegramDeps,
+    telegram_user_id: int,
+    incoming: str,
+    completed: DecodeCompleted,
+) -> str | None:
+    if completed.result.safety is not SafetyVerdict.OK:
+        return None
+    looked_up = await tg_deps.get_user_by_telegram_id.execute(
+        GetUserByTelegramIdQuery(TelegramUserId(telegram_user_id))
+    )
+    user = looked_up.user
+    if user is None or user.active_contact_id is None:
+        return None
+    pseudonym = tg_deps.pseudonymizer.pseudonymize(RULE_SOURCE_PURPOSE, str(telegram_user_id))
+    token = await tg_deps.rule_sources.store(
+        pseudonym,
+        RuleSourcePayload(contact_id=user.active_contact_id, incoming_text=incoming),
+    )
+    return rule_source_callback_data(token)

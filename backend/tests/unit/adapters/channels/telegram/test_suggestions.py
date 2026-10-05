@@ -149,7 +149,7 @@ def _sent_texts(session: FakeTelegramSession) -> list[str]:
 
 @pytest.mark.unit
 def test_feature_callback_registry_includes_sg() -> None:
-    assert FEATURE_CALLBACK_PREFIXES == ("ct", "ru", "sg")
+    assert FEATURE_CALLBACK_PREFIXES == ("ct", "ru", "sg", "sn")
     assert is_feature_callback("sg:a:00000000-0000-0000-0000-000000000001")
     assert is_feature_callback("ct:n")
     assert is_feature_callback("ru:n")

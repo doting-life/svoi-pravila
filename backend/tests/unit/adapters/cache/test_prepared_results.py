@@ -40,6 +40,9 @@ class _MemoryRedis:
                 removed += 1
         return removed
 
+    async def getdel(self, key: str) -> str | None:
+        return self.data.pop(key, None)
+
 
 def _store() -> tuple[ValkeyPreparedResults, _MemoryRedis]:
     memory = _MemoryRedis()

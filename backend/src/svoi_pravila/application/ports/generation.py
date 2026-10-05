@@ -9,6 +9,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from svoi_pravila.domain.enums import Firmness, RelationshipKind, RuleCategory
+from svoi_pravila.domain.text import RuleText
 
 BOUNDED_TEXT_MIN = 1
 BOUNDED_TEXT_MAX = 4000
@@ -95,6 +96,38 @@ class DecodeRequest:
 
     def __post_init__(self) -> None:
         _validate_bounded_text("incoming", self.incoming)
+
+
+@dataclass(frozen=True, slots=True)
+class SuggestRuleRequest:
+    """Input for suggesting a rule from an incoming message."""
+
+    incoming: str
+    rules: tuple[RuleContext, ...]
+    relationship: RelationshipKind
+    deadline_seconds: float
+
+    def __post_init__(self) -> None:
+        _validate_bounded_text("incoming", self.incoming)
+
+
+@dataclass(frozen=True, slots=True)
+class SuggestRuleProposed:
+    """Model proposed a rule candidate."""
+
+    category: RuleCategory
+    text: RuleText
+    meta: GenerationMeta
+
+
+@dataclass(frozen=True, slots=True)
+class SuggestRuleNothing:
+    """Model decided nothing should be recorded as a rule."""
+
+    meta: GenerationMeta
+
+
+SuggestRuleResult = SuggestRuleProposed | SuggestRuleNothing
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,3 +237,6 @@ class TextGenerator(Protocol):
 
     def decode_stream(self, request: DecodeRequest) -> AsyncIterator[DecodeEvent]:
         """Stream decode analysis chunks, then a completed structured result."""
+
+    async def suggest_rule(self, request: SuggestRuleRequest) -> SuggestRuleResult:
+        """Propose a rule candidate from an incoming message, or none."""

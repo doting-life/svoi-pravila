@@ -98,8 +98,10 @@ def variant_reply_markup(
     *,
     copy_max: int,
     insert_query: str | None,
+    make_rule_callback: str | None = None,
 ) -> InlineKeyboardMarkup | None:
     """Copy and/or «Вставить в чат» (switch_inline_query_chosen_chat)."""
+    rows: list[list[InlineKeyboardButton]] = []
     buttons: list[InlineKeyboardButton] = []
     if text and len(text) <= copy_max:
         buttons.append(
@@ -121,9 +123,20 @@ def variant_reply_markup(
                 ),
             )
         )
-    if not buttons:
+    if buttons:
+        rows.append(buttons)
+    if make_rule_callback is not None:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=strings.decode_make_rule,
+                    callback_data=_require_callback_bytes(make_rule_callback),
+                )
+            ]
+        )
+    if not rows:
         return None
-    return InlineKeyboardMarkup(inline_keyboard=[buttons])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _require_callback_bytes(data: str) -> str:
@@ -185,18 +198,23 @@ def rule_category_keyboard(strings: TelegramStrings) -> InlineKeyboardMarkup:
 def suggestion_decision_keyboard(
     strings: TelegramStrings,
     suggestion_id: RuleSuggestionId,
+    *,
+    include_edit: bool = False,
 ) -> InlineKeyboardMarkup:
-    """Accept / dismiss buttons for one suggestion. Callback data carries the id only."""
+    """Accept / dismiss (and optional edit) buttons for one suggestion."""
     accept = _require_callback_bytes(f"sg:a:{suggestion_id}")
     dismiss = _require_callback_bytes(f"sg:d:{suggestion_id}")
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text=strings.suggestion_accept, callback_data=accept),
-                InlineKeyboardButton(text=strings.suggestion_dismiss, callback_data=dismiss),
-            ]
-        ]
-    )
+    row = [
+        InlineKeyboardButton(text=strings.suggestion_accept, callback_data=accept),
+        InlineKeyboardButton(text=strings.suggestion_dismiss, callback_data=dismiss),
+    ]
+    if include_edit:
+        edit = _require_callback_bytes(f"sg:e:{suggestion_id}")
+        row.insert(
+            1,
+            InlineKeyboardButton(text=strings.suggestion_edit, callback_data=edit),
+        )
+    return InlineKeyboardMarkup(inline_keyboard=[row])
 
 
 def rules_keyboard(

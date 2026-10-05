@@ -47,6 +47,7 @@ class UsageScenario(StrEnum):
     DECODE = "decode"
     SOFTEN = "soften"
     HELP_SAY = "help_say"
+    SUGGEST_RULE = "suggest_rule"
 
 
 class UsageSurface(StrEnum):

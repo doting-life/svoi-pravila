@@ -340,11 +340,16 @@ class InMemoryToneSignalRepository:
         self,
         user_id: UserId,
         contact_id: ContactId,
-        *,
-        for_update: bool = False,
     ) -> ToneSignal | None:
+        return self._working.tone_signals.get((user_id, contact_id))
+
+    async def lock_for_append(
+        self,
+        user_id: UserId,
+        contact_id: ContactId,
+    ) -> ToneSignal:
         existing = self._working.tone_signals.get((user_id, contact_id))
-        if for_update and existing is None:
+        if existing is None:
             empty = ToneSignal(user_id=user_id, contact_id=contact_id, values=())
             self._working.tone_signals[(user_id, contact_id)] = empty
             return empty

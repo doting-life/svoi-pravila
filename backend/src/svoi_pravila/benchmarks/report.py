@@ -179,12 +179,110 @@ def aggregate_decode_stream_row(
     return row, reason_counts
 
 
+def _ratio_or_na(hits: int, total: int) -> str:
+    if total == 0:
+        return "n/a"
+    return f"{100.0 * hits / total:.0f}"
+
+
+def _suggest_rule_quality(
+    records: list[CallRecord],
+) -> tuple[str, str, str, str, str, int]:
+    """Category match%, none precision/recall, text mean/max, overlap count."""
+    expected_ok = [r for r in records if r.expected_verdict == "ok"]
+    category_hits = sum(
+        1
+        for r in expected_ok
+        if r.outcome == "ok"
+        and r.actual_verdict == "ok"
+        and r.actual_category == r.expected_category
+    )
+    category_match = _ratio_or_na(category_hits, len(expected_ok))
+
+    expected_none = [r for r in records if r.expected_verdict == "none"]
+    none_hits = sum(1 for r in expected_none if r.outcome == "ok" and r.actual_verdict == "none")
+    none_recall = _ratio_or_na(none_hits, len(expected_none))
+
+    actual_none = [r for r in records if r.outcome == "ok" and r.actual_verdict == "none"]
+    none_true = sum(1 for r in actual_none if r.expected_verdict == "none")
+    none_precision = _ratio_or_na(none_true, len(actual_none))
+
+    lengths = [
+        r.text_length
+        for r in records
+        if r.outcome == "ok" and r.actual_verdict == "ok" and r.text_length is not None
+    ]
+    if lengths:
+        text_mean = f"{sum(lengths) / len(lengths):.0f}"
+        text_max = str(max(lengths))
+    else:
+        text_mean = "n/a"
+        text_max = "n/a"
+
+    overlaps = sum(1 for r in records if r.outcome == "ok" and r.overlap_violation)
+    return category_match, none_precision, none_recall, text_mean, text_max, overlaps
+
+
+def format_suggest_rule_case_table(records: list[CallRecord]) -> list[str]:
+    """Per-case markdown table for suggest_rule (synthetic texts only)."""
+    header = (
+        "| id | expected_verdict | expected_category | actual_verdict | "
+        "actual_category | text_len | overlap | billable | text |\n"
+        "|---|---|---|---|---|---:|---|---:|---|"
+    )
+    rows = [header]
+    for rec in records:
+        text = "" if rec.generated_text is None else rec.generated_text.replace("|", "\\|")
+        rows.append(
+            "| "
+            f"{rec.case_id or ''} | "
+            f"{rec.expected_verdict or ''} | "
+            f"{rec.expected_category or ''} | "
+            f"{rec.actual_verdict or ''} | "
+            f"{rec.actual_category or ''} | "
+            f"{'' if rec.text_length is None else rec.text_length} | "
+            f"{'yes' if rec.overlap_violation else 'no'} | "
+            f"{rec.billable_tokens} | "
+            f"{text} |"
+        )
+    return rows
+
+
+def aggregate_suggest_rule_row(
+    records: list[CallRecord], *, model: str
+) -> tuple[str, dict[str, int]]:
+    """Return one markdown row for suggest_rule with category/none/overlap metrics."""
+    n = len(records)
+    ok = [r for r in records if r.outcome == "ok"]
+    ok_lat = [r.latency_ms for r in ok]
+    all_lat = [r.latency_ms for r in records]
+    schema_first, schema_after, refuse_pct, reason_counts, unavail_parts = _quality_metrics(
+        records, operation="suggest_rule"
+    )
+    mean_attempts, mean_in, mean_out, cost = _token_cost(records, model)
+    category_match, none_precision, none_recall, text_mean, text_max, overlaps = (
+        _suggest_rule_quality(records)
+    )
+    schema = f"{schema_first:.0f}/{schema_after:.0f}"
+    tokens = f"{mean_in:.0f}/{mean_out:.0f}"
+    row = (
+        f"| suggest_rule | {model} | {n} | {percentile(ok_lat, 50):.0f} | "
+        f"{percentile(ok_lat, 95):.0f} | {percentile(all_lat, 50):.0f} | "
+        f"{schema} | {refuse_pct:.0f} | {unavail_parts} | {category_match} | "
+        f"{none_precision} | {none_recall} | {text_mean} | {text_max} | "
+        f"{overlaps} | {mean_attempts:.2f} | {tokens} | {cost:.3f} |"
+    )
+    return row, reason_counts
+
+
 def aggregate_row(
     records: list[CallRecord], *, operation: str, model: str
 ) -> tuple[str, dict[str, int]]:
     """Dispatch to the correct table row builder."""
     if operation == "decode_stream":
         return aggregate_decode_stream_row(records, model=model)
+    if operation == "suggest_rule":
+        return aggregate_suggest_rule_row(records, model=model)
     return aggregate_standard_row(records, operation=operation, model=model)
 
 
@@ -205,6 +303,17 @@ def decode_stream_report_header() -> str:
         "total-p50 | total-p95 | schema% first/after | refuse% | unavail% by kind | "
         "safety ok/crisis/refuse | false-non-ok% | mean att | tok in/out | est. ₽ |\n"
         "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---|---|---:|---:|---:|---:|"
+    )
+
+
+def suggest_rule_report_header() -> str:
+    """Markdown header for suggest_rule rows."""
+    return (
+        "| operation | model | n | ok-p50 | ok-p95 | all-p50 | "
+        "schema% first/after | refuse% | unavail% by kind | category-match% | "
+        "none-precision% | none-recall% | text-mean | text-max | overlap | "
+        "mean att | tok in/out | est. ₽ |\n"
+        "|---|---|---:|---:|---:|---:|---:|---:|---|---|---|---|---|---|---:|---:|---:|---:|"
     )
 
 

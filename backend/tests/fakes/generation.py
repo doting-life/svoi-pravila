@@ -22,11 +22,15 @@ from svoi_pravila.application.ports.generation import (
     SafetyVerdict,
     SoftenRequest,
     SoftenResult,
+    SuggestRuleProposed,
+    SuggestRuleRequest,
+    SuggestRuleResult,
     TextGenerator,
     TokenUsage,
     Variant,
 )
-from svoi_pravila.domain.enums import Firmness
+from svoi_pravila.domain.enums import Firmness, RuleCategory
+from svoi_pravila.domain.text import RuleText
 
 
 def _meta(operation: str) -> GenerationMeta:
@@ -56,6 +60,7 @@ class FakeTextGenerator:
         self.soften_result = soften_result
         self.help_say_result = help_say_result
         self.decode_result = decode_result
+        self.suggest_rule_result: SuggestRuleResult | None = None
         self.stream_chunks = stream_chunks
         self.stream_error = stream_error
         self.emit_completed = True
@@ -65,6 +70,9 @@ class FakeTextGenerator:
         self.help_say_error: (
             GenerationRefusedByProvider | InvalidGenerationOutput | GenerationUnavailable | None
         ) = None
+        self.suggest_rule_error: (
+            GenerationRefusedByProvider | InvalidGenerationOutput | GenerationUnavailable | None
+        ) = None
         self.soften_block: asyncio.Event | None = None
         self.soften_started = asyncio.Event()
         self.help_say_block: asyncio.Event | None = None
@@ -72,6 +80,7 @@ class FakeTextGenerator:
         self.soften_calls: list[SoftenRequest] = []
         self.help_say_calls: list[HelpSayRequest] = []
         self.decode_stream_calls: list[DecodeRequest] = []
+        self.suggest_rule_calls: list[SuggestRuleRequest] = []
 
     @property
     def call_count(self) -> int:
@@ -142,6 +151,18 @@ class FakeTextGenerator:
             return
         result = self._decode_result(request)
         yield DecodeCompleted(analysis="".join(self.stream_chunks) or "analysis", result=result)
+
+    async def suggest_rule(self, request: SuggestRuleRequest) -> SuggestRuleResult:
+        self.suggest_rule_calls.append(request)
+        if self.suggest_rule_error is not None:
+            raise self.suggest_rule_error
+        if self.suggest_rule_result is not None:
+            return self.suggest_rule_result
+        return SuggestRuleProposed(
+            category=RuleCategory.HOW_TO_ASK,
+            text=RuleText("Мы говорим спокойно и без резких формулировок"),
+            meta=_meta("suggest_rule"),
+        )
 
 
 def as_text_generator(fake: FakeTextGenerator) -> TextGenerator:

@@ -8,17 +8,27 @@ from dataclasses import dataclass
 
 import structlog
 
-from svoi_pravila.adapters.llm.gigachat.schemas import DecodeOut, VariantOut
+from svoi_pravila.adapters.llm.gigachat.schemas import (
+    DecodeOut,
+    SuggestRuleOut,
+    SuggestRuleVerdictOut,
+    VariantOut,
+)
 from svoi_pravila.application.errors import InvalidGenerationOutput, InvalidOutputReason
 from svoi_pravila.application.ports.generation import (
     DecodeResult,
     GenerationMeta,
     RuleContext,
     SafetyVerdict,
+    SuggestRuleNothing,
+    SuggestRuleProposed,
+    SuggestRuleResult,
     TokenUsage,
     Variant,
 )
-from svoi_pravila.domain.enums import Firmness
+from svoi_pravila.domain.enums import Firmness, RuleCategory
+from svoi_pravila.domain.errors import InvalidValueError
+from svoi_pravila.domain.text import RuleText
 
 _URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 _FENCE_RE = re.compile(r"```")
@@ -45,6 +55,8 @@ MAX_TOKENS_ANALYSIS = output_token_cap(MAX_ANALYSIS_CHARS)
 MAX_TOKENS_DECODE = output_token_cap(
     MAX_VARIANTS * MAX_VARIANT_CHARS + MAX_HYPOTHESES * MAX_VARIANT_CHARS + MAX_VARIANT_CHARS
 )
+MAX_RULE_CHARS = 280
+MAX_TOKENS_SUGGEST = output_token_cap(MAX_RULE_CHARS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,6 +257,44 @@ def rules_text(rules: tuple[RuleContext, ...]) -> str:
         )
         lines.append(rule.text)
     return "\n".join(lines)
+
+
+def to_suggest_rule_result(parsed: SuggestRuleOut, meta: GenerationMeta) -> SuggestRuleResult:
+    """Validate structured suggest_rule output into a port result."""
+
+    def fail(reason: InvalidOutputReason) -> InvalidGenerationOutput:
+        return invalid(
+            reason,
+            usage=meta.usage,
+            attempts=meta.attempts,
+            model=meta.model,
+            prompt_version=meta.prompt_version,
+        )
+
+    if parsed.verdict is SuggestRuleVerdictOut.NONE:
+        if parsed.category is not None or parsed.text is not None:
+            raise fail(InvalidOutputReason.SCHEMA_VIOLATION)
+        return SuggestRuleNothing(meta=meta)
+    if parsed.category is None or parsed.text is None:
+        raise fail(InvalidOutputReason.SCHEMA_VIOLATION)
+    text = parsed.text.strip()
+    if not text:
+        raise fail(InvalidOutputReason.EMPTY_TEXT)
+    if len(text) > MAX_RULE_CHARS:
+        raise fail(InvalidOutputReason.TEXT_TOO_LONG)
+    if _URL_RE.search(text) is not None:
+        raise fail(InvalidOutputReason.URL_IN_TEXT)
+    if _FENCE_RE.search(text) is not None:
+        raise fail(InvalidOutputReason.MARKUP_FENCE)
+    try:
+        rule_text = RuleText(text)
+    except InvalidValueError as exc:
+        raise fail(InvalidOutputReason.EMPTY_TEXT) from exc
+    try:
+        category = RuleCategory(parsed.category.value)
+    except ValueError as exc:
+        raise fail(InvalidOutputReason.SCHEMA_VIOLATION) from exc
+    return SuggestRuleProposed(category=category, text=rule_text, meta=meta)
 
 
 def untrusted_texts(*parts: str, rules: tuple[RuleContext, ...] = ()) -> tuple[str, ...]:

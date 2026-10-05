@@ -73,6 +73,7 @@ from svoi_pravila.benchmarks.report import (
     default_models,
     format_reasons_line,
     format_report,
+    format_suggest_rule_case_table,
     percentile,
     phase_count,
     price_for,
@@ -1637,3 +1638,135 @@ async def test_rate_limit_capture_feeds_incomplete_out(
     assert "http_status: 429" in written
     assert "header retry-after: 2" in written
     assert "header x-ratelimit-remaining: 0" in written
+
+
+@pytest.mark.unit
+def test_suggest_rule_metrics_mixed_outcomes_and_case_table() -> None:
+    hit = CallRecord(
+        "ok",
+        100,
+        "ok",
+        1,
+        (),
+        None,
+        10,
+        5,
+        billable_tokens=15,
+        actual_verdict="ok",
+        actual_category="how_to_ask",
+        text_length=20,
+        expected_verdict="ok",
+        expected_category="how_to_ask",
+        generated_text="Мы говорим спокойно",
+        case_id="sr-hit",
+    )
+    mismatch = CallRecord(
+        "ok",
+        110,
+        "ok",
+        1,
+        (),
+        None,
+        10,
+        5,
+        billable_tokens=16,
+        actual_verdict="ok",
+        actual_category="other",
+        text_length=10,
+        expected_verdict="ok",
+        expected_category="apology",
+        generated_text="Мы пишем вечером",
+        case_id="sr-mismatch",
+    )
+    none_ok = CallRecord(
+        "ok",
+        90,
+        "ok",
+        1,
+        (),
+        None,
+        8,
+        2,
+        billable_tokens=10,
+        actual_verdict="none",
+        expected_verdict="none",
+        case_id="sr-none",
+    )
+    false_none = CallRecord(
+        "ok",
+        95,
+        "ok",
+        1,
+        (),
+        None,
+        8,
+        2,
+        billable_tokens=11,
+        actual_verdict="none",
+        expected_verdict="ok",
+        expected_category="taboo_topic",
+        case_id="sr-false-none",
+    )
+    invalid = CallRecord(
+        "invalid_output",
+        120,
+        "ok",
+        2,
+        ("schema_violation",),
+        None,
+        9,
+        1,
+        billable_tokens=12,
+        expected_verdict="ok",
+        expected_category="how_to_ask",
+        case_id="sr-invalid",
+    )
+    overlap = CallRecord(
+        "ok",
+        105,
+        "ok",
+        1,
+        (),
+        None,
+        10,
+        5,
+        billable_tokens=14,
+        actual_verdict="ok",
+        actual_category="conflict_protocol",
+        text_length=40,
+        overlap_violation=True,
+        expected_verdict="ok",
+        expected_category="conflict_protocol",
+        generated_text="x" * 40,
+        case_id="sr-overlap",
+    )
+    records = [hit, mismatch, none_ok, false_none, invalid, overlap]
+    row, reasons = aggregate_row(records, operation="suggest_rule", model="GigaChat-3-Lightning")
+    cells = [c.strip() for c in row.strip().strip("|").split("|")]
+    # header: op model n ok-p50 ok-p95 all-p50 schema refuse unavail
+    # category none-prec none-rec text-mean text-max overlap mean-att tok cost
+    assert cells[0] == "suggest_rule"
+    assert cells[9] == "40"  # category-match: 2/5
+    assert cells[10] == "50"  # none-precision: 1/2
+    assert cells[11] == "100"  # none-recall: 1/1
+    assert cells[12] == "23"  # text mean (20+10+40)/3
+    assert cells[13] == "40"  # text max
+    assert cells[14] == "1"  # overlap count
+    assert reasons == {"schema_violation": 1}
+    case_lines = format_suggest_rule_case_table(records)
+    assert case_lines[0].startswith("| id |")
+    joined = "\n".join(case_lines)
+    assert "| sr-hit |" in joined
+    assert "Мы говорим спокойно" in joined
+    assert "| sr-overlap |" in joined
+    assert "| yes |" in joined
+    empty_row, empty_reasons = aggregate_row(
+        [], operation="suggest_rule", model="GigaChat-3-Lightning"
+    )
+    empty_cells = [c.strip() for c in empty_row.strip().strip("|").split("|")]
+    assert empty_cells[9] == "n/a"
+    assert empty_cells[10] == "n/a"
+    assert empty_cells[11] == "n/a"
+    assert empty_cells[12] == "n/a"
+    assert empty_cells[13] == "n/a"
+    assert empty_reasons == {}

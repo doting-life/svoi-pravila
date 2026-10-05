@@ -24,7 +24,7 @@ from svoi_pravila.domain.user import User
 logger = structlog.get_logger(__name__)
 
 # Feature callback prefixes that must reach their routers during onboarding.
-FEATURE_CALLBACK_PREFIXES: tuple[str, ...] = ("ct", "ru", "sg")
+FEATURE_CALLBACK_PREFIXES: tuple[str, ...] = ("ct", "ru", "sg", "sn")
 
 
 def is_feature_callback(data: str | None) -> bool:

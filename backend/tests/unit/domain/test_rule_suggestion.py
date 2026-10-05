@@ -100,6 +100,22 @@ def test_create_tone_is_pending() -> None:
 
 
 @pytest.mark.unit
+def test_create_decode_is_pending_without_firmness() -> None:
+    suggestion = RuleSuggestion.create_decode(
+        suggestion_id=SUGGESTION_ID,
+        user_id=USER,
+        contact_id=CONTACT,
+        category=RuleCategory.HOW_TO_ASK,
+        text=RuleText("Мы говорим спокойно и без резких формулировок"),
+        now=NOW,
+    )
+    assert suggestion.status is SuggestionStatus.PENDING
+    assert suggestion.source is SuggestionSource.DECODE
+    assert suggestion.firmness is None
+    assert suggestion.decided_at is None
+
+
+@pytest.mark.unit
 def test_accept_from_pending() -> None:
     accepted = _tone().accept(NOW)
     assert accepted.status is SuggestionStatus.ACCEPTED

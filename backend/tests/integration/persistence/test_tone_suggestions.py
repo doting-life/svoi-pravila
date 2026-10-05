@@ -223,8 +223,7 @@ async def test_suggestion_and_tone_repository_crud(
         await uow.users.add(owner)
         await uow.contacts.add(contact)
         assert await uow.tone_signals.get(owner.id, contact_id) is None
-        locked = await uow.tone_signals.get(owner.id, contact_id, for_update=True)
-        assert locked is not None
+        locked = await uow.tone_signals.lock_for_append(owner.id, contact_id)
         assert locked.values == ()
         await uow.tone_signals.upsert(
             ToneSignal(user_id=owner.id, contact_id=contact_id, values=(Firmness.GENTLE,))
@@ -330,3 +329,64 @@ async def test_suggestion_export_and_delete_clear_rows(
         assert await uow.tone_signals.get(owner.id, contact_id) is None
         await uow.rule_suggestions.delete_for_user(owner.id)
         await uow.tone_signals.delete_for_user(owner.id)
+
+
+@pytest.mark.integration
+async def test_concurrent_pending_decode_suggestions_conflict(
+    uow_factory: SqlAlchemyUnitOfWorkFactory,
+) -> None:
+    owner = User(
+        id=UserId(UUID(int=9300)),
+        telegram_user_id=TelegramUserId(9300),
+        created_at=NOW,
+        age_confirmed_at=NOW,
+        active_contact_id=None,
+    )
+    contact_id = ContactId(UUID(int=9301))
+    contact = Contact(
+        id=contact_id,
+        owner_id=owner.id,
+        label=ContactLabel("DecodeRace"),
+        relationship=RelationshipKind.FRIEND,
+        pair_id=None,
+        created_at=NOW,
+    )
+    first = RuleSuggestion.create_decode(
+        suggestion_id=RuleSuggestionId(UUID(int=9302)),
+        user_id=owner.id,
+        contact_id=contact_id,
+        category=RuleCategory.APOLOGY,
+        text=RuleText("Мы извиняемся без оговорок"),
+        now=NOW,
+    )
+    second = RuleSuggestion.create_decode(
+        suggestion_id=RuleSuggestionId(UUID(int=9303)),
+        user_id=owner.id,
+        contact_id=contact_id,
+        category=RuleCategory.HOW_TO_ASK,
+        text=RuleText("Мы говорим спокойно и по делу"),
+        now=NOW,
+    )
+    async with uow_factory() as uow:
+        await uow.users.add(owner)
+        await uow.contacts.add(contact)
+        await uow.commit()
+
+    async def _add(suggestion: RuleSuggestion) -> str:
+        try:
+            async with uow_factory() as uow:
+                await uow.rule_suggestions.add(suggestion)
+                await uow.commit()
+        except ConflictError:
+            return "conflict"
+        else:
+            return "ok"
+
+    outcomes = await asyncio.gather(_add(first), _add(second))
+    assert outcomes.count("ok") == 1
+    assert outcomes.count("conflict") == 1
+
+    async with uow_factory() as uow:
+        pending = await uow.rule_suggestions.list_pending_for_contact(owner.id, contact_id)
+        decode_pending = [s for s in pending if s.source is SuggestionSource.DECODE]
+        assert len(decode_pending) == 1

@@ -810,29 +810,32 @@ class SqlAlchemyToneSignalRepository:
         self,
         user_id: UserId,
         contact_id: ContactId,
-        *,
-        for_update: bool = False,
     ) -> ToneSignal | None:
-        if for_update:
-            await self._session.execute(
-                pg_insert(ToneSignalRow)
-                .values(user_id=user_id, contact_id=contact_id, values=[])
-                .on_conflict_do_nothing(index_elements=["user_id", "contact_id"])
-            )
-            result = await self._session.execute(
-                select(ToneSignalRow)
-                .where(
-                    ToneSignalRow.user_id == user_id,
-                    ToneSignalRow.contact_id == contact_id,
-                )
-                .with_for_update()
-            )
-            locked = result.scalar_one()
-            return self._to_domain(locked)
         existing = await self._session.get(ToneSignalRow, (user_id, contact_id))
         if existing is None:
             return None
         return self._to_domain(existing)
+
+    async def lock_for_append(
+        self,
+        user_id: UserId,
+        contact_id: ContactId,
+    ) -> ToneSignal:
+        await self._session.execute(
+            pg_insert(ToneSignalRow)
+            .values(user_id=user_id, contact_id=contact_id, values=[])
+            .on_conflict_do_nothing(index_elements=["user_id", "contact_id"])
+        )
+        result = await self._session.execute(
+            select(ToneSignalRow)
+            .where(
+                ToneSignalRow.user_id == user_id,
+                ToneSignalRow.contact_id == contact_id,
+            )
+            .with_for_update()
+        )
+        locked = result.scalar_one()
+        return self._to_domain(locked)
 
     async def list_for_user(self, user_id: UserId) -> list[ToneSignal]:
         result = await self._session.execute(

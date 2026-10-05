@@ -4,7 +4,8 @@
 
 ## Текущее
 - Дата: 2026-10-04 · Спринт 0 (Фундамент)
-- Активная задача: **0011.1 — кандидаты правил: сигнал тона** · ветка `task/0011-1-tone-suggestions` · GigaChat 0 токенов; старт после мержа 0010
+- Активная задача: **0011.1-a — доработка сигнала тона** (замерзание сигнала, типизированные ошибки, гонка записи, интеграционные тесты репозиториев) · ветка `task/0011-1-tone-suggestions` · GigaChat 0 токенов
+- В `master`: 0010 (`2180caa`, squash #11)
 - В `master`: 0009.2 (`16037df`, squash #10)
 - В `master`: 0009.1 (`18ba3f1`, squash #9)
 - Расход GigaChat на eval 0008-b…d: ≈ 68 000 токенов (30 618 + 26 965 + 8 585 + разминки)
@@ -67,7 +68,8 @@
 | 0010 | Inline optimization: result reuse, normalization, answer latency | `task/0010-inline-opt` | проверен 04.10 | **CHANGES** → 0010-a: истёкшие результаты (C2) остаются в памяти без трафика, telegram id удалённых пользователей хранятся вечно (`_forget_gen`), `ApplicationError.reuse` и клоны ошибок, недопустимое состояние резолюции, широкий `except ApplicationError` в обработчике |
 | 0010-a | Reuse retention, typed failures | `task/0010-inline-opt` | проверен 04.10 | **CHANGES** → 0010-b: строгий срок и ограниченное состояние — приняты; осталась дыра в типах (`ReuseFailed.error: ApplicationError` + проверка `TypeError` и тест на невозможный случай), недостижимая ветка без цикла событий, лишние блокировка и задача при истечении |
 | 0010-b | Produce errors as values, synchronous expiry | `task/0010-inline-opt` | проверен 04.10 | **ACCEPT** (770 тестов, 99,28 %); дублирующий кортеж типов ошибок в адаптере — в 0011.1, часть 0 |
-| 0011.1 | Rule suggestions: tone signal | `task/0011-1-tone-suggestions` | выдан | — |
+| 0011.1 | Rule suggestions: tone signal | `task/0011-1-tone-suggestions` | проверен 05.10 | **CHANGES** → 0011.1-a: при ожидающем тон-кандидате и смене доминирующей жёсткости уникальный индекс откатывает транзакцию — сигнал замерзает навсегда; приложение глушит `OSError`/`RuntimeError`/`TimeoutError`; потерянное обновление `tone_signals`; новые репозитории без интеграционных тестов (`repositories.py` 91 %) |
+| 0011.1-a | Tone signal fixes, repository integration tests | `task/0011-1-tone-suggestions` | выдан | — |
 | 0006.1-b | Image gate: Debian security updates, base digest pin, Dependabot | `task/0006-telegram-channel` | проверен 04.10 | **ACCEPT** (Trivy: 21 CVE → 0) |
 
 ## Решения

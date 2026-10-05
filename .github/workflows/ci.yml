@@ -231,6 +231,9 @@ jobs:
           for key, value in (
               ("SP_ENVIRONMENT", "test"),
               ("SP_TELEGRAM_UPDATES_MODE", "disabled"),
+              # Mini-app mount (incl. TEST-only sse-flush) requires a bot token even when
+              # updates are disabled; value is synthetic and never used for Telegram API.
+              ("SP_TELEGRAM_BOT_TOKEN", "1:CI-STACK-SMOKE-PLACEHOLDER"),
               ("SP_GIGACHAT_CREDENTIALS", "ci-placeholder"),
               ("SP_GIGACHAT_SCOPE", "PERS"),
           ):

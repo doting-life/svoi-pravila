@@ -36,20 +36,29 @@ RUN mkdir -p /out \
 		--replace golang.org/x/text=golang.org/x/text@v0.39.0 \
 		--replace google.golang.org/grpc=google.golang.org/grpc@v1.83.2
 
-# Directories owned by distroless nonroot (uid/gid 65532); no shell in the final image.
+# Writable runtime dirs for Caddy (uid 65532). Static content is prepared separately as root.
 FROM alpine:3.23.6@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0 AS rootfs
-RUN mkdir -p /srv /config/caddy /data/caddy /etc/caddy \
-	&& chown -R 65532:65532 /srv /config /data /etc/caddy
+RUN mkdir -p /config/caddy /data/caddy \
+	&& chown -R 65532:65532 /config /data \
+	&& chmod 0755 /config /data /config/caddy /data/caddy
+
+# Caddyfile and /srv are root-owned and only readable by the runtime user (0014 Part 0).
+FROM alpine:3.23.6@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0 AS static
+COPY --from=build /app/dist /srv
+COPY Caddyfile /etc/caddy/Caddyfile
+RUN chown -R 0:0 /srv /etc/caddy \
+	&& find /srv -type d -exec chmod 0555 {} + \
+	&& find /srv -type f -exec chmod 0444 {} + \
+	&& chmod 0555 /etc/caddy \
+	&& chmod 0444 /etc/caddy/Caddyfile
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
 COPY --from=caddybuild /out/caddy /usr/bin/caddy
-COPY --from=rootfs --chown=65532:65532 /srv /srv
 COPY --from=rootfs --chown=65532:65532 /config /config
 COPY --from=rootfs --chown=65532:65532 /data /data
-COPY --from=rootfs --chown=65532:65532 /etc/caddy /etc/caddy
-COPY --from=build --chown=65532:65532 /app/dist /srv
-COPY --chown=65532:65532 Caddyfile /etc/caddy/Caddyfile
+COPY --from=static /srv /srv
+COPY --from=static /etc/caddy /etc/caddy
 
 ENV XDG_CONFIG_HOME=/config
 ENV XDG_DATA_HOME=/data

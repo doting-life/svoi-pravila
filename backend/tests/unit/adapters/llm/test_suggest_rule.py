@@ -22,8 +22,9 @@ from svoi_pravila.application.errors import (
 )
 from svoi_pravila.application.ports.generation import (
     GenerationMeta,
+    SuggestRuleNothing,
+    SuggestRuleProposed,
     SuggestRuleRequest,
-    SuggestRuleVerdict,
     TokenUsage,
 )
 from svoi_pravila.domain.enums import RelationshipKind, RuleCategory
@@ -64,15 +65,15 @@ async def test_suggest_rule_ok_and_none() -> None:
         }
     )
     ok = await _gen(_FakeAche(create_results=[ok_payload])).suggest_rule(_request())
-    assert ok.verdict is SuggestRuleVerdict.OK
+    assert isinstance(ok, SuggestRuleProposed)
     assert ok.category is RuleCategory.HOW_TO_ASK
-    assert ok.text is not None
+    assert ok.text.value
 
     none_payload = SuggestRuleOut.model_validate(
         {"verdict": "none", "category": None, "text": None}
     )
     none = await _gen(_FakeAche(create_results=[none_payload])).suggest_rule(_request())
-    assert none.verdict is SuggestRuleVerdict.NONE
+    assert isinstance(none, SuggestRuleNothing)
 
 
 @pytest.mark.unit
@@ -87,7 +88,7 @@ async def test_suggest_rule_invalid_then_retry() -> None:
     )
     ache = _FakeAche(create_results=[bad, good])
     result = await _gen(ache).suggest_rule(_request())
-    assert result.verdict is SuggestRuleVerdict.OK
+    assert isinstance(result, SuggestRuleProposed)
     assert ache.create_calls == 2
 
 

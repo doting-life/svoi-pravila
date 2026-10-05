@@ -9,6 +9,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from svoi_pravila.domain.enums import Firmness, RelationshipKind, RuleCategory
+from svoi_pravila.domain.text import RuleText
 
 BOUNDED_TEXT_MIN = 1
 BOUNDED_TEXT_MAX = 4000
@@ -97,13 +98,6 @@ class DecodeRequest:
         _validate_bounded_text("incoming", self.incoming)
 
 
-class SuggestRuleVerdict(StrEnum):
-    """Whether the model proposed a rule candidate."""
-
-    OK = "ok"
-    NONE = "none"
-
-
 @dataclass(frozen=True, slots=True)
 class SuggestRuleRequest:
     """Input for suggesting a rule from an incoming message."""
@@ -118,13 +112,22 @@ class SuggestRuleRequest:
 
 
 @dataclass(frozen=True, slots=True)
-class SuggestRuleResult:
-    """Structured suggest-rule response."""
+class SuggestRuleProposed:
+    """Model proposed a rule candidate."""
 
-    verdict: SuggestRuleVerdict
-    category: RuleCategory | None
-    text: str | None
+    category: RuleCategory
+    text: RuleText
     meta: GenerationMeta
+
+
+@dataclass(frozen=True, slots=True)
+class SuggestRuleNothing:
+    """Model decided nothing should be recorded as a rule."""
+
+    meta: GenerationMeta
+
+
+SuggestRuleResult = SuggestRuleProposed | SuggestRuleNothing
 
 
 @dataclass(frozen=True, slots=True)

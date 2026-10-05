@@ -8,6 +8,7 @@ from enum import StrEnum
 
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.errors import (
+    ConflictError,
     GenerationRefusedByProvider,
     GenerationUnavailable,
     InvalidGenerationOutput,
@@ -19,9 +20,10 @@ from svoi_pravila.application.ports.clock import Clock
 from svoi_pravila.application.ports.consent_catalog import ConsentCatalog
 from svoi_pravila.application.ports.generation import (
     RuleContext,
+    SuggestRuleNothing,
+    SuggestRuleProposed,
     SuggestRuleRequest,
     SuggestRuleResult,
-    SuggestRuleVerdict,
     TextGenerator,
 )
 from svoi_pravila.application.ports.id_generator import IdGenerator
@@ -42,9 +44,14 @@ from svoi_pravila.domain.enums import (
     UsageScenario,
     UsageSurface,
 )
-from svoi_pravila.domain.ids import RuleSuggestionId, TelegramUserId, UsageEventId, UserId
+from svoi_pravila.domain.ids import (
+    ContactId,
+    RuleSuggestionId,
+    TelegramUserId,
+    UsageEventId,
+    UserId,
+)
 from svoi_pravila.domain.rule_suggestion import RuleSuggestion
-from svoi_pravila.domain.text import RuleText
 from svoi_pravila.domain.usage import UsageEvent
 
 _ANALYTICS_PURPOSE = "analytics"
@@ -112,7 +119,7 @@ class SuggestRuleFromDecode:
         self._ports = ports
 
     async def execute(self, command: SuggestRuleFromDecodeCommand) -> SuggestRuleFromDecodeResult:
-        """Access → redeem → crisis → quota → ownership → pending → generate."""
+        """Access → redeem → crisis → ownership → pending → quota → generate."""
         async with self._ports.uow_factory() as uow:
             user = await uow.users.get_by_telegram_id(command.telegram_user_id)
             if user is None:
@@ -126,6 +133,9 @@ class SuggestRuleFromDecode:
         prepared = await self._load_for_generation(command.telegram_user_id, early)
         if isinstance(prepared, SuggestRuleFromDecodeResult):
             return prepared
+        quota_pseudonym = self._ports.pseudonymizer.pseudonymize(_QUOTA_PURPOSE, user_key)
+        if not (await self._ports.quota.check(quota_pseudonym)).allowed:
+            return SuggestRuleFromDecodeResult(outcome=SuggestRuleFromDecodeOutcome.QUOTA_EXCEEDED)
         return await self._generate_and_store(user_key=user_key, prepared=prepared)
 
     async def _redeem_and_screen(
@@ -138,9 +148,6 @@ class SuggestRuleFromDecode:
             return SuggestRuleFromDecodeResult(outcome=SuggestRuleFromDecodeOutcome.UNAVAILABLE)
         if self._ports.crisis_screen.hit(payload.incoming_text):
             return SuggestRuleFromDecodeResult(outcome=SuggestRuleFromDecodeOutcome.CRISIS)
-        quota_pseudonym = self._ports.pseudonymizer.pseudonymize(_QUOTA_PURPOSE, user_key)
-        if not (await self._ports.quota.check(quota_pseudonym)).allowed:
-            return SuggestRuleFromDecodeResult(outcome=SuggestRuleFromDecodeOutcome.QUOTA_EXCEEDED)
         return payload
 
     async def _load_for_generation(
@@ -205,25 +212,50 @@ class SuggestRuleFromDecode:
             await self._persist_error(user_key=user_key, started=started, error=exc)
             raise
         await self._persist_ok(user_key=user_key, result=generated)
-        if generated.verdict is SuggestRuleVerdict.NONE or generated.category is None:
+        if isinstance(generated, SuggestRuleNothing):
             return SuggestRuleFromDecodeResult(outcome=SuggestRuleFromDecodeOutcome.NONE)
-        if generated.text is None:
-            return SuggestRuleFromDecodeResult(outcome=SuggestRuleFromDecodeOutcome.NONE)
+        return await self._persist_suggestion(prepared=prepared, proposed=generated)
+
+    async def _persist_suggestion(
+        self,
+        *,
+        prepared: _PreparedCall,
+        proposed: SuggestRuleProposed,
+    ) -> SuggestRuleFromDecodeResult:
         suggestion = RuleSuggestion.create_decode(
             suggestion_id=RuleSuggestionId(self._ports.ids.new_id()),
             user_id=prepared.user_id,
             contact_id=prepared.payload.contact_id,
-            category=generated.category,
-            text=RuleText(generated.text),
+            category=proposed.category,
+            text=proposed.text,
             now=self._ports.clock.now(),
         )
-        async with self._ports.uow_factory() as uow:
-            await uow.rule_suggestions.add(suggestion)
-            await uow.commit()
+        try:
+            async with self._ports.uow_factory() as uow:
+                await uow.rule_suggestions.add(suggestion)
+                await uow.commit()
+        except ConflictError:
+            return await self._pending_after_conflict(prepared.user_id, prepared.payload.contact_id)
         return SuggestRuleFromDecodeResult(
             outcome=SuggestRuleFromDecodeOutcome.OK,
             suggestion=suggestion,
         )
+
+    async def _pending_after_conflict(
+        self, user_id: UserId, contact_id: ContactId
+    ) -> SuggestRuleFromDecodeResult:
+        async with self._ports.uow_factory() as uow:
+            existing = await uow.rule_suggestions.list_pending_for_contact(user_id, contact_id)
+            decode_pending = next(
+                (s for s in existing if s.source is SuggestionSource.DECODE),
+                None,
+            )
+            if decode_pending is None:
+                raise NotFound()
+            return SuggestRuleFromDecodeResult(
+                outcome=SuggestRuleFromDecodeOutcome.PENDING_EXISTS,
+                suggestion=decode_pending,
+            )
 
     async def _persist_ok(self, *, user_key: str, result: SuggestRuleResult) -> None:
         meta = result.meta

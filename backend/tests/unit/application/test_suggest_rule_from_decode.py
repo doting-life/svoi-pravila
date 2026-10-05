@@ -11,6 +11,7 @@ import pytest
 
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.errors import (
+    ConflictError,
     GenerationRefusedByProvider,
     GenerationUnavailable,
     InvalidGenerationOutput,
@@ -20,8 +21,7 @@ from svoi_pravila.application.errors import (
 )
 from svoi_pravila.application.ports.generation import (
     GenerationMeta,
-    SuggestRuleResult,
-    SuggestRuleVerdict,
+    SuggestRuleNothing,
     TokenUsage,
 )
 from svoi_pravila.application.ports.unit_of_work import UnitOfWork
@@ -122,10 +122,7 @@ async def test_suggest_rule_none_unavailable_quota(world: AppWorld) -> None:
         pseudo, RuleSourcePayload(contact_id=contact.id, incoming_text="ок")
     )
     generator = FakeTextGenerator()
-    generator.suggest_rule_result = SuggestRuleResult(
-        verdict=SuggestRuleVerdict.NONE,
-        category=None,
-        text=None,
+    generator.suggest_rule_result = SuggestRuleNothing(
         meta=GenerationMeta(
             model="fake",
             prompt_version="suggest_rule@v1",
@@ -284,17 +281,10 @@ async def test_suggest_rule_not_found_paths(world: AppWorld) -> None:
 
 
 @pytest.mark.unit
-async def test_suggest_rule_generation_errors_and_empty_text(world: AppWorld) -> None:
+async def test_suggest_rule_generation_errors_and_sink_fail(world: AppWorld) -> None:
     tg, contact = await _active_contact(world, 906)
     sources = FakeRuleSources()
     pseudo = FakePseudonymizer().pseudonymize(RULE_SOURCE_PURPOSE, str(tg.value))
-    meta = GenerationMeta(
-        model="fake",
-        prompt_version="suggest_rule@v1",
-        latency_ms=1,
-        attempts=1,
-        usage=TokenUsage(1, 1, 0),
-    )
 
     for error in (
         GenerationRefusedByProvider(
@@ -344,23 +334,6 @@ async def test_suggest_rule_generation_errors_and_empty_text(world: AppWorld) ->
             assert sink.events[-1].outcome is UsageOutcome.REFUSED
         else:
             assert sink.events[-1].outcome is UsageOutcome.INVALID_OUTPUT
-
-    token_empty = await sources.store(
-        pseudo, RuleSourcePayload(contact_id=contact.id, incoming_text="пусто")
-    )
-    empty = FakeTextGenerator()
-    empty.suggest_rule_result = SuggestRuleResult(
-        verdict=SuggestRuleVerdict.OK,
-        category=RuleCategory.HOW_TO_ASK,
-        text=None,
-        meta=meta,
-    )
-    ports_empty = _ports(world, sources=sources, generator=empty)
-    assert (
-        await SuggestRuleFromDecode(ports_empty).execute(
-            SuggestRuleFromDecodeCommand(tg, token_empty)
-        )
-    ).outcome is SuggestRuleFromDecodeOutcome.NONE
 
     token_ok = await sources.store(
         pseudo, RuleSourcePayload(contact_id=contact.id, incoming_text="sink fail ok")
@@ -418,3 +391,187 @@ async def test_suggest_rule_generation_errors_and_empty_text(world: AppWorld) ->
         await SuggestRuleFromDecode(ports_err_fail).execute(
             SuggestRuleFromDecodeCommand(tg, token_err)
         )
+
+
+@pytest.mark.unit
+async def test_suggest_rule_conflict_on_add_returns_pending_exists(world: AppWorld) -> None:
+    tg, contact = await _active_contact(world, 907)
+    user = await world.ensure_granted_user(907)
+    sources = FakeRuleSources()
+    pseudo = FakePseudonymizer().pseudonymize(RULE_SOURCE_PURPOSE, str(tg.value))
+    token = await sources.store(
+        pseudo, RuleSourcePayload(contact_id=contact.id, incoming_text="гонка")
+    )
+    competing = RuleSuggestion.create_decode(
+        suggestion_id=RuleSuggestionId(UUID(int=77)),
+        user_id=user.id,
+        contact_id=contact.id,
+        category=RuleCategory.APOLOGY,
+        text=RuleText("Мы извиняемся без оговорок"),
+        now=world.clock.now(),
+    )
+
+    class _ConflictOnAdd:
+        def __init__(self, inner: object, base_factory: object) -> None:
+            self._inner = inner
+            self._base_factory = base_factory
+
+        async def add(self, suggestion: RuleSuggestion) -> None:
+            _ = suggestion
+            async with cast(Any, self._base_factory)() as uow:
+                await uow.rule_suggestions.add(competing)
+                await uow.commit()
+            raise ConflictError()
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._inner, name)
+
+    class _WrapUow:
+        def __init__(self, inner: UnitOfWork, base_factory: object) -> None:
+            self._inner = inner
+            self._base_factory = base_factory
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._inner, name)
+
+        async def __aenter__(self) -> UnitOfWork:
+            entered = await self._inner.__aenter__()
+            wrapped = _ConflictOnAdd(entered.rule_suggestions, self._base_factory)
+            object.__setattr__(self, "rule_suggestions", wrapped)
+            for name in (
+                "users",
+                "consents",
+                "contacts",
+                "pairs",
+                "rules",
+                "invites",
+                "usage_events",
+                "tone_signals",
+            ):
+                object.__setattr__(self, name, getattr(entered, name))
+            return cast(UnitOfWork, self)
+
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: TracebackType | None,
+        ) -> None:
+            await self._inner.__aexit__(exc_type, exc, tb)
+
+        async def commit(self) -> None:
+            await self._inner.commit()
+
+    class _Factory:
+        def __init__(self) -> None:
+            self._opens = 0
+
+        def __call__(self) -> UnitOfWork:
+            self._opens += 1
+            inner = world.uow_factory()
+            # Third open is the persist-suggestion transaction.
+            if self._opens == 3:
+                return cast(UnitOfWork, _WrapUow(inner, world.uow_factory))
+            return inner
+
+    ports = SuggestRuleFromDecodePorts(
+        uow_factory=_Factory(),
+        catalog=world.catalog,
+        rule_sources=sources,
+        generator=FakeTextGenerator(),
+        quota=FakeRateLimiter(limit=10),
+        sink=RecordingUsageEventSink(),
+        clock=world.clock,
+        monotonic=world.clock,
+        ids=world.ids,
+        pseudonymizer=FakePseudonymizer(),
+        crisis_screen=CrisisScreen.load_ru_v2(),
+        deadline_seconds=45.0,
+    )
+    result = await SuggestRuleFromDecode(ports).execute(SuggestRuleFromDecodeCommand(tg, token))
+    assert result.outcome is SuggestRuleFromDecodeOutcome.PENDING_EXISTS
+    assert result.suggestion is not None
+    assert result.suggestion.id == competing.id
+
+
+@pytest.mark.unit
+async def test_suggest_rule_conflict_without_pending_raises_not_found(world: AppWorld) -> None:
+    tg, contact = await _active_contact(world, 908)
+    sources = FakeRuleSources()
+    pseudo = FakePseudonymizer().pseudonymize(RULE_SOURCE_PURPOSE, str(tg.value))
+    token = await sources.store(
+        pseudo, RuleSourcePayload(contact_id=contact.id, incoming_text="гонка без pending")
+    )
+
+    class _RaiseConflict:
+        def __init__(self, inner: object) -> None:
+            self._inner = inner
+
+        async def add(self, suggestion: RuleSuggestion) -> None:
+            _ = suggestion
+            raise ConflictError()
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._inner, name)
+
+    class _WrapUow:
+        def __init__(self, inner: UnitOfWork) -> None:
+            self._inner = inner
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._inner, name)
+
+        async def __aenter__(self) -> UnitOfWork:
+            entered = await self._inner.__aenter__()
+            object.__setattr__(self, "rule_suggestions", _RaiseConflict(entered.rule_suggestions))
+            for name in (
+                "users",
+                "consents",
+                "contacts",
+                "pairs",
+                "rules",
+                "invites",
+                "usage_events",
+                "tone_signals",
+            ):
+                object.__setattr__(self, name, getattr(entered, name))
+            return cast(UnitOfWork, self)
+
+        async def __aexit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: TracebackType | None,
+        ) -> None:
+            await self._inner.__aexit__(exc_type, exc, tb)
+
+        async def commit(self) -> None:
+            await self._inner.commit()
+
+    class _Factory:
+        def __init__(self) -> None:
+            self._opens = 0
+
+        def __call__(self) -> UnitOfWork:
+            self._opens += 1
+            inner = world.uow_factory()
+            if self._opens == 3:
+                return cast(UnitOfWork, _WrapUow(inner))
+            return inner
+
+    ports = SuggestRuleFromDecodePorts(
+        uow_factory=_Factory(),
+        catalog=world.catalog,
+        rule_sources=sources,
+        generator=FakeTextGenerator(),
+        quota=FakeRateLimiter(limit=10),
+        sink=RecordingUsageEventSink(),
+        clock=world.clock,
+        monotonic=world.clock,
+        ids=world.ids,
+        pseudonymizer=FakePseudonymizer(),
+        crisis_screen=CrisisScreen.load_ru_v2(),
+        deadline_seconds=45.0,
+    )
+    with pytest.raises(NotFound):
+        await SuggestRuleFromDecode(ports).execute(SuggestRuleFromDecodeCommand(tg, token))

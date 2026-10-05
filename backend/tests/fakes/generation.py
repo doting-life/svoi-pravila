@@ -22,14 +22,15 @@ from svoi_pravila.application.ports.generation import (
     SafetyVerdict,
     SoftenRequest,
     SoftenResult,
+    SuggestRuleProposed,
     SuggestRuleRequest,
     SuggestRuleResult,
-    SuggestRuleVerdict,
     TextGenerator,
     TokenUsage,
     Variant,
 )
 from svoi_pravila.domain.enums import Firmness, RuleCategory
+from svoi_pravila.domain.text import RuleText
 
 
 def _meta(operation: str) -> GenerationMeta:
@@ -157,10 +158,9 @@ class FakeTextGenerator:
             raise self.suggest_rule_error
         if self.suggest_rule_result is not None:
             return self.suggest_rule_result
-        return SuggestRuleResult(
-            verdict=SuggestRuleVerdict.OK,
+        return SuggestRuleProposed(
             category=RuleCategory.HOW_TO_ASK,
-            text="Мы говорим спокойно и без резких формулировок",
+            text=RuleText("Мы говорим спокойно и без резких формулировок"),
             meta=_meta("suggest_rule"),
         )
 

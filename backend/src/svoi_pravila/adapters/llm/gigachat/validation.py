@@ -8,15 +8,21 @@ from dataclasses import dataclass
 
 import structlog
 
-from svoi_pravila.adapters.llm.gigachat.schemas import DecodeOut, SuggestRuleOut, VariantOut
+from svoi_pravila.adapters.llm.gigachat.schemas import (
+    DecodeOut,
+    SuggestRuleOut,
+    SuggestRuleVerdictOut,
+    VariantOut,
+)
 from svoi_pravila.application.errors import InvalidGenerationOutput, InvalidOutputReason
 from svoi_pravila.application.ports.generation import (
     DecodeResult,
     GenerationMeta,
     RuleContext,
     SafetyVerdict,
+    SuggestRuleNothing,
+    SuggestRuleProposed,
     SuggestRuleResult,
-    SuggestRuleVerdict,
     TokenUsage,
     Variant,
 )
@@ -265,15 +271,10 @@ def to_suggest_rule_result(parsed: SuggestRuleOut, meta: GenerationMeta) -> Sugg
             prompt_version=meta.prompt_version,
         )
 
-    if parsed.verdict.value == SuggestRuleVerdict.NONE.value:
+    if parsed.verdict is SuggestRuleVerdictOut.NONE:
         if parsed.category is not None or parsed.text is not None:
             raise fail(InvalidOutputReason.SCHEMA_VIOLATION)
-        return SuggestRuleResult(
-            verdict=SuggestRuleVerdict.NONE,
-            category=None,
-            text=None,
-            meta=meta,
-        )
+        return SuggestRuleNothing(meta=meta)
     if parsed.category is None or parsed.text is None:
         raise fail(InvalidOutputReason.SCHEMA_VIOLATION)
     text = parsed.text.strip()
@@ -293,12 +294,7 @@ def to_suggest_rule_result(parsed: SuggestRuleOut, meta: GenerationMeta) -> Sugg
         category = RuleCategory(parsed.category.value)
     except ValueError as exc:
         raise fail(InvalidOutputReason.SCHEMA_VIOLATION) from exc
-    return SuggestRuleResult(
-        verdict=SuggestRuleVerdict.OK,
-        category=category,
-        text=rule_text.value,
-        meta=meta,
-    )
+    return SuggestRuleProposed(category=category, text=rule_text, meta=meta)
 
 
 def untrusted_texts(*parts: str, rules: tuple[RuleContext, ...] = ()) -> tuple[str, ...]:

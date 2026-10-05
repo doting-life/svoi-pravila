@@ -214,6 +214,66 @@ describe("App", () => {
         expect(adapter.close).toHaveBeenCalled();
     });
 
+    it("handles gate export errors and delete cancel / failure paths", async () => {
+        const showConfirm = vi.fn(() => Promise.resolve(false));
+        const adapter = fakeAdapter({ showConfirm });
+        let exportCalls = 0;
+        const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(String(input), init);
+            const path = new URL(request.url).pathname;
+            if (path === "/api/v1/me") {
+                return Promise.resolve(jsonResponse({ ...meDone, onboarding_step: "consent" }));
+            }
+            if (path === "/api/v1/me/export" && request.method === "POST") {
+                exportCalls += 1;
+                if (exportCalls === 1) {
+                    return Promise.resolve(
+                        jsonResponse({ code: "bot_chat_unavailable", message: "start" }, 409),
+                    );
+                }
+                if (exportCalls === 2) {
+                    return Promise.resolve(
+                        jsonResponse({ code: "rate_limited", message: "slow" }, 429),
+                    );
+                }
+                return Promise.resolve(
+                    jsonResponse({ code: "not_found", message: "export failed" }, 500),
+                );
+            }
+            if (path === "/api/v1/me/delete" && request.method === "POST") {
+                return Promise.resolve(
+                    jsonResponse({ code: "open_rule_limit", message: "delete failed" }, 409),
+                );
+            }
+            return Promise.resolve(jsonResponse({ code: "not_found", message: "x" }, 404));
+        }) as typeof fetch;
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyExportAction }));
+        expect(await screen.findByText(ru.privacyExportUnavailable)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyExportAction }));
+        expect(await screen.findByText(ru.rateLimited)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyExportAction }));
+        expect(await screen.findByText("export failed")).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
+        expect(showConfirm).toHaveBeenCalled();
+        expect(screen.queryByText(ru.privacyDeleteForever)).not.toBeInTheDocument();
+
+        showConfirm.mockResolvedValueOnce(true);
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
+        expect(
+            await screen.findByRole("button", { name: ru.privacyDeleteForever }),
+        ).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.cancel }));
+        expect(screen.getByRole("button", { name: ru.privacyExportAction })).toBeInTheDocument();
+
+        showConfirm.mockResolvedValueOnce(true);
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyDeleteForever }));
+        expect(await screen.findByText("delete failed")).toBeInTheDocument();
+        expect(adapter.hapticNotification).toHaveBeenCalledWith("error");
+    });
+
     it("shows a generic me error with retry", async () => {
         const fetchImpl = mockFetch([
             {

@@ -13,7 +13,9 @@ from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 from tests.fakes.clock import FakeClock
 from tests.fakes.consent_catalog import FakeConsentCatalog
+from tests.fakes.export_delivery import FakeExportDelivery
 from tests.fakes.ids import FakeIdGenerator
+from tests.fakes.inline_reuse import make_inline_reuse
 from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
 from tests.fakes.tokens import FakeTokenGenerator
 from tests.fakes.uow import InMemoryUnitOfWorkFactory
@@ -32,8 +34,10 @@ from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.confirm_age import ConfirmAge, ConfirmAgeCommand
 from svoi_pravila.application.use_cases.create_contact import CreateContact
+from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
 from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggestion
 from svoi_pravila.application.use_cases.ensure_user import EnsureUser, EnsureUserCommand
+from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
@@ -41,6 +45,8 @@ from svoi_pravila.application.use_cases.list_rules import ListRules
 from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
+from svoi_pravila.application.use_cases.request_my_data_export import RequestMyDataExport
+from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from svoi_pravila.config import Environment
 from svoi_pravila.domain.access import AccessStatus
@@ -68,7 +74,13 @@ def _auth_header(telegram_id: int, *, auth_date: datetime | None = None) -> dict
     return {"Authorization": f"tma {raw}"}
 
 
-def _build_app(world: AppWorld, *, rate_limit: int = 120) -> Any:
+def _build_app(
+    world: AppWorld,
+    *,
+    rate_limit: int = 120,
+    export_limit: int = 3,
+    delivery: FakeExportDelivery | None = None,
+) -> Any:
     auth = MiniappDeps(
         init_data_verifier=AiogramInitDataVerifier(
             SecretStr(_TOKEN), world.clock, max_age_seconds=3600
@@ -78,6 +90,8 @@ def _build_app(world: AppWorld, *, rate_limit: int = 120) -> Any:
         get_user_by_telegram_id=GetUserByTelegramId(world.uow_factory),
         get_onboarding_step=GetOnboardingStep(world.uow_factory, world.catalog),
     )
+    reuse = make_inline_reuse(world.clock)
+    export_delivery = delivery if delivery is not None else FakeExportDelivery()
     bindings = MiniappRouterBindings(
         auth=auth,
         list_contacts=ListContacts(world.uow_factory, world.catalog),
@@ -92,6 +106,19 @@ def _build_app(world: AppWorld, *, rate_limit: int = 120) -> Any:
             world.uow_factory, world.catalog, world.ids, world.clock
         ),
         dismiss_suggestion=DismissSuggestion(world.uow_factory, world.catalog, world.clock),
+        request_my_data_export=RequestMyDataExport(
+            ExportMyData(world.uow_factory, world.clock),
+            export_delivery,
+        ),
+        revoke_all_consents=RevokeAllConsents(world.uow_factory, world.clock, reuse),
+        delete_my_account=DeleteMyAccount(
+            world.uow_factory,
+            world.ids,
+            FakePseudonymizer(),
+            world.clock,
+            reuse,
+        ),
+        export_rate_limiter=FakeRateLimiter(limit=export_limit),
         display_timezone="Europe/Moscow",
     )
     return create_app(
@@ -150,6 +177,7 @@ async def test_me_unknown_user_age_step(mini_world: AppWorld) -> None:
     assert response.headers["cache-control"] == "no-store"
     body = response.json()
     assert body["onboarding_step"] == "age"
+    assert body["account_exists"] is False
     assert body["display_timezone"] == "Europe/Moscow"
 
 
@@ -232,6 +260,7 @@ async def test_happy_path_contacts_rules_suggestions(
         me = await client.get("/api/v1/me", headers=headers)
         assert me.status_code == 200
         assert me.json()["onboarding_step"] == "done"
+        assert me.json()["account_exists"] is True
         assert me.json()["display_timezone"] == "Europe/Moscow"
 
         created = await client.post(

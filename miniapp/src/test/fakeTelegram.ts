@@ -49,12 +49,39 @@ export type MockRoute = {
     readonly body?: unknown;
 };
 
+/** Synthetic API copy for RTL (not the production catalog wording). */
+export const privacyTexts = {
+    export: {
+        description: "TEST_EXPORT_DESCRIPTION",
+        sections: {
+            согласия: "согласия",
+            контакты: "контакты",
+            правила: "правила",
+            общие_правила: "правила",
+            предложения: "предложения правил",
+            сигналы_тона: "историю выбора тона",
+        },
+    },
+    revoke: {
+        description: "TEST_REVOKE_DESCRIPTION",
+        confirm: "TEST_REVOKE_CONFIRM",
+    },
+    delete: {
+        description: "TEST_DELETE_DESCRIPTION",
+        confirm: "TEST_DELETE_CONFIRM",
+    },
+} as const;
+
 export function mockFetch(routes: readonly MockRoute[]): typeof fetch {
+    const withDefaults: MockRoute[] = [
+        { path: "/api/v1/privacy/texts", body: privacyTexts },
+        ...routes,
+    ];
     const impl: typeof fetch = (input, init) => {
         const request = input instanceof Request ? input : new Request(String(input), init);
         const url = new URL(request.url);
         const method = request.method.toUpperCase();
-        const match = routes.find((route) => {
+        const match = withDefaults.find((route) => {
             if (url.pathname !== route.path) {
                 return false;
             }

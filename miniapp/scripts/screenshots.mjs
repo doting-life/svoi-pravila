@@ -50,6 +50,7 @@ const meDone = {
     consent_kind: null,
     consent_version: null,
     active_contact_id: "c1",
+    account_exists: true,
     max_contacts: 20,
     max_open_rules: 50,
     display_timezone: "Europe/Moscow",
@@ -81,6 +82,33 @@ const suggestion = {
     source: "decode",
     firmness: "soft",
     created_at: "2026-10-04T12:00:00.000Z",
+};
+
+const privacyTexts = {
+    export: {
+        description:
+            "Выгрузка содержит контакты, согласия, правила, предложения правил и историю выбора тона. Файл придёт в чат с ботом и не хранится на сервере.",
+        sections: {
+            согласия: "согласия",
+            контакты: "контакты",
+            правила: "правила",
+            общие_правила: "правила",
+            предложения: "предложения правил",
+            сигналы_тона: "историю выбора тона",
+        },
+    },
+    revoke: {
+        description:
+            "Отзыв согласий остановит обработку сообщений. Сохранённые правила и контакты останутся, пока вы не удалите аккаунт.",
+        confirm:
+            "Отзыв согласий остановит обработку сообщений. Сохранённые правила и контакты останутся, пока вы не удалите аккаунт. Подтвердите отзыв.",
+    },
+    delete: {
+        description:
+            "Удаление сотрёт ваш аккаунт, согласия, контакты и ваши правила. Общие правила, которые написал партнёр, останутся у него. Это нельзя отменить.",
+        confirm:
+            "Удаление сотрёт ваш аккаунт, согласия, контакты и ваши правила. Общие правила, которые написал партнёр, останутся у него. Это нельзя отменить.",
+    },
 };
 
 async function installTelegram(page, scheme) {
@@ -144,7 +172,11 @@ async function mockApi(page, mode) {
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
-                body: JSON.stringify({ ...meDone, onboarding_step: "age" }),
+                body: JSON.stringify({
+                    ...meDone,
+                    onboarding_step: "age",
+                    account_exists: false,
+                }),
             });
             return;
         }
@@ -152,7 +184,11 @@ async function mockApi(page, mode) {
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
-                body: JSON.stringify({ ...meDone, onboarding_step: "consent" }),
+                body: JSON.stringify({
+                    ...meDone,
+                    onboarding_step: "consent",
+                    account_exists: true,
+                }),
             });
             return;
         }
@@ -169,6 +205,14 @@ async function mockApi(page, mode) {
                 status: 200,
                 contentType: "application/json",
                 body: JSON.stringify(meDone),
+            });
+            return;
+        }
+        if (path === "/api/v1/privacy/texts") {
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify(privacyTexts),
             });
             return;
         }
@@ -194,6 +238,18 @@ async function mockApi(page, mode) {
                 contentType: "application/json",
                 body: JSON.stringify({ suggestions: [suggestion] }),
             });
+            return;
+        }
+        if (path === "/api/v1/me/export") {
+            await route.fulfill({
+                status: 202,
+                contentType: "application/json",
+                body: JSON.stringify({ delivered_to: "bot_chat" }),
+            });
+            return;
+        }
+        if (path === "/api/v1/me/consents/revoke" || path === "/api/v1/me/delete") {
+            await route.fulfill({ status: 204, body: "" });
             return;
         }
         await route.fulfill({
@@ -222,6 +278,8 @@ async function captureScheme(browser, baseUrl, scheme) {
     await mockApi(consent, "gate-consent");
     await consent.goto(baseUrl, { waitUntil: "networkidle" });
     await consent.waitForSelector("text=Нужно подтвердить согласия");
+    await consent.waitForSelector("text=Выгрузить данные");
+    await consent.waitForSelector("text=Удалить аккаунт");
     await shot(consent, `${scheme}-gate-consent`);
     await consent.close();
 
@@ -246,6 +304,27 @@ async function captureScheme(browser, baseUrl, scheme) {
     await app.waitForSelector("text=Новое правило");
     await shot(app, `${scheme}-add-rule`);
     await app.close();
+
+    const privacy = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await installTelegram(privacy, scheme);
+    await mockApi(privacy, "app");
+    await privacy.goto(baseUrl, { waitUntil: "networkidle" });
+    await privacy.waitForSelector("text=Аня");
+    await privacy.getByRole("button", { name: "Приватность" }).click();
+    await privacy.waitForSelector("text=Выгрузить данные");
+    await shot(privacy, `${scheme}-privacy`);
+    await privacy.evaluate(() => {
+        window.Telegram.WebApp.showConfirm = (_m, cb) => {
+            cb?.(true);
+        };
+    });
+    await privacy.getByRole("button", { name: "Удалить аккаунт" }).click();
+    await privacy.waitForSelector("text=Удалить навсегда");
+    await shot(privacy, `${scheme}-delete-confirm`);
+    await privacy.getByRole("button", { name: "Удалить навсегда" }).click();
+    await privacy.waitForSelector("text=Аккаунт удалён");
+    await shot(privacy, `${scheme}-deleted`);
+    await privacy.close();
 }
 
 async function main() {

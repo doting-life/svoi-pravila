@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MeResponse(BaseModel):
@@ -15,9 +15,46 @@ class MeResponse(BaseModel):
     consent_kind: Literal["personal_data", "special_category"] | None = None
     consent_version: str | None = None
     active_contact_id: str | None = None
+    account_exists: bool
     max_contacts: int = Field(ge=1)
     max_open_rules: int = Field(ge=1)
     display_timezone: str = Field(min_length=1)
+
+
+class ConfirmTrueRequest(BaseModel):
+    """Destructive confirmations: body must be exactly ``{\"confirm\": true}``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    confirm: Literal[True]
+
+
+class ExportDeliveryResponse(BaseModel):
+    """POST /me/export — delivery acknowledgement (never the export payload)."""
+
+    delivered_to: Literal["bot_chat"]
+
+
+class PrivacyExportTextsResponse(BaseModel):
+    """Export disclosure copy from the shared privacy catalog (C0)."""
+
+    description: str = Field(min_length=1)
+    sections: dict[str, str]
+
+
+class PrivacyActionTextsResponse(BaseModel):
+    """Revoke or delete blurb and confirm copy (C0)."""
+
+    description: str = Field(min_length=1)
+    confirm: str = Field(min_length=1)
+
+
+class PrivacyTextsResponse(BaseModel):
+    """GET /privacy/texts — shared privacy copy for the mini-app (C0)."""
+
+    export: PrivacyExportTextsResponse
+    revoke: PrivacyActionTextsResponse
+    delete: PrivacyActionTextsResponse
 
 
 class ContactItem(BaseModel):

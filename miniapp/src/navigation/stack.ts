@@ -1,7 +1,14 @@
 export type Screen =
     | { readonly name: "contacts" }
-    | { readonly name: "contactDetail"; readonly contactId: string }
-    | { readonly name: "addRule"; readonly contactId: string };
+    | {
+          readonly name: "contactDetail";
+          readonly contactId: string;
+          readonly label: string;
+          readonly relationship: string;
+      }
+    | { readonly name: "addRule"; readonly contactId: string }
+    | { readonly name: "privacy" }
+    | { readonly name: "deleteConfirm" };
 
 export type NavigationState = {
     readonly stack: readonly Screen[];

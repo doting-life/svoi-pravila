@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import json
-
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
+from svoi_pravila.adapters.channels.telegram.export_document import send_export_document
 from svoi_pravila.adapters.channels.telegram.handlers.helpers import (
     callback_chat_id,
     clear_callback_keyboard,
@@ -59,15 +58,11 @@ def build_rights_router() -> Router:
         if not result.found or result.payload is None:
             await message.answer(tg_deps.strings.rights_export_empty)
             return
-        body = json.dumps(result.payload, ensure_ascii=False, indent=2)
-        stamp = tg_deps.clock.now().strftime("%Y%m%d")
-        document = BufferedInputFile(
-            body.encode("utf-8"),
-            filename=f"svoi-pravila-export-{stamp}.json",
-        )
-        await bot.send_document(
+        await send_export_document(
+            bot,
             chat_id=message.chat.id,
-            document=document,
+            payload=result.payload,
+            now=tg_deps.clock.now(),
             caption=tg_deps.strings.rights_export_caption,
         )
 

@@ -11,6 +11,34 @@ from svoi_pravila.application.use_cases._effective_rules import collect_visible_
 from svoi_pravila.domain.ids import TelegramUserId, UserId
 from svoi_pravila.domain.rules import RuleRevision
 
+# Content-section keys in the export payload (schema identifiers, not UI copy).
+EXPORT_SECTION_CONSENTS = "согласия"
+EXPORT_SECTION_CONTACTS = "контакты"
+EXPORT_SECTION_RULES = "правила"
+EXPORT_SECTION_SHARED_RULES = "общие_правила"
+EXPORT_SECTION_SUGGESTIONS = "предложения"
+EXPORT_SECTION_TONE_SIGNALS = "сигналы_тона"
+
+EXPORT_CONTENT_SECTION_KEYS: frozenset[str] = frozenset(
+    {
+        EXPORT_SECTION_CONSENTS,
+        EXPORT_SECTION_CONTACTS,
+        EXPORT_SECTION_RULES,
+        EXPORT_SECTION_SHARED_RULES,
+        EXPORT_SECTION_SUGGESTIONS,
+        EXPORT_SECTION_TONE_SIGNALS,
+    }
+)
+
+EXPORT_CONTACT_SECTION_KEYS: frozenset[str] = frozenset(
+    {
+        EXPORT_SECTION_RULES,
+        EXPORT_SECTION_SHARED_RULES,
+        EXPORT_SECTION_SUGGESTIONS,
+        EXPORT_SECTION_TONE_SIGNALS,
+    }
+)
+
 
 def _iso(value: datetime | None) -> str | None:
     if value is None:
@@ -76,7 +104,7 @@ class ExportMyData:
                         "отношение": contact.relationship.value,
                         "создан": _iso(contact.created_at),
                         "в_паре": contact.pair_id is not None,
-                        "правила": [
+                        EXPORT_SECTION_RULES: [
                             {
                                 "категория": view.category.value,
                                 "статус": view.status.value,
@@ -88,7 +116,7 @@ class ExportMyData:
                             }
                             for view in private
                         ],
-                        "общие_правила": [
+                        EXPORT_SECTION_SHARED_RULES: [
                             {
                                 "категория": view.category.value,
                                 "статус": view.status.value,
@@ -100,7 +128,7 @@ class ExportMyData:
                             }
                             for view in shared
                         ],
-                        "предложения": [
+                        EXPORT_SECTION_SUGGESTIONS: [
                             {
                                 "источник": suggestion.source.value,
                                 "категория": suggestion.category.value,
@@ -116,7 +144,7 @@ class ExportMyData:
                             }
                             for suggestion in contact_suggestions
                         ],
-                        "сигналы_тона": [
+                        EXPORT_SECTION_TONE_SIGNALS: [
                             {"значения": [v.value for v in signal.values]}
                             for signal in contact_tones
                         ],
@@ -129,7 +157,7 @@ class ExportMyData:
                     "создан": _iso(user.created_at),
                     "возраст_подтверждён": _iso(user.age_confirmed_at),
                 },
-                "согласия": [
+                EXPORT_SECTION_CONSENTS: [
                     {
                         "вид": consent.kind.value,
                         "версия": consent.text_version,
@@ -139,6 +167,6 @@ class ExportMyData:
                     }
                     for consent in consents
                 ],
-                "контакты": contacts_payload,
+                EXPORT_SECTION_CONTACTS: contacts_payload,
             }
             return ExportMyDataResult(found=True, payload=payload)

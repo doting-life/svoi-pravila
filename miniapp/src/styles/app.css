@@ -97,11 +97,24 @@ body {
     justify-content: space-between;
 }
 
+.screen-header-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+}
+
 .screen-title,
 .block-title {
     margin: 0;
     font-size: 1.1rem;
     font-weight: 650;
+}
+
+.screen-subtitle {
+    margin: 0.25rem 0 0;
+    font-size: 0.9rem;
+    color: var(--tg-hint-color);
 }
 
 .block-title {

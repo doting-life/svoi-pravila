@@ -10,12 +10,16 @@ import {
     currentScreen,
     popScreen,
     pushScreen,
+    resetToContacts,
     type NavigationState,
 } from "./navigation/stack";
 import { AddRuleScreen } from "./screens/AddRuleScreen";
 import { ContactDetailScreen } from "./screens/ContactDetailScreen";
 import { ContactsScreen } from "./screens/ContactsScreen";
+import { DeleteConfirmScreen } from "./screens/DeleteConfirmScreen";
+import { DeletedScreen } from "./screens/DeletedScreen";
 import { GateScreen } from "./screens/GateScreen";
+import { PrivacyScreen } from "./screens/PrivacyScreen";
 import {
     applyThemeCssVariables,
     createTelegramAdapter,
@@ -27,13 +31,23 @@ export type AppProps = {
     readonly fetchImpl?: typeof fetch;
 };
 
-function MiniappShell({ telegram }: { readonly telegram: TelegramAdapter }) {
+function MiniappShell({
+    telegram,
+    onAccountDeleted,
+}: {
+    readonly telegram: TelegramAdapter;
+    readonly onAccountDeleted: () => void;
+}) {
     const me = useMe();
     const [nav, setNav] = useState<NavigationState>(createInitialNavigation());
+    const [forceConsentGate, setForceConsentGate] = useState(false);
 
     useEffect(() => {
         const showBack =
-            me.status === "success" && me.data.onboarding_step === "done" && canGoBack(nav);
+            me.status === "success" &&
+            me.data.onboarding_step === "done" &&
+            !forceConsentGate &&
+            canGoBack(nav);
         if (showBack) {
             telegram.BackButton.show();
         } else {
@@ -42,7 +56,18 @@ function MiniappShell({ telegram }: { readonly telegram: TelegramAdapter }) {
         return telegram.BackButton.onClick(() => {
             setNav((current) => popScreen(current));
         });
-    }, [me, nav, telegram]);
+    }, [forceConsentGate, me, nav, telegram]);
+
+    if (forceConsentGate) {
+        return (
+            <GateScreen
+                kind="consent"
+                telegram={telegram}
+                showRightsActions
+                onAccountDeleted={onAccountDeleted}
+            />
+        );
+    }
 
     if (me.status === "loading") {
         return <LoadingView />;
@@ -53,12 +78,31 @@ function MiniappShell({ telegram }: { readonly telegram: TelegramAdapter }) {
             return <GateScreen kind="unauthorized" telegram={telegram} />;
         }
         if (me.error.code === "consent_required") {
-            return <GateScreen kind="consent" telegram={telegram} />;
+            return (
+                <GateScreen
+                    kind="consent"
+                    telegram={telegram}
+                    showRightsActions
+                    onAccountDeleted={onAccountDeleted}
+                />
+            );
         }
         return <ErrorView message={me.error.message} onRetry={me.refetch} />;
     }
 
     if (me.data.onboarding_step !== "done") {
+        const incomplete = me.data.onboarding_step === "age";
+        const showRightsActions = incomplete ? me.data.account_exists : true;
+        if (showRightsActions) {
+            return (
+                <GateScreen
+                    kind={me.data.onboarding_step === "consent" ? "consent" : "incomplete"}
+                    telegram={telegram}
+                    showRightsActions
+                    onAccountDeleted={onAccountDeleted}
+                />
+            );
+        }
         return (
             <GateScreen
                 kind={me.data.onboarding_step === "consent" ? "consent" : "incomplete"}
@@ -73,8 +117,18 @@ function MiniappShell({ telegram }: { readonly telegram: TelegramAdapter }) {
             <ContactsScreen
                 activeContactId={me.data.active_contact_id}
                 telegram={telegram}
-                onOpenContact={(contactId) => {
-                    setNav((current) => pushScreen(current, { name: "contactDetail", contactId }));
+                onOpenContact={(contact) => {
+                    setNav((current) =>
+                        pushScreen(current, {
+                            name: "contactDetail",
+                            contactId: contact.id,
+                            label: contact.label,
+                            relationship: contact.relationship,
+                        }),
+                    );
+                }}
+                onOpenPrivacy={() => {
+                    setNav((current) => pushScreen(current, { name: "privacy" }));
                 }}
                 onActivated={me.refetch}
             />
@@ -84,6 +138,8 @@ function MiniappShell({ telegram }: { readonly telegram: TelegramAdapter }) {
         return (
             <ContactDetailScreen
                 contactId={screen.contactId}
+                label={screen.label}
+                relationship={screen.relationship}
                 displayTimezone={me.data.display_timezone}
                 telegram={telegram}
                 onAddRule={() => {
@@ -95,13 +151,38 @@ function MiniappShell({ telegram }: { readonly telegram: TelegramAdapter }) {
             />
         );
     }
+    if (screen.name === "addRule") {
+        return (
+            <AddRuleScreen
+                contactId={screen.contactId}
+                telegram={telegram}
+                onCreated={() => {
+                    setNav((current) => popScreen(current));
+                }}
+            />
+        );
+    }
+    if (screen.name === "privacy") {
+        return (
+            <PrivacyScreen
+                telegram={telegram}
+                onRevoked={() => {
+                    setForceConsentGate(true);
+                    setNav(resetToContacts());
+                }}
+                onDeleteRequested={() => {
+                    setNav((current) => pushScreen(current, { name: "deleteConfirm" }));
+                }}
+            />
+        );
+    }
     return (
-        <AddRuleScreen
-            contactId={screen.contactId}
+        <DeleteConfirmScreen
             telegram={telegram}
-            onCreated={() => {
+            onCancelled={() => {
                 setNav((current) => popScreen(current));
             }}
+            onDeleted={onAccountDeleted}
         />
     );
 }
@@ -109,6 +190,8 @@ function MiniappShell({ telegram }: { readonly telegram: TelegramAdapter }) {
 export function App({ adapter, fetchImpl }: AppProps) {
     const defaultAdapter = useMemo(() => createTelegramAdapter(), []);
     const telegram = adapter ?? defaultAdapter;
+    const [sessionKey, setSessionKey] = useState(0);
+    const [accountDeleted, setAccountDeleted] = useState(false);
 
     useEffect(() => {
         applyThemeCssVariables(
@@ -125,6 +208,11 @@ export function App({ adapter, fetchImpl }: AppProps) {
         });
     }, [telegram]);
 
+    const onAccountDeleted = () => {
+        setAccountDeleted(true);
+        setSessionKey((current) => current + 1);
+    };
+
     return (
         <div className="app-shell">
             <header className="app-header">
@@ -133,13 +221,19 @@ export function App({ adapter, fetchImpl }: AppProps) {
             <main className="app-main">
                 {!telegram.isInsideTelegram ? (
                     <p className="app-message">{ru.openFromTelegram}</p>
+                ) : accountDeleted ? (
+                    <DeletedScreen telegram={telegram} />
                 ) : fetchImpl !== undefined ? (
-                    <ApiProvider initData={telegram.initData} fetchImpl={fetchImpl}>
-                        <MiniappShell telegram={telegram} />
+                    <ApiProvider
+                        key={sessionKey}
+                        initData={telegram.initData}
+                        fetchImpl={fetchImpl}
+                    >
+                        <MiniappShell telegram={telegram} onAccountDeleted={onAccountDeleted} />
                     </ApiProvider>
                 ) : (
-                    <ApiProvider initData={telegram.initData}>
-                        <MiniappShell telegram={telegram} />
+                    <ApiProvider key={sessionKey} initData={telegram.initData}>
+                        <MiniappShell telegram={telegram} onAccountDeleted={onAccountDeleted} />
                     </ApiProvider>
                 )}
             </main>

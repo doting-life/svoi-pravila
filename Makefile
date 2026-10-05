@@ -1,10 +1,14 @@
 .PHONY: install fmt fmt-check lint typecheck imports test-unit test-integration test \
-	audit secrets migrations-check image-scan dev-env infra-up infra-down build up down \
-	logs ps bench-llm eval-llm check
+	audit secrets migrations-check image-scan openapi miniapp-install miniapp-api-check \
+	miniapp-check dev-env infra-up infra-down build up down logs ps bench-llm eval-llm check
 
 BACKEND := backend
+MINIAPP := miniapp
 GITLEAKS_IMAGE := zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
 TRIVY_IMAGE := aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e
+
+# Exact CSP value served by miniapp/Caddyfile (stack-smoke asserts this string).
+MINIAPP_CSP := default-src 'none'; script-src 'self' https://telegram.org; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors https://web.telegram.org https://webk.telegram.org https://webz.telegram.org
 
 ENV_FILE ?= .env
 export ENV_FILE
@@ -13,6 +17,8 @@ ENV_FILE_ARG := $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE_ABS),)
 COMPOSE_ENV := $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE_ABS),)
 COMPOSE := docker compose $(COMPOSE_ENV)
 UV := cd $(BACKEND) && uv run $(ENV_FILE_ARG)
+# Prefer Corepack-managed pnpm (CI); fall back to PATH pnpm for local shells.
+PNPM := cd $(MINIAPP) && pnpm
 
 install:
 	cd $(BACKEND) && uv sync --frozen
@@ -77,6 +83,23 @@ image-scan:
 	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock $(TRIVY_IMAGE) \
 		image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --format table \
 		svoi-pravila:ci
+	docker build -t svoi-pravila-miniapp:ci -f $(MINIAPP)/Dockerfile $(MINIAPP)
+	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock $(TRIVY_IMAGE) \
+		image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --format table \
+		svoi-pravila-miniapp:ci
+
+openapi:
+	cd $(BACKEND) && uv run python scripts/export_openapi.py --out ../$(MINIAPP)/src/api/openapi.json
+	$(PNPM) run openapi:types
+
+miniapp-install:
+	$(PNPM) install --frozen-lockfile
+
+miniapp-api-check: openapi
+	git diff --exit-code -- $(MINIAPP)/src/api/openapi.json $(MINIAPP)/src/api/schema.d.ts
+
+miniapp-check: miniapp-api-check
+	$(PNPM) run check
 
 migrations-check:
 	$(UV) alembic upgrade head
@@ -98,14 +121,15 @@ build:
 up: build
 	$(COMPOSE) --profile app up -d --wait
 	@echo "API: http://127.0.0.1:$${API_PORT:-8000}"
+	@echo "Mini-app: http://127.0.0.1:$${MINIAPP_PORT:-8080}"
 
 down:
 	$(COMPOSE) --profile app down
 
 logs:
-	$(COMPOSE) --profile app logs -f api migrate
+	$(COMPOSE) --profile app logs -f api migrate miniapp
 
 ps:
 	$(COMPOSE) --profile app ps
 
-check: lint fmt-check typecheck imports migrations-check test audit secrets
+check: lint fmt-check typecheck imports migrations-check test audit secrets miniapp-check

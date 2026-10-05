@@ -102,6 +102,29 @@ services:
       - no-new-privileges:true
     stop_grace_period: 20s
 
+  miniapp:
+    profiles: ["app"]
+    build:
+      context: ./miniapp
+      dockerfile: Dockerfile
+    image: svoi-pravila-miniapp:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MINIAPP_PORT:-8080}:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /config
+      - /data
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 20s
+
 volumes:
   postgres_data:
   valkey_data:

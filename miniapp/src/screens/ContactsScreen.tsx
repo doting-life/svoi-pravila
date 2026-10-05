@@ -11,7 +11,8 @@ const RELATIONSHIPS = Object.keys(ru.relationships) as RelationshipKey[];
 export type ContactsScreenProps = {
     readonly activeContactId: string | null | undefined;
     readonly telegram: TelegramAdapter;
-    readonly onOpenContact: (contactId: string) => void;
+    readonly onOpenContact: (contact: Contact) => void;
+    readonly onOpenPrivacy: () => void;
     readonly onActivated: () => void;
 };
 
@@ -21,6 +22,7 @@ export function ContactsScreen({
     activeContactId,
     telegram,
     onOpenContact,
+    onOpenPrivacy,
     onActivated,
 }: ContactsScreenProps) {
     const contacts = useContacts();
@@ -107,9 +109,14 @@ export function ContactsScreen({
                 <h2 id="contacts-title" className="screen-title">
                     {ru.contactsTitle}
                 </h2>
-                <button type="button" className="btn btn-primary" onClick={openAdd}>
-                    {ru.contactsAdd}
-                </button>
+                <div className="screen-header-actions">
+                    <button type="button" className="btn btn-secondary" onClick={onOpenPrivacy}>
+                        {ru.privacyTitle}
+                    </button>
+                    <button type="button" className="btn btn-primary" onClick={openAdd}>
+                        {ru.contactsAdd}
+                    </button>
+                </div>
             </header>
 
             {contacts.status === "loading" ? <LoadingView /> : null}
@@ -129,7 +136,7 @@ export function ContactsScreen({
                                     type="button"
                                     className="list-item-main"
                                     onClick={() => {
-                                        onOpenContact(contact.id);
+                                        onOpenContact(contact);
                                     }}
                                 >
                                     <span className="list-item-title">{contact.label}</span>

@@ -21,8 +21,26 @@ export const ru = {
     contactsLabel: "Как называть",
     contactsRelationship: "Отношения",
     contactsLimit: "Достигнут лимит контактов.",
-    contactDetailTitle: "Контакт",
     contactAddRule: "Добавить правило",
+    privacyTitle: "Приватность",
+    privacyExportBlurb:
+        "Выгрузка содержит контакты, согласия и правила. Файл придёт в чат с ботом и не хранится на сервере.",
+    privacyExportAction: "Выгрузить данные",
+    privacyExportDone: "Файл отправлен в чат с ботом",
+    privacyExportUnavailable: "Напишите боту /start, затем повторите",
+    privacyRevokeBlurb:
+        "Отзыв согласий остановит обработку сообщений. Сохранённые правила и контакты останутся, пока вы не удалите аккаунт. Подтвердите отзыв.",
+    privacyRevokeAction: "Отозвать согласия",
+    privacyRevokeConfirm:
+        "Отзыв согласий остановит обработку сообщений. Сохранённые правила и контакты останутся, пока вы не удалите аккаунт. Подтвердите отзыв.",
+    privacyDeleteBlurb:
+        "Удаление сотрёт ваш аккаунт, согласия, контакты и ваши правила. Общие правила, которые написал партнёр, останутся у него. Это нельзя отменить.",
+    privacyDeleteAction: "Удалить аккаунт",
+    privacyDeleteConfirm:
+        "Удаление сотрёт ваш аккаунт, согласия, контакты и ваши правила. Общие правила, которые написал партнёр, останутся у него. Это нельзя отменить.",
+    privacyDeleteForever: "Удалить навсегда",
+    privacyDeleted: "Аккаунт удалён",
+    rateLimited: "Слишком много запросов. Подождите немного.",
     suggestionsTitle: "Предложения",
     suggestionAccept: "Добавить",
     suggestionDismiss: "Не надо",
@@ -36,7 +54,7 @@ export const ru = {
     addRuleTitle: "Новое правило",
     addRuleCategory: "Категория",
     addRuleText: "Текст",
-    addRuleSubmit: "Отправить",
+    addRuleSubmit: "Сохранить правило",
     addRuleValidation: "Проверьте текст правила.",
     addRuleOpenLimit: "Слишком много открытых правил.",
     relationships: {

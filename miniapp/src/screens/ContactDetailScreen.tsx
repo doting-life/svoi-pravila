@@ -2,11 +2,13 @@ import { formatDisplayDate } from "../dates/formatDisplayDate";
 import { EmptyView, ErrorView, LoadingView } from "../components/StatusViews";
 import { useRules } from "../hooks/useRules";
 import { useSuggestions } from "../hooks/useSuggestions";
-import { ru } from "../localization/ru";
+import { ru, type RelationshipKey } from "../localization/ru";
 import type { TelegramAdapter } from "../telegram/webapp";
 
 export type ContactDetailScreenProps = {
     readonly contactId: string;
+    readonly label: string;
+    readonly relationship: string;
     readonly displayTimezone: string;
     readonly telegram: TelegramAdapter;
     readonly onAddRule: () => void;
@@ -15,6 +17,8 @@ export type ContactDetailScreenProps = {
 
 export function ContactDetailScreen({
     contactId,
+    label,
+    relationship,
     displayTimezone,
     telegram,
     onAddRule,
@@ -70,9 +74,14 @@ export function ContactDetailScreen({
     return (
         <section className="screen" aria-labelledby="detail-title">
             <header className="screen-header">
-                <h2 id="detail-title" className="screen-title">
-                    {ru.contactDetailTitle}
-                </h2>
+                <div>
+                    <h2 id="detail-title" className="screen-title">
+                        {label}
+                    </h2>
+                    <p className="screen-subtitle">
+                        {ru.relationships[relationship as RelationshipKey] ?? relationship}
+                    </p>
+                </div>
                 <button type="button" className="btn btn-primary" onClick={onAddRule}>
                     {ru.contactAddRule}
                 </button>

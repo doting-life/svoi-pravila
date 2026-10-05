@@ -27,6 +27,7 @@ from svoi_pravila.application.use_cases.revoke_all_consents import (
 from svoi_pravila.domain.contact import Contact
 from svoi_pravila.domain.enums import (
     ConsentKind,
+    Firmness,
     RelationshipKind,
     RuleCategory,
     RuleStatus,
@@ -34,8 +35,16 @@ from svoi_pravila.domain.enums import (
     UsageScenario,
     UsageSurface,
 )
-from svoi_pravila.domain.ids import ContactId, PairId, TelegramUserId, UsageEventId, UserId
+from svoi_pravila.domain.ids import (
+    ContactId,
+    PairId,
+    RuleSuggestionId,
+    TelegramUserId,
+    UsageEventId,
+    UserId,
+)
 from svoi_pravila.domain.pair import Pair
+from svoi_pravila.domain.rule_suggestion import RuleSuggestion, ToneSignal
 from svoi_pravila.domain.rules import MAX_OPEN_RULES_PER_SCOPE, ContactScope, PairScope
 from svoi_pravila.domain.text import ContactLabel, RuleText
 from svoi_pravila.domain.usage import UsageEvent
@@ -246,6 +255,24 @@ async def test_delete_and_export(world: AppWorld) -> None:
     analytics_a = pseudo.pseudonymize("analytics", str(inviter.telegram_user_id.value))
     analytics_b = pseudo.pseudonymize("analytics", str(invitee.telegram_user_id.value))
     async with world.uow_factory() as uow:
+        await uow.rule_suggestions.add(
+            RuleSuggestion.create_tone(
+                suggestion_id=RuleSuggestionId(UUID(int=95)),
+                user_id=inviter.id,
+                contact_id=contact.id,
+                category=RuleCategory.HOW_TO_ASK,
+                text=RuleText("Говорить мягко, без резких формулировок"),
+                firmness=Firmness.GENTLE,
+                now=world.clock.now(),
+            )
+        )
+        await uow.tone_signals.upsert(
+            ToneSignal(
+                user_id=inviter.id,
+                contact_id=contact.id,
+                values=(Firmness.GENTLE,) * 5,
+            )
+        )
         await uow.usage_events.add(
             UsageEvent(
                 id=UsageEventId(UUID(int=90)),
@@ -302,6 +329,8 @@ async def test_delete_and_export(world: AppWorld) -> None:
     assert "secret private" in blob
     assert "together" in blob
     assert "partner only" not in blob
+    assert "Говорить мягко, без резких формулировок" in blob
+    assert "gentle" in blob
 
     deleter = DeleteMyAccount(
         world.uow_factory, world.ids, pseudo, world.clock, make_inline_reuse(world.clock)
@@ -315,6 +344,8 @@ async def test_delete_and_export(world: AppWorld) -> None:
         assert await uow.users.get(invitee.id) is not None
         assert await uow.usage_events.get(UsageEventId(UUID(int=90))) is None
         assert await uow.usage_events.get(UsageEventId(UUID(int=91))) is not None
+        assert await uow.rule_suggestions.list_for_user(inviter.id) == []
+        assert await uow.tone_signals.list_for_user(inviter.id) == []
         remaining_rules = await uow.rules.list_for_scope(
             ContactScope(contact_id=accepted.invitee_contact.id)
         )

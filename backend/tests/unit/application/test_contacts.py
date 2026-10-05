@@ -14,6 +14,8 @@ from svoi_pravila.application.ports.repositories import (
     InviteRepository,
     PairRepository,
     RuleRepository,
+    RuleSuggestionRepository,
+    ToneSignalRepository,
     UsageEventRepository,
     UserRepository,
 )
@@ -154,6 +156,8 @@ class _HideUserUow:
         self.rules: RuleRepository
         self.invites: InviteRepository
         self.usage_events: UsageEventRepository
+        self.rule_suggestions: RuleSuggestionRepository
+        self.tone_signals: ToneSignalRepository
 
     async def __aenter__(self) -> _HideUserUow:
         await self._inner.__aenter__()
@@ -164,6 +168,8 @@ class _HideUserUow:
         self.rules = self._inner.rules
         self.invites = self._inner.invites
         self.usage_events = self._inner.usage_events
+        self.rule_suggestions = self._inner.rule_suggestions
+        self.tone_signals = self._inner.tone_signals
         return self
 
     async def __aexit__(

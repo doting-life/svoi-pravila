@@ -58,6 +58,8 @@ class ExportMyData:
             if user is None:
                 return ExportMyDataResult(found=False, payload=None)
             consents = await uow.consents.list_for_user(user.id)
+            suggestions = await uow.rule_suggestions.list_for_user(user.id)
+            tone_signals = await uow.tone_signals.list_for_user(user.id)
             contacts_payload: list[dict[str, object]] = []
             for contact in await uow.contacts.list_for_owner(user.id):
                 pair = None
@@ -66,6 +68,8 @@ class ExportMyData:
                 visible = await collect_visible_rules(uow, contact, pair)
                 private = [view for view in visible if view.scope_kind == "contact"]
                 shared = [view for view in visible if view.scope_kind == "pair"]
+                contact_suggestions = [s for s in suggestions if s.contact_id == contact.id]
+                contact_tones = [s for s in tone_signals if s.contact_id == contact.id]
                 contacts_payload.append(
                     {
                         "подпись": contact.label.value,
@@ -95,6 +99,26 @@ class ExportMyData:
                                 ],
                             }
                             for view in shared
+                        ],
+                        "предложения": [
+                            {
+                                "источник": suggestion.source.value,
+                                "категория": suggestion.category.value,
+                                "текст": suggestion.text.value,
+                                "жёсткость": (
+                                    None
+                                    if suggestion.firmness is None
+                                    else suggestion.firmness.value
+                                ),
+                                "статус": suggestion.status.value,
+                                "создано": _iso(suggestion.created_at),
+                                "решено": _iso(suggestion.decided_at),
+                            }
+                            for suggestion in contact_suggestions
+                        ],
+                        "сигналы_тона": [
+                            {"значения": [v.value for v in signal.values]}
+                            for signal in contact_tones
                         ],
                     }
                 )

@@ -182,7 +182,11 @@ export function GateScreen({
                 {ru.close}
             </button>
             {showRightsActions ? (
-                <GateRightsActions telegram={telegram} onAccountDeleted={onAccountDeleted} />
+                onAccountDeleted !== undefined ? (
+                    <GateRightsActions telegram={telegram} onAccountDeleted={onAccountDeleted} />
+                ) : (
+                    <GateRightsActions telegram={telegram} />
+                )
             ) : null}
         </section>
     );

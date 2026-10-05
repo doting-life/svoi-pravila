@@ -1,0 +1,2 @@
+# Applied-rule citation template for decode (C0). Placeholders: {date}, {text}.
+Учтено правило от {date}: «{text}»

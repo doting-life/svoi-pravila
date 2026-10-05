@@ -27,6 +27,7 @@ export function fakeAdapter(overrides: Partial<TelegramAdapter> = {}): TelegramA
         close: vi.fn(),
         showConfirm: vi.fn(() => Promise.resolve(true)),
         hapticNotification: vi.fn(),
+        switchInlineQuery: vi.fn(),
         onColorSchemeChanged: () => () => undefined,
         ...overrides,
     };

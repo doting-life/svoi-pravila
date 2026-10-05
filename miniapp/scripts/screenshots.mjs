@@ -252,6 +252,38 @@ async function mockApi(page, mode) {
             await route.fulfill({ status: 204, body: "" });
             return;
         }
+        if (path === "/api/v1/decode") {
+            if (mode === "decode-streaming") {
+                const body =
+                    'event: analysis\ndata: {"chunk":"Собеседник звучит раздражённо, "}\n\n' +
+                    'event: analysis\ndata: {"chunk":"но суть просьбы можно сохранить."}\n\n';
+                await route.fulfill({
+                    status: 200,
+                    contentType: "text/event-stream",
+                    headers: { "Cache-Control": "no-store" },
+                    body,
+                });
+                return;
+            }
+            if (mode === "decode-crisis") {
+                await route.fulfill({
+                    status: 200,
+                    contentType: "text/event-stream",
+                    headers: { "Cache-Control": "no-store" },
+                    body: 'event: crisis\ndata: {"lead":"Сейчас важнее живой человек рядом, а не текст. Если вам или кому-то рядом угрожает опасность — обратитесь за помощью. Ниже — контакты служб.","resources":["Телефон доверия: 8-800-2000-122"]}\n\n',
+                });
+                return;
+            }
+            await route.fulfill({
+                status: 200,
+                contentType: "text/event-stream",
+                headers: { "Cache-Control": "no-store" },
+                body:
+                    'event: analysis\ndata: {"chunk":"Собеседник звучит раздражённо, но суть просьбы можно сохранить."}\n\n' +
+                    'event: completed\ndata: {"safety":"ok","variants":[{"firmness":"gentle","text":"Давай спокойно разберём, что важно каждому.","insert_query":"p_demo"},{"firmness":"firm","text":"Мне важно продолжить разговор без повышения тона.","insert_query":null}],"applied_rules":[{"category":"other","text":"не повышать голос","effective_since":"2026-10-03T12:00:00.000Z"}],"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":"tok"}\n\n',
+            });
+            return;
+        }
         await route.fulfill({
             status: 404,
             contentType: "application/json",
@@ -325,6 +357,27 @@ async function captureScheme(browser, baseUrl, scheme) {
     await privacy.waitForSelector("text=Аккаунт удалён");
     await shot(privacy, `${scheme}-deleted`);
     await privacy.close();
+
+    for (const [mode, name, waitText, fillAndSubmit] of [
+        ["decode-streaming", "decode-streaming", "Собеседник звучит раздражённо", true],
+        ["decode-completed", "decode-completed", "Давай спокойно разберём", true],
+        ["decode-crisis", "decode-crisis", "Телефон доверия", true],
+    ]) {
+        const decode = await browser.newPage({ viewport: { width: 390, height: 844 } });
+        await installTelegram(decode, scheme);
+        await mockApi(decode, mode);
+        await decode.goto(baseUrl, { waitUntil: "networkidle" });
+        await decode.waitForSelector("text=Аня");
+        await decode.getByRole("button", { name: "Расшифровать" }).click();
+        await decode.waitForSelector("text=Вставьте сообщение");
+        if (fillAndSubmit) {
+            await decode.locator("textarea").fill("синтетическое входящее сообщение для скриншота");
+            await decode.getByRole("button", { name: "Расшифровать" }).click();
+        }
+        await decode.waitForSelector(`text=${waitText}`);
+        await shot(decode, `${scheme}-${name}`);
+        await decode.close();
+    }
 }
 
 async function main() {

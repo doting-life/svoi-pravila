@@ -40,10 +40,12 @@ describe("navigation stack", () => {
         expect(resetToContacts()).toEqual(createInitialNavigation());
     });
 
-    it("supports privacy and delete-confirm screens", () => {
+    it("supports privacy, decode and delete-confirm screens", () => {
         let state = createInitialNavigation();
         state = pushScreen(state, { name: "privacy" });
         expect(currentScreen(state).name).toBe("privacy");
+        state = pushScreen(state, { name: "decode" });
+        expect(currentScreen(state)).toEqual({ name: "decode" });
         state = pushScreen(state, { name: "deleteConfirm" });
         expect(currentScreen(state).name).toBe("deleteConfirm");
         state = resetToContacts();

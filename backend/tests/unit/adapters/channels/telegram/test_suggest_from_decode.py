@@ -197,7 +197,9 @@ async def test_sn_callback_expired_none_crisis_quota() -> None:
     await lifecycle.dispatcher.feed_update(
         bot, _callback(902, 7102, rule_source_callback_data(token_crisis))
     )
-    assert deps.strings.suggestion_decode_crisis in _sent_texts(session)
+    from svoi_pravila.adapters.channels.telegram.localization import render_crisis_message
+
+    assert render_crisis_message() in _sent_texts(session)
 
     deps_q = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, suggest_quota_limit=0))
     session_q = FakeTelegramSession()

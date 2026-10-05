@@ -45,6 +45,7 @@ from svoi_pravila.domain.enums import (
     SuggestionSource,
     UsageOutcome,
     UsageScenario,
+    UsageSurface,
 )
 from svoi_pravila.domain.ids import ContactId, RuleSuggestionId, TelegramUserId, UserId
 from svoi_pravila.domain.rule_suggestion import RuleSuggestion
@@ -105,7 +106,9 @@ async def test_suggest_rule_ok_creates_decode_suggestion(world: AppWorld) -> Non
         RuleSourcePayload(contact_id=contact.id, incoming_text="Давай без сарказма"),
     )
     ports = _ports(world, sources=sources, generator=FakeTextGenerator(), sink=sink)
-    result = await SuggestRuleFromDecode(ports).execute(SuggestRuleFromDecodeCommand(tg, token))
+    result = await SuggestRuleFromDecode(ports).execute(
+        SuggestRuleFromDecodeCommand(tg, token, surface=UsageSurface.DM)
+    )
     assert result.outcome is SuggestRuleFromDecodeOutcome.OK
     assert result.suggestion is not None
     assert result.suggestion.source is SuggestionSource.DECODE
@@ -134,10 +137,10 @@ async def test_suggest_rule_none_unavailable_quota(world: AppWorld) -> None:
     ports = _ports(world, sources=sources, generator=generator)
     uc = SuggestRuleFromDecode(ports)
     assert (
-        await uc.execute(SuggestRuleFromDecodeCommand(tg, token))
+        await uc.execute(SuggestRuleFromDecodeCommand(tg, token, surface=UsageSurface.DM))
     ).outcome is SuggestRuleFromDecodeOutcome.NONE
     assert (
-        await uc.execute(SuggestRuleFromDecodeCommand(tg, token))
+        await uc.execute(SuggestRuleFromDecodeCommand(tg, token, surface=UsageSurface.DM))
     ).outcome is SuggestRuleFromDecodeOutcome.UNAVAILABLE
     token2 = await sources.store(
         pseudo, RuleSourcePayload(contact_id=contact.id, incoming_text="ещё")
@@ -149,7 +152,9 @@ async def test_suggest_rule_none_unavailable_quota(world: AppWorld) -> None:
         quota=FakeRateLimiter(limit=0),
     )
     assert (
-        await SuggestRuleFromDecode(ports_q).execute(SuggestRuleFromDecodeCommand(tg, token2))
+        await SuggestRuleFromDecode(ports_q).execute(
+            SuggestRuleFromDecodeCommand(tg, token2, surface=UsageSurface.DM)
+        )
     ).outcome is SuggestRuleFromDecodeOutcome.QUOTA_EXCEEDED
 
 
@@ -176,7 +181,9 @@ async def test_suggest_rule_pending_exists_and_crisis(world: AppWorld) -> None:
     token = await sources.store(
         pseudo, RuleSourcePayload(contact_id=contact.id, incoming_text="повтор")
     )
-    result = await SuggestRuleFromDecode(ports).execute(SuggestRuleFromDecodeCommand(tg, token))
+    result = await SuggestRuleFromDecode(ports).execute(
+        SuggestRuleFromDecodeCommand(tg, token, surface=UsageSurface.DM)
+    )
     assert result.outcome is SuggestRuleFromDecodeOutcome.PENDING_EXISTS
     assert generator.suggest_rule_calls == []
 
@@ -184,7 +191,9 @@ async def test_suggest_rule_pending_exists_and_crisis(world: AppWorld) -> None:
         pseudo,
         RuleSourcePayload(contact_id=contact.id, incoming_text="Я хочу покончить с собой"),
     )
-    crisis = await SuggestRuleFromDecode(ports).execute(SuggestRuleFromDecodeCommand(tg, token_c))
+    crisis = await SuggestRuleFromDecode(ports).execute(
+        SuggestRuleFromDecodeCommand(tg, token_c, surface=UsageSurface.DM)
+    )
     assert crisis.outcome is SuggestRuleFromDecodeOutcome.CRISIS
 
 
@@ -201,7 +210,9 @@ async def test_suggest_rule_privacy_canary_absent_from_logs(
         RuleSourcePayload(contact_id=contact.id, incoming_text=marker),
     )
     ports = _ports(world, sources=sources, generator=FakeTextGenerator())
-    await SuggestRuleFromDecode(ports).execute(SuggestRuleFromDecodeCommand(tg, token))
+    await SuggestRuleFromDecode(ports).execute(
+        SuggestRuleFromDecodeCommand(tg, token, surface=UsageSurface.DM)
+    )
     assert marker not in " ".join(str(event) for event in capture_log_events())
 
 
@@ -211,7 +222,7 @@ async def test_suggest_rule_not_found_paths(world: AppWorld) -> None:
     ports = _ports(world, sources=sources, generator=FakeTextGenerator())
     with pytest.raises(NotFound):
         await SuggestRuleFromDecode(ports).execute(
-            SuggestRuleFromDecodeCommand(TelegramUserId(999001), "missing")
+            SuggestRuleFromDecodeCommand(TelegramUserId(999001), "missing", surface=UsageSurface.DM)
         )
 
     tg, contact = await _active_contact(world, 905)
@@ -222,7 +233,9 @@ async def test_suggest_rule_not_found_paths(world: AppWorld) -> None:
         pseudo, RuleSourcePayload(contact_id=foreign, incoming_text="чужой контакт")
     )
     with pytest.raises(NotFound):
-        await SuggestRuleFromDecode(ports).execute(SuggestRuleFromDecodeCommand(tg, token))
+        await SuggestRuleFromDecode(ports).execute(
+            SuggestRuleFromDecodeCommand(tg, token, surface=UsageSurface.DM)
+        )
 
     token_gone = await sources.store(
         pseudo, RuleSourcePayload(contact_id=contact.id, incoming_text="user gone")
@@ -276,7 +289,7 @@ async def test_suggest_rule_not_found_paths(world: AppWorld) -> None:
     )
     with pytest.raises(NotFound):
         await SuggestRuleFromDecode(ports_gone).execute(
-            SuggestRuleFromDecodeCommand(tg, token_gone)
+            SuggestRuleFromDecodeCommand(tg, token_gone, surface=UsageSurface.DM)
         )
 
 
@@ -326,7 +339,9 @@ async def test_suggest_rule_generation_errors_and_sink_fail(world: AppWorld) -> 
             deadline_seconds=45.0,
         )
         with pytest.raises(type(error)):
-            await SuggestRuleFromDecode(ports).execute(SuggestRuleFromDecodeCommand(tg, token))
+            await SuggestRuleFromDecode(ports).execute(
+                SuggestRuleFromDecodeCommand(tg, token, surface=UsageSurface.DM)
+            )
         assert sink.events[-1].scenario is UsageScenario.SUGGEST_RULE
         if isinstance(error, GenerationUnavailable):
             assert sink.events[-1].outcome is UsageOutcome.UNAVAILABLE
@@ -353,7 +368,7 @@ async def test_suggest_rule_generation_errors_and_sink_fail(world: AppWorld) -> 
         deadline_seconds=45.0,
     )
     ok_despite_sink = await SuggestRuleFromDecode(ports_ok_fail).execute(
-        SuggestRuleFromDecodeCommand(tg, token_ok)
+        SuggestRuleFromDecodeCommand(tg, token_ok, surface=UsageSurface.DM)
     )
     assert ok_despite_sink.outcome is SuggestRuleFromDecodeOutcome.OK
     assert ok_despite_sink.suggestion is not None
@@ -389,7 +404,7 @@ async def test_suggest_rule_generation_errors_and_sink_fail(world: AppWorld) -> 
     )
     with pytest.raises(GenerationUnavailable):
         await SuggestRuleFromDecode(ports_err_fail).execute(
-            SuggestRuleFromDecodeCommand(tg, token_err)
+            SuggestRuleFromDecodeCommand(tg, token_err, surface=UsageSurface.DM)
         )
 
 
@@ -488,7 +503,9 @@ async def test_suggest_rule_conflict_on_add_returns_pending_exists(world: AppWor
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
     )
-    result = await SuggestRuleFromDecode(ports).execute(SuggestRuleFromDecodeCommand(tg, token))
+    result = await SuggestRuleFromDecode(ports).execute(
+        SuggestRuleFromDecodeCommand(tg, token, surface=UsageSurface.DM)
+    )
     assert result.outcome is SuggestRuleFromDecodeOutcome.PENDING_EXISTS
     assert result.suggestion is not None
     assert result.suggestion.id == competing.id
@@ -574,4 +591,6 @@ async def test_suggest_rule_conflict_without_pending_raises_not_found(world: App
         deadline_seconds=45.0,
     )
     with pytest.raises(NotFound):
-        await SuggestRuleFromDecode(ports).execute(SuggestRuleFromDecodeCommand(tg, token))
+        await SuggestRuleFromDecode(ports).execute(
+            SuggestRuleFromDecodeCommand(tg, token, surface=UsageSurface.DM)
+        )

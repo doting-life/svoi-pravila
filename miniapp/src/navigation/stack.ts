@@ -6,7 +6,13 @@ export type Screen =
           readonly label: string;
           readonly relationship: string;
       }
-    | { readonly name: "addRule"; readonly contactId: string }
+    | {
+          readonly name: "addRule";
+          readonly contactId: string;
+          readonly initialCategory?: string;
+          readonly initialText?: string;
+      }
+    | { readonly name: "decode" }
     | { readonly name: "privacy" }
     | { readonly name: "deleteConfirm" };
 

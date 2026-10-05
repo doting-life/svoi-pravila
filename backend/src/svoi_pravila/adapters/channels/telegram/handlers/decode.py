@@ -15,6 +15,11 @@ from svoi_pravila.adapters.channels.telegram.presenters import (
     render_applied_rule_citations,
     render_decode_completed,
 )
+from svoi_pravila.application.decode_sealing import (
+    DecodeSealPorts,
+    DecodeSealRequest,
+    seal_decode_outcome,
+)
 from svoi_pravila.application.errors import (
     AccessNotGranted,
     ApplicationError,
@@ -28,15 +33,14 @@ from svoi_pravila.application.errors import (
     ScenarioQuotaExceeded,
 )
 from svoi_pravila.application.ports.generation import AnalysisChunk, DecodeCompleted, SafetyVerdict
-from svoi_pravila.application.ports.prepared_results import PreparedVariant
-from svoi_pravila.application.rule_source import RuleSourcePayload, rule_source_callback_data
+from svoi_pravila.application.rule_source import rule_source_callback_data
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncomingCommand
 from svoi_pravila.application.use_cases.get_onboarding_step import (
     GetOnboardingStepQuery,
     OnboardingStepKind,
 )
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramIdQuery
-from svoi_pravila.application.use_cases.suggest_rule_from_decode import RULE_SOURCE_PURPOSE
+from svoi_pravila.domain.enums import UsageSurface
 from svoi_pravila.domain.ids import TelegramUserId
 
 _COPY_MAX = 256
@@ -113,6 +117,7 @@ async def _stream_decode(
         DecodeIncomingCommand(
             telegram_user_id=TelegramUserId(message.from_user.id),
             incoming_text=incoming,
+            surface=UsageSurface.DM,
         )
     ):
         if isinstance(event, AnalysisChunk):
@@ -121,21 +126,39 @@ async def _stream_decode(
             continue
         if isinstance(event, DecodeCompleted):
             await draft.consider(bot, tg_deps.monotonic.monotonic(), force=True)
-            insert_queries = await _store_insert_tokens(tg_deps, message.from_user.id, event)
-            make_rule_callback = await _store_make_rule_callback(
-                tg_deps, message.from_user.id, incoming, event
+            looked_up = await tg_deps.get_user_by_telegram_id.execute(
+                GetUserByTelegramIdQuery(TelegramUserId(message.from_user.id))
+            )
+            user = looked_up.user
+            active_contact_id = None if user is None else user.active_contact_id
+            sealed = await seal_decode_outcome(
+                DecodeSealPorts(
+                    prepared_results=tg_deps.prepared_results,
+                    rule_sources=tg_deps.rule_sources,
+                    pseudonymizer=tg_deps.pseudonymizer,
+                ),
+                DecodeSealRequest(
+                    telegram_user_id=message.from_user.id,
+                    incoming_text=incoming,
+                    completed=event,
+                    active_contact_id=active_contact_id,
+                ),
+            )
+            make_rule_callback = (
+                None
+                if sealed.rule_source_token is None
+                else rule_source_callback_data(sealed.rule_source_token)
             )
             for text, keyboard in render_decode_completed(
                 tg_deps.strings,
                 event,
                 copy_max=_COPY_MAX,
-                insert_queries=insert_queries,
+                insert_queries=sealed.insert_queries,
                 make_rule_callback=make_rule_callback,
             ):
                 await message.answer(text, reply_markup=keyboard)
             if event.result.safety is SafetyVerdict.OK:
                 for citation in render_applied_rule_citations(
-                    tg_deps.strings,
                     event.applied_rules,
                     now=tg_deps.clock.now(),
                     tz=tg_deps.display_timezone,
@@ -157,50 +180,3 @@ def _decode_error_reply(exc: ApplicationError, strings: TelegramStrings) -> str 
         if isinstance(exc, error_type):
             return reply
     return None
-
-
-_PREPARED_PURPOSE = "prepared"
-
-
-async def _store_insert_tokens(
-    tg_deps: TelegramDeps,
-    telegram_user_id: int,
-    completed: DecodeCompleted,
-) -> tuple[str | None, ...]:
-    result = completed.result
-    if result.safety is not SafetyVerdict.OK:
-        return tuple(None for _ in result.variants)
-    pseudonym = tg_deps.pseudonymizer.pseudonymize(_PREPARED_PURPOSE, str(telegram_user_id))
-    tokens: list[str | None] = []
-    for variant in result.variants:
-        if not variant.text:
-            tokens.append(None)
-            continue
-        token = await tg_deps.prepared_results.store(
-            pseudonym,
-            PreparedVariant(firmness=variant.firmness, text=variant.text),
-        )
-        tokens.append(token)
-    return tuple(tokens)
-
-
-async def _store_make_rule_callback(
-    tg_deps: TelegramDeps,
-    telegram_user_id: int,
-    incoming: str,
-    completed: DecodeCompleted,
-) -> str | None:
-    if completed.result.safety is not SafetyVerdict.OK:
-        return None
-    looked_up = await tg_deps.get_user_by_telegram_id.execute(
-        GetUserByTelegramIdQuery(TelegramUserId(telegram_user_id))
-    )
-    user = looked_up.user
-    if user is None or user.active_contact_id is None:
-        return None
-    pseudonym = tg_deps.pseudonymizer.pseudonymize(RULE_SOURCE_PURPOSE, str(telegram_user_id))
-    token = await tg_deps.rule_sources.store(
-        pseudonym,
-        RuleSourcePayload(contact_id=user.active_contact_id, incoming_text=incoming),
-    )
-    return rule_source_callback_data(token)

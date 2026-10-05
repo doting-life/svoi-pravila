@@ -27,7 +27,7 @@ def test_load_ru_strings_succeeds() -> None:
     assert strings.decode_insert
     assert strings.inline_prefix_decline
     assert strings.inline_button_need_support
-    assert "112" in render_crisis_message(strings)
+    assert "112" in render_crisis_message()
 
 
 @pytest.mark.unit

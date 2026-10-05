@@ -871,9 +871,9 @@ async def test_start_support_and_why_deep_links() -> None:
     await lifecycle.dispatcher.feed_update(bot, _text_update(1, 40, "/start support"))
     await lifecycle.dispatcher.feed_update(bot, _text_update(2, 40, "/start why"))
     bodies = [req.text for req in session.requests if isinstance(req, SendMessage)]
-    assert render_crisis_message(deps.strings) in bodies
+    assert render_crisis_message() in bodies
     assert render_refuse_manipulation(deps.strings) in bodies
-    assert "112" in render_crisis_message(deps.strings)
+    assert "112" in render_crisis_message()
 
 
 @pytest.mark.unit

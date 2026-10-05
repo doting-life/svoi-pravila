@@ -110,7 +110,7 @@ async def _drain(use_case: DecodeIncoming, telegram_id: int, text: str) -> list[
     return [
         event
         async for event in use_case.execute(
-            DecodeIncomingCommand(TelegramUserId(telegram_id), text)
+            DecodeIncomingCommand(TelegramUserId(telegram_id), text, surface=UsageSurface.DM)
         )
     ]
 
@@ -447,7 +447,7 @@ async def test_decode_ok_event_recorded_after_completed_yield(world: AppWorld) -
     await world.ensure_granted_user(106)
     use_case, sink, _g = _ports(world)
     agen: AsyncGenerator[DecodeEvent] = use_case.execute(
-        DecodeIncomingCommand(TelegramUserId(106), "incoming")
+        DecodeIncomingCommand(TelegramUserId(106), "incoming", surface=UsageSurface.DM)
     )
     completed: DecodeCompleted | None = None
     async for event in agen:

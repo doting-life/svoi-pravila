@@ -20,6 +20,7 @@ from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
 from tests.fakes.tokens import FakeTokenGenerator
 from tests.fakes.uow import InMemoryUnitOfWorkFactory
 from tests.support.init_data import InitDataOptions, build_webapp_init_data
+from tests.support.miniapp_decode import build_miniapp_decode_bundle
 from tests.unit.application.conftest import AppWorld
 
 from svoi_pravila.adapters.channels.telegram.init_data import AiogramInitDataVerifier
@@ -92,6 +93,7 @@ def _build_app(
     )
     reuse = make_inline_reuse(world.clock)
     export_delivery = delivery if delivery is not None else FakeExportDelivery()
+    decode_bundle = build_miniapp_decode_bundle(world)
     bindings = MiniappRouterBindings(
         auth=auth,
         list_contacts=ListContacts(world.uow_factory, world.catalog),
@@ -120,6 +122,12 @@ def _build_app(
         ),
         export_rate_limiter=FakeRateLimiter(limit=export_limit),
         display_timezone="Europe/Moscow",
+        decode_incoming=decode_bundle.decode_incoming,
+        suggest_rule_from_decode=decode_bundle.suggest_rule_from_decode,
+        prepared_results=decode_bundle.prepared_results,
+        rule_sources=decode_bundle.rule_sources,
+        pseudonymizer=decode_bundle.pseudonymizer,
+        enable_test_routes=True,
     )
     return create_app(
         CheckReadiness(probes=(), timeout_seconds=1.0),

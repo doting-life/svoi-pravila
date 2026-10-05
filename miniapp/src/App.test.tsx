@@ -937,6 +937,55 @@ describe("App", () => {
         backCallback?.();
         expect(await screen.findByText("Аня")).toBeInTheDocument();
     });
+
+    it("opens decode and prefills addRule from a suggestion edit", async () => {
+        const sse =
+            'event: analysis\ndata: {"chunk":"разбор"}\n\n' +
+            'event: completed\ndata: {"safety":"ok","variants":[{"firmness":"gentle","text":"вариант","insert_query":null}],"applied_rules":[],"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":"tok"}\n\n';
+        const base = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            {
+                method: "POST",
+                path: "/api/v1/suggestions/from-decode",
+                body: {
+                    outcome: "ok",
+                    suggestion: {
+                        id: "s1",
+                        category: "apology",
+                        text: "извиняться спокойно",
+                        source: "decode",
+                        firmness: null,
+                        created_at: "2026-01-01T00:00:00Z",
+                    },
+                },
+            },
+        ]);
+        const fetchImpl: typeof fetch = async (input, init) => {
+            const url = input instanceof Request ? input.url : String(input);
+            if (url.includes("/api/v1/decode") && !url.includes("from-decode")) {
+                return new Response(sse, {
+                    status: 200,
+                    headers: {
+                        "Content-Type": "text/event-stream",
+                        "Cache-Control": "no-store",
+                    },
+                });
+            }
+            return base(input, init);
+        };
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.decodeEntry }));
+        expect(await screen.findByRole("heading", { name: ru.decodeTitle })).toBeInTheDocument();
+        fireEvent.change(screen.getByRole("textbox"), { target: { value: "входящее" } });
+        fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
+        expect(await screen.findByText("разбор")).toBeInTheDocument();
+        fireEvent.click(await screen.findByRole("button", { name: ru.decodeMakeRule }));
+        expect(await screen.findByText("извиняться спокойно")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.decodeSuggestionEdit }));
+        expect(await screen.findByRole("heading", { name: ru.addRuleTitle })).toBeInTheDocument();
+        expect(screen.getByRole("textbox")).toHaveValue("извиняться спокойно");
+    });
 });
 
 describe("Telegram adapter wiring", () => {

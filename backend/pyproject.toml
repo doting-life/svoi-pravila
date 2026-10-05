@@ -59,6 +59,8 @@ packages = ["src/svoi_pravila"]
 "src/svoi_pravila/api/miniapp/localization/ru.json" = "svoi_pravila/api/miniapp/localization/ru.json"
 "src/svoi_pravila/privacy/ru.json" = "svoi_pravila/privacy/ru.json"
 "src/svoi_pravila/domain/safety/crisis_patterns/ru/v2.txt" = "svoi_pravila/domain/safety/crisis_patterns/ru/v2.txt"
+"src/svoi_pravila/domain/safety/crisis_copy/ru/v1.txt" = "svoi_pravila/domain/safety/crisis_copy/ru/v1.txt"
+"src/svoi_pravila/domain/safety/decode_copy/ru/v1.txt" = "svoi_pravila/domain/safety/decode_copy/ru/v1.txt"
 "src/svoi_pravila/domain/safety/support_resources/ru/v1.txt" = "svoi_pravila/domain/safety/support_resources/ru/v1.txt"
 
 [tool.hatch.build.targets.sdist]
@@ -174,6 +176,25 @@ modules = [
 ]
 
 [[tool.importlinter.contracts]]
+name = "Privacy is a leaf package"
+type = "forbidden"
+source_modules = [
+    "svoi_pravila.privacy",
+]
+forbidden_modules = [
+    "svoi_pravila.domain",
+    "svoi_pravila.application",
+    "svoi_pravila.adapters",
+    "svoi_pravila.api",
+    "svoi_pravila.bootstrap",
+    "svoi_pravila.config",
+    "svoi_pravila.observability",
+    "svoi_pravila.crypto",
+    "svoi_pravila.benchmarks",
+    "svoi_pravila.evals",
+]
+
+[[tool.importlinter.contracts]]
 name = "Application forbidden imports"
 type = "forbidden"
 source_modules = [
@@ -183,6 +204,7 @@ forbidden_modules = [
     "svoi_pravila.config",
     "svoi_pravila.observability",
     "svoi_pravila.crypto",
+    "svoi_pravila.privacy",
     "fastapi",
     "starlette",
     "pydantic",
@@ -211,6 +233,7 @@ forbidden_modules = [
     "svoi_pravila.config",
     "svoi_pravila.observability",
     "svoi_pravila.crypto",
+    "svoi_pravila.privacy",
     "fastapi",
     "starlette",
     "pydantic",

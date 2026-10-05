@@ -282,8 +282,9 @@ async def test_body_limit_passthrough_non_http_and_disconnect() -> None:
 
 
 @pytest.mark.unit
-async def test_chunked_oversized_drain_disconnect() -> None:
+async def test_chunked_oversized_stops_without_draining() -> None:
     ran: list[bool] = []
+    receive_calls = 0
 
     async def app(scope: Scope, receive: Receive, send: Send) -> None:
         ran.append(True)
@@ -291,17 +292,18 @@ async def test_chunked_oversized_drain_disconnect() -> None:
         await send({"type": "http.response.body", "body": b"ok"})
 
     middleware = BodyLimitMiddleware(cast(ASGIApp, app))
-    messages: list[MutableMapping[str, Any]] = [
-        {"type": "http.request", "body": b"x" * (MAX_BODY_BYTES + 1), "more_body": True},
-        {"type": "http.disconnect"},
-    ]
-    index = 0
 
     async def receive() -> MutableMapping[str, Any]:
-        nonlocal index
-        message = messages[index]
-        index += 1
-        return message
+        nonlocal receive_calls
+        receive_calls += 1
+        if receive_calls == 1:
+            return {
+                "type": "http.request",
+                "body": b"x" * (MAX_BODY_BYTES + 1),
+                "more_body": True,
+            }
+        # Would yield forever if the middleware kept draining.
+        return {"type": "http.request", "body": b"y", "more_body": True}
 
     sent: list[MutableMapping[str, Any]] = []
 
@@ -317,7 +319,9 @@ async def test_chunked_oversized_drain_disconnect() -> None:
     }
     await middleware(scope, receive, send)
     assert ran == []
+    assert receive_calls == 1
     assert sent[0]["status"] == 413
+    assert json.loads(cast(bytes, sent[1]["body"]))["code"] == MiniappErrorCode.BODY_TOO_LARGE
 
 
 @pytest.mark.unit

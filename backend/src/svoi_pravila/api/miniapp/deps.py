@@ -1,8 +1,7 @@
 """Mini-app API dependencies: auth, rate limit, actor resolution."""
 
-from __future__ import annotations
-
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from typing import Annotated
 from uuid import UUID
 
@@ -54,76 +53,65 @@ class MiniappDeps:
 
 
 @dataclass(slots=True)
-class _AuthClosure:
-    """Holds composition-root deps closed over by auth dependencies."""
+class MiniappAuthenticator:
+    """Per-router auth callables closed over composition-root bindings."""
 
     deps: MiniappDeps
+    authenticate: Callable[..., Awaitable[MiniappAuthContext]] = field(init=False, repr=False)
+    require_actor: Callable[..., Awaitable[User]] = field(init=False, repr=False)
 
+    def __post_init__(self) -> None:
+        deps = self.deps
 
-_auth_slot: list[_AuthClosure] = []
+        async def authenticate(
+            authorization: Annotated[str | None, Header()] = None,
+        ) -> MiniappAuthContext:
+            if authorization is None or not authorization.startswith(_AUTH_PREFIX):
+                logger.info("miniapp_auth_rejected", reason="missing_or_malformed_header")
+                raise MiniappHttpError(MiniappErrorCode.UNAUTHORIZED, 401)
+            raw = authorization[len(_AUTH_PREFIX) :]
+            try:
+                verified = deps.init_data_verifier.verify(raw)
+            except InitDataExpired:
+                logger.info("miniapp_auth_rejected", reason="init_data_expired")
+                raise MiniappHttpError(MiniappErrorCode.INIT_DATA_EXPIRED, 401) from None
+            except InitDataInvalid:
+                logger.info("miniapp_auth_rejected", reason="init_data_invalid")
+                raise MiniappHttpError(MiniappErrorCode.INIT_DATA_INVALID, 401) from None
 
+            pseudonym = deps.pseudonymizer.pseudonymize(
+                "miniapp",
+                str(verified.telegram_user_id.value),
+            )
+            decision = await deps.rate_limiter.check(pseudonym)
+            if not decision.allowed:
+                logger.info("miniapp_rate_limited", reason="rate_limited")
+                raise MiniappHttpError(MiniappErrorCode.RATE_LIMITED, 429)
 
-def bind_miniapp_auth(deps: MiniappDeps) -> None:
-    """Close auth dependencies over composition-root deps (router build)."""
-    _auth_slot.clear()
-    _auth_slot.append(_AuthClosure(deps=deps))
+            user_result = await deps.get_user_by_telegram_id.execute(
+                GetUserByTelegramIdQuery(telegram_user_id=verified.telegram_user_id)
+            )
+            return MiniappAuthContext(
+                telegram_user_id=verified.telegram_user_id,
+                user=user_result.user,
+            )
 
+        async def require_actor(
+            auth: Annotated[MiniappAuthContext, Depends(authenticate)],
+        ) -> User:
+            if auth.user is None:
+                raise MiniappHttpError(MiniappErrorCode.ONBOARDING_REQUIRED, 403)
+            step = await deps.get_onboarding_step.execute(
+                GetOnboardingStepQuery(telegram_user_id=auth.telegram_user_id)
+            )
+            if step.step.kind is OnboardingStepKind.DONE:
+                return auth.user
+            if step.step.kind is OnboardingStepKind.CONSENT:
+                raise MiniappHttpError(MiniappErrorCode.CONSENT_REQUIRED, 403)
+            raise MiniappHttpError(MiniappErrorCode.ONBOARDING_REQUIRED, 403)
 
-def _bound_deps() -> MiniappDeps:
-    return _auth_slot[0].deps
-
-
-async def authenticate_miniapp(
-    authorization: Annotated[str | None, Header()] = None,
-) -> MiniappAuthContext:
-    """Parse Authorization: tma …, verify initData, rate-limit, load user."""
-    deps = _bound_deps()
-    if authorization is None or not authorization.startswith(_AUTH_PREFIX):
-        logger.info("miniapp_auth_rejected", reason="missing_or_malformed_header")
-        raise MiniappHttpError(MiniappErrorCode.UNAUTHORIZED, 401)
-    raw = authorization[len(_AUTH_PREFIX) :]
-    try:
-        verified = deps.init_data_verifier.verify(raw)
-    except InitDataExpired:
-        logger.info("miniapp_auth_rejected", reason="init_data_expired")
-        raise MiniappHttpError(MiniappErrorCode.INIT_DATA_EXPIRED, 401) from None
-    except InitDataInvalid:
-        logger.info("miniapp_auth_rejected", reason="init_data_invalid")
-        raise MiniappHttpError(MiniappErrorCode.INIT_DATA_INVALID, 401) from None
-
-    pseudonym = deps.pseudonymizer.pseudonymize(
-        "miniapp",
-        str(verified.telegram_user_id.value),
-    )
-    decision = await deps.rate_limiter.check(pseudonym)
-    if not decision.allowed:
-        logger.info("miniapp_rate_limited", reason="rate_limited")
-        raise MiniappHttpError(MiniappErrorCode.RATE_LIMITED, 429)
-
-    user_result = await deps.get_user_by_telegram_id.execute(
-        GetUserByTelegramIdQuery(telegram_user_id=verified.telegram_user_id)
-    )
-    return MiniappAuthContext(
-        telegram_user_id=verified.telegram_user_id,
-        user=user_result.user,
-    )
-
-
-async def require_actor(
-    auth: Annotated[MiniappAuthContext, Depends(authenticate_miniapp)],
-) -> User:
-    """Require a persisted user with completed onboarding (DONE)."""
-    deps = _bound_deps()
-    if auth.user is None:
-        raise MiniappHttpError(MiniappErrorCode.ONBOARDING_REQUIRED, 403)
-    step = await deps.get_onboarding_step.execute(
-        GetOnboardingStepQuery(telegram_user_id=auth.telegram_user_id)
-    )
-    if step.step.kind is OnboardingStepKind.DONE:
-        return auth.user
-    if step.step.kind is OnboardingStepKind.CONSENT:
-        raise MiniappHttpError(MiniappErrorCode.CONSENT_REQUIRED, 403)
-    raise MiniappHttpError(MiniappErrorCode.ONBOARDING_REQUIRED, 403)
+        self.authenticate = authenticate
+        self.require_actor = require_actor
 
 
 def parse_path_uuid(raw: str) -> UUID:

@@ -1,7 +1,5 @@
 """FastAPI router for `/api/v1` mini-app endpoints."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Annotated, Any
 
@@ -9,12 +7,10 @@ from fastapi import APIRouter, Depends, Response, status
 
 from svoi_pravila.api.miniapp.deps import (
     MiniappAuthContext,
+    MiniappAuthenticator,
     MiniappDeps,
-    authenticate_miniapp,
-    bind_miniapp_auth,
     no_store,
     parse_path_uuid,
-    require_actor,
 )
 from svoi_pravila.api.miniapp.errors import ErrorBody
 from svoi_pravila.api.miniapp.schemas import (
@@ -153,21 +149,22 @@ def _rule_item(rule: Rule) -> RuleItem:
 
 def build_miniapp_router(bindings: MiniappRouterBindings) -> APIRouter:
     """Create `/api/v1` routes bound to composition-root use cases."""
-    bind_miniapp_auth(bindings.auth)
+    authenticator = MiniappAuthenticator(bindings.auth)
+    auth_dep = Annotated[MiniappAuthContext, Depends(authenticator.authenticate)]
+    actor_dep = Annotated[User, Depends(authenticator.require_actor)]
     router = APIRouter(prefix="/api/v1", tags=["miniapp"])
-    _register_routes(router, bindings)
+    _register_me(router, bindings, auth_dep)
+    _register_contacts(router, bindings, actor_dep)
+    _register_rules(router, bindings, actor_dep)
+    _register_suggestions(router, bindings, actor_dep)
     return router
 
 
-def _register_routes(router: APIRouter, bindings: MiniappRouterBindings) -> None:
-    """Attach all `/api/v1` handlers to ``router``."""
-    _register_me(router, bindings)
-    _register_contacts(router, bindings)
-    _register_rules(router, bindings)
-    _register_suggestions(router, bindings)
-
-
-def _register_me(router: APIRouter, bindings: MiniappRouterBindings) -> None:
+def _register_me(
+    router: APIRouter,
+    bindings: MiniappRouterBindings,
+    auth_dep: Any,
+) -> None:
     """Register me routes."""
 
     @router.get(
@@ -178,7 +175,7 @@ def _register_me(router: APIRouter, bindings: MiniappRouterBindings) -> None:
     )
     async def get_me(
         response: Response,
-        auth: Annotated[MiniappAuthContext, Depends(authenticate_miniapp)],
+        auth: auth_dep,
     ) -> MeResponse:
         no_store(response)
         step_result = await bindings.auth.get_onboarding_step.execute(
@@ -204,7 +201,11 @@ def _register_me(router: APIRouter, bindings: MiniappRouterBindings) -> None:
         )
 
 
-def _register_contacts(router: APIRouter, bindings: MiniappRouterBindings) -> None:
+def _register_contacts(
+    router: APIRouter,
+    bindings: MiniappRouterBindings,
+    actor_dep: Any,
+) -> None:
     """Register contacts routes."""
 
     @router.get(
@@ -215,7 +216,7 @@ def _register_contacts(router: APIRouter, bindings: MiniappRouterBindings) -> No
     )
     async def list_contacts(
         response: Response,
-        actor: Annotated[User, Depends(require_actor)],
+        actor: actor_dep,
     ) -> ContactListResponse:
         no_store(response)
         result = await bindings.list_contacts.execute(ListContactsCommand(actor_id=actor.id))
@@ -231,7 +232,7 @@ def _register_contacts(router: APIRouter, bindings: MiniappRouterBindings) -> No
     async def create_contact(
         body: CreateContactRequest,
         response: Response,
-        actor: Annotated[User, Depends(require_actor)],
+        actor: actor_dep,
     ) -> ContactItem:
         no_store(response)
         result = await bindings.create_contact.execute(
@@ -253,7 +254,7 @@ def _register_contacts(router: APIRouter, bindings: MiniappRouterBindings) -> No
         contact_id: str,
         body: RenameContactRequest,
         response: Response,
-        actor: Annotated[User, Depends(require_actor)],
+        actor: actor_dep,
     ) -> ContactItem:
         no_store(response)
         cid = ContactId(parse_path_uuid(contact_id))
@@ -275,7 +276,7 @@ def _register_contacts(router: APIRouter, bindings: MiniappRouterBindings) -> No
     async def activate_contact(
         contact_id: str,
         response: Response,
-        actor: Annotated[User, Depends(require_actor)],
+        actor: actor_dep,
     ) -> Response:
         no_store(response)
         cid = ContactId(parse_path_uuid(contact_id))
@@ -288,7 +289,11 @@ def _register_contacts(router: APIRouter, bindings: MiniappRouterBindings) -> No
         )
 
 
-def _register_rules(router: APIRouter, bindings: MiniappRouterBindings) -> None:
+def _register_rules(
+    router: APIRouter,
+    bindings: MiniappRouterBindings,
+    actor_dep: Any,
+) -> None:
     """Register rules routes."""
 
     @router.get(
@@ -300,7 +305,7 @@ def _register_rules(router: APIRouter, bindings: MiniappRouterBindings) -> None:
     async def list_rules(
         contact_id: str,
         response: Response,
-        actor: Annotated[User, Depends(require_actor)],
+        actor: actor_dep,
     ) -> RuleListResponse:
         no_store(response)
         cid = ContactId(parse_path_uuid(contact_id))
@@ -321,7 +326,7 @@ def _register_rules(router: APIRouter, bindings: MiniappRouterBindings) -> None:
         contact_id: str,
         body: CreateRuleRequest,
         response: Response,
-        actor: Annotated[User, Depends(require_actor)],
+        actor: actor_dep,
     ) -> RuleItem:
         no_store(response)
         cid = ContactId(parse_path_uuid(contact_id))
@@ -345,7 +350,7 @@ def _register_rules(router: APIRouter, bindings: MiniappRouterBindings) -> None:
     async def archive_rule(
         rule_id: str,
         response: Response,
-        actor: Annotated[User, Depends(require_actor)],
+        actor: actor_dep,
     ) -> RuleItem:
         no_store(response)
         rid = RuleId(parse_path_uuid(rule_id))
@@ -355,7 +360,11 @@ def _register_rules(router: APIRouter, bindings: MiniappRouterBindings) -> None:
         return _rule_item(result.rule)
 
 
-def _register_suggestions(router: APIRouter, bindings: MiniappRouterBindings) -> None:
+def _register_suggestions(
+    router: APIRouter,
+    bindings: MiniappRouterBindings,
+    actor_dep: Any,
+) -> None:
     """Register suggestions routes."""
 
     @router.get(
@@ -367,7 +376,7 @@ def _register_suggestions(router: APIRouter, bindings: MiniappRouterBindings) ->
     async def list_suggestions(
         contact_id: str,
         response: Response,
-        actor: Annotated[User, Depends(require_actor)],
+        actor: actor_dep,
     ) -> SuggestionListResponse:
         no_store(response)
         cid = ContactId(parse_path_uuid(contact_id))
@@ -398,7 +407,7 @@ def _register_suggestions(router: APIRouter, bindings: MiniappRouterBindings) ->
     async def accept_suggestion(
         suggestion_id: str,
         response: Response,
-        actor: Annotated[User, Depends(require_actor)],
+        actor: actor_dep,
     ) -> AcceptSuggestionResponse:
         no_store(response)
         sid = RuleSuggestionId(parse_path_uuid(suggestion_id))
@@ -423,7 +432,7 @@ def _register_suggestions(router: APIRouter, bindings: MiniappRouterBindings) ->
     async def dismiss_suggestion(
         suggestion_id: str,
         response: Response,
-        actor: Annotated[User, Depends(require_actor)],
+        actor: actor_dep,
     ) -> DismissSuggestionResponse:
         no_store(response)
         sid = RuleSuggestionId(parse_path_uuid(suggestion_id))

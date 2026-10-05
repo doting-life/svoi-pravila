@@ -112,6 +112,34 @@ def mini_world() -> AppWorld:
 
 
 @pytest.mark.unit
+async def test_two_apps_keep_isolated_auth_deps(mini_world: AppWorld) -> None:
+    """Two routers in one process must not share rate-limiter state via globals."""
+    app_loose = _build_app(mini_world, rate_limit=120)
+    app_strict = _build_app(mini_world, rate_limit=1)
+    headers = _auth_header(_TG_A)
+    async with AsyncClient(
+        transport=ASGITransport(app=app_loose), base_url="http://loose"
+    ) as loose:
+        first = await loose.get("/api/v1/me", headers=headers)
+        second = await loose.get("/api/v1/me", headers=headers)
+    assert first.status_code == 200
+    assert second.status_code == 200
+    async with AsyncClient(
+        transport=ASGITransport(app=app_strict), base_url="http://strict"
+    ) as strict:
+        ok = await strict.get("/api/v1/me", headers=headers)
+        limited = await strict.get("/api/v1/me", headers=headers)
+    assert ok.status_code == 200
+    assert limited.status_code == 429
+    assert limited.json()["code"] == MiniappErrorCode.RATE_LIMITED
+    async with AsyncClient(
+        transport=ASGITransport(app=app_loose), base_url="http://loose"
+    ) as loose_again:
+        still_ok = await loose_again.get("/api/v1/me", headers=headers)
+    assert still_ok.status_code == 200
+
+
+@pytest.mark.unit
 async def test_me_unknown_user_age_step(mini_world: AppWorld) -> None:
     app = _build_app(mini_world)
     transport = ASGITransport(app=app)

@@ -77,10 +77,6 @@ async def _read_body_limited(receive: Receive, max_bytes: int) -> bytes | None:
         chunk = message.get("body", b"")
         size += len(chunk)
         if size > max_bytes:
-            while message.get("more_body"):
-                message = await receive()
-                if message["type"] == "http.disconnect":
-                    break
             return None
         chunks.append(chunk)
         if not message.get("more_body", False):

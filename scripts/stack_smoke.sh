@@ -42,22 +42,12 @@ PY
 )"
 export MINIAPP_CSP="$csp"
 
-env_get() {
-  local key="$1"
-  local default="$2"
-  local line
-  line="$(grep -E "^${key}=" "$ENV_FILE" | head -n1 || true)"
-  if [[ -z "$line" ]]; then
-    printf '%s' "$default"
-    return
-  fi
-  printf '%s' "${line#*=}"
+compose_port() {
+  local service="$1"
+  local container_port="$2"
+  docker compose -p "${COMPOSE_PROJECT_NAME:-svoi-pravila-ci}" --env-file "$ENV_FILE" \
+    port "$service" "$container_port"
 }
-
-API_PORT="$(env_get API_PORT 18000)"
-MINIAPP_PORT="$(env_get MINIAPP_PORT 18080)"
-API_BASE="http://127.0.0.1:${API_PORT}"
-MINIAPP_BASE="http://127.0.0.1:${MINIAPP_PORT}"
 
 cleanup() {
   make -C "$ROOT" down ENV_FILE="$ENV_FILE" || true
@@ -68,6 +58,12 @@ cleanup() {
 trap cleanup EXIT
 
 make -C "$ROOT" up ENV_FILE="$ENV_FILE"
+
+API_BIND="$(compose_port api 8000)"
+MINIAPP_BIND="$(compose_port miniapp 8080)"
+API_BASE="http://${API_BIND}"
+MINIAPP_BASE="http://${MINIAPP_BIND}"
+echo "stack-smoke: api=${API_BASE} miniapp=${MINIAPP_BASE}"
 
 code="$(curl -s -o "${CI_TMPDIR}/readyz.json" -w '%{http_code}' "${API_BASE}/readyz")"
 test "$code" = "200"

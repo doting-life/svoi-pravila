@@ -53,7 +53,8 @@ def materialize(*, env_file: Path, stack_smoke: bool) -> None:
     text = _set_key(text, "VALKEY_PORT", CI_VALKEY_PORT)
     text = _set_key(text, "API_PORT", CI_API_PORT)
     text = _set_key(text, "MINIAPP_PORT", CI_MINIAPP_PORT)
-    text = _set_key(text, "SP_HTTP_PORT", CI_API_PORT)
+    text = _set_key(text, "SP_HTTP_HOST", "0.0.0.0")
+    text = _set_key(text, "SP_HTTP_PORT", "8000")
     user = _get_key(text, "POSTGRES_USER") or "svoi"
     password = _get_key(text, "POSTGRES_PASSWORD") or "svoi_local_dev_only"
     db_name = _get_key(text, "POSTGRES_DB") or "svoi_pravila"

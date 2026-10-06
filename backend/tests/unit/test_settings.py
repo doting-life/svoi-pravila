@@ -49,7 +49,7 @@ def test_settings_rejects_invalid_analytics_timezone() -> None:
 
 @pytest.mark.unit
 def test_settings_rejects_invalid_analytics_run_at() -> None:
-    with pytest.raises(ValidationError, match="HH:MM"):
+    with pytest.raises(ValidationError):
         make_settings(analytics_run_at="25:00")
 
 
@@ -60,8 +60,8 @@ def test_settings_analytics_defaults() -> None:
     settings = Settings.model_validate(values)
     assert settings.analytics_jobs_enabled is True
     assert settings.analytics_timezone == "Europe/Moscow"
-    assert settings.analytics_run_at_time().hour == 3
-    assert settings.analytics_run_at_time().minute == 30
+    assert settings.analytics_run_at.hour == 3
+    assert settings.analytics_run_at.minute == 30
 
 
 @pytest.mark.unit

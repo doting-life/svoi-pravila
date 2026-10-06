@@ -208,20 +208,6 @@ class _EmptyConn:
         return None
 
 
-class _FlipBegin:
-    def __init__(self) -> None:
-        self._n = 0
-
-    def connect(self) -> _Enter:
-        return _Enter(_EmptyConn())
-
-    def begin(self) -> _RaiseOS | _Enter:
-        self._n += 1
-        if self._n == 1:
-            return _Enter(_EmptyConn())
-        return _RaiseOS()
-
-
 @pytest.mark.unit
 async def test_compute_day_maps_begin_errors() -> None:
     day = datetime(2026, 1, 1, tzinfo=UTC).date()
@@ -240,10 +226,31 @@ async def test_fetch_day_none_when_empty() -> None:
     assert got is None
 
 
+class _FailOnNthExecute:
+    def __init__(self, n: int, exc: BaseException) -> None:
+        self._n = 0
+        self._fail_at = n
+        self._exc = exc
+
+    async def execute(self, *_args: object, **_kwargs: object) -> _EmptyResult:
+        self._n += 1
+        if self._n == self._fail_at:
+            raise self._exc
+        return _EmptyResult()
+
+
+class _FailNthBegin:
+    def __init__(self, n: int, exc: BaseException) -> None:
+        self._conn = _FailOnNthExecute(n, exc)
+
+    def begin(self) -> _Enter:
+        return _Enter(self._conn)
+
+
 @pytest.mark.unit
-async def test_scalar_write_maps_oserror_on_second_begin() -> None:
+async def test_compute_day_maps_mid_transaction_oserror() -> None:
     with pytest.raises(AnalyticsJobFailed) as exc:
-        await _store(_FlipBegin()).compute_day(
+        await _store(_FailNthBegin(2, OSError("x"))).compute_day(
             datetime(2026, 1, 1, tzinfo=UTC).date(),
             "Europe/Moscow",
             datetime(2026, 1, 1, tzinfo=UTC),
@@ -252,14 +259,33 @@ async def test_scalar_write_maps_oserror_on_second_begin() -> None:
 
 
 @pytest.mark.unit
-def test_numeric_helpers() -> None:
-    flag = True
-    assert _as_int(flag) == 0
+def test_numeric_helpers_accept_driver_types() -> None:
     assert _as_int(3) == 3
-    assert _as_int(4.9) == 4
-    assert _as_int("x") == 0
+    assert _as_int(Decimal("4")) == 4
     assert _float_or_none(None) is None
-    assert _float_or_none(flag) is None
     assert _float_or_none(2) == 2.0
+    assert _float_or_none(1.5) == 1.5
     assert _float_or_none(Decimal("1.5")) == 1.5
-    assert _float_or_none("no") is None
+
+
+@pytest.mark.unit
+def test_numeric_helpers_reject_unexpected() -> None:
+    flag = True
+    with pytest.raises(AnalyticsJobFailed) as exc_bool:
+        _as_int(flag)
+    assert exc_bool.value.kind is AnalyticsErrorKind.DATABASE
+    with pytest.raises(AnalyticsJobFailed) as exc_float:
+        _as_int(4.9)
+    assert exc_float.value.kind is AnalyticsErrorKind.DATABASE
+    with pytest.raises(AnalyticsJobFailed) as exc_str:
+        _as_int("x")
+    assert exc_str.value.kind is AnalyticsErrorKind.DATABASE
+    with pytest.raises(AnalyticsJobFailed) as exc_none:
+        _as_int(None)
+    assert exc_none.value.kind is AnalyticsErrorKind.DATABASE
+    with pytest.raises(AnalyticsJobFailed) as exc_fbool:
+        _float_or_none(flag)
+    assert exc_fbool.value.kind is AnalyticsErrorKind.DATABASE
+    with pytest.raises(AnalyticsJobFailed) as exc_fstr:
+        _float_or_none("no")
+    assert exc_fstr.value.kind is AnalyticsErrorKind.DATABASE

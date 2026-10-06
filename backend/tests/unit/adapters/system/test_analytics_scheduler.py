@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
 
 import pytest
-from tests.fakes.analytics_store import FakeAnalyticsStore
 from tests.fakes.clock import FakeClock
 
 from svoi_pravila.adapters.system.analytics_scheduler import (
@@ -37,12 +36,16 @@ class _HangingJob:
         await self.release.wait()
 
 
+class _BoomJob:
+    async def execute(self, now: datetime) -> None:
+        _ = now
+        raise RuntimeError("unexpected")
+
+
 @pytest.mark.unit
 async def test_disabled_scheduler_does_not_start_a_task() -> None:
-    store = FakeAnalyticsStore()
     scheduler = AnalyticsScheduler(
         _FailingJob(),
-        store,
         FakeClock(NOW),
         AnalyticsSchedulerSettings(
             timezone="Europe/Moscow",
@@ -53,14 +56,12 @@ async def test_disabled_scheduler_does_not_start_a_task() -> None:
     await scheduler.start()
     assert scheduler._task is None
     await scheduler.shutdown()
-    assert store.closed == []
 
 
 @pytest.mark.unit
-async def test_loop_logs_typed_failure_then_waits(
+async def test_loop_logs_typed_failure_then_retries_with_backoff(
     capture_log_events: Callable[[], list[dict[str, Any]]],
 ) -> None:
-    store = FakeAnalyticsStore()
     sleeps: list[float] = []
 
     async def _sleep(delay: float) -> None:
@@ -69,7 +70,6 @@ async def test_loop_logs_typed_failure_then_waits(
 
     scheduler = AnalyticsScheduler(
         _FailingJob(),
-        store,
         FakeClock(NOW),
         AnalyticsSchedulerSettings(
             timezone="Europe/Moscow",
@@ -87,17 +87,15 @@ async def test_loop_logs_typed_failure_then_waits(
         item.get("event") == "analytics_job_failed" and item.get("error_kind") == "database"
         for item in logged
     )
-    assert sleeps
+    assert sleeps == [timedelta(minutes=5).total_seconds()]
     await scheduler.shutdown()
 
 
 @pytest.mark.unit
-async def test_shutdown_cancels_in_flight_run_and_closes_running_rows() -> None:
-    store = FakeAnalyticsStore()
+async def test_shutdown_cancels_in_flight_run_without_db() -> None:
     job = _HangingJob()
     scheduler = AnalyticsScheduler(
         job,
-        store,
         FakeClock(NOW),
         AnalyticsSchedulerSettings(
             timezone="Europe/Moscow",
@@ -108,7 +106,6 @@ async def test_shutdown_cancels_in_flight_run_and_closes_running_rows() -> None:
     await scheduler.start()
     await asyncio.wait_for(job.started.wait(), timeout=2)
     await scheduler.shutdown()
-    assert store.closed[0][0] is AnalyticsErrorKind.CANCELLED
     assert scheduler._task is None
 
 
@@ -126,7 +123,6 @@ class _AdvancingClock:
 
 @pytest.mark.unit
 async def test_loop_clamps_negative_delay() -> None:
-    store = FakeAnalyticsStore()
     sleeps: list[float] = []
 
     async def _sleep(delay: float) -> None:
@@ -141,7 +137,6 @@ async def test_loop_clamps_negative_delay() -> None:
 
     scheduler = AnalyticsScheduler(
         _Ok(),
-        store,
         _AdvancingClock(),
         AnalyticsSchedulerSettings(
             timezone="Europe/Moscow",
@@ -155,4 +150,35 @@ async def test_loop_clamps_negative_delay() -> None:
     with pytest.raises(asyncio.CancelledError):
         await scheduler._task
     assert sleeps[0] == 0.0
+    await scheduler.shutdown()
+
+
+@pytest.mark.unit
+async def test_done_callback_logs_unexpected_stop(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    async def _sleep(_delay: float) -> None:
+        raise asyncio.CancelledError
+
+    scheduler = AnalyticsScheduler(
+        _BoomJob(),
+        FakeClock(NOW),
+        AnalyticsSchedulerSettings(
+            timezone="Europe/Moscow",
+            run_at=time(3, 30),
+            enabled=True,
+        ),
+        sleep=_sleep,
+    )
+    await scheduler.start()
+    assert scheduler._task is not None
+    with pytest.raises(RuntimeError, match="unexpected"):
+        await scheduler._task
+    logged = capture_log_events()
+    assert any(
+        item.get("event") == "analytics_scheduler_stopped"
+        and item.get("error_type") == "RuntimeError"
+        and item.get("level") == "error"
+        for item in logged
+    )
     await scheduler.shutdown()

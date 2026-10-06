@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Seed 1_000_000 usage_events and time compute_day / compute_cohorts / purge.
+"""Seed usage_events and time compute_day / compute_cohorts / purge.
 
 Not imported by pytest. Talks only to the dedicated ``*_test`` database:
 
-    cd backend && uv run python benchmarks/seed_usage_events.py
+    cd backend && uv run python benchmarks/seed_usage_events.py --scale 1m
+    cd backend && uv run python benchmarks/seed_usage_events.py --scale 4m
 """
 
 from __future__ import annotations
@@ -19,14 +20,22 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from svoi_pravila.adapters.persistence.analytics_store import SqlAlchemyAnalyticsStore
+from svoi_pravila.adapters.persistence.analytics_store import (
+    _COHORT_UPSERT,
+    _DAILY_UPSERT,
+    _SCENARIO_INSERT,
+    SqlAlchemyAnalyticsStore,
+)
 from svoi_pravila.bootstrap import load_test_infra_settings
 from svoi_pravila.domain.enums import UsageOutcome, UsageScenario, UsageSurface
 
-DAYS = 35
 PSEUDONYMS_PER_DAY = 1_000
-EVENTS = 1_000_000
 TZ = "Europe/Moscow"
+
+_SCALES = {
+    "1m": (1_000_000, 35),
+    "4m": (4_000_000, 140),
+}
 
 
 def _pseudo(index: int) -> str:
@@ -43,15 +52,15 @@ def _test_database_url(url: str) -> str:
     return urlunparse(parsed._replace(path=f"/{name}"))
 
 
-async def _seed(engine: AsyncEngine, now: datetime) -> None:
-    start = now - timedelta(days=DAYS)
+async def _seed(engine: AsyncEngine, now: datetime, events: int, days: int) -> None:
+    start = now - timedelta(days=days)
     batch: list[dict[str, object]] = []
-    remaining = EVENTS
+    remaining = events
     event_id = 1
     while remaining > 0:
-        day_index = (EVENTS - remaining) % DAYS
-        user_index = (EVENTS - remaining) % (PSEUDONYMS_PER_DAY * DAYS)
-        occurred = start + timedelta(days=day_index, seconds=(EVENTS - remaining) % 86_400)
+        day_index = (events - remaining) % days
+        user_index = (events - remaining) % (PSEUDONYMS_PER_DAY * days)
+        occurred = start + timedelta(days=day_index, seconds=(events - remaining) % 86_400)
         occurred = occurred.replace(microsecond=0)
         batch.append(
             {
@@ -98,13 +107,27 @@ async def _seed(engine: AsyncEngine, now: datetime) -> None:
             batch = []
 
 
-async def _explain(engine: AsyncEngine, sql: str, params: dict[str, object]) -> str:
+async def _explain(
+    engine: AsyncEngine,
+    sql: str,
+    params: dict[str, object],
+    *,
+    prelude: str | None = None,
+    prelude_params: dict[str, object] | None = None,
+) -> str:
     async with engine.connect() as conn:
-        result = await conn.execute(text("EXPLAIN (ANALYZE, BUFFERS) " + sql), params)
-        return "\n".join(row[0] for row in result.all())
+        transaction = await conn.begin()
+        try:
+            if prelude is not None:
+                await conn.execute(text(prelude), prelude_params or {})
+            result = await conn.execute(text("EXPLAIN (ANALYZE, BUFFERS) " + sql), params)
+            return "\n".join(row[0] for row in result.all())
+        finally:
+            await transaction.rollback()
 
 
-async def _run(purge_expired: int) -> None:
+async def _run(scale: str, purge_expired: int) -> None:
+    events, days = _SCALES[scale]
     url = _test_database_url(load_test_infra_settings().database_url.get_secret_value())
     engine = create_async_engine(url, pool_pre_ping=True)
     now = datetime.now(UTC).replace(microsecond=0)
@@ -116,39 +139,47 @@ async def _run(purge_expired: int) -> None:
                     "analytics_daily_scenario, analytics_cohorts, job_runs"
                 )
             )
-        print(f"seeding {EVENTS} events...")
+        print(f"seeding scale={scale} events={events} days={days}...")
         t0 = time.perf_counter()
-        await _seed(engine, now)
+        await _seed(engine, now, events, days)
         print(f"seed_seconds={time.perf_counter() - t0:.2f}")
         store = SqlAlchemyAnalyticsStore(engine)
         yesterday = now.astimezone(ZoneInfo(TZ)).date() - timedelta(days=1)
+        from_day = yesterday - timedelta(days=8)
+        to_day = yesterday - timedelta(days=1)
         t1 = time.perf_counter()
         await store.compute_day(yesterday, TZ, now)
         print(f"compute_day_seconds={time.perf_counter() - t1:.3f}")
         t2 = time.perf_counter()
-        await store.compute_cohorts(
-            yesterday - timedelta(days=8), yesterday - timedelta(days=1), TZ, yesterday, now
-        )
+        await store.compute_cohorts(from_day, to_day, TZ, yesterday, now)
         print(f"compute_cohorts_seconds={time.perf_counter() - t2:.3f}")
-        day_sql = (
-            "WITH bounds AS ("
-            "SELECT timezone(:tz, CAST(:day AS timestamp without time zone)) AS start_ts, "
-            "timezone(:tz, CAST(:day AS timestamp without time zone) + interval '1 day') "
-            "AS end_ts) "
-            "SELECT COUNT(*) FROM usage_events e, bounds b "
-            "WHERE e.occurred_at >= b.start_ts AND e.occurred_at < b.end_ts"
-        )
+        day_params = {"day": yesterday, "tz": TZ, "computed_at": now}
         print("explain_compute_day:")
-        print(await _explain(engine, day_sql, {"day": yesterday, "tz": TZ}))
-        cohort_sql = (
-            "SELECT COUNT(DISTINCT user_pseudonym) FROM usage_events "
-            "WHERE scenario <> 'suggest_rule' AND ("
-            "event_kind = 'result_chosen' OR ("
-            "event_kind = 'generation' AND surface IN ('dm', 'miniapp') "
-            "AND outcome IN ('ok', 'refused', 'screened')))"
+        print(await _explain(engine, _DAILY_UPSERT, day_params))
+        print("explain_scenario_insert:")
+        print(
+            await _explain(
+                engine,
+                _SCENARIO_INSERT,
+                day_params,
+                prelude="DELETE FROM analytics_daily_scenario WHERE day = :day",
+                prelude_params={"day": yesterday},
+            )
         )
         print("explain_compute_cohorts:")
-        print(await _explain(engine, cohort_sql, {}))
+        print(
+            await _explain(
+                engine,
+                _COHORT_UPSERT,
+                {
+                    "from_day": from_day,
+                    "to_day": to_day,
+                    "tz": TZ,
+                    "as_of": yesterday,
+                    "computed_at": now,
+                },
+            )
+        )
         async with engine.begin() as conn:
             await conn.execute(
                 text(
@@ -166,9 +197,10 @@ async def _run(purge_expired: int) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--scale", choices=sorted(_SCALES), default="1m")
     parser.add_argument("--purge-expired", type=int, default=100_000)
     args = parser.parse_args()
-    asyncio.run(_run(args.purge_expired))
+    asyncio.run(_run(args.scale, args.purge_expired))
 
 
 if __name__ == "__main__":

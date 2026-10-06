@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 import pytest
 
@@ -12,6 +13,7 @@ from svoi_pravila.application.errors import (
     AnalyticsJobName,
     AnalyticsJobStatus,
 )
+from svoi_pravila.application.ports.analytics_store import JobRun
 from svoi_pravila.application.use_cases.run_daily_analytics import (
     CATCH_UP_MAX_DAYS,
     RunDailyAnalytics,
@@ -131,3 +133,50 @@ async def test_compute_failure_marks_running_row_failed() -> None:
     failed = [item for item in store.runs if item.status is AnalyticsJobStatus.FAILED]
     assert len(failed) == 1
     assert failed[0].error_kind is AnalyticsErrorKind.DATABASE
+
+
+@pytest.mark.unit
+async def test_stale_running_closed_after_lock_before_steps() -> None:
+    use_case, store = _job()
+    stale_id = UUID(int=9_001)
+    store.runs.append(
+        JobRun(
+            id=stale_id,
+            job=AnalyticsJobName.PURGE,
+            target_day=None,
+            started_at=NOW - timedelta(hours=1),
+            finished_at=None,
+            status=AnalyticsJobStatus.RUNNING,
+            rows_affected=0,
+            error_kind=None,
+        )
+    )
+    store.earliest = YESTERDAY
+    await use_case.execute(NOW)
+    assert store.closed == [(AnalyticsErrorKind.CANCELLED, NOW)]
+    assert not any(item.status is AnalyticsJobStatus.RUNNING for item in store.runs)
+    assert store.compute_days == [YESTERDAY]
+
+
+@pytest.mark.unit
+async def test_stale_running_not_closed_when_lock_skipped() -> None:
+    use_case, store = _job()
+    store.acquired = False
+    stale_id = UUID(int=9_002)
+    store.runs.append(
+        JobRun(
+            id=stale_id,
+            job=AnalyticsJobName.COHORTS,
+            target_day=None,
+            started_at=NOW,
+            finished_at=None,
+            status=AnalyticsJobStatus.RUNNING,
+            rows_affected=0,
+            error_kind=None,
+        )
+    )
+    await use_case.execute(NOW)
+    assert store.closed == []
+    assert any(
+        item.id == stale_id and item.status is AnalyticsJobStatus.RUNNING for item in store.runs
+    )

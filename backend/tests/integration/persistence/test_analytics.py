@@ -254,6 +254,108 @@ async def test_oracle_parity_every_field(
             assert left.latency_p95_ms == right.latency_p95_ms
             assert left.ttfc_p50_ms == right.ttfc_p50_ms
             assert left.ttfc_p95_ms == right.ttfc_p95_ms
+        await store.compute_cohorts(day, day, TZ, date(2026, 3, 23), COMPUTED)
+        cohort_rows = await store.fetch_cohorts(day, day)
+        if got.daily.new_users == 0:
+            assert cohort_rows == ()
+        else:
+            assert len(cohort_rows) == 1
+            assert cohort_rows[0].size == got.daily.new_users
+
+
+@pytest.mark.integration
+async def test_compute_day_rolls_back_when_scenario_insert_fails(
+    uow_factory: SqlAlchemyUnitOfWorkFactory,
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import svoi_pravila.adapters.persistence.analytics_store as store_mod
+
+    day = date(2026, 3, 16)
+    events = (_gen(1, datetime(2026, 3, 16, 12, 0, 0, tzinfo=UTC), _pseudo(1)),)
+    await _insert(uow_factory, events)
+    store = SqlAlchemyAnalyticsStore(engine)
+    await store.compute_day(day, TZ, COMPUTED)
+    before = await store.fetch_day(day)
+    assert before is not None
+    monkeypatch.setattr(store_mod, "_SCENARIO_INSERT", "SELECT 1/0")
+    with pytest.raises(AnalyticsJobFailed) as exc:
+        await store.compute_day(day, TZ, COMPUTED)
+    assert exc.value.kind is AnalyticsErrorKind.DATABASE
+    after = await store.fetch_day(day)
+    assert after == before
+
+
+@pytest.mark.integration
+async def test_compute_day_new_day_absent_after_mid_failure(
+    uow_factory: SqlAlchemyUnitOfWorkFactory,
+    engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import svoi_pravila.adapters.persistence.analytics_store as store_mod
+
+    day = date(2026, 3, 16)
+    events = (_gen(1, datetime(2026, 3, 16, 12, 0, 0, tzinfo=UTC), _pseudo(1)),)
+    await _insert(uow_factory, events)
+    store = SqlAlchemyAnalyticsStore(engine)
+    monkeypatch.setattr(
+        store_mod,
+        "_SCENARIO_INSERT",
+        "INSERT INTO analytics_daily_scenario (day) VALUES (:day)",
+    )
+    with pytest.raises(AnalyticsJobFailed) as exc:
+        await store.compute_day(day, TZ, COMPUTED)
+    assert exc.value.kind is AnalyticsErrorKind.DATABASE
+    assert await store.fetch_day(day) is None
+
+
+@pytest.mark.integration
+async def test_second_instance_closes_stale_running_then_proceeds(
+    uow_factory: SqlAlchemyUnitOfWorkFactory,
+    engine: AsyncEngine,
+) -> None:
+    events = (_gen(1, datetime(2026, 3, 16, 12, 0, 0, tzinfo=UTC), _pseudo(1)),)
+    await _insert(uow_factory, events)
+    store_a = SqlAlchemyAnalyticsStore(engine)
+    stale_id = UUID(int=90_001)
+    await store_a.record_run(
+        JobRun(
+            id=stale_id,
+            job=AnalyticsJobName.PURGE,
+            target_day=None,
+            started_at=COMPUTED,
+            finished_at=None,
+            status=AnalyticsJobStatus.RUNNING,
+            rows_affected=0,
+            error_kind=None,
+        )
+    )
+    await store_a.record_run(
+        JobRun(
+            id=UUID(int=90_002),
+            job=AnalyticsJobName.DAILY_AGGREGATES,
+            target_day=date(2026, 3, 15),
+            started_at=COMPUTED,
+            finished_at=COMPUTED,
+            status=AnalyticsJobStatus.SUCCEEDED,
+            rows_affected=1,
+            error_kind=None,
+        )
+    )
+    store_b = SqlAlchemyAnalyticsStore(engine)
+    job_b = RunDailyAnalytics(
+        RunDailyAnalyticsPorts(
+            store=store_b,
+            ids=FakeIdGenerator(),
+            clock=FakeClock(COMPUTED),
+            timezone=TZ,
+        )
+    )
+    await job_b.execute(COMPUTED)
+    runs = {item.id: item for item in await store_b.fetch_job_runs()}
+    assert runs[stale_id].status is AnalyticsJobStatus.FAILED
+    assert runs[stale_id].error_kind is AnalyticsErrorKind.CANCELLED
+    assert await store_b.fetch_day(date(2026, 3, 16)) is not None
 
 
 @pytest.mark.integration

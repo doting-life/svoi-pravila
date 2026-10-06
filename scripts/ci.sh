@@ -7,7 +7,10 @@ cd "$ROOT"
 # shellcheck disable=SC1091
 source "$ROOT/scripts/image-pins.env"
 
-CI_JOBS="${CI_JOBS:-backend miniapp secrets image stack-smoke ownership-guard}"
+if [[ -z "${CI_JOBS:-}" ]]; then
+  echo "CI_JOBS is unset" >&2
+  exit 1
+fi
 read -r -a ALL_JOBS <<< "$CI_JOBS"
 
 REPO_ENV="$ROOT/.env"
@@ -40,7 +43,7 @@ run_stage() {
   local start end rc
   start="$(date +%s)"
   set +e
-  "$@"
+  ( set -euo pipefail; "$@" )
   rc=$?
   set -e
   end="$(date +%s)"
@@ -126,18 +129,12 @@ job_ownership_guard() {
 
 run_job() {
   local name="$1"
-  case "$name" in
-    backend) run_stage backend job_backend ;;
-    miniapp) run_stage miniapp job_miniapp ;;
-    secrets) run_stage secrets job_secrets ;;
-    image) run_stage image job_image ;;
-    stack-smoke) run_stage stack-smoke job_stack_smoke ;;
-    ownership-guard) run_stage ownership-guard job_ownership_guard ;;
-    *)
-      echo "unknown JOB=${name}" >&2
-      exit 1
-      ;;
-  esac
+  local fn="job_${name//-/_}"
+  if ! declare -F "$fn" >/dev/null; then
+    echo "unknown JOB=${name}" >&2
+    exit 1
+  fi
+  run_stage "$name" "$fn"
 }
 
 materialize

@@ -38,9 +38,9 @@ if ((${#miniapp_files[@]} > 0)); then
   done
   (
     cd miniapp
-    corepack pnpm exec prettier --check "${prettier_files[@]}"
+    pnpm exec prettier --check "${prettier_files[@]}"
     if ((${#eslint_files[@]} > 0)); then
-      corepack pnpm exec eslint --no-warn-ignored "${eslint_files[@]}"
+      pnpm exec eslint --no-warn-ignored "${eslint_files[@]}"
     fi
   )
 fi

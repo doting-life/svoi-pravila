@@ -13,8 +13,11 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "ci.yml"
 ACTION_PATH = ROOT / ".github" / "actions" / "toolchain" / "action.yml"
 MAKEFILE_PATH = ROOT / "Makefile"
+CI_SH_PATH = ROOT / "scripts" / "ci.sh"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 CI_JOBS_RE = re.compile(r"^CI_JOBS\s*:?=\s*(.+)$", re.MULTILINE)
+JOB_FN_RE = re.compile(r"^job_([a-z0-9_]+)\s*\(\)", re.MULTILINE)
+INTERNAL_JOB_FNS = frozenset({"workflow", "toolchain"})
 
 
 def job_list_from_makefile(text: str) -> list[str]:
@@ -23,6 +26,55 @@ def job_list_from_makefile(text: str) -> list[str]:
     if match is None:
         raise ValueError("CI_JOBS is missing from the Makefile")
     return match.group(1).split()
+
+
+def job_functions_from_ci_sh(text: str) -> set[str]:
+    """Return `job_*` function names from ci.sh without the `job_` prefix."""
+    return set(JOB_FN_RE.findall(text))
+
+
+def check_job_functions(ci_sh: str, jobs: list[str]) -> list[str]:
+    """Return mismatches between CI_JOBS names and job_* functions in ci.sh."""
+    errors: list[str] = []
+    found = job_functions_from_ci_sh(ci_sh)
+    expected = {name.replace("-", "_") for name in jobs}
+    for name in jobs:
+        fn = name.replace("-", "_")
+        if fn not in found:
+            errors.append(f"ci.sh missing job_{fn} for {name}")
+    extras = found - expected - INTERNAL_JOB_FNS
+    if extras:
+        extra_names = ", ".join(sorted(f"job_{item}" for item in extras))
+        errors.append(f"ci.sh has unexpected job functions: {extra_names}")
+    return errors
+
+
+_BANNED_PM = "core" + "pack"
+
+
+def check_banned_pm_bootstrap(named_texts: dict[str, str]) -> list[str]:
+    """Fail when any scanned file still invokes the Node package-manager shim."""
+    errors: list[str] = []
+    for label, text in named_texts.items():
+        if _BANNED_PM in text:
+            errors.append(f"{label} must not invoke {_BANNED_PM}")
+    return errors
+
+
+def banned_pm_texts_from_tree(root: Path) -> dict[str, str]:
+    """Load Makefile, scripts, hooks, and GitHub YAML for the bootstrap ban."""
+    texts: dict[str, str] = {}
+    makefile = root / "Makefile"
+    if makefile.is_file():
+        texts[str(makefile.relative_to(root))] = makefile.read_text()
+    for directory in (root / "scripts", root / ".githooks", root / ".github"):
+        if not directory.exists():
+            continue
+        for path in directory.rglob("*"):
+            if not path.is_file() or "__pycache__" in path.parts or path.suffix == ".pyc":
+                continue
+            texts[str(path.relative_to(root))] = path.read_text()
+    return texts
 
 
 def _uses_parts(value: str) -> tuple[str, str]:
@@ -109,6 +161,7 @@ def _check_toolchain_action(action: dict[str, Any]) -> list[str]:
         return ["toolchain action has no steps"]
     saw_uv = False
     saw_node = False
+    saw_pnpm = False
     for step in steps:
         if not isinstance(step, dict) or "uses" not in step:
             errors.append("toolchain action steps must be SHA-pinned uses")
@@ -136,23 +189,38 @@ def _check_toolchain_action(action: dict[str, Any]) -> list[str]:
                 )
             if "node-version" in with_ and str(with_["node-version"]).strip():
                 errors.append("setup-node must not set a node-version literal")
+        elif action_name == "pnpm/action-setup":
+            saw_pnpm = True
+            package_json = str(with_.get("package_json_file", ""))
+            if package_json != "miniapp/package.json":
+                errors.append(
+                    "pnpm/action-setup package_json_file must be miniapp/package.json, "
+                    f"found {package_json!r}"
+                )
+            if "version" in with_ and str(with_["version"]).strip():
+                errors.append("pnpm/action-setup must not set a version literal")
         else:
             errors.append(f"toolchain action uses unexpected action {uses!r}")
     if not saw_uv:
         errors.append("toolchain action must install uv from backend/pyproject.toml")
     if not saw_node:
         errors.append("toolchain action must install Node from miniapp/.nvmrc")
+    if not saw_pnpm:
+        errors.append("toolchain action must install pnpm from miniapp/package.json")
     return errors
 
 
 def main() -> int:
-    jobs = job_list_from_makefile(MAKEFILE_PATH.read_text())
+    makefile = MAKEFILE_PATH.read_text()
+    jobs = job_list_from_makefile(makefile)
     workflow = yaml.safe_load(WORKFLOW_PATH.read_text())
     action = yaml.safe_load(ACTION_PATH.read_text())
     if not isinstance(workflow, dict) or not isinstance(action, dict):
         print("ci.yml and toolchain action.yml must be mappings", file=sys.stderr)
         return 1
     errors = check_workflow(workflow, action, jobs)
+    errors.extend(check_job_functions(CI_SH_PATH.read_text(), jobs))
+    errors.extend(check_banned_pm_bootstrap(banned_pm_texts_from_tree(ROOT)))
     if errors:
         for item in errors:
             print(item, file=sys.stderr)

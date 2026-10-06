@@ -20,7 +20,7 @@ ENV_FILE_ARG := $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE_ABS),)
 COMPOSE_ENV := $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE_ABS),)
 COMPOSE := docker compose $(COMPOSE_ENV)
 UV := cd $(BACKEND) && uv run $(ENV_FILE_ARG)
-PNPM := cd $(MINIAPP) && corepack pnpm
+PNPM := cd $(MINIAPP) && pnpm
 
 install:
 	cd $(BACKEND) && uv sync --frozen

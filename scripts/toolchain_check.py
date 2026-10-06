@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FAILURES: list[str] = []
+TOOLS = ("uv", "node", "pnpm", "docker", "git", "curl")
 
 
 def _run(args: list[str], cwd: Path | None = None) -> str:
@@ -34,6 +35,34 @@ def _required_uv_version() -> str:
     return match.group(1)
 
 
+def _required_pnpm_version() -> str:
+    package = json.loads((ROOT / "miniapp" / "package.json").read_text())
+    manager = str(package["packageManager"])
+    return manager.split("@", 1)[1]
+
+
+def _resolve(name: str) -> str | None:
+    path = shutil.which(name)
+    if path is None:
+        FAILURES.append(f"{name} missing")
+        return None
+    return path
+
+
+def _semver(output: str) -> str:
+    match = re.search(r"(\d+\.\d+\.\d+)", output)
+    return match.group(1) if match else output.strip()
+
+
+def _report_and_pin(name: str, path: str, version_args: list[str], expected: str | None) -> None:
+    output = _run(version_args)
+    first = output.splitlines()[0] if output else ""
+    print(f"{name} {path} {first}")
+    if expected is not None:
+        found = _semver(first.lstrip("v") if name == "node" else first)
+        _expect(name, expected, found)
+
+
 def _python_version() -> None:
     expected = (ROOT / "backend" / ".python-version").read_text().strip()
     found = _run(
@@ -55,41 +84,16 @@ def _python_version() -> None:
             break
     major_minor = ".".join(expected.split(".")[:2])
     if major_minor not in requires:
-        FAILURES.append(
-            f"python pin {expected!r} does not match requires-python {requires!r}"
-        )
+        FAILURES.append(f"python pin {expected!r} does not match requires-python {requires!r}")
 
 
-def _uv_version() -> None:
-    expected = _required_uv_version()
-    output = _run(["uv", "--version"])
-    match = re.search(r"(\d+\.\d+\.\d+)", output)
-    found = match.group(1) if match else output
-    _expect("uv", expected, found)
-
-
-def _node_version() -> None:
-    expected = (ROOT / "miniapp" / ".nvmrc").read_text().strip().lstrip("v")
-    output = _run(["node", "--version"])
-    found = output.lstrip("v")
-    _expect("node", expected, found)
-
-
-def _pnpm_version() -> None:
-    package = json.loads((ROOT / "miniapp" / "package.json").read_text())
-    manager = str(package["packageManager"])
-    expected = manager.split("@", 1)[1]
-    output = _run(["corepack", "pnpm", "--version"], cwd=ROOT / "miniapp")
-    _expect("pnpm", expected, output)
-
-
-def _docker() -> None:
-    if shutil.which("docker") is None:
-        FAILURES.append("docker: expected an engine on PATH, found none")
-        return
-    result = subprocess.run(["docker", "info"], check=False, capture_output=True, text=True)
-    if result.returncode != 0:
-        FAILURES.append("docker: expected a running engine, found it unavailable")
+def _docker_plugins(docker: str) -> None:
+    compose = _run([docker, "compose", "version"])
+    if not compose:
+        FAILURES.append("docker compose version failed")
+    buildx = _run([docker, "buildx", "version"])
+    if not buildx:
+        FAILURES.append("docker buildx version failed")
 
 
 def _load_pins() -> dict[str, str]:
@@ -139,11 +143,35 @@ def _dockerfile_tags() -> None:
 
 
 def main() -> int:
-    _python_version()
-    _uv_version()
-    _node_version()
-    _pnpm_version()
-    _docker()
+    resolved: dict[str, str] = {}
+    for name in TOOLS:
+        path = _resolve(name)
+        if path is not None:
+            resolved[name] = path
+
+    pins = {
+        "uv": _required_uv_version(),
+        "node": (ROOT / "miniapp" / ".nvmrc").read_text().strip().lstrip("v"),
+        "pnpm": _required_pnpm_version(),
+    }
+    version_flags = {
+        "uv": ["--version"],
+        "node": ["--version"],
+        "pnpm": ["--version"],
+        "docker": ["--version"],
+        "git": ["--version"],
+        "curl": ["--version"],
+    }
+    for name in TOOLS:
+        path = resolved.get(name)
+        if path is None:
+            continue
+        _report_and_pin(name, path, [path, *version_flags[name]], pins.get(name))
+        if name == "docker":
+            _docker_plugins(path)
+
+    if "uv" in resolved:
+        _python_version()
     _image_digests()
     _dockerfile_tags()
     if FAILURES:

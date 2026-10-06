@@ -338,10 +338,7 @@ class SqlAlchemyAnalyticsStore:
         try:
             async with self._engine.begin() as conn:
                 result = await conn.execute(text(sql), params)
-                count = result.rowcount
-                if count >= 0:
-                    return int(count)
-                return len(result.all())
+                return max(int(result.rowcount), 0)
         except OSError as exc:
             raise AnalyticsJobFailed(AnalyticsErrorKind.NETWORK) from exc
         except SQLAlchemyError as exc:

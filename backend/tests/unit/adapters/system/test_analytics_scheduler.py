@@ -110,3 +110,49 @@ async def test_shutdown_cancels_in_flight_run_and_closes_running_rows() -> None:
     await scheduler.shutdown()
     assert store.closed[0][0] is AnalyticsErrorKind.CANCELLED
     assert scheduler._task is None
+
+
+class _AdvancingClock:
+    def __init__(self) -> None:
+        self._now = NOW
+        self._calls = 0
+
+    def now(self) -> datetime:
+        self._calls += 1
+        if self._calls >= 3:
+            return datetime(2026, 1, 16, 12, 0, tzinfo=UTC)
+        return self._now
+
+
+@pytest.mark.unit
+async def test_loop_clamps_negative_delay() -> None:
+    store = FakeAnalyticsStore()
+    sleeps: list[float] = []
+
+    async def _sleep(delay: float) -> None:
+        sleeps.append(delay)
+        if len(sleeps) == 1:
+            return
+        raise asyncio.CancelledError
+
+    class _Ok:
+        async def execute(self, now: datetime) -> None:
+            _ = now
+
+    scheduler = AnalyticsScheduler(
+        _Ok(),
+        store,
+        _AdvancingClock(),
+        AnalyticsSchedulerSettings(
+            timezone="Europe/Moscow",
+            run_at=time(3, 30),
+            enabled=True,
+        ),
+        sleep=_sleep,
+    )
+    await scheduler.start()
+    assert scheduler._task is not None
+    with pytest.raises(asyncio.CancelledError):
+        await scheduler._task
+    assert sleeps[0] == 0.0
+    await scheduler.shutdown()

@@ -281,3 +281,23 @@ def test_cohorts_null_until_windows_complete() -> None:
     )
     assert complete[0].d1_retained == 1
     assert complete[0].d7_retained == 1
+    outsider = _generation(
+        occurred_at=datetime(2026, 2, 1, 12, 0, 0, tzinfo=UTC),
+        user_pseudonym="cc" * 32,
+        event_id=5,
+    )
+    noise = _generation(
+        occurred_at=c,
+        user_pseudonym="dd" * 32,
+        event_id=6,
+        scenario=UsageScenario.SUGGEST_RULE,
+    )
+    filtered = cohorts(
+        (*events, outsider, noise),
+        _TZ,
+        date(2026, 3, 1),
+        date(2026, 3, 1),
+        date(2026, 3, 8),
+        _NOW,
+    )
+    assert filtered[0].size == 2

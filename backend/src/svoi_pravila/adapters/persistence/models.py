@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     BigInteger,
     CheckConstraint,
+    Date,
     DateTime,
+    Double,
     ForeignKey,
     Index,
     Integer,
@@ -514,4 +516,118 @@ class UsageEventRow(Base):
             "user_pseudonym",
             "occurred_at",
         ),
+    )
+
+
+_SCENARIO_VALUES = "('decode', 'soften', 'help_say', 'suggest_rule')"
+_SURFACE_VALUES = "('dm', 'inline', 'miniapp')"
+_JOB_VALUES = "('daily_aggregates', 'cohorts', 'purge')"
+_JOB_STATUS_VALUES = "('running', 'succeeded', 'failed', 'skipped_locked')"
+_JOB_ERROR_VALUES = "('unknown_timezone', 'catch_up_capped', 'database', 'network', 'cancelled')"
+
+
+class AnalyticsDailyRow(Base):
+    """C0 daily product-analytics totals (no pseudonyms)."""
+
+    __tablename__ = "analytics_daily"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    active_users: Mapped[int] = mapped_column(Integer, nullable=False)
+    appeals: Mapped[int] = mapped_column(Integer, nullable=False)
+    new_users: Mapped[int] = mapped_column(Integer, nullable=False)
+    generations: Mapped[int] = mapped_column(Integer, nullable=False)
+    generation_errors: Mapped[int] = mapped_column(Integer, nullable=False)
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("active_users >= 0", name="active_users_nonneg"),
+        CheckConstraint("appeals >= 0", name="appeals_nonneg"),
+        CheckConstraint("new_users >= 0", name="new_users_nonneg"),
+        CheckConstraint("generations >= 0", name="generations_nonneg"),
+        CheckConstraint("generation_errors >= 0", name="generation_errors_nonneg"),
+    )
+
+
+class AnalyticsDailyScenarioRow(Base):
+    """C0 per-scenario/surface daily slice (no pseudonyms)."""
+
+    __tablename__ = "analytics_daily_scenario"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    scenario: Mapped[str] = mapped_column(Text(), primary_key=True)
+    surface: Mapped[str] = mapped_column(Text(), primary_key=True)
+    appeals: Mapped[int] = mapped_column(Integer, nullable=False)
+    users: Mapped[int] = mapped_column(Integer, nullable=False)
+    ok: Mapped[int] = mapped_column(Integer, nullable=False)
+    refused: Mapped[int] = mapped_column(Integer, nullable=False)
+    screened: Mapped[int] = mapped_column(Integer, nullable=False)
+    invalid_output: Mapped[int] = mapped_column(Integer, nullable=False)
+    unavailable: Mapped[int] = mapped_column(Integer, nullable=False)
+    chosen: Mapped[int] = mapped_column(Integer, nullable=False)
+    latency_p50_ms: Mapped[float | None] = mapped_column(Double, nullable=True)
+    latency_p95_ms: Mapped[float | None] = mapped_column(Double, nullable=True)
+    ttfc_p50_ms: Mapped[float | None] = mapped_column(Double, nullable=True)
+    ttfc_p95_ms: Mapped[float | None] = mapped_column(Double, nullable=True)
+    input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    billable_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(f"scenario IN {_SCENARIO_VALUES}", name="usage_scenario"),
+        CheckConstraint(f"surface IN {_SURFACE_VALUES}", name="usage_surface"),
+        CheckConstraint("appeals >= 0", name="appeals_nonneg"),
+        CheckConstraint("users >= 0", name="users_nonneg"),
+        CheckConstraint("ok >= 0", name="ok_nonneg"),
+        CheckConstraint("refused >= 0", name="refused_nonneg"),
+        CheckConstraint("screened >= 0", name="screened_nonneg"),
+        CheckConstraint("invalid_output >= 0", name="invalid_output_nonneg"),
+        CheckConstraint("unavailable >= 0", name="unavailable_nonneg"),
+        CheckConstraint("chosen >= 0", name="chosen_nonneg"),
+        CheckConstraint("input_tokens >= 0", name="input_tokens_nonneg"),
+        CheckConstraint("output_tokens >= 0", name="output_tokens_nonneg"),
+        CheckConstraint("billable_tokens >= 0", name="billable_tokens_nonneg"),
+    )
+
+
+class AnalyticsCohortRow(Base):
+    """C0 D1/D7 cohort sizes (no pseudonyms)."""
+
+    __tablename__ = "analytics_cohorts"
+
+    cohort_day: Mapped[date] = mapped_column(Date, primary_key=True)
+    size: Mapped[int] = mapped_column(Integer, nullable=False)
+    d1_retained: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    d7_retained: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("size >= 0", name="size_nonneg"),
+        CheckConstraint("d1_retained IS NULL OR d1_retained >= 0", name="d1_nonneg"),
+        CheckConstraint("d7_retained IS NULL OR d7_retained >= 0", name="d7_nonneg"),
+    )
+
+
+class JobRunRow(Base):
+    """C0 analytics job run journal."""
+
+    __tablename__ = "job_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    job: Mapped[str] = mapped_column(Text(), nullable=False)
+    target_day: Mapped[date | None] = mapped_column(Date, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(Text(), nullable=False)
+    rows_affected: Mapped[int] = mapped_column(Integer, nullable=False)
+    error_kind: Mapped[str | None] = mapped_column(Text(), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(f"job IN {_JOB_VALUES}", name="job_name"),
+        CheckConstraint(f"status IN {_JOB_STATUS_VALUES}", name="job_status"),
+        CheckConstraint(
+            f"error_kind IS NULL OR error_kind IN {_JOB_ERROR_VALUES}",
+            name="job_error_kind",
+        ),
+        CheckConstraint("rows_affected >= 0", name="rows_affected_nonneg"),
+        Index("ix_job_runs_job_status_target_day", "job", "status", "target_day"),
     )

@@ -28,6 +28,7 @@ svoi-pravila-api = "svoi_pravila.bootstrap:serve"
 svoi-pravila-healthcheck = "svoi_pravila.bootstrap:healthcheck"
 svoi-pravila-bench-llm = "svoi_pravila.benchmarks.llm:main"
 svoi-pravila-eval = "svoi_pravila.evals.cli:main"
+svoi-pravila-analytics = "svoi_pravila.cli.analytics:main"
 
 [dependency-groups]
 dev = [
@@ -97,11 +98,14 @@ select = [
 ]
 "src/svoi_pravila/application/errors.py" = ["N818"]
 "src/svoi_pravila/application/ports/init_data.py" = ["N818"]
+"src/svoi_pravila/domain/analytics.py" = ["PLR0913", "PLR0917"]
 "src/svoi_pravila/domain/rules.py" = ["PLR0913"]
 "src/svoi_pravila/domain/rule_suggestion.py" = ["PLR0913"]
 "src/svoi_pravila/domain/pair.py" = ["PLR2004"]
 "src/svoi_pravila/benchmarks/**" = ["T201"]
+"benchmarks/**" = ["T201", "TRY003", "PLR2004", "S608"]
 "src/svoi_pravila/evals/**" = ["T201"]
+"src/svoi_pravila/cli/**" = ["T201"]
 [tool.mypy]
 python_version = "3.13"
 strict = true
@@ -145,7 +149,7 @@ include_external_packages = true
 name = "Layers"
 type = "layers"
 layers = [
-    "svoi_pravila.bootstrap : svoi_pravila.benchmarks : svoi_pravila.evals",
+    "svoi_pravila.bootstrap : svoi_pravila.benchmarks : svoi_pravila.evals : svoi_pravila.cli",
     "svoi_pravila.api | svoi_pravila.adapters",
     "svoi_pravila.application",
     "svoi_pravila.domain",

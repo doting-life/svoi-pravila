@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import re
+from datetime import time
 from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, Self
@@ -226,6 +227,9 @@ class Settings(BaseSettings):
     rule_source_ttl_seconds: int = Field(default=600, ge=60, le=600)
     dialog_ttl_seconds: int = Field(default=600, ge=1, le=86_400)
     display_timezone: str = Field(default="Europe/Moscow")
+    analytics_timezone: str = Field(default="Europe/Moscow")
+    analytics_run_at: time = Field(default=time(3, 30))
+    analytics_jobs_enabled: bool = True
     miniapp_url: str | None = None
     miniapp_initdata_max_age_seconds: int = Field(default=3600, ge=60, le=86_400)
     miniapp_requests_per_minute: int = Field(default=120, ge=1, le=600)
@@ -238,6 +242,17 @@ class Settings(BaseSettings):
             ZoneInfo(value)
         except ZoneInfoNotFoundError as exc:
             msg = "display_timezone must be a valid IANA time zone"
+            raise ValueError(msg) from exc
+        return value
+
+    @field_validator("analytics_timezone")
+    @classmethod
+    def analytics_timezone_must_be_iana(cls, value: str) -> str:
+        """Reject names that are not IANA time zones."""
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            msg = "analytics_timezone must be a valid IANA time zone"
             raise ValueError(msg) from exc
         return value
 

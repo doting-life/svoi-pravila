@@ -4,7 +4,7 @@
 
 ## Текущее
 - Дата: 2026-10-06 · Спринт 0 (Фундамент)
-- Активная задача: **0016.3-a — герметичный `make ci` и проверяемый слой установки CI** · ветка `task/0016-3-ci-parity` · GigaChat 0 токенов
+- Активная задача: **0016.3-b — pnpm в слое установки; проверять то, что запускается** · ветка `task/0016-3-ci-parity` · GigaChat 0 токенов
 - В `master`: 0016.2 (`d52c82f`, squash #20)
 - В `master`: 0016.1 (`c2d68c0`, squash #19)
 - Правило с 05.10 (владелец): тестировать всё локально, в GitHub отправлять только проверенный код; push только после зелёного `make ci` (04-workflow ред. 1.1, правило исполнителя)
@@ -113,7 +113,14 @@
 - pre-push проверяет рабочее дерево, а не отправляемый коммит.
 
 Промах CTO: критерий `rg "run: \|"` пропускал однострочную логику и не проверял слой установки |
-| 0016.3-a | Hermetic `make ci`; verified CI setup layer | `task/0016-3-ci-parity` | выдан | — |
+| 0016.3-a | Hermetic `make ci`; verified CI setup layer | `task/0016-3-ci-parity` | проверен 06.10 | **CHANGES** → 0016.3-b. Сделано:
+- герметичный `make ci` (временное окружение вне репозитория, отдельный compose-проект и порты, `down -v`);
+- общее действие установки;
+- проверка паритета workflow с тестами;
+- pre-push в worktree.
+
+В GitHub зелёные 5 из 6 заданий. Красный `miniapp`: скрипты `package.json` вызывают `pnpm` без `corepack`, на раннере его нет в PATH; локально его подставляет shim. `toolchain-check` проверял `corepack pnpm`, а не запускаемый `pnpm`. Промах CTO: в 0016.3 велел удалить `corepack enable` как неиспользуемый. Мелочь: список заданий продублирован в `ci.sh` |
+| 0016.3-b | pnpm in the toolchain layer; check what runs | `task/0016-3-ci-parity` | выдан | — |
 | 0006.1-b | Image gate: Debian security updates, base digest pin, Dependabot | `task/0006-telegram-channel` | проверен 04.10 | **ACCEPT** (Trivy: 21 CVE → 0) |
 
 ## Решения

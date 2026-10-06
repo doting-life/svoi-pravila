@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import cast
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy.exc import SQLAlchemyError
@@ -289,3 +290,38 @@ def test_numeric_helpers_reject_unexpected() -> None:
     with pytest.raises(AnalyticsJobFailed) as exc_fstr:
         _float_or_none("no")
     assert exc_fstr.value.kind is AnalyticsErrorKind.DATABASE
+
+
+class _ScalarConn:
+    def __init__(self, value: object) -> None:
+        self._value = value
+
+    async def execute(self, *_args: object, **_kwargs: object) -> object:
+        class _Result:
+            def __init__(self, value: object) -> None:
+                self._value = value
+
+            def scalar(self) -> object:
+                return self._value
+
+        return _Result(self._value)
+
+
+@pytest.mark.unit
+async def test_earliest_event_day_none_and_rejects_non_datetime() -> None:
+    none_store = _store(_EngineConn(_ScalarConn(None)))
+    assert await none_store.earliest_event_day("Europe/Moscow") is None
+    bad_store = _store(_EngineConn(_ScalarConn("not-a-datetime")))
+    with pytest.raises(AnalyticsJobFailed) as exc:
+        await bad_store.earliest_event_day("Europe/Moscow")
+    assert exc.value.kind is AnalyticsErrorKind.DATABASE
+
+
+@pytest.mark.unit
+async def test_earliest_event_day_converts_min_timestamp() -> None:
+    when = datetime(2026, 3, 15, 21, 0, tzinfo=UTC)
+    store = _store(_EngineConn(_ScalarConn(when)))
+    assert (
+        await store.earliest_event_day("Europe/Moscow")
+        == when.astimezone(ZoneInfo("Europe/Moscow")).date()
+    )

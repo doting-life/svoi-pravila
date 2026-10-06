@@ -182,3 +182,38 @@ async def test_done_callback_logs_unexpected_stop(
         for item in logged
     )
     await scheduler.shutdown()
+
+
+@pytest.mark.unit
+async def test_done_callback_ignores_clean_completion(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    async def _ok() -> None:
+        return None
+
+    task = asyncio.create_task(_ok())
+    task.add_done_callback(AnalyticsScheduler._on_done)
+    await task
+    assert not any(
+        item.get("event") == "analytics_scheduler_stopped" for item in capture_log_events()
+    )
+
+
+@pytest.mark.unit
+async def test_shutdown_retrieves_exception_from_finished_task() -> None:
+    scheduler = AnalyticsScheduler(
+        _BoomJob(),
+        FakeClock(NOW),
+        AnalyticsSchedulerSettings(
+            timezone="Europe/Moscow",
+            run_at=time(3, 30),
+            enabled=True,
+        ),
+        sleep=asyncio.sleep,
+    )
+    await scheduler.start()
+    assert scheduler._task is not None
+    with pytest.raises(RuntimeError, match="unexpected"):
+        await asyncio.wait_for(scheduler._task, timeout=2)
+    await scheduler.shutdown()
+    assert scheduler._task is None

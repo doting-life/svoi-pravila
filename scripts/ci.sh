@@ -24,7 +24,7 @@ run_stage() {
 
 run_stage toolchain-check make toolchain-check
 if [[ ! -f "$ROOT/.env" ]]; then
-  ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/svoi-pravila-ci.XXXXXX.env")"
+  ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/svoi-pravila-ci.XXXXXX")"
   export ENV_FILE
   make infra-up
 fi

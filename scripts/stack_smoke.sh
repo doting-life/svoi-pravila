@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 if [[ -z "${ENV_FILE:-}" ]]; then
-  ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/svoi-pravila-stack-smoke.XXXXXX.env")"
+  ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/svoi-pravila-stack-smoke.XXXXXX")"
   export ENV_FILE
 fi
 
@@ -13,7 +13,7 @@ ENV_ABS="$(cd "$(dirname "$ENV_FILE")" && pwd)/$(basename "$ENV_FILE")"
 REPO_ABS="$(pwd)"
 case "$ENV_ABS" in
   "$REPO_ABS" | "$REPO_ABS"/*)
-    ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/svoi-pravila-stack-smoke.XXXXXX.env")"
+    ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/svoi-pravila-stack-smoke.XXXXXX")"
     ENV_ABS="$(cd "$(dirname "$ENV_FILE")" && pwd)/$(basename "$ENV_FILE")"
     ;;
 esac

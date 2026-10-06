@@ -18,7 +18,7 @@ while read -r _local_ref local_sha _remote_ref _remote_sha; do
   }
   trap cleanup EXIT
   git worktree add --detach "$worktree" "$local_sha"
-  make -C "$worktree" ci
+  PUSH_REF="$_local_ref" make -C "$worktree" ci
   cleanup
   trap - EXIT
 done

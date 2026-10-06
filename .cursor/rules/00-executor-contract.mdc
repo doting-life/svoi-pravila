@@ -49,6 +49,12 @@ Ask one concrete question per blocker and describe the options you see.
 - Before any push: `make ci` green on the exact commit being pushed. Run it after the final rebase. Paste the summary in the report.
 - One push per review round. Never push to "see what CI says" and never push fix-up commits to turn CI green.
 - Commit only formatted, linted code (the repository's git hooks run the fast checks on commit and `make ci` on push; install them with `make hooks`).
+- `make ci` is hermetic:
+  - it never reads or writes the owner's `.env` (it uses its own ephemeral env file outside the repo);
+  - it runs in its own compose project on its own ports and removes it, volumes included;
+  - it installs its dependencies on a clean clone;
+  - the pre-push hook runs it on the exact pushed commit in a temporary worktree.
+- Each CI job is the shared toolchain setup action plus `make ci JOB=<name>`. Tool versions come only from native pin files. `toolchain-check` runs first in every job.
 - If CI fails after a green local `make ci`, that is a parity defect: stop, report BLOCKED with the failing job and the difference, and fix the parity (Makefile, scripts, toolchain pins) — not only the symptom.
 
 ## Report — your final chat reply

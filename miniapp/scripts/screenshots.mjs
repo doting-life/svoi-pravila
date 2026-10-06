@@ -398,6 +398,7 @@ async function captureScheme(browser, baseUrl, scheme) {
     await paired.waitForSelector("text=Личные правила");
     await paired.waitForSelector("text=Общие правила");
     await paired.waitForSelector("text=Подтвердить");
+    await paired.waitForSelector("text=Выйти из общего свода");
     await shot(paired, `${scheme}-contact-paired`);
     await paired.close();
 

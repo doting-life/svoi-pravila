@@ -325,20 +325,7 @@ export function ContactDetailScreen({
                         </>
                     )}
                 </section>
-            ) : (
-                <div className="list-item-actions">
-                    <button
-                        type="button"
-                        className="btn btn-danger"
-                        disabled={privacyTexts.status !== "success"}
-                        onClick={() => {
-                            void leave();
-                        }}
-                    >
-                        {ru.contactLeavePair}
-                    </button>
-                </div>
-            )}
+            ) : null}
 
             {loading ? <LoadingView /> : null}
             {error !== undefined ? (
@@ -444,6 +431,21 @@ export function ContactDetailScreen({
                         }}
                     />
                 )
+            ) : null}
+
+            {paired ? (
+                <section className="block block-leave" aria-label={ru.contactLeavePair}>
+                    <button
+                        type="button"
+                        className="btn btn-danger"
+                        disabled={privacyTexts.status !== "success"}
+                        onClick={() => {
+                            void leave();
+                        }}
+                    >
+                        {ru.contactLeavePair}
+                    </button>
+                </section>
             ) : null}
         </section>
     );

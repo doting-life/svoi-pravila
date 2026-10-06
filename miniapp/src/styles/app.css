@@ -122,6 +122,12 @@ body {
     color: var(--tg-hint-color);
 }
 
+.block-leave {
+    margin-top: 0.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--tg-hint-color);
+}
+
 .btn {
     min-height: 44px;
     min-width: 44px;

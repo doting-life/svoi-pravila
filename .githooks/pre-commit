@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo="$(git rev-parse --show-toplevel)"
+cd "$repo"
+
+python_files=()
+miniapp_files=()
+
+while IFS= read -r file; do
+  [[ -z "$file" ]] && continue
+  if [[ "$file" == backend/* && "$file" == *.py ]]; then
+    python_files+=("${file#backend/}")
+  elif [[ "$file" == miniapp/* ]]; then
+    case "$file" in
+      *.ts|*.tsx|*.js|*.mjs|*.cjs|*.css|*.json)
+        miniapp_files+=("${file#miniapp/}")
+        ;;
+    esac
+  fi
+done < <(git diff --cached --name-only --diff-filter=ACMR)
+
+if ((${#python_files[@]} > 0)); then
+  (
+    cd backend
+    uv run ruff format --check "${python_files[@]}"
+    uv run ruff check "${python_files[@]}"
+  )
+fi
+
+if ((${#miniapp_files[@]} > 0)); then
+  prettier_files=("${miniapp_files[@]}")
+  eslint_files=()
+  for file in "${miniapp_files[@]}"; do
+    case "$file" in
+      *.ts|*.tsx|*.js|*.mjs|*.cjs) eslint_files+=("$file") ;;
+    esac
+  done
+  (
+    cd miniapp
+    pnpm exec prettier --check "${prettier_files[@]}"
+    if ((${#eslint_files[@]} > 0)); then
+      pnpm exec eslint --no-warn-ignored "${eslint_files[@]}"
+    fi
+  )
+fi

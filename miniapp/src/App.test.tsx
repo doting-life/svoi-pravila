@@ -1095,6 +1095,15 @@ describe("App", () => {
         expect(await screen.findByText(ru.contactPairedBadge)).toBeInTheDocument();
         expect(screen.getByText(ru.rulesPersonalTitle)).toBeInTheDocument();
         expect(screen.getByText(ru.rulesSharedTitle)).toBeInTheDocument();
+        const leaveButton = await screen.findByRole("button", { name: ru.contactLeavePair });
+        const addRule = screen.getByRole("button", { name: ru.contactAddRule });
+        expect(
+            addRule.compareDocumentPosition(leaveButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+        expect(
+            screen.getByText(ru.rulesSharedTitle).compareDocumentPosition(leaveButton) &
+                Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
         expect(screen.getByText("моё на согласовании")).toBeInTheDocument();
         expect(screen.getByText("чужое на согласовании")).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: ru.ruleApprove }));

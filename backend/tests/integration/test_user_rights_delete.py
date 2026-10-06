@@ -191,6 +191,21 @@ async def _seed_delete_fixture(
     return alice, bob, alice_contact, bob_contact, pair
 
 
+async def _insert_daily_aggregate(engine: AsyncEngine) -> None:
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO analytics_daily ("
+                "day, active_users, appeals, new_users, generations, "
+                "generation_errors, computed_at"
+                ") VALUES ("
+                "DATE '2026-01-01', 1, 1, 1, 1, 0, :now"
+                ")"
+            ),
+            {"now": NOW},
+        )
+
+
 @pytest.mark.integration
 async def test_delete_account_shreds_caller_and_rehomes_partner_rules(
     settings: Settings,
@@ -205,6 +220,7 @@ async def test_delete_account_shreds_caller_and_rehomes_partner_rules(
     alice, bob, alice_contact, bob_contact, pair = await _seed_delete_fixture(
         uow_factory_postgres, a_pseudo=a_pseudo, b_pseudo=b_pseudo
     )
+    await _insert_daily_aggregate(engine)
     clock = FakeClock(LEAVE_AT)
     result = await DeleteMyAccount(
         DeleteMyAccountPorts(
@@ -249,6 +265,13 @@ async def test_delete_account_shreds_caller_and_rehomes_partner_rules(
     assert pair_rows == 0
     assert a_usage == 0
     assert b_usage == 1
+    async with engine.connect() as conn:
+        daily = (
+            await conn.execute(
+                text("SELECT active_users FROM analytics_daily WHERE day = DATE '2026-01-01'")
+            )
+        ).scalar_one()
+    assert daily == 1
 
     async with uow_factory_postgres() as uow:
         assert await uow.contacts.get(alice_contact.id) is None

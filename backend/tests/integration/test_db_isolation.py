@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from svoi_pravila.adapters.persistence.engine import create_engine, dispose_engine
@@ -19,7 +19,21 @@ async def _domain_table_counts(database_url: str) -> dict[str, int]:
     try:
         counts: dict[str, int] = {}
         async with engine.connect() as conn:
+            existing = set(
+                (
+                    await conn.execute(
+                        text(
+                            "SELECT tablename FROM pg_catalog.pg_tables "
+                            "WHERE schemaname = current_schema()"
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
             for table in Base.metadata.sorted_tables:
+                if table.name not in existing:
+                    continue
                 result = await conn.execute(select(func.count()).select_from(table))
                 counts[table.name] = int(result.scalar_one())
         return counts

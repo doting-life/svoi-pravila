@@ -19,6 +19,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-file", type=Path, required=True)
     args = parser.parse_args()
+    if not args.env_file.exists() or args.env_file.stat().st_size == 0:
+        args.env_file.write_text(Path(__file__).resolve().parents[1].joinpath(".env.example").read_text())
     ensure_dev_env(env_path=args.env_file)
     text = args.env_file.read_text()
     for key, value in (

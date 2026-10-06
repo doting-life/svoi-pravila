@@ -130,7 +130,7 @@ migrations-check:
 	$(UV) alembic check
 
 dev-env:
-	test -f "$(ENV_FILE)" || cp .env.example "$(ENV_FILE)"
+	test -s "$(ENV_FILE)" || cp .env.example "$(ENV_FILE)"
 	cd $(BACKEND) && uv run python ../scripts/ensure_dev_env.py --env-file "$(ENV_FILE_ABS)"
 
 infra-up: dev-env

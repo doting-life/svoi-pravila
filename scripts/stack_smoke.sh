@@ -201,3 +201,15 @@ if printf '%s\n' "$forbidden_env" | grep -E '^(SP_TELEGRAM_|SP_GIGACHAT_|SP_DATA
   exit 1
 fi
 echo "grafana_env_names_ok"
+
+# B2 — Grafana shares the internal observability network with Postgres.
+project="${COMPOSE_PROJECT_NAME:-svoi-pravila-ci}"
+grafana_cid="$(docker compose -p "$project" --env-file "$ENV_FILE" ps -q grafana)"
+postgres_cid="$(docker compose -p "$project" --env-file "$ENV_FILE" ps -q postgres)"
+obs_net="$(docker network ls --format '{{.Name}}' | grep -E "^${project}_observability$" | head -n1)"
+test -n "$obs_net"
+internal="$(docker network inspect "$obs_net" --format '{{.Internal}}')"
+test "$internal" = "true"
+docker inspect "$grafana_cid" --format '{{json .NetworkSettings.Networks}}' | grep -q "$obs_net"
+docker inspect "$postgres_cid" --format '{{json .NetworkSettings.Networks}}' | grep -q "$obs_net"
+echo "grafana_internal_network_ok"

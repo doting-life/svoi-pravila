@@ -157,7 +157,7 @@ infra-down:
 	$(COMPOSE) down
 
 build:
-	$(COMPOSE) --profile app build
+	$(COMPOSE) --profile app --profile observability build
 
 up: build
 	$(COMPOSE) --profile app up -d --wait

@@ -59,6 +59,7 @@ class RunDailyAnalytics:
                     )
                 )
                 return
+            await self._store.close_open_runs(AnalyticsErrorKind.CANCELLED, now)
             await self._store.ensure_timezone(self._timezone)
             yesterday = now.astimezone(ZoneInfo(self._timezone)).date() - timedelta(days=1)
             await self._catch_up(now, yesterday)

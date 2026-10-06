@@ -563,11 +563,10 @@ def _analytics_scheduler(
                 timezone=settings.analytics_timezone,
             )
         ),
-        store,
         clock,
         AnalyticsSchedulerSettings(
             timezone=settings.analytics_timezone,
-            run_at=settings.analytics_run_at_time(),
+            run_at=settings.analytics_run_at,
             enabled=settings.analytics_jobs_enabled,
         ),
     )

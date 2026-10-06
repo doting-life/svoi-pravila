@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from svoi_pravila.application.errors import (
     AnalyticsErrorKind,
@@ -29,19 +30,52 @@ from svoi_pravila.domain.enums import UsageScenario, UsageSurface
 
 LOCK_KEY = "svoi_pravila.analytics.daily"
 
-_APPEAL = """
+_APPEAL_TEMPLATE = """
 (
-  e.scenario <> 'suggest_rule'
+  __ALIAS__.scenario <> 'suggest_rule'
   AND (
-    e.event_kind = 'result_chosen'
+    __ALIAS__.event_kind = 'result_chosen'
     OR (
-      e.event_kind = 'generation'
-      AND e.surface IN ('dm', 'miniapp')
-      AND e.outcome IN ('ok', 'refused', 'screened')
+      __ALIAS__.event_kind = 'generation'
+      AND __ALIAS__.surface IN ('dm', 'miniapp')
+      AND __ALIAS__.outcome IN ('ok', 'refused', 'screened')
     )
   )
 )
 """
+
+_NEW_USER_TEMPLATE = """
+(
+  __EVENT_APPEAL__
+  AND (
+    SELECT __PRIOR__.occurred_at
+    FROM usage_events __PRIOR__
+    WHERE __PRIOR__.user_pseudonym = __EVENT__.user_pseudonym
+      AND __PRIOR_APPEAL__
+    ORDER BY __PRIOR__.occurred_at
+    LIMIT 1
+  ) >= __START_TS__
+)
+"""
+
+
+def _appeal_sql(alias: str) -> str:
+    return _APPEAL_TEMPLATE.replace("__ALIAS__", alias)
+
+
+def _new_user_sql(event_alias: str, prior_alias: str, start_ts: str) -> str:
+    """Appeal in the day window whose first ever appeal is not before ``start_ts``."""
+    return (
+        _NEW_USER_TEMPLATE.replace("__EVENT_APPEAL__", _appeal_sql(event_alias))
+        .replace("__PRIOR_APPEAL__", _appeal_sql(prior_alias))
+        .replace("__PRIOR__", prior_alias)
+        .replace("__EVENT__", event_alias)
+        .replace("__START_TS__", start_ts)
+    )
+
+
+_APPEAL = _appeal_sql("e")
+_NEW_USER = _new_user_sql("e", "p", "b.start_ts")
 
 
 class SqlAlchemyAnalyticsStore:
@@ -96,14 +130,16 @@ class SqlAlchemyAnalyticsStore:
             raise AnalyticsJobFailed(AnalyticsErrorKind.UNKNOWN_TIMEZONE)
 
     async def compute_day(self, day: date, tz_name: str, computed_at: datetime) -> int:
-        """Idempotent upsert of daily totals and scenario slices."""
+        """Idempotent upsert of daily totals and scenario slices in one transaction."""
         params = {"day": day, "tz": tz_name, "computed_at": computed_at}
-        await self._execute(_DAILY_UPSERT, params)
-        await self._execute(
-            "DELETE FROM analytics_daily_scenario WHERE day = :day",
-            {"day": day},
+        scenario_count = await self._run_write(
+            (
+                (_DAILY_UPSERT, params),
+                ("DELETE FROM analytics_daily_scenario WHERE day = :day", {"day": day}),
+                (_SCENARIO_INSERT, params),
+            ),
+            scalar_index=2,
         )
-        scenario_count = await self._scalar_write(_SCENARIO_INSERT, params)
         return 1 + _as_int(scenario_count)
 
     async def compute_cohorts(
@@ -158,12 +194,13 @@ class SqlAlchemyAnalyticsStore:
         return value if isinstance(value, date) else None
 
     async def earliest_event_day(self, tz_name: str) -> date | None:
-        """Minimum event calendar day in ``tz_name``."""
-        value = await self._scalar(
-            "SELECT MIN((occurred_at AT TIME ZONE :tz)::date) FROM usage_events",
-            {"tz": tz_name},
-        )
-        return value if isinstance(value, date) else None
+        """Minimum event calendar day in ``tz_name`` via index ``MIN(occurred_at)``."""
+        value = await self._scalar("SELECT MIN(occurred_at) FROM usage_events", {})
+        if value is None:
+            return None
+        if not isinstance(value, datetime):
+            raise AnalyticsJobFailed(AnalyticsErrorKind.DATABASE)
+        return value.astimezone(ZoneInfo(tz_name)).date()
 
     async def record_run(self, run: JobRun) -> None:
         """Insert or update a ``job_runs`` row."""
@@ -295,15 +332,37 @@ class SqlAlchemyAnalyticsStore:
             for item in rows
         ]
 
-    async def _scalar_write(self, sql: str, params: dict[str, object]) -> object:
+    async def _run_write(
+        self,
+        statements: Sequence[tuple[str, dict[str, object]]],
+        *,
+        scalar_index: int | None = None,
+    ) -> object | None:
+        """Run several statements in one transaction; optionally return one scalar."""
         try:
             async with self._engine.begin() as conn:
-                result = await conn.execute(text(sql), params)
-                return result.scalar()
+                return await self._execute_statements(conn, statements, scalar_index=scalar_index)
         except OSError as exc:
             raise AnalyticsJobFailed(AnalyticsErrorKind.NETWORK) from exc
         except SQLAlchemyError as exc:
             raise AnalyticsJobFailed(AnalyticsErrorKind.DATABASE) from exc
+
+    async def _execute_statements(
+        self,
+        conn: AsyncConnection,
+        statements: Sequence[tuple[str, dict[str, object]]],
+        *,
+        scalar_index: int | None,
+    ) -> object | None:
+        scalar: object | None = None
+        for index, (sql, params) in enumerate(statements):
+            result = await conn.execute(text(sql), params)
+            if scalar_index is not None and index == scalar_index:
+                scalar = result.scalar()
+        return scalar
+
+    async def _scalar_write(self, sql: str, params: dict[str, object]) -> object:
+        return await self._run_write(((sql, params),), scalar_index=0)
 
     async def _scalar(self, sql: str, params: dict[str, object]) -> object:
         try:
@@ -326,13 +385,7 @@ class SqlAlchemyAnalyticsStore:
             raise AnalyticsJobFailed(AnalyticsErrorKind.DATABASE) from exc
 
     async def _execute(self, sql: str, params: dict[str, object]) -> None:
-        try:
-            async with self._engine.begin() as conn:
-                await conn.execute(text(sql), params)
-        except OSError as exc:
-            raise AnalyticsJobFailed(AnalyticsErrorKind.NETWORK) from exc
-        except SQLAlchemyError as exc:
-            raise AnalyticsJobFailed(AnalyticsErrorKind.DATABASE) from exc
+        await self._run_write(((sql, params),))
 
     async def _execute_rowcount(self, sql: str, params: dict[str, object]) -> int:
         try:
@@ -347,20 +400,22 @@ class SqlAlchemyAnalyticsStore:
 
 def _as_int(value: object) -> int:
     if isinstance(value, bool):
-        return 0
+        raise AnalyticsJobFailed(AnalyticsErrorKind.DATABASE)
     if isinstance(value, int):
         return value
-    if isinstance(value, float):
+    if isinstance(value, Decimal):
         return int(value)
-    return 0
+    raise AnalyticsJobFailed(AnalyticsErrorKind.DATABASE)
 
 
 def _float_or_none(value: object) -> float | None:
-    if value is None or isinstance(value, bool):
+    if value is None:
         return None
+    if isinstance(value, bool):
+        raise AnalyticsJobFailed(AnalyticsErrorKind.DATABASE)
     if isinstance(value, int | float | Decimal):
         return float(value)
-    return None
+    raise AnalyticsJobFailed(AnalyticsErrorKind.DATABASE)
 
 
 _DAILY_UPSERT = """
@@ -387,26 +442,13 @@ SELECT
           AND __APPEAL__
     ),
     (
-        SELECT COUNT(DISTINCT e.user_pseudonym)
-        FROM usage_events e, bounds b
-        WHERE e.occurred_at >= b.start_ts AND e.occurred_at < b.end_ts
-          AND __APPEAL__
-          AND NOT EXISTS (
-            SELECT 1 FROM usage_events p
-            WHERE p.user_pseudonym = e.user_pseudonym
-              AND p.occurred_at < b.start_ts
-              AND (
-                p.scenario <> 'suggest_rule'
-                AND (
-                  p.event_kind = 'result_chosen'
-                  OR (
-                    p.event_kind = 'generation'
-                    AND p.surface IN ('dm', 'miniapp')
-                    AND p.outcome IN ('ok', 'refused', 'screened')
-                  )
-                )
-              )
-          )
+        SELECT COUNT(*)
+        FROM (
+            SELECT DISTINCT e.user_pseudonym
+            FROM usage_events e, bounds b
+            WHERE e.occurred_at >= b.start_ts AND e.occurred_at < b.end_ts
+              AND __NEW_USER__
+        ) AS new_user_pseudos
     ),
     (
         SELECT COUNT(*)
@@ -430,7 +472,7 @@ ON CONFLICT (day) DO UPDATE SET
     generations = EXCLUDED.generations,
     generation_errors = EXCLUDED.generation_errors,
     computed_at = EXCLUDED.computed_at
-""".replace("__APPEAL__", _APPEAL)
+""".replace("__APPEAL__", _APPEAL).replace("__NEW_USER__", _NEW_USER)
 
 _SCENARIO_INSERT = """
 WITH bounds AS (
@@ -484,39 +526,77 @@ inserted AS (
 SELECT COUNT(*) FROM inserted
 """.replace("__APPEAL__", _APPEAL)
 
-_COHORT_UPSERT = """
-WITH first_appeals AS (
-    SELECT DISTINCT ON (user_pseudonym)
-        user_pseudonym,
-        occurred_at
-    FROM usage_events e
+_COHORT_UPSERT = (
+    """
+WITH days AS (
+    SELECT generate_series(
+        CAST(:from_day AS date),
+        CAST(:to_day AS date),
+        interval '1 day'
+    )::date AS cohort_day
+),
+day_bounds AS (
+    SELECT
+        d.cohort_day,
+        timezone(:tz, CAST(d.cohort_day AS timestamp without time zone)) AS start_ts,
+        timezone(:tz, CAST(d.cohort_day AS timestamp without time zone) + interval '1 day')
+            AS end_ts,
+        timezone(:tz, CAST(d.cohort_day AS timestamp without time zone) + interval '1 day')
+            AS d1_start,
+        timezone(:tz, CAST(d.cohort_day AS timestamp without time zone) + interval '2 day')
+            AS d1_end,
+        timezone(:tz, CAST(d.cohort_day AS timestamp without time zone) + interval '7 day')
+            AS d7_start,
+        timezone(:tz, CAST(d.cohort_day AS timestamp without time zone) + interval '8 day')
+            AS d7_end
+    FROM days d
+),
+day_appeals AS (
+    SELECT DISTINCT
+        db.cohort_day,
+        db.start_ts,
+        db.d1_start,
+        db.d1_end,
+        db.d7_start,
+        db.d7_end,
+        e.user_pseudonym
+    FROM day_bounds db
+    JOIN usage_events e
+      ON e.occurred_at >= db.start_ts AND e.occurred_at < db.end_ts
     WHERE __APPEAL__
-    ORDER BY user_pseudonym, occurred_at
 ),
 members AS (
     SELECT
-        user_pseudonym,
-        (occurred_at AT TIME ZONE :tz)::date AS cohort_day
-    FROM first_appeals
-    WHERE (occurred_at AT TIME ZONE :tz)::date BETWEEN :from_day AND :to_day
-),
-appeal_days AS (
-    SELECT DISTINCT
-        user_pseudonym,
-        (occurred_at AT TIME ZONE :tz)::date AS d
-    FROM usage_events e
-    WHERE __APPEAL__
+        da.cohort_day,
+        da.user_pseudonym,
+        da.d1_start,
+        da.d1_end,
+        da.d7_start,
+        da.d7_end
+    FROM day_appeals da
+    WHERE (
+        SELECT p.occurred_at
+        FROM usage_events p
+        WHERE p.user_pseudonym = da.user_pseudonym
+          AND __APPEAL_P__
+        ORDER BY p.occurred_at
+        LIMIT 1
+    ) >= da.start_ts
 ),
 per_member AS (
     SELECT
         m.cohort_day,
         EXISTS (
-            SELECT 1 FROM appeal_days a
-            WHERE a.user_pseudonym = m.user_pseudonym AND a.d = m.cohort_day + 1
+            SELECT 1 FROM usage_events r
+            WHERE r.user_pseudonym = m.user_pseudonym
+              AND r.occurred_at >= m.d1_start AND r.occurred_at < m.d1_end
+              AND __APPEAL_R__
         ) AS has_d1,
         EXISTS (
-            SELECT 1 FROM appeal_days a
-            WHERE a.user_pseudonym = m.user_pseudonym AND a.d = m.cohort_day + 7
+            SELECT 1 FROM usage_events r
+            WHERE r.user_pseudonym = m.user_pseudonym
+              AND r.occurred_at >= m.d7_start AND r.occurred_at < m.d7_end
+              AND __APPEAL_R__
         ) AS has_d7
     FROM members m
 ),
@@ -542,7 +622,19 @@ upserted AS (
     RETURNING 1
 )
 SELECT COUNT(*) FROM upserted
-""".replace("__APPEAL__", _APPEAL)
+""".replace(
+        "__APPEAL__",
+        _appeal_sql("e"),
+    )
+    .replace(
+        "__APPEAL_P__",
+        _appeal_sql("p"),
+    )
+    .replace(
+        "__APPEAL_R__",
+        _appeal_sql("r"),
+    )
+)
 
 _PURGE_BATCH = """
 WITH doomed AS (

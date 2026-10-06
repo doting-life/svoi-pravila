@@ -84,7 +84,7 @@ class AnalyticsScheduler:
                 await self._use_case.execute(self._clock.now())
             except AnalyticsJobFailed as exc:
                 failures += 1
-                logger.info(
+                logger.warning(
                     "analytics_job_failed",
                     job=None if exc.job is None else exc.job.value,
                     error_kind=exc.kind.value,

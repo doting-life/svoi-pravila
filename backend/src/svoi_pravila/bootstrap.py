@@ -12,6 +12,7 @@ from aiogram import Bot
 from aiogram.types import Update
 from fastapi import APIRouter, FastAPI
 from gigachat import GigaChat
+from pydantic import ValidationError
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -114,6 +115,8 @@ from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
 from svoi_pravila.config import (
     DatabaseSettings,
     Environment,
+    GrafanaDbPasswordMissingError,
+    MigrateSettings,
     Settings,
     TelegramUpdatesMode,
     TestInfraSettings,
@@ -262,8 +265,24 @@ def _build_miniapp_mount(
 
 
 def load_database_settings() -> DatabaseSettings:
-    """Load migrate-process settings (database URL and log level only)."""
+    """Load Alembic-only settings (database URL and log level)."""
     return DatabaseSettings()
+
+
+def load_migrate_settings() -> MigrateSettings:
+    """Load compose migrate settings including ``SP_GRAFANA_DB_PASSWORD``.
+
+    Raises:
+        GrafanaDbPasswordMissingError: when the password env var is unset or blank.
+    """
+    try:
+        return MigrateSettings()
+    except ValidationError as exc:
+        for err in exc.errors():
+            loc = err.get("loc", ())
+            if loc and loc[0] == "grafana_db_password":
+                raise GrafanaDbPasswordMissingError() from exc
+        raise
 
 
 def load_test_infra_settings() -> TestInfraSettings:

@@ -50,6 +50,7 @@ compose_port() {
 }
 
 cleanup() {
+  make -C "$ROOT" observability-down ENV_FILE="$ENV_FILE" || true
   make -C "$ROOT" down ENV_FILE="$ENV_FILE" || true
   if [[ "$OWN_TMP" -eq 1 ]]; then
     rm -rf "$CI_TMPDIR"
@@ -58,12 +59,15 @@ cleanup() {
 trap cleanup EXIT
 
 make -C "$ROOT" up ENV_FILE="$ENV_FILE"
+make -C "$ROOT" observability-up ENV_FILE="$ENV_FILE"
 
 API_BIND="$(compose_port api 8000)"
 MINIAPP_BIND="$(compose_port miniapp 8080)"
+GRAFANA_BIND="$(compose_port grafana 3000)"
 API_BASE="http://${API_BIND}"
 MINIAPP_BASE="http://${MINIAPP_BIND}"
-echo "stack-smoke: api=${API_BASE} miniapp=${MINIAPP_BASE}"
+GRAFANA_BASE="http://${GRAFANA_BIND}"
+echo "stack-smoke: api=${API_BASE} miniapp=${MINIAPP_BASE} grafana=${GRAFANA_BASE}"
 
 code="$(curl -s -o "${CI_TMPDIR}/readyz.json" -w '%{http_code}' "${API_BASE}/readyz")"
 test "$code" = "200"
@@ -101,5 +105,73 @@ with urllib.request.urlopen(url, timeout=10) as resp:
 assert b"event:" in first or b"data:" in first, first
 assert first_at < 1.5, f"first SSE bytes arrived too late: {first_at:.3f}s"
 print(f"sse_flush_ok first_bytes_at={first_at:.3f}s")
+PY
+)
+
+(
+  cd "$ROOT/backend" && uv run --locked python - <<PY
+import base64
+import json
+import os
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+env_path = Path(os.environ["ENV_FILE"])
+vals: dict[str, str] = {}
+for line in env_path.read_text().splitlines():
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    key, value = line.split("=", 1)
+    vals[key] = value
+admin_password = vals["SP_GRAFANA_ADMIN_PASSWORD"]
+token = base64.b64encode(f"admin:{admin_password}".encode()).decode()
+auth = {"Authorization": f"Basic {token}"}
+base = "${GRAFANA_BASE}"
+
+with urllib.request.urlopen(urllib.request.Request(f"{base}/api/health"), timeout=10) as resp:
+    health = json.loads(resp.read().decode())
+assert health.get("database") == "ok", health
+print("grafana_health_ok")
+
+deadline = time.monotonic() + 90
+ds_health = None
+last_err = None
+while time.monotonic() < deadline:
+    try:
+        ds_req = urllib.request.Request(
+            f"{base}/api/datasources/uid/svoi-analytics-pg/health",
+            headers=auth,
+        )
+        with urllib.request.urlopen(ds_req, timeout=30) as resp:
+            ds_health = json.loads(resp.read().decode())
+        if ds_health.get("status") == "OK":
+            break
+    except urllib.error.HTTPError as exc:
+        last_err = exc
+        body = exc.read().decode() if exc.fp is not None else ""
+        if exc.code not in {404, 502, 503}:
+            raise
+        time.sleep(2)
+        continue
+    time.sleep(2)
+else:
+    list_req = urllib.request.Request(f"{base}/api/datasources", headers=auth)
+    with urllib.request.urlopen(list_req, timeout=10) as resp:
+        listing = resp.read().decode()
+    raise AssertionError(
+        f"datasource health not OK: last={ds_health!r} err={last_err!r} listing={listing}"
+    )
+print("grafana_datasource_ok")
+
+dash_req = urllib.request.Request(
+    f"{base}/api/dashboards/uid/svoi-analytics",
+    headers=auth,
+)
+with urllib.request.urlopen(dash_req, timeout=10) as resp:
+    dash = json.loads(resp.read().decode())
+assert dash["dashboard"]["uid"] == "svoi-analytics", dash
+print("grafana_dashboard_ok")
 PY
 )

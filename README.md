@@ -60,6 +60,27 @@ In the tunnel logs, copy the printed `https://….trycloudflare.com` origin into
 
 The trycloudflare URL **changes every run**. Stop the tunnel with `make miniapp-tunnel-down`. The executor never edits the owner’s `.env`.
 
+### Analytics dashboard
+
+Grafana reads only the aggregate tables (`analytics_daily`, `analytics_daily_scenario`, `analytics_cohorts`) via the `grafana_reader` DB role. It is never exposed on a public interface — only `127.0.0.1`.
+
+Locally:
+
+```bash
+make up
+make observability-up
+```
+
+Open `http://127.0.0.1:${GRAFANA_PORT:-3000}` (admin password from `SP_GRAFANA_ADMIN_PASSWORD` in your env file). Stop with `make observability-down`.
+
+On the VPS, open an SSH tunnel and keep Grafana bound to loopback only:
+
+```bash
+ssh -L 3000:127.0.0.1:3000 <host>
+```
+
+Then open `http://127.0.0.1:3000` on your machine. Do not publish Grafana ports on the host firewall.
+
 Data lives in Docker named volumes (`postgres_data`, `valkey_data`). To reset local data:
 
 ```bash
@@ -86,6 +107,8 @@ Tests never write to the manual-testing database: they use a dedicated PostgreSQ
 | `miniapp-check` | OpenAPI drift check + mini-app lint/test/build |
 | `miniapp-tunnel` | Start Cloudflare quick tunnel to the mini-app (profile `tunnel`) |
 | `miniapp-tunnel-down` | Stop the tunnel service |
+| `observability-up` | Start Grafana (profile `observability`) after migrate; bind `127.0.0.1` only |
+| `observability-down` | Stop the Grafana service |
 | `fmt` | Ruff format |
 | `lint` | Ruff lint |
 | `typecheck` | mypy |

@@ -84,7 +84,9 @@ async def test_loop_logs_typed_failure_then_retries_with_backoff(
         await scheduler._task
     logged = capture_log_events()
     assert any(
-        item.get("event") == "analytics_job_failed" and item.get("error_kind") == "database"
+        item.get("event") == "analytics_job_failed"
+        and item.get("error_kind") == "database"
+        and item.get("level") == "warning"
         for item in logged
     )
     assert sleeps == [timedelta(minutes=5).total_seconds()]

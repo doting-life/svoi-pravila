@@ -35,7 +35,7 @@ services:
       start_period: 5s
 
   migrate:
-    profiles: ["app"]
+    profiles: ["app", "observability"]
     build:
       context: ./backend
       dockerfile: Dockerfile
@@ -49,8 +49,7 @@ services:
       SP_HTTP_HOST: "0.0.0.0"
       SP_FORWARDED_ALLOW_IPS: "127.0.0.1"
       SP_GIGACHAT_CA_BUNDLE_FILE: /app/certs/russian_trusted_root_ca.pem
-    entrypoint: ["alembic"]
-    command: ["upgrade", "head"]
+    entrypoint: ["svoi-pravila-migrate"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -139,6 +138,62 @@ services:
       - no-new-privileges:true
     stop_grace_period: 20s
 
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:13.2.3-slim@sha256:7c2b05e94eb43e2b88aa814d7a1c9421affc7f3593a951148177f29feaff6017
+    restart: unless-stopped
+    user: "472"
+    env_file:
+      - ${ENV_FILE:-.env}
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${SP_GRAFANA_ADMIN_PASSWORD}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_INSTALL_PLUGINS: ""
+      # Slim image omits core SQL datasources; preinstall only the official Postgres plugin
+      # synchronously so file provisioning can register the datasource before /api/health.
+      GF_PLUGINS_PREINSTALL: grafana-postgresql-datasource
+      GF_PLUGINS_PREINSTALL_ASYNC: "false"
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+      GF_SERVER_HTTP_ADDR: "0.0.0.0"
+      POSTGRES_DB: ${POSTGRES_DB}
+      SP_GRAFANA_DB_PASSWORD: ${SP_GRAFANA_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:3000/api/health | grep -q '\"database\": \"ok\"'",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 18
+      start_period: 60s
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 20s
+
 volumes:
   postgres_data:
   valkey_data:
+  grafana_data:

@@ -16,8 +16,5 @@ scan() {
 
 scan svoi-pravila:ci
 scan svoi-pravila-miniapp:ci
-
-# Grafana OSS (profile observability); digest must stay in sync with compose.yaml.
-GRAFANA_IMAGE="grafana/grafana:13.2.3-slim@sha256:7c2b05e94eb43e2b88aa814d7a1c9421affc7f3593a951148177f29feaff6017"
-docker pull "$GRAFANA_IMAGE"
-scan "$GRAFANA_IMAGE"
+# Built Grafana image (plugin baked in); not the upstream base alone.
+scan svoi-pravila-grafana:ci

@@ -175,3 +175,29 @@ assert dash["dashboard"]["uid"] == "svoi-analytics", dash
 print("grafana_dashboard_ok")
 PY
 )
+
+# C2 — Grafana must not receive app secrets (names only; never print values).
+forbidden_env="$(
+  docker compose -p "${COMPOSE_PROJECT_NAME:-svoi-pravila-ci}" --env-file "$ENV_FILE" \
+    exec -T grafana sh -c 'env | cut -d= -f1' | sort -u
+)"
+for name in \
+  SP_TELEGRAM_BOT_TOKEN \
+  SP_TELEGRAM_UPDATES_MODE \
+  SP_GIGACHAT_CREDENTIALS \
+  SP_GIGACHAT_SCOPE \
+  SP_DATA_KEK \
+  SP_PSEUDONYM_PEPPER \
+  SP_DATABASE_URL
+do
+  if printf '%s\n' "$forbidden_env" | grep -qx "$name"; then
+    echo "grafana env leak: ${name}" >&2
+    exit 1
+  fi
+done
+# Pattern families from the task (prefix match on names only).
+if printf '%s\n' "$forbidden_env" | grep -E '^(SP_TELEGRAM_|SP_GIGACHAT_|SP_DATA_KEK)'; then
+  echo "grafana env leak: forbidden prefix present" >&2
+  exit 1
+fi
+echo "grafana_env_names_ok"

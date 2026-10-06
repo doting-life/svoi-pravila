@@ -62,7 +62,9 @@ The trycloudflare URL **changes every run**. Stop the tunnel with `make miniapp-
 
 ### Analytics dashboard
 
-Grafana reads only the aggregate tables (`analytics_daily`, `analytics_daily_scenario`, `analytics_cohorts`) via the `grafana_reader` DB role. It is never exposed on a public interface — only `127.0.0.1`.
+Grafana reads only the aggregate tables (`analytics_daily`, `analytics_daily_scenario`, `analytics_cohorts`) via the configured Grafana DB user (`SP_GRAFANA_DB_USER`, default `grafana_reader`), a member of `svoi_analytics_read`. It is never exposed on a public interface — only `127.0.0.1`, on an internal compose network shared with Postgres.
+
+The one-shot `migrate` service needs a Postgres role with `CREATEROLE` (not superuser) so it can create the analytics group role and the Grafana LOGIN role. Full separation of migrate / app / analytics roles is planned for task 0022.
 
 Locally:
 

@@ -8,7 +8,7 @@ datasources:
     type: grafana-postgresql-datasource
     access: proxy
     url: postgres:5432
-    user: grafana_reader
+    user: $SP_GRAFANA_DB_USER
     isDefault: true
     editable: false
     jsonData:

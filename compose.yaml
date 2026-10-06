@@ -10,6 +10,9 @@ services:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql
+    networks:
+      - default
+      - observability
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -140,11 +143,12 @@ services:
 
   grafana:
     profiles: ["observability"]
-    image: grafana/grafana:13.2.3-slim@sha256:7c2b05e94eb43e2b88aa814d7a1c9421affc7f3593a951148177f29feaff6017
+    build:
+      context: ./ops/grafana
+      dockerfile: Dockerfile
+    image: svoi-pravila-grafana:local
     restart: unless-stopped
     user: "472"
-    env_file:
-      - ${ENV_FILE:-.env}
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${SP_GRAFANA_ADMIN_PASSWORD}
@@ -154,14 +158,11 @@ services:
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
       GF_NEWS_NEWS_FEED_ENABLED: "false"
       GF_SECURITY_DISABLE_GRAVATAR: "true"
-      GF_INSTALL_PLUGINS: ""
-      # Slim image omits core SQL datasources; preinstall only the official Postgres plugin
-      # synchronously so file provisioning can register the datasource before /api/health.
-      GF_PLUGINS_PREINSTALL: grafana-postgresql-datasource
-      GF_PLUGINS_PREINSTALL_ASYNC: "false"
       GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+      GF_PATHS_PLUGINS: /usr/share/grafana/plugins
       GF_SERVER_HTTP_ADDR: "0.0.0.0"
       POSTGRES_DB: ${POSTGRES_DB}
+      SP_GRAFANA_DB_USER: ${SP_GRAFANA_DB_USER:-grafana_reader}
       SP_GRAFANA_DB_PASSWORD: ${SP_GRAFANA_DB_PASSWORD}
     ports:
       - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
@@ -169,6 +170,8 @@ services:
       - grafana_data:/var/lib/grafana
       - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - observability
     depends_on:
       postgres:
         condition: service_healthy
@@ -183,7 +186,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 18
-      start_period: 60s
+      start_period: 40s
     read_only: true
     tmpfs:
       - /tmp
@@ -192,6 +195,10 @@ services:
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 20s
+
+networks:
+  observability:
+    internal: true
 
 volumes:
   postgres_data:

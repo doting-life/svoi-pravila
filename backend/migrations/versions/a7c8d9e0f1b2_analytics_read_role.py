@@ -27,21 +27,43 @@ EXCEPTION
 END $$;
 """
 
-# Roles are cluster-wide. Drop grants in this database, then drop the role when
-# nothing else (other databases / login members) still depends on it.
+# Roles are cluster-wide. Revoke members, then DROP the group role only when
+# no members remain and pg_shdepend shows no dependencies in other databases.
 _DOWNGRADE_CLEANUP = """
-DO $$ BEGIN
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'grafana_reader') THEN
-        EXECUTE 'REVOKE svoi_analytics_read FROM grafana_reader';
-    END IF;
+DO $$
+DECLARE
+    member_name text;
+    member_count integer;
+    other_db_deps integer;
+BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'svoi_analytics_read') THEN
-        EXECUTE 'DROP OWNED BY svoi_analytics_read';
+        FOR member_name IN
+            SELECT m.rolname
+            FROM pg_auth_members am
+            JOIN pg_roles g ON g.oid = am.roleid
+            JOIN pg_roles m ON m.oid = am.member
+            WHERE g.rolname = 'svoi_analytics_read'
+        LOOP
+            EXECUTE format('REVOKE svoi_analytics_read FROM %I', member_name);
+        END LOOP;
+
+        SELECT count(*) INTO member_count
+        FROM pg_auth_members am
+        JOIN pg_roles g ON g.oid = am.roleid
+        WHERE g.rolname = 'svoi_analytics_read';
+
+        -- pg_roles (not pg_authid): readable without superuser (CREATEROLE path).
+        SELECT count(*) INTO other_db_deps
+        FROM pg_shdepend sd
+        JOIN pg_roles r ON r.oid = sd.refobjid
+        WHERE r.rolname = 'svoi_analytics_read'
+          AND sd.dbid <> 0
+          AND sd.dbid <> (SELECT oid FROM pg_database WHERE datname = current_database());
+
+        IF member_count = 0 AND other_db_deps = 0 THEN
+            DROP ROLE svoi_analytics_read;
+        END IF;
     END IF;
-    BEGIN
-        DROP ROLE IF EXISTS svoi_analytics_read;
-    EXCEPTION
-        WHEN dependent_objects_still_exist THEN NULL;
-    END;
 END $$;
 """
 

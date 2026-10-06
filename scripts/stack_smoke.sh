@@ -20,7 +20,7 @@ esac
 
 export ENV_FILE="$ENV_ABS"
 
-cd "$ROOT/backend" && uv run python ../scripts/materialize_stack_smoke_env.py --env-file "$ENV_FILE"
+( cd "$ROOT/backend" && uv run python ../scripts/materialize_stack_smoke_env.py --env-file "$ENV_FILE" )
 
 csp="$(cd "$ROOT/backend" && uv run python - <<'PY'
 from pathlib import Path
@@ -35,11 +35,11 @@ PY
 export MINIAPP_CSP="$csp"
 
 cleanup() {
-  make down ENV_FILE="$ENV_FILE" || true
+  make -C "$ROOT" down ENV_FILE="$ENV_FILE" || true
 }
 trap cleanup EXIT
 
-make up ENV_FILE="$ENV_FILE"
+make -C "$ROOT" up ENV_FILE="$ENV_FILE"
 
 code="$(curl -s -o /tmp/svoi-pravila-readyz.json -w '%{http_code}' http://127.0.0.1:8000/readyz)"
 test "$code" = "200"
@@ -63,7 +63,7 @@ code="$(dd if=/dev/zero bs=1024 count=20 2>/dev/null \
     --data-binary @-)"
 test "$code" = "413"
 
-cd "$ROOT/backend" && uv run python - <<'PY'
+( cd "$ROOT/backend" && uv run python - <<'PY'
 import time
 import urllib.request
 
@@ -77,3 +77,4 @@ assert b"event:" in first or b"data:" in first, first
 assert first_at < 1.5, f"first SSE bytes arrived too late: {first_at:.3f}s"
 print(f"sse_flush_ok first_bytes_at={first_at:.3f}s")
 PY
+)

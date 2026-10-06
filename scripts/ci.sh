@@ -31,7 +31,8 @@ if [[ "$(cd "$(dirname "$ENV_FILE")" && pwd)/$(basename "$ENV_FILE")" == "$REPO_
 fi
 
 cleanup() {
-  docker compose -p "$COMPOSE_PROJECT_NAME" --env-file "$ENV_FILE" --profile app down -v >/dev/null 2>&1 || true
+  docker compose -p "$COMPOSE_PROJECT_NAME" --env-file "$ENV_FILE" \
+    --profile app --profile observability down -v >/dev/null 2>&1 || true
   docker compose -p "$COMPOSE_PROJECT_NAME" --env-file "$ENV_FILE" down -v >/dev/null 2>&1 || true
   rm -rf "$CI_TMPDIR"
 }

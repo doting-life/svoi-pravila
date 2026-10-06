@@ -29,6 +29,7 @@ svoi-pravila-healthcheck = "svoi_pravila.bootstrap:healthcheck"
 svoi-pravila-bench-llm = "svoi_pravila.benchmarks.llm:main"
 svoi-pravila-eval = "svoi_pravila.evals.cli:main"
 svoi-pravila-analytics = "svoi_pravila.cli.analytics:main"
+svoi-pravila-migrate = "svoi_pravila.cli.migrate:main"
 
 [dependency-groups]
 dev = [

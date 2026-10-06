@@ -17,6 +17,7 @@ CI_POSTGRES_PORT = "15432"
 CI_VALKEY_PORT = "16379"
 CI_API_PORT = "18000"
 CI_MINIAPP_PORT = "18080"
+CI_GRAFANA_PORT = "13000"
 
 STACK_SMOKE_OVERRIDES = (
     ("SP_ENVIRONMENT", "test"),
@@ -53,6 +54,10 @@ def materialize(*, env_file: Path, stack_smoke: bool) -> None:
     text = _set_key(text, "VALKEY_PORT", CI_VALKEY_PORT)
     text = _set_key(text, "API_PORT", CI_API_PORT)
     text = _set_key(text, "MINIAPP_PORT", CI_MINIAPP_PORT)
+    text = _set_key(text, "GRAFANA_PORT", CI_GRAFANA_PORT)
+    text = _set_key(text, "SP_GRAFANA_DB_PASSWORD", secrets.token_urlsafe(32))
+    text = _set_key(text, "SP_GRAFANA_ADMIN_PASSWORD", secrets.token_urlsafe(32))
+    text = _set_key(text, "SP_GRAFANA_DB_USER", "grafana_reader")
     text = _set_key(text, "SP_HTTP_HOST", "0.0.0.0")
     text = _set_key(text, "SP_HTTP_PORT", "8000")
     user = _get_key(text, "POSTGRES_USER") or "svoi"

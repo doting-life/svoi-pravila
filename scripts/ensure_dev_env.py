@@ -70,6 +70,9 @@ def main(env_path: Path = ENV_PATH, example_path: Path = EXAMPLE_PATH) -> None:
         "SP_TELEGRAM_RATE_LIMIT_PER_MINUTE",
         "SP_TELEGRAM_DEDUP_TTL_SECONDS",
         "SP_TELEGRAM_SHUTDOWN_GRACE_SECONDS",
+        "SP_GRAFANA_DB_PASSWORD",
+        "SP_GRAFANA_ADMIN_PASSWORD",
+        "GRAFANA_PORT",
     ):
         text = _ensure_key_line(text, example, key)
 
@@ -83,6 +86,8 @@ def main(env_path: Path = ENV_PATH, example_path: Path = EXAMPLE_PATH) -> None:
         "SP_PSEUDONYM_PEPPER",
         base64.b64encode(secrets.token_bytes(32)).decode(),
     )
+    text = _set_if_empty(text, "SP_GRAFANA_DB_PASSWORD", secrets.token_urlsafe(32))
+    text = _set_if_empty(text, "SP_GRAFANA_ADMIN_PASSWORD", secrets.token_urlsafe(32))
 
     if _updates_mode(text) == "webhook":
         for key in (

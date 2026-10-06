@@ -1,0 +1,352 @@
+{
+  "uid": "svoi-analytics",
+  "title": "Продуктовая аналитика",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "tags": ["svoi-pravila", "analytics"],
+  "editable": false,
+  "graphTooltip": 1,
+  "time": {
+    "from": "now-30d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": []
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "DAU (активные пользователи)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  day AS \"time\",\n  active_users AS \"DAU\"\nFROM analytics_daily\nWHERE $__timeFilter(day)\nORDER BY day"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Обращения",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  day AS \"time\",\n  appeals AS \"Обращения\"\nFROM analytics_daily\nWHERE $__timeFilter(day)\nORDER BY day"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Обращения на DAU",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 2,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" },
+          "mappings": [
+            { "type": "special", "options": { "match": "null", "result": { "text": "нет данных" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  day AS \"time\",\n  appeals::double precision / NULLIF(active_users, 0) AS \"Обращения / DAU\"\nFROM analytics_daily\nWHERE $__timeFilter(day)\nORDER BY day"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Новые пользователи",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 50, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  day AS \"time\",\n  new_users AS \"Новые пользователи\"\nFROM analytics_daily\nWHERE $__timeFilter(day)\nORDER BY day"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Удержание D1% по дню когорты",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "always", "spanNulls": false },
+          "mappings": [
+            { "type": "special", "options": { "match": "null", "result": { "text": "нет данных" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  cohort_day AS \"time\",\n  CASE\n    WHEN d1_retained IS NULL THEN NULL\n    ELSE 100.0 * d1_retained / NULLIF(size, 0)\n  END AS \"D1%\"\nFROM analytics_cohorts\nWHERE $__timeFilter(cohort_day)\nORDER BY cohort_day"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Удержание D7% по дню когорты",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "always", "spanNulls": false },
+          "mappings": [
+            { "type": "special", "options": { "match": "null", "result": { "text": "нет данных" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  cohort_day AS \"time\",\n  CASE\n    WHEN d7_retained IS NULL THEN NULL\n    ELSE 100.0 * d7_retained / NULLIF(size, 0)\n  END AS \"D7%\"\nFROM analytics_cohorts\nWHERE $__timeFilter(cohort_day)\nORDER BY cohort_day"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Обращения по сценарию × поверхности",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 24 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": { "mode": "normal", "group": "A" },
+            "lineWidth": 1,
+            "fillOpacity": 80,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  day AS \"time\",\n  scenario || ' / ' || surface AS metric,\n  appeals AS value\nFROM analytics_daily_scenario\nWHERE $__timeFilter(day)\nORDER BY day"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Выборы варианта (chosen) в inline по дням",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 34 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 50, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  day AS \"time\",\n  SUM(chosen) AS \"chosen\"\nFROM analytics_daily_scenario\nWHERE surface = 'inline'\n  AND $__timeFilter(day)\nGROUP BY day\nORDER BY day"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Доля ошибок генерации",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 34 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "never" },
+          "mappings": [
+            { "type": "special", "options": { "match": "null", "result": { "text": "нет данных" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  day AS \"time\",\n  generation_errors::double precision / NULLIF(generations, 0) AS \"Ошибки / генерации\"\nFROM analytics_daily\nWHERE $__timeFilter(day)\nORDER BY day"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Латентность p50 / p95 и TTFC p95 по сценарию × поверхности",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 42 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 0, "showPoints": "never", "spanNulls": false },
+          "mappings": [
+            { "type": "special", "options": { "match": "null", "result": { "text": "нет данных" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  day AS \"time\",\n  scenario || ' / ' || surface || ' p50' AS metric,\n  latency_p50_ms AS value\nFROM analytics_daily_scenario\nWHERE $__timeFilter(day)\nUNION ALL\nSELECT\n  day AS \"time\",\n  scenario || ' / ' || surface || ' p95' AS metric,\n  latency_p95_ms AS value\nFROM analytics_daily_scenario\nWHERE $__timeFilter(day)\nUNION ALL\nSELECT\n  day AS \"time\",\n  scenario || ' / ' || surface || ' TTFC p95' AS metric,\n  ttfc_p95_ms AS value\nFROM analytics_daily_scenario\nWHERE $__timeFilter(day)\nORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Платные токены по дням и сценариям",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 52 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": { "mode": "normal", "group": "A" },
+            "lineWidth": 1,
+            "fillOpacity": 80,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "svoi-analytics-pg" },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  day AS \"time\",\n  scenario AS metric,\n  SUM(billable_tokens) AS value\nFROM analytics_daily_scenario\nWHERE $__timeFilter(day)\nGROUP BY day, scenario\nORDER BY day"
+        }
+      ]
+    }
+  ]
+}

@@ -526,8 +526,7 @@ inserted AS (
 SELECT COUNT(*) FROM inserted
 """.replace("__APPEAL__", _APPEAL)
 
-_COHORT_UPSERT = (
-    """
+_COHORT_UPSERT = """
 WITH days AS (
     SELECT generate_series(
         CAST(:from_day AS date),
@@ -551,37 +550,18 @@ day_bounds AS (
             AS d7_end
     FROM days d
 ),
-day_appeals AS (
+members AS (
     SELECT DISTINCT
         db.cohort_day,
-        db.start_ts,
+        e.user_pseudonym,
         db.d1_start,
         db.d1_end,
         db.d7_start,
-        db.d7_end,
-        e.user_pseudonym
+        db.d7_end
     FROM day_bounds db
     JOIN usage_events e
       ON e.occurred_at >= db.start_ts AND e.occurred_at < db.end_ts
-    WHERE __APPEAL__
-),
-members AS (
-    SELECT
-        da.cohort_day,
-        da.user_pseudonym,
-        da.d1_start,
-        da.d1_end,
-        da.d7_start,
-        da.d7_end
-    FROM day_appeals da
-    WHERE (
-        SELECT p.occurred_at
-        FROM usage_events p
-        WHERE p.user_pseudonym = da.user_pseudonym
-          AND __APPEAL_P__
-        ORDER BY p.occurred_at
-        LIMIT 1
-    ) >= da.start_ts
+    WHERE __NEW_USER__
 ),
 per_member AS (
     SELECT
@@ -623,17 +603,11 @@ upserted AS (
 )
 SELECT COUNT(*) FROM upserted
 """.replace(
-        "__APPEAL__",
-        _appeal_sql("e"),
-    )
-    .replace(
-        "__APPEAL_P__",
-        _appeal_sql("p"),
-    )
-    .replace(
-        "__APPEAL_R__",
-        _appeal_sql("r"),
-    )
+    "__NEW_USER__",
+    _new_user_sql("e", "p", "db.start_ts"),
+).replace(
+    "__APPEAL_R__",
+    _appeal_sql("r"),
 )
 
 _PURGE_BATCH = """

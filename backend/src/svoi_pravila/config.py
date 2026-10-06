@@ -145,7 +145,7 @@ class LlmToolSettings(BaseSettings):
 
 
 class DatabaseSettings(BaseSettings):
-    """Migrate-process settings: database URL and logging only."""
+    """Alembic-only settings: database URL and logging."""
 
     model_config = _SETTINGS_CONFIG
 
@@ -157,6 +157,48 @@ class DatabaseSettings(BaseSettings):
     def database_url_must_use_asyncpg(cls, value: SecretStr) -> SecretStr:
         """Reject database URLs that are not `postgresql+asyncpg://`."""
         return _validate_database_url(value)
+
+
+class GrafanaDbPasswordMissingError(Exception):
+    """``SP_GRAFANA_DB_PASSWORD`` is unset or blank; no default password exists."""
+
+    def __init__(self) -> None:
+        super().__init__("SP_GRAFANA_DB_PASSWORD is required and must be non-empty")
+
+
+_GRAFANA_DB_USER_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
+
+
+class MigrateSettings(BaseSettings):
+    """Compose migrate one-shot: Alembic plus Grafana reader provisioning."""
+
+    model_config = _SETTINGS_CONFIG
+
+    log_level: LogLevel = LogLevel.INFO
+    database_url: SecretStr
+    grafana_db_password: SecretStr
+    grafana_db_user: str = "grafana_reader"
+
+    @field_validator("database_url")
+    @classmethod
+    def database_url_must_use_asyncpg(cls, value: SecretStr) -> SecretStr:
+        """Reject database URLs that are not `postgresql+asyncpg://`."""
+        return _validate_database_url(value)
+
+    @field_validator("grafana_db_password")
+    @classmethod
+    def grafana_db_password_must_not_be_empty(cls, value: SecretStr) -> SecretStr:
+        """Reject an empty Grafana reader password (no default)."""
+        return _require_nonempty_secret(value, "grafana_db_password")
+
+    @field_validator("grafana_db_user")
+    @classmethod
+    def grafana_db_user_must_be_identifier(cls, value: str) -> str:
+        """Reject LOGIN role names that are not safe SQL identifiers."""
+        if _GRAFANA_DB_USER_RE.fullmatch(value) is None:
+            msg = "grafana_db_user must match ^[a-z_][a-z0-9_]{0,62}$"
+            raise ValueError(msg)
+        return value
 
 
 class TestInfraSettings(BaseSettings):

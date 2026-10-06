@@ -1,6 +1,6 @@
 .PHONY: install fmt fmt-check lint typecheck imports test-unit test-integration test \
 	audit secrets migrations-check image image-scan openapi miniapp-install miniapp-api-check \
-	miniapp-check miniapp-tunnel miniapp-tunnel-down \
+	miniapp-check miniapp-tunnel miniapp-tunnel-down observability-up observability-down \
 	dev-env infra-up infra-down build up down logs ps bench-llm eval-llm analytics check \
 	toolchain-check stack-smoke ownership-guard hooks ci
 
@@ -134,6 +134,14 @@ miniapp-tunnel-down:
 	$(COMPOSE) --profile app --profile tunnel stop tunnel
 	$(COMPOSE) --profile app --profile tunnel rm -f tunnel
 
+observability-up: build
+	$(COMPOSE) --profile observability up -d --wait migrate grafana
+	@echo "Grafana: http://127.0.0.1:$$(docker compose $(COMPOSE_ENV) port grafana 3000 | sed 's/.*://') (loopback only; SSH tunnel on VPS)"
+
+observability-down:
+	$(COMPOSE) --profile observability stop grafana
+	$(COMPOSE) --profile observability rm -f grafana
+
 migrations-check:
 	$(UV) alembic upgrade head
 	$(UV) alembic check
@@ -149,7 +157,7 @@ infra-down:
 	$(COMPOSE) down
 
 build:
-	$(COMPOSE) --profile app build
+	$(COMPOSE) --profile app --profile observability build
 
 up: build
 	$(COMPOSE) --profile app up -d --wait

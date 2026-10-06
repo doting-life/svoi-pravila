@@ -95,6 +95,15 @@ def downgrade_base(*, sqlalchemy_url: str | None = None) -> None:
     _run_alembic_in_isolated_loop(lambda: command.downgrade(cfg, "base"))
 
 
+def downgrade_to(revision: str, *, sqlalchemy_url: str | None = None) -> None:
+    """Downgrade Alembic migrations to ``revision`` on a ``*_test`` database only."""
+    if sqlalchemy_url is None:
+        sqlalchemy_url = load_test_infra_settings().database_url.get_secret_value()
+    require_test_database_url(sqlalchemy_url)
+    cfg = alembic_config(sqlalchemy_url=sqlalchemy_url)
+    _run_alembic_in_isolated_loop(lambda: command.downgrade(cfg, revision))
+
+
 def replace_database_name(database_url: str, database_name: str) -> str:
     """Return ``database_url`` with the path replaced by ``/database_name``."""
     parsed = urlparse(database_url)

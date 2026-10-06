@@ -16,3 +16,5 @@ scan() {
 
 scan svoi-pravila:ci
 scan svoi-pravila-miniapp:ci
+# Built Grafana image (plugin baked in); not the upstream base alone.
+scan svoi-pravila-grafana:ci

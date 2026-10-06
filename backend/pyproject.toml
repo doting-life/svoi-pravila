@@ -103,6 +103,7 @@ select = [
 "src/svoi_pravila/domain/rule_suggestion.py" = ["PLR0913"]
 "src/svoi_pravila/domain/pair.py" = ["PLR2004"]
 "src/svoi_pravila/benchmarks/**" = ["T201"]
+"benchmarks/**" = ["T201", "TRY003", "PLR2004", "S608"]
 "src/svoi_pravila/evals/**" = ["T201"]
 "src/svoi_pravila/cli/**" = ["T201"]
 [tool.mypy]

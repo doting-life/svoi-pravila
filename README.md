@@ -4,7 +4,8 @@ AI helper for difficult conversations: a Telegram inline bot and mini-app that r
 
 ## Prerequisites
 
-- [uv](https://docs.astral.sh/uv/) (Python 3.13 managed by uv)
+- [uv](https://docs.astral.sh/uv/) at the version in `scripts/uv-version` (Python from `backend/.python-version`)
+- Node from `miniapp/.nvmrc` and pnpm from `miniapp/package.json` `packageManager` (Corepack)
 - Docker (Compose v2) for the local stack (API, one-shot migrations, PostgreSQL 18, Valkey)
 
 ## Local setup
@@ -13,8 +14,10 @@ AI helper for difficult conversations: a Telegram inline bot and mini-app that r
 cp .env.example .env
 make install
 make infra-up
-make check
+make ci
 ```
+
+`make install` syncs backend dependencies and points this clone at `.githooks` (`make hooks`). Commit runs format and lint on staged files; push runs `make ci`.
 
 `make infra-up` starts only PostgreSQL and Valkey (for gates and tests). Use the Local stack section below to run the application itself.
 
@@ -68,7 +71,10 @@ Tests never write to the manual-testing database: they use a dedicated PostgreSQ
 
 | Target | Purpose |
 |--------|---------|
-| `install` | Sync backend deps with uv (incl. dev group) and install pre-commit hooks |
+| `install` | Sync backend deps with uv and set `core.hooksPath` to `.githooks` |
+| `hooks` | Point this clone at `.githooks` (repo-local git config only) |
+| `toolchain-check` | Compare local Python, uv, Node, pnpm, Docker, and image digests with pins |
+| `ci` | Full local mirror of GitHub CI (fail-fast, one summary line per stage) |
 | `build` | Build app images (`svoi-pravila-api:local`) |
 | `up` | Build and start the full stack (profile `app`); wait until API/mini-app are healthy |
 | `down` | Stop the full stack; keep volumes |
@@ -86,8 +92,12 @@ Tests never write to the manual-testing database: they use a dedicated PostgreSQ
 | `test` | Unit + integration with coverage gates |
 | `audit` | `pip-audit` against the lockfile |
 | `secrets` | gitleaks scan of the working tree |
+| `image` | Build API and mini-app CI images |
+| `image-scan` | Trivy HIGH/CRITICAL scan of both CI images |
+| `stack-smoke` | Compose stack smoke (env file outside the repo) |
+| `ownership-guard` | Forbid task-branch edits to CTO-owned paths (`BASE=<ref>`) |
 | `migrations-check` | Alembic upgrade + check against compose DB |
 | `infra-up` / `infra-down` | Start/stop local Postgres and Valkey (tests/gates) |
-| `check` | All gates in order (fail-fast) |
+| `check` | Backend and mini-app gates in order (fail-fast) |
 
 Agent instructions and ownership: [`AGENTS.md`](AGENTS.md).

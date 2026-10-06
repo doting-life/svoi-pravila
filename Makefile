@@ -1,15 +1,13 @@
 .PHONY: install fmt fmt-check lint typecheck imports test-unit test-integration test \
-	audit secrets migrations-check image-scan openapi miniapp-install miniapp-api-check \
+	audit secrets migrations-check image image-scan openapi miniapp-install miniapp-api-check \
 	miniapp-check miniapp-tunnel miniapp-tunnel-down \
-	dev-env infra-up infra-down build up down logs ps bench-llm eval-llm check
+	dev-env infra-up infra-down build up down logs ps bench-llm eval-llm check \
+	toolchain-check stack-smoke ownership-guard hooks ci
 
 BACKEND := backend
 MINIAPP := miniapp
-GITLEAKS_IMAGE := zricethezav/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
-TRIVY_IMAGE := aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e
-
-# Exact CSP value served by miniapp/Caddyfile (stack-smoke asserts this string).
-MINIAPP_CSP := default-src 'none'; script-src 'self' https://telegram.org; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors https://web.telegram.org https://webk.telegram.org https://webz.telegram.org
+include scripts/image-pins.env
+export GITLEAKS_IMAGE TRIVY_IMAGE
 
 ENV_FILE ?= .env
 export ENV_FILE
@@ -18,12 +16,11 @@ ENV_FILE_ARG := $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE_ABS),)
 COMPOSE_ENV := $(if $(wildcard $(ENV_FILE)),--env-file $(ENV_FILE_ABS),)
 COMPOSE := docker compose $(COMPOSE_ENV)
 UV := cd $(BACKEND) && uv run $(ENV_FILE_ARG)
-# Prefer Corepack-managed pnpm (CI); fall back to PATH pnpm for local shells.
-PNPM := cd $(MINIAPP) && pnpm
+PNPM := cd $(MINIAPP) && corepack pnpm
 
 install:
 	cd $(BACKEND) && uv sync --frozen
-	cd $(BACKEND) && uv run $(ENV_FILE_ARG) pre-commit install
+	$(MAKE) hooks
 
 fmt:
 	$(UV) ruff format src tests migrations
@@ -82,17 +79,28 @@ audit:
 	$(UV) pip-audit -r /tmp/svoi-pravila-requirements.txt
 
 secrets:
-	docker run --rm -v "$(CURDIR):/repo:ro" $(GITLEAKS_IMAGE) detect --source=/repo --verbose
+	./scripts/secrets.sh
+
+image:
+	./scripts/image.sh
 
 image-scan:
-	docker build -t svoi-pravila:ci -f $(BACKEND)/Dockerfile $(BACKEND)
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock $(TRIVY_IMAGE) \
-		image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --format table \
-		svoi-pravila:ci
-	docker build -t svoi-pravila-miniapp:ci -f $(MINIAPP)/Dockerfile $(MINIAPP)
-	docker run --rm -v /var/run/docker.sock:/var/run/docker.sock $(TRIVY_IMAGE) \
-		image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --format table \
-		svoi-pravila-miniapp:ci
+	./scripts/image_scan.sh
+
+toolchain-check:
+	cd $(BACKEND) && uv run python ../scripts/toolchain_check.py
+
+stack-smoke:
+	./scripts/stack_smoke.sh
+
+ownership-guard:
+	BASE="$(BASE)" ./scripts/ownership_guard.sh
+
+hooks:
+	git config core.hooksPath .githooks
+
+ci:
+	./scripts/ci.sh
 
 openapi:
 	cd $(BACKEND) && uv run python scripts/export_openapi.py --out ../$(MINIAPP)/src/api/openapi.json

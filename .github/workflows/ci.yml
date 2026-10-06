@@ -14,89 +14,19 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  SP_ENVIRONMENT: test
-  SP_LOG_LEVEL: INFO
-  SP_HTTP_HOST: 127.0.0.1
-  SP_HTTP_PORT: 8000
-  SP_DATABASE_URL: postgresql+asyncpg://svoi:svoi_ci@127.0.0.1:5432/svoi_pravila
-  SP_VALKEY_URL: redis://127.0.0.1:6379/0
-  SP_READINESS_TIMEOUT_SECONDS: "2.0"
-  SP_FORWARDED_ALLOW_IPS: "127.0.0.1"
-  SP_DATA_KEK_ID: ci-1
-  SP_GIGACHAT_CREDENTIALS: ci-dummy-credentials
-  SP_GIGACHAT_SCOPE: PERS
-  SP_GIGACHAT_CA_BUNDLE_FILE: certs/russian_trusted_root_ca.pem
-  SP_GIGACHAT_MODEL_SOFTEN: GigaChat-2
-  SP_GIGACHAT_MODEL_HELP_SAY: GigaChat-2
-  SP_GIGACHAT_MODEL_DECODE: GigaChat-2
-  SP_GIGACHAT_TIMEOUT_SECONDS: "5"
-  SP_GIGACHAT_MAX_RETRIES: "0"
-
 jobs:
   backend:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:18.6
-        env:
-          POSTGRES_USER: svoi
-          POSTGRES_PASSWORD: svoi_ci
-          POSTGRES_DB: svoi_pravila
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U svoi -d svoi_pravila"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-      valkey:
-        image: valkey/valkey:9.1.2
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "valkey-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Generate field-encryption KEK
-        run: echo "SP_DATA_KEK=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+      - name: Toolchain
+        uses: ./.github/actions/toolchain
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          version-file: scripts/uv-version
-          enable-cache: true
-
-      - name: Sync dependencies
-        working-directory: backend
-        run: uv sync --frozen
-
-      - name: Lint
-        run: make lint
-
-      - name: Format check
-        run: make fmt-check
-
-      - name: Typecheck
-        run: make typecheck
-
-      - name: Import contracts
-        run: make imports
-
-      - name: Migrations check
-        run: make migrations-check
-
-      - name: Tests with coverage
-        run: make test
-
-      - name: Audit
-        run: make audit
+      - name: Backend
+        run: make ci JOB=backend
 
   miniapp:
     if: github.event_name != 'schedule'
@@ -105,29 +35,11 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          version-file: scripts/uv-version
-          enable-cache: true
+      - name: Toolchain
+        uses: ./.github/actions/toolchain
 
-      - name: Sync backend (OpenAPI export)
-        working-directory: backend
-        run: uv sync --frozen
-
-      - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version-file: miniapp/.nvmrc
-
-      - name: Enable pnpm
-        run: corepack enable
-
-      - name: Install mini-app dependencies
-        run: make miniapp-install
-
-      - name: Mini-app check
-        run: make miniapp-check
+      - name: Mini-app
+        run: make ci JOB=miniapp
 
   secrets:
     if: github.event_name != 'schedule'
@@ -138,8 +50,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Scan secrets
-        run: make secrets
+      - name: Toolchain
+        uses: ./.github/actions/toolchain
+
+      - name: Secrets
+        run: make ci JOB=secrets
 
   image:
     runs-on: ubuntu-latest
@@ -147,33 +62,24 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Toolchain
+        uses: ./.github/actions/toolchain
 
-      - name: Build images
-        run: make image
-
-      - name: Scan images
-        run: make image-scan
+      - name: Images
+        run: make ci JOB=image
 
   stack-smoke:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
-    env:
-      SP_ENVIRONMENT: test
-      SP_TELEGRAM_UPDATES_MODE: disabled
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          version-file: scripts/uv-version
-          enable-cache: true
+      - name: Toolchain
+        uses: ./.github/actions/toolchain
 
       - name: Stack smoke
-        run: make stack-smoke
+        run: make ci JOB=stack-smoke
 
   ownership-guard:
     if: github.event_name != 'schedule' && github.event_name == 'pull_request' && startsWith(github.head_ref, 'task/')
@@ -184,5 +90,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Forbid changes to CTO-owned paths
-        run: make ownership-guard BASE=${{ github.base_ref }}
+      - name: Toolchain
+        uses: ./.github/actions/toolchain
+
+      - name: Ownership guard
+        env:
+          BASE: ${{ github.base_ref }}
+        run: make ci JOB=ownership-guard

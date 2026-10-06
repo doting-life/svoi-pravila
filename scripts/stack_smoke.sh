@@ -4,25 +4,33 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+if [[ -z "${CI_TMPDIR:-}" ]]; then
+  CI_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/svoi-pravila-stack-smoke.XXXXXX")"
+  OWN_TMP=1
+else
+  OWN_TMP=0
+fi
+
 if [[ -z "${ENV_FILE:-}" ]]; then
-  ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/svoi-pravila-stack-smoke.XXXXXX")"
-  export ENV_FILE
+  ENV_FILE="${CI_TMPDIR}/env"
 fi
 
 ENV_ABS="$(cd "$(dirname "$ENV_FILE")" && pwd)/$(basename "$ENV_FILE")"
-REPO_ABS="$(pwd)"
 case "$ENV_ABS" in
-  "$REPO_ABS" | "$REPO_ABS"/*)
-    ENV_FILE="$(mktemp "${TMPDIR:-/tmp}/svoi-pravila-stack-smoke.XXXXXX")"
-    ENV_ABS="$(cd "$(dirname "$ENV_FILE")" && pwd)/$(basename "$ENV_FILE")"
+  "$ROOT" | "$ROOT"/*)
+    ENV_FILE="${CI_TMPDIR}/env"
+    ENV_ABS="$ENV_FILE"
     ;;
 esac
-
 export ENV_FILE="$ENV_ABS"
 
-( cd "$ROOT/backend" && uv run python ../scripts/materialize_stack_smoke_env.py --env-file "$ENV_FILE" )
+(
+  cd "$ROOT/backend"
+  uv run --locked python ../scripts/materialize_ci_env.py --env-file "$ENV_FILE" --stack-smoke
+)
 
-csp="$(cd "$ROOT/backend" && uv run python - <<'PY'
+csp="$(
+  cd "$ROOT/backend" && uv run --locked python - <<'PY'
 from pathlib import Path
 import re
 text = Path("../miniapp/Caddyfile").read_text()
@@ -34,40 +42,61 @@ PY
 )"
 export MINIAPP_CSP="$csp"
 
+env_get() {
+  local key="$1"
+  local default="$2"
+  local line
+  line="$(grep -E "^${key}=" "$ENV_FILE" | head -n1 || true)"
+  if [[ -z "$line" ]]; then
+    printf '%s' "$default"
+    return
+  fi
+  printf '%s' "${line#*=}"
+}
+
+API_PORT="$(env_get API_PORT 18000)"
+MINIAPP_PORT="$(env_get MINIAPP_PORT 18080)"
+API_BASE="http://127.0.0.1:${API_PORT}"
+MINIAPP_BASE="http://127.0.0.1:${MINIAPP_PORT}"
+
 cleanup() {
   make -C "$ROOT" down ENV_FILE="$ENV_FILE" || true
+  if [[ "$OWN_TMP" -eq 1 ]]; then
+    rm -rf "$CI_TMPDIR"
+  fi
 }
 trap cleanup EXIT
 
 make -C "$ROOT" up ENV_FILE="$ENV_FILE"
 
-code="$(curl -s -o /tmp/svoi-pravila-readyz.json -w '%{http_code}' http://127.0.0.1:8000/readyz)"
+code="$(curl -s -o "${CI_TMPDIR}/readyz.json" -w '%{http_code}' "${API_BASE}/readyz")"
 test "$code" = "200"
 
-headers="$(mktemp "${TMPDIR:-/tmp}/svoi-pravila-headers.XXXXXX")"
-code="$(curl -sD "$headers" -o /tmp/svoi-pravila-miniapp-index.html -w '%{http_code}' http://127.0.0.1:8080/)"
+headers="${CI_TMPDIR}/headers"
+code="$(curl -sD "$headers" -o "${CI_TMPDIR}/miniapp-index.html" -w '%{http_code}' "${MINIAPP_BASE}/")"
 test "$code" = "200"
 csp_got="$(awk -F': ' 'tolower($1)=="content-security-policy"{sub(/\r$/,"",$2); print $2; exit}' "$headers")"
 test "$csp_got" = "$MINIAPP_CSP"
-asset_path="$(grep -oE '/assets/[^"]+' /tmp/svoi-pravila-miniapp-index.html | head -n1)"
+asset_path="$(grep -oE '/assets/[^"]+' "${CI_TMPDIR}/miniapp-index.html" | head -n1)"
 test -n "$asset_path"
-asset_code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8080${asset_path}")"
+asset_code="$(curl -s -o /dev/null -w '%{http_code}' "${MINIAPP_BASE}${asset_path}")"
 test "$asset_code" = "200"
-health_code="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/healthz)"
+health_code="$(curl -s -o /dev/null -w '%{http_code}' "${MINIAPP_BASE}/healthz")"
 test "$health_code" = "404"
 
 code="$(dd if=/dev/zero bs=1024 count=20 2>/dev/null \
-  | curl -s -o /tmp/svoi-pravila-body-limit.json -w '%{http_code}' \
-    -X POST http://127.0.0.1:8080/api/v1/contacts \
+  | curl -s -o "${CI_TMPDIR}/body-limit.json" -w '%{http_code}' \
+    -X POST "${MINIAPP_BASE}/api/v1/contacts" \
     -H 'Content-Type: application/json' \
     --data-binary @-)"
 test "$code" = "413"
 
-( cd "$ROOT/backend" && uv run python - <<'PY'
+(
+  cd "$ROOT/backend" && uv run --locked python - <<PY
 import time
 import urllib.request
 
-url = "http://127.0.0.1:8080/api/v1/_test/sse-flush"
+url = "${MINIAPP_BASE}/api/v1/_test/sse-flush"
 started = time.monotonic()
 with urllib.request.urlopen(url, timeout=10) as resp:
     assert resp.headers.get_content_type() == "text/event-stream"

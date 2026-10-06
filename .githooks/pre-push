@@ -3,4 +3,22 @@ set -euo pipefail
 
 repo="$(git rev-parse --show-toplevel)"
 cd "$repo"
-make ci
+zero="0000000000000000000000000000000000000000"
+
+while read -r _local_ref local_sha _remote_ref _remote_sha; do
+  [[ -z "${local_sha:-}" ]] && continue
+  if [[ "$local_sha" == "$zero" ]]; then
+    continue
+  fi
+  tmp="$(mktemp -d "${TMPDIR:-/tmp}/svoi-pravila-pre-push.XXXXXX")"
+  worktree="${tmp}/wt"
+  cleanup() {
+    git -C "$repo" worktree remove --force "$worktree" >/dev/null 2>&1 || true
+    rm -rf "$tmp"
+  }
+  trap cleanup EXIT
+  git worktree add --detach "$worktree" "$local_sha"
+  make -C "$worktree" ci
+  cleanup
+  trap - EXIT
+done

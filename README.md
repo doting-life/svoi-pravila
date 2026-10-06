@@ -4,7 +4,7 @@ AI helper for difficult conversations: a Telegram inline bot and mini-app that r
 
 ## Prerequisites
 
-- [uv](https://docs.astral.sh/uv/) at the version in `scripts/uv-version` (Python from `backend/.python-version`)
+- [uv](https://docs.astral.sh/uv/) at `[tool.uv] required-version` in `backend/pyproject.toml` (Python from `backend/.python-version`)
 - Node from `miniapp/.nvmrc` and pnpm from `miniapp/package.json` `packageManager` (Corepack)
 - Docker (Compose v2) for the local stack (API, one-shot migrations, PostgreSQL 18, Valkey)
 
@@ -17,7 +17,9 @@ make infra-up
 make ci
 ```
 
-`make install` syncs backend dependencies and points this clone at `.githooks` (`make hooks`). Commit runs format and lint on staged files; push runs `make ci`.
+`make install` syncs backend dependencies and points this clone at `.githooks` (`make hooks`). Commit runs format and lint on staged files; push runs `make ci` on the exact pushed commit in a temporary worktree.
+
+`make ci` never reads or writes the repository `.env`. It writes an ephemeral env file outside the repo, uses compose project `svoi-pravila-ci` on its own ports, and removes that project (volumes included) on exit. Run one GitHub job locally with `make ci JOB=backend` (or `miniapp`, `secrets`, `image`, `stack-smoke`, `ownership-guard`).
 
 `make infra-up` starts only PostgreSQL and Valkey (for gates and tests). Use the Local stack section below to run the application itself.
 
@@ -74,7 +76,7 @@ Tests never write to the manual-testing database: they use a dedicated PostgreSQ
 | `install` | Sync backend deps with uv and set `core.hooksPath` to `.githooks` |
 | `hooks` | Point this clone at `.githooks` (repo-local git config only) |
 | `toolchain-check` | Compare local Python, uv, Node, pnpm, Docker, and image digests with pins |
-| `ci` | Full local mirror of GitHub CI (fail-fast, one summary line per stage) |
+| `ci` | Hermetic local mirror of GitHub CI (`make ci JOB=<name>` for one job). Never touches `.env`. |
 | `build` | Build app images (`svoi-pravila-api:local`) |
 | `up` | Build and start the full stack (profile `app`); wait until API/mini-app are healthy |
 | `down` | Stop the full stack; keep volumes |
@@ -98,6 +100,6 @@ Tests never write to the manual-testing database: they use a dedicated PostgreSQ
 | `ownership-guard` | Forbid task-branch edits to CTO-owned paths (`BASE=<ref>`) |
 | `migrations-check` | Alembic upgrade + check against compose DB |
 | `infra-up` / `infra-down` | Start/stop local Postgres and Valkey (tests/gates) |
-| `check` | Backend and mini-app gates in order (fail-fast) |
+| `check` | Backend and mini-app gates (no secrets scan) |
 
 Agent instructions and ownership: [`AGENTS.md`](AGENTS.md).

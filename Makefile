@@ -7,7 +7,11 @@
 BACKEND := backend
 MINIAPP := miniapp
 include scripts/image-pins.env
-export GITLEAKS_IMAGE TRIVY_IMAGE
+export GITLEAKS_IMAGE TRIVY_IMAGE ACTIONLINT_IMAGE
+CI_JOBS := backend miniapp secrets image stack-smoke ownership-guard
+export CI_JOBS
+export JOB
+export BASE
 
 ENV_FILE ?= .env
 export ENV_FILE
@@ -156,4 +160,4 @@ logs:
 ps:
 	$(COMPOSE) --profile app ps
 
-check: lint fmt-check typecheck imports migrations-check test audit secrets miniapp-check
+check: lint fmt-check typecheck imports migrations-check test audit miniapp-check

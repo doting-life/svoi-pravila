@@ -1,7 +1,7 @@
 .PHONY: install fmt fmt-check lint typecheck imports test-unit test-integration test \
 	audit secrets migrations-check image image-scan openapi miniapp-install miniapp-api-check \
 	miniapp-check miniapp-tunnel miniapp-tunnel-down \
-	dev-env infra-up infra-down build up down logs ps bench-llm eval-llm check \
+	dev-env infra-up infra-down build up down logs ps bench-llm eval-llm analytics check \
 	toolchain-check stack-smoke ownership-guard hooks ci
 
 BACKEND := backend
@@ -68,6 +68,11 @@ test:
 	$(UV) coverage report --include='*/handlers/onboarding.py' --fail-under=95
 	$(UV) coverage report --include='*/handlers/rules.py' --fail-under=95
 	$(UV) coverage report --include='*/svoi_pravila/evals/*' --fail-under=95
+	$(UV) coverage report --include='*/svoi_pravila/adapters/persistence/analytics_store.py' --fail-under=95
+	$(UV) coverage report --include='*/svoi_pravila/adapters/system/analytics_scheduler.py' --fail-under=100
+
+analytics:
+	$(COMPOSE) --profile app run --rm --entrypoint svoi-pravila-analytics api $(ARGS)
 
 bench-llm:
 	$(COMPOSE) --profile app run --rm --entrypoint svoi-pravila-bench-llm api $(BENCH_ARGS)

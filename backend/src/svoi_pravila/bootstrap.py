@@ -40,10 +40,15 @@ from svoi_pravila.adapters.channels.telegram.sleeper import AsyncioSleeper
 from svoi_pravila.adapters.consents import PackageConsentCatalog
 from svoi_pravila.adapters.llm.gigachat.adapter import GigaChatTextGenerator
 from svoi_pravila.adapters.llm.gigachat.client import close_gigachat_client, create_gigachat_client
+from svoi_pravila.adapters.persistence.analytics_store import SqlAlchemyAnalyticsStore
 from svoi_pravila.adapters.persistence.engine import create_engine, dispose_engine
 from svoi_pravila.adapters.persistence.probe import DatabaseProbe
 from svoi_pravila.adapters.persistence.uow import SqlAlchemyUnitOfWorkFactory
 from svoi_pravila.adapters.persistence.usage_sink import UnitOfWorkUsageEventSink
+from svoi_pravila.adapters.system.analytics_scheduler import (
+    AnalyticsScheduler,
+    AnalyticsSchedulerSettings,
+)
 from svoi_pravila.adapters.system.clock import SystemClock
 from svoi_pravila.adapters.system.ids import Uuid7IdGenerator
 from svoi_pravila.adapters.system.inline_result_reuse import InProcessInlineResultReuse
@@ -97,6 +102,10 @@ from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.request_my_data_export import RequestMyDataExport
 from svoi_pravila.application.use_cases.resolve_invite import ResolveInvite
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
+from svoi_pravila.application.use_cases.run_daily_analytics import (
+    RunDailyAnalytics,
+    RunDailyAnalyticsPorts,
+)
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
     SuggestRuleFromDecode,
@@ -524,6 +533,7 @@ def create_application(settings: Settings) -> FastAPI:
             io=_AppIoClients(gigachat=gigachat, valkey=valkey, engine=engine),
             routers=tuple(routers),
             extra_shutdown=_miniapp_bot_shutdown(lifecycle, shared_bot),
+            analytics_scheduler=_analytics_scheduler(settings, engine, ids, clock),
         ),
     )
 
@@ -535,6 +545,32 @@ class _AppIoClients:
     gigachat: GigaChat
     valkey: Redis
     engine: AsyncEngine
+
+
+def _analytics_scheduler(
+    settings: Settings,
+    engine: AsyncEngine,
+    ids: Uuid7IdGenerator,
+    clock: SystemClock,
+) -> AnalyticsScheduler:
+    store = SqlAlchemyAnalyticsStore(engine)
+    return AnalyticsScheduler(
+        RunDailyAnalytics(
+            RunDailyAnalyticsPorts(
+                store=store,
+                ids=ids,
+                clock=clock,
+                timezone=settings.analytics_timezone,
+            )
+        ),
+        store,
+        clock,
+        AnalyticsSchedulerSettings(
+            timezone=settings.analytics_timezone,
+            run_at=settings.analytics_run_at_time(),
+            enabled=settings.analytics_jobs_enabled,
+        ),
+    )
 
 
 def _miniapp_bot_shutdown(
@@ -557,14 +593,19 @@ def _app_lifecycle_hooks(
     io: _AppIoClients,
     routers: tuple[APIRouter, ...],
     extra_shutdown: DisposeHook | None = None,
+    analytics_scheduler: AnalyticsScheduler | None = None,
 ) -> AppLifecycleHooks:
     """Build FastAPI lifespan hooks for optional Telegram lifecycle and I/O clients."""
 
     async def on_startup() -> None:
         if lifecycle is not None:
             await lifecycle.start()
+        if analytics_scheduler is not None:
+            await analytics_scheduler.start()
 
     async def on_shutdown() -> None:
+        if analytics_scheduler is not None:
+            await analytics_scheduler.shutdown()
         if lifecycle is not None:
             await lifecycle.shutdown()
         if extra_shutdown is not None:

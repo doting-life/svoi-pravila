@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from enum import StrEnum
 
 from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
@@ -77,6 +78,49 @@ class ConflictError(ApplicationError):
 
 class UsageEventWriteFailed(ApplicationError):
     """Persisting a usage event failed; the user-visible result must not change."""
+
+
+class AnalyticsErrorKind(StrEnum):
+    """Typed ``job_runs.error_kind`` / ``AnalyticsJobFailed.kind`` (never exception text)."""
+
+    UNKNOWN_TIMEZONE = "unknown_timezone"
+    CATCH_UP_CAPPED = "catch_up_capped"
+    DATABASE = "database"
+    NETWORK = "network"
+    CANCELLED = "cancelled"
+
+
+class AnalyticsJobName(StrEnum):
+    """Names recorded in ``job_runs.job``."""
+
+    DAILY_AGGREGATES = "daily_aggregates"
+    COHORTS = "cohorts"
+    PURGE = "purge"
+
+
+class AnalyticsJobStatus(StrEnum):
+    """Lifecycle status of a ``job_runs`` row."""
+
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    SKIPPED_LOCKED = "skipped_locked"
+
+
+class AnalyticsJobFailed(ApplicationError):
+    """A daily analytics step failed with a typed kind."""
+
+    def __init__(
+        self,
+        kind: AnalyticsErrorKind,
+        *,
+        job: AnalyticsJobName | None = None,
+        target_day: date | None = None,
+    ) -> None:
+        self.kind = kind
+        self.job = job
+        self.target_day = target_day
+        super().__init__(kind.value)
 
 
 class GenerationUnavailable(ApplicationError):

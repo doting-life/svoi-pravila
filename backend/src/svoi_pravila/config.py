@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import binascii
 import re
+from datetime import time
 from enum import StrEnum
 from pathlib import Path
 from typing import Protocol, Self
@@ -20,6 +21,7 @@ _PEPPER_MIN_BYTES = 32
 _WEBHOOK_PATH_SECRET_MIN = 32
 _WEBHOOK_SECRET_TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{32,256}$")
 _URL_SAFE_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_RUN_AT_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
 class Environment(StrEnum):
@@ -226,6 +228,9 @@ class Settings(BaseSettings):
     rule_source_ttl_seconds: int = Field(default=600, ge=60, le=600)
     dialog_ttl_seconds: int = Field(default=600, ge=1, le=86_400)
     display_timezone: str = Field(default="Europe/Moscow")
+    analytics_timezone: str = Field(default="Europe/Moscow")
+    analytics_run_at: str = Field(default="03:30")
+    analytics_jobs_enabled: bool = True
     miniapp_url: str | None = None
     miniapp_initdata_max_age_seconds: int = Field(default=3600, ge=60, le=86_400)
     miniapp_requests_per_minute: int = Field(default=120, ge=1, le=600)
@@ -240,6 +245,31 @@ class Settings(BaseSettings):
             msg = "display_timezone must be a valid IANA time zone"
             raise ValueError(msg) from exc
         return value
+
+    @field_validator("analytics_timezone")
+    @classmethod
+    def analytics_timezone_must_be_iana(cls, value: str) -> str:
+        """Reject names that are not IANA time zones."""
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            msg = "analytics_timezone must be a valid IANA time zone"
+            raise ValueError(msg) from exc
+        return value
+
+    @field_validator("analytics_run_at")
+    @classmethod
+    def analytics_run_at_must_be_hh_mm(cls, value: str) -> str:
+        """Reject times that are not 24-hour HH:MM."""
+        if _RUN_AT_RE.fullmatch(value) is None:
+            msg = "analytics_run_at must be HH:MM"
+            raise ValueError(msg)
+        return value
+
+    def analytics_run_at_time(self) -> time:
+        """Return ``analytics_run_at`` as a ``datetime.time``."""
+        hour, minute = self.analytics_run_at.split(":", maxsplit=1)
+        return time(hour=int(hour), minute=int(minute))
 
     @field_validator("miniapp_url")
     @classmethod

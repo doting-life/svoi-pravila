@@ -24,6 +24,7 @@ from tests.support.init_data import InitDataOptions, build_webapp_init_data
 from tests.support.miniapp_decode import build_miniapp_decode_bundle
 from tests.unit.application.conftest import AppWorld
 
+from svoi_pravila.adapters.channels.telegram.bot_username import BotUsernameCache
 from svoi_pravila.adapters.channels.telegram.init_data import AiogramInitDataVerifier
 from svoi_pravila.api.app import AppLifecycleHooks, create_app
 from svoi_pravila.api.miniapp import MiniappDeps, MiniappRouterBindings, build_miniapp_router
@@ -32,10 +33,12 @@ from svoi_pravila.api.miniapp.errors import MiniappErrorCode, error_body
 from svoi_pravila.api.miniapp.http import map_access_error, register_miniapp_exception_handlers
 from svoi_pravila.application.errors import AccessNotGranted
 from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
+from svoi_pravila.application.use_cases.approve_rule import ApproveRule
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.confirm_age import ConfirmAge, ConfirmAgeCommand
 from svoi_pravila.application.use_cases.create_contact import CreateContact
+from svoi_pravila.application.use_cases.create_invite import CreateInvite
 from svoi_pravila.application.use_cases.delete_my_account import (
     DeleteMyAccount,
     DeleteMyAccountPorts,
@@ -45,10 +48,12 @@ from svoi_pravila.application.use_cases.ensure_user import EnsureUser, EnsureUse
 from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
+from svoi_pravila.application.use_cases.leave_pair import LeavePair
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
 from svoi_pravila.application.use_cases.list_rules import ListRules
 from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
+from svoi_pravila.application.use_cases.reject_pending_rule import RejectPendingRule
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.request_my_data_export import RequestMyDataExport
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
@@ -104,11 +109,19 @@ def _build_app(
         create_contact=CreateContact(world.uow_factory, world.catalog, world.ids, world.clock),
         rename_contact=RenameContact(world.uow_factory, world.catalog),
         set_active_contact=SetActiveContact(world.uow_factory, world.catalog),
+        create_invite=CreateInvite(
+            world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
+        ),
+        leave_pair=LeavePair(world.uow_factory, world.ids, world.clock, world.notifier),
         list_rules=ListRules(world.uow_factory, world.catalog),
         propose_rule=ProposeRule(
             world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
         ),
         archive_rule=ArchiveRule(world.uow_factory, world.catalog, world.clock),
+        approve_rule=ApproveRule(world.uow_factory, world.catalog, world.clock, world.notifier),
+        reject_pending_rule=RejectPendingRule(
+            world.uow_factory, world.catalog, world.clock, world.notifier
+        ),
         list_suggestions=ListSuggestions(world.uow_factory, world.catalog),
         accept_suggestion=AcceptSuggestion(
             world.uow_factory, world.catalog, world.ids, world.clock
@@ -136,6 +149,7 @@ def _build_app(
         prepared_results=decode_bundle.prepared_results,
         rule_sources=decode_bundle.rule_sources,
         pseudonymizer=decode_bundle.pseudonymizer,
+        bot_username=BotUsernameCache(username="test_bot"),
         enable_test_routes=True,
     )
     return create_app(
@@ -289,10 +303,16 @@ async def test_happy_path_contacts_rules_suggestions(
         assert created.status_code == 201
         assert created.headers["cache-control"] == "no-store"
         contact_id = created.json()["id"]
+        assert created.json()["paired"] is False
 
         listed = await client.get("/api/v1/contacts", headers=headers)
         assert listed.status_code == 200
         assert len(listed.json()["contacts"]) == 1
+        assert listed.json()["contacts"][0]["paired"] is False
+
+        privacy = await client.get("/api/v1/privacy/texts", headers=headers)
+        assert privacy.status_code == 200
+        assert "confirm" in privacy.json()["leave_pair"]
 
         renamed = await client.patch(
             f"/api/v1/contacts/{contact_id}",
@@ -452,8 +472,12 @@ async def test_idor_matrix_returns_404(mini_world: AppWorld) -> None:
             ("GET", f"/api/v1/contacts/{contact_id}/suggestions", None),
             ("PATCH", f"/api/v1/contacts/{contact_id}", {"label": "Hacked"}),
             ("POST", f"/api/v1/contacts/{contact_id}/activate", None),
+            ("POST", f"/api/v1/contacts/{contact_id}/invite", None),
+            ("POST", f"/api/v1/contacts/{contact_id}/leave", {"confirm": True}),
             ("POST", f"/api/v1/contacts/{contact_id}/rules", {"category": "other", "text": "x"}),
             ("POST", f"/api/v1/rules/{rule_id}/archive", None),
+            ("POST", f"/api/v1/rules/{rule_id}/approve", None),
+            ("POST", f"/api/v1/rules/{rule_id}/reject", None),
             ("POST", f"/api/v1/suggestions/{suggestion_id}/accept", None),
             ("POST", f"/api/v1/suggestions/{suggestion_id}/dismiss", None),
         ]
@@ -534,10 +558,11 @@ def test_rule_item_fallback_for_rejected_without_effective() -> None:
     )
     rejected = proposed.reject_pending(partner, now)
     assert rejected.status is RuleStatus.REJECTED
-    item = _rule_item(rejected)
+    item = _rule_item(rejected, owner)
     assert item.status == "rejected"
     assert item.text == "pending only"
     assert item.has_pending_edit is False
+    assert item.needs_my_approval is False
 
 
 @pytest.mark.unit
@@ -622,3 +647,155 @@ async def test_non_miniapp_validation_keeps_detail() -> None:
         response = await client.post("/other", json=[1, 2, 3])
     assert response.status_code == 422
     assert "detail" in response.json()
+
+
+@pytest.mark.unit
+async def test_pair_invite_shared_rule_approve_reject_leave(mini_world: AppWorld) -> None:
+    from svoi_pravila.application.use_cases.accept_invite import AcceptInvite, AcceptInviteCommand
+    from svoi_pravila.application.use_cases.resolve_invite import (
+        ResolveInvite,
+        ResolveInviteCommand,
+    )
+    from svoi_pravila.domain.enums import RelationshipKind
+    from svoi_pravila.domain.text import ContactLabel
+
+    await mini_world.ensure_granted_user(_TG_A)
+    invitee = await mini_world.ensure_granted_user(_TG_B)
+    app = _build_app(mini_world)
+    headers_a = _auth_header(_TG_A)
+    headers_b = _auth_header(_TG_B)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        created = await client.post(
+            "/api/v1/contacts",
+            headers=headers_a,
+            json={"label": "Partner", "relationship": "friend"},
+        )
+        contact_id = created.json()["id"]
+        shared_fail = await client.post(
+            f"/api/v1/contacts/{contact_id}/rules",
+            headers=headers_a,
+            json={"category": "other", "text": "shared fails", "shared": True},
+        )
+        assert shared_fail.status_code == 409
+        assert shared_fail.json()["code"] == MiniappErrorCode.CONTACT_NOT_PAIRED
+
+        leave_fail = await client.post(
+            f"/api/v1/contacts/{contact_id}/leave",
+            headers=headers_a,
+            json={"confirm": True},
+        )
+        assert leave_fail.status_code == 409
+        assert leave_fail.json()["code"] == MiniappErrorCode.CONTACT_NOT_PAIRED
+
+        invite = await client.post(
+            f"/api/v1/contacts/{contact_id}/invite",
+            headers=headers_a,
+        )
+        assert invite.status_code == 201
+        link = invite.json()["link"]
+        assert link.startswith("https://t.me/test_bot?start=inv_")
+        assert "expires_at" in invite.json()
+
+        again = await client.post(
+            f"/api/v1/contacts/{contact_id}/invite",
+            headers=headers_a,
+        )
+        assert again.status_code == 201
+        raw_token = again.json()["link"].rsplit("inv_", 1)[1]
+
+        resolved = await ResolveInvite(
+            mini_world.uow_factory, mini_world.catalog, mini_world.clock
+        ).execute(ResolveInviteCommand(invitee.id, raw_token))
+        await AcceptInvite(
+            mini_world.uow_factory,
+            mini_world.catalog,
+            mini_world.ids,
+            mini_world.clock,
+            mini_world.notifier,
+        ).execute(
+            AcceptInviteCommand(
+                invitee.id,
+                resolved.invite_id,
+                ContactLabel("Inviter"),
+                RelationshipKind.FRIEND,
+            )
+        )
+        assert mini_world.notifier.invite_accepted_calls
+
+        contacts_a = await client.get("/api/v1/contacts", headers=headers_a)
+        assert contacts_a.json()["contacts"][0]["paired"] is True
+
+        linked = await client.post(
+            f"/api/v1/contacts/{contact_id}/invite",
+            headers=headers_a,
+        )
+        assert linked.status_code == 409
+        assert linked.json()["code"] == MiniappErrorCode.CONTACT_ALREADY_LINKED
+
+        shared = await client.post(
+            f"/api/v1/contacts/{contact_id}/rules",
+            headers=headers_a,
+            json={"category": "other", "text": "shared pending", "shared": True},
+        )
+        assert shared.status_code == 201
+        assert shared.json()["shared"] is True
+        assert shared.json()["status"] == "proposed"
+        assert shared.json()["needs_my_approval"] is False
+        rule_id = shared.json()["id"]
+        assert mini_world.notifier.shared_rule_proposed_calls
+
+        contacts_b = await client.get("/api/v1/contacts", headers=headers_b)
+        b_contact = contacts_b.json()["contacts"][0]["id"]
+        rules_b = await client.get(f"/api/v1/contacts/{b_contact}/rules", headers=headers_b)
+        pending = next(r for r in rules_b.json()["rules"] if r["id"] == rule_id)
+        assert pending["needs_my_approval"] is True
+
+        approved = await client.post(f"/api/v1/rules/{rule_id}/approve", headers=headers_b)
+        assert approved.status_code == 200
+        assert approved.json()["status"] == "active"
+        assert mini_world.notifier.shared_rule_decided_calls
+
+        shared2 = await client.post(
+            f"/api/v1/contacts/{contact_id}/rules",
+            headers=headers_a,
+            json={"category": "other", "text": "to reject", "shared": True},
+        )
+        reject_id = shared2.json()["id"]
+        rejected = await client.post(f"/api/v1/rules/{reject_id}/reject", headers=headers_b)
+        assert rejected.status_code == 200
+
+        self_approve = await client.post(f"/api/v1/rules/{reject_id}/approve", headers=headers_a)
+        assert self_approve.status_code in {404, 409}
+
+        mini_world.notifier.partner_left_calls.clear()
+        left = await client.post(
+            f"/api/v1/contacts/{contact_id}/leave",
+            headers=headers_a,
+            json={"confirm": True},
+        )
+        assert left.status_code == 204
+        assert mini_world.notifier.partner_left_calls
+        after = await client.get("/api/v1/contacts", headers=headers_a)
+        assert after.json()["contacts"][0]["paired"] is False
+
+
+@pytest.mark.unit
+def test_needs_my_approval_false_when_pending_missing() -> None:
+    from types import SimpleNamespace
+    from typing import cast
+    from uuid import UUID
+
+    from svoi_pravila.api.miniapp.router import _needs_my_approval
+    from svoi_pravila.domain.enums import RuleStatus
+    from svoi_pravila.domain.ids import PairId, UserId
+    from svoi_pravila.domain.rules import PairScope, Rule
+
+    actor = UserId(UUID(int=1))
+    rule = SimpleNamespace(
+        scope=PairScope(pair_id=PairId(UUID(int=2))),
+        status=RuleStatus.PROPOSED,
+        pending_revision=None,
+        approvers=frozenset({actor}),
+    )
+    assert _needs_my_approval(cast(Rule, rule), actor) is False

@@ -22,6 +22,8 @@ export type TelegramAdapter = {
     expand: () => void;
     close: () => void;
     showConfirm: (message: string) => Promise<boolean>;
+    openTelegramLink: (url: string) => void;
+    copyText: (text: string) => Promise<boolean>;
     hapticNotification: (type: HapticNotificationType) => void;
     switchInlineQuery: (query: string, chooseChatTypes: readonly InlineQueryChatType[]) => void;
     onColorSchemeChanged: (callback: (scheme: ColorScheme) => void) => () => void;
@@ -138,6 +140,22 @@ export function createTelegramAdapter(): TelegramAdapter {
                     resolve(confirmed);
                 });
             }),
+        openTelegramLink: (url: string) => {
+            const current = readWebApp();
+            if (current !== undefined && typeof current.openTelegramLink === "function") {
+                current.openTelegramLink(url);
+                return;
+            }
+            window.open(url, "_blank", "noopener,noreferrer");
+        },
+        copyText: async (text: string) => {
+            try {
+                await navigator.clipboard.writeText(text);
+                return true;
+            } catch {
+                return false;
+            }
+        },
         hapticNotification: (type: HapticNotificationType) => {
             readWebApp()?.HapticFeedback?.notificationOccurred(type);
         },

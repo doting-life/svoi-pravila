@@ -22,6 +22,7 @@ const contact = {
     label: "Аня",
     relationship: "partner",
     pair_id: null,
+    paired: false,
     created_at: "2026-10-01T12:00:00.000Z",
 };
 
@@ -31,6 +32,7 @@ const rule = {
     status: "active",
     text: "не повышать голос",
     shared: false,
+    needs_my_approval: false,
     created_at: "2026-10-03T12:00:00.000Z",
     effective_since: "2026-10-03T12:00:00.000Z",
     has_pending_edit: true,
@@ -985,6 +987,207 @@ describe("App", () => {
         fireEvent.click(screen.getByRole("button", { name: ru.decodeSuggestionEdit }));
         expect(await screen.findByRole("heading", { name: ru.addRuleTitle })).toBeInTheDocument();
         expect(screen.getByRole("textbox")).toHaveValue("извиняться спокойно");
+    });
+
+    it("invites unpaired contact and shares/copies the link", async () => {
+        const adapter = fakeAdapter();
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [rule] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+            {
+                method: "POST",
+                path: "/api/v1/contacts/c1/invite",
+                status: 201,
+                body: {
+                    link: "https://t.me/test_bot?start=inv_token",
+                    expires_at: "2026-10-08T12:00:00.000Z",
+                },
+            },
+        ]);
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.contactInvite }));
+        expect(
+            await screen.findByText("https://t.me/test_bot?start=inv_token"),
+        ).toBeInTheDocument();
+        expect(screen.queryByText(ru.contactPairedBadge)).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.contactInviteShare }));
+        expect(adapter.openTelegramLink).toHaveBeenCalledWith(
+            expect.stringContaining("https://t.me/share/url?url="),
+        );
+        fireEvent.click(screen.getByRole("button", { name: ru.contactInviteCopy }));
+        await waitFor(() => {
+            expect(adapter.copyText).toHaveBeenCalledWith("https://t.me/test_bot?start=inv_token");
+        });
+        expect(await screen.findByText(ru.contactInviteCopied)).toBeInTheDocument();
+    });
+
+    it("shows paired sections, approve/reject, scope switch, and leave confirm", async () => {
+        const pairedContact = {
+            ...contact,
+            paired: true,
+            pair_id: "p1",
+        };
+        const personal = { ...rule, id: "r-personal", shared: false };
+        const pendingMine = {
+            ...rule,
+            id: "r-mine",
+            text: "моё на согласовании",
+            shared: true,
+            status: "proposed",
+            needs_my_approval: false,
+            has_pending_edit: false,
+            effective_since: null,
+        };
+        const pendingTheirs = {
+            ...rule,
+            id: "r-theirs",
+            text: "чужое на согласовании",
+            shared: true,
+            status: "proposed",
+            needs_my_approval: true,
+            has_pending_edit: false,
+            effective_since: null,
+        };
+        const adapter = fakeAdapter({
+            showConfirm: vi.fn(() => Promise.resolve(true)),
+        });
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [pairedContact] } },
+            {
+                path: "/api/v1/contacts/c1/rules",
+                body: { rules: [personal, pendingMine, pendingTheirs] },
+            },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+            {
+                method: "POST",
+                path: "/api/v1/rules/r-theirs/approve",
+                body: { ...pendingTheirs, status: "active", needs_my_approval: false },
+            },
+            {
+                method: "POST",
+                path: "/api/v1/rules/r-theirs/reject",
+                body: { ...pendingTheirs, status: "rejected", needs_my_approval: false },
+            },
+            {
+                method: "POST",
+                path: "/api/v1/contacts/c1/leave",
+                status: 204,
+            },
+            {
+                method: "POST",
+                path: "/api/v1/contacts/c1/rules",
+                status: 201,
+                body: {
+                    ...rule,
+                    id: "r-new",
+                    text: "общее новое",
+                    shared: true,
+                    status: "proposed",
+                },
+            },
+        ]);
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
+        expect(await screen.findByText(ru.contactPairedBadge)).toBeInTheDocument();
+        expect(screen.getByText(ru.rulesPersonalTitle)).toBeInTheDocument();
+        expect(screen.getByText(ru.rulesSharedTitle)).toBeInTheDocument();
+        expect(screen.getByText("моё на согласовании")).toBeInTheDocument();
+        expect(screen.getByText("чужое на согласовании")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.ruleApprove }));
+        await waitFor(() => {
+            expect(
+                vi.mocked(fetchImpl).mock.calls.some((call) => {
+                    const request = call[0];
+                    const url = request instanceof Request ? request.url : "";
+                    return url.includes("/approve");
+                }),
+            ).toBe(true);
+        });
+        fireEvent.click(await screen.findByRole("button", { name: ru.ruleReject }));
+        await waitFor(() => {
+            expect(
+                vi.mocked(fetchImpl).mock.calls.some((call) => {
+                    const request = call[0];
+                    const url = request instanceof Request ? request.url : "";
+                    return url.includes("/reject");
+                }),
+            ).toBe(true);
+        });
+
+        fireEvent.click(await screen.findByRole("button", { name: ru.contactAddRule }));
+        expect(await screen.findByText(ru.addRuleScope)).toBeInTheDocument();
+        fireEvent.click(screen.getByLabelText(ru.addRuleScopeShared));
+        fireEvent.change(screen.getByRole("textbox"), { target: { value: "общее новое" } });
+        fireEvent.click(screen.getByRole("button", { name: ru.addRuleSubmit }));
+        await waitFor(() => {
+            expect(
+                vi.mocked(fetchImpl).mock.calls.some((call) => {
+                    const request = call[0];
+                    if (!(request instanceof Request) || !request.url.includes("/rules")) {
+                        return false;
+                    }
+                    return request.method === "POST";
+                }),
+            ).toBe(true);
+        });
+
+        await waitFor(() => {
+            expect(screen.getByRole("button", { name: ru.contactLeavePair })).toBeEnabled();
+        });
+        fireEvent.click(screen.getByRole("button", { name: ru.contactLeavePair }));
+        await waitFor(() => {
+            expect(adapter.showConfirm).toHaveBeenCalledWith("TEST_LEAVE_PAIR_CONFIRM");
+        });
+        await waitFor(() => {
+            expect(screen.queryByText(ru.contactPairedBadge)).not.toBeInTheDocument();
+        });
+    });
+
+    it("does not leave when confirm is declined", async () => {
+        const pairedContact = { ...contact, paired: true, pair_id: "p1" };
+        const adapter = fakeAdapter({
+            showConfirm: vi.fn(() => Promise.resolve(false)),
+        });
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [pairedContact] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+        ]);
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
+        await waitFor(() => {
+            expect(screen.getByRole("button", { name: ru.contactLeavePair })).toBeEnabled();
+        });
+        fireEvent.click(screen.getByRole("button", { name: ru.contactLeavePair }));
+        await waitFor(() => {
+            expect(adapter.showConfirm).toHaveBeenCalled();
+        });
+        expect(screen.getByText(ru.contactPairedBadge)).toBeInTheDocument();
+        expect(
+            vi.mocked(fetchImpl).mock.calls.every((call) => {
+                const request = call[0];
+                const url = request instanceof Request ? request.url : "";
+                return !url.includes("/leave");
+            }),
+        ).toBe(true);
+    });
+
+    it("hides scope switch when contact is unpaired", async () => {
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.contactAddRule }));
+        expect(screen.queryByText(ru.addRuleScope)).not.toBeInTheDocument();
     });
 });
 

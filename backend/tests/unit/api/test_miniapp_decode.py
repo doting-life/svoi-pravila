@@ -31,6 +31,7 @@ from tests.support.init_data import InitDataOptions, build_webapp_init_data
 from tests.support.miniapp_decode import MiniappDecodeBundle, build_miniapp_decode_bundle
 from tests.unit.application.conftest import AppWorld
 
+from svoi_pravila.adapters.channels.telegram.bot_username import BotUsernameCache
 from svoi_pravila.adapters.channels.telegram.init_data import AiogramInitDataVerifier
 from svoi_pravila.adapters.channels.telegram.localization import render_crisis_message
 from svoi_pravila.api.app import AppLifecycleHooks, create_app
@@ -74,9 +75,11 @@ from svoi_pravila.application.support_resources import (
     load_support_resources,
 )
 from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
+from svoi_pravila.application.use_cases.approve_rule import ApproveRule
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.create_contact import CreateContact, CreateContactCommand
+from svoi_pravila.application.use_cases.create_invite import CreateInvite
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
 from svoi_pravila.application.use_cases.delete_my_account import (
     DeleteMyAccount,
@@ -86,10 +89,12 @@ from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggest
 from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
+from svoi_pravila.application.use_cases.leave_pair import LeavePair
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
 from svoi_pravila.application.use_cases.list_rules import ListRules
 from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
+from svoi_pravila.application.use_cases.reject_pending_rule import RejectPendingRule
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.request_my_data_export import RequestMyDataExport
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
@@ -215,11 +220,19 @@ def _bindings(
         create_contact=CreateContact(world.uow_factory, world.catalog, world.ids, world.clock),
         rename_contact=RenameContact(world.uow_factory, world.catalog),
         set_active_contact=SetActiveContact(world.uow_factory, world.catalog),
+        create_invite=CreateInvite(
+            world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
+        ),
+        leave_pair=LeavePair(world.uow_factory, world.ids, world.clock, world.notifier),
         list_rules=ListRules(world.uow_factory, world.catalog),
         propose_rule=ProposeRule(
             world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
         ),
         archive_rule=ArchiveRule(world.uow_factory, world.catalog, world.clock),
+        approve_rule=ApproveRule(world.uow_factory, world.catalog, world.clock, world.notifier),
+        reject_pending_rule=RejectPendingRule(
+            world.uow_factory, world.catalog, world.clock, world.notifier
+        ),
         list_suggestions=ListSuggestions(world.uow_factory, world.catalog),
         accept_suggestion=AcceptSuggestion(
             world.uow_factory, world.catalog, world.ids, world.clock
@@ -247,6 +260,7 @@ def _bindings(
         prepared_results=bundle.prepared_results,
         rule_sources=bundle.rule_sources,
         pseudonymizer=bundle.pseudonymizer,
+        bot_username=BotUsernameCache(username="test_bot"),
         enable_test_routes=enable_test_routes,
     )
 
@@ -494,6 +508,41 @@ async def test_decode_client_cancel_releases_without_completion(world: AppWorld)
 
 
 @pytest.mark.unit
+async def test_decode_sse_cancelled_error_propagates(world: AppWorld) -> None:
+    """CancelledError must not be mapped to an SSE error frame."""
+    from svoi_pravila.api.miniapp.decode_sse import DecodeStreamPorts, iter_decode_sse
+    from svoi_pravila.domain.ids import TelegramUserId
+
+    class _CancelOnExecute:
+        def execute(self, command: object) -> AsyncGenerator[object]:
+            raise asyncio.CancelledError
+
+    user = await world.ensure_granted_user(_TG)
+    ports = DecodeStreamPorts(
+        decode_incoming=_CancelOnExecute(),  # type: ignore[arg-type]
+        prepared_results=FakePreparedResults(),
+        rule_sources=FakeRuleSources(),
+        pseudonymizer=FakePseudonymizer(),
+    )
+    agen = iter_decode_sse(
+        ports,
+        actor=user,
+        telegram_user_id=TelegramUserId(_TG),
+        text="cancel probe",
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await agen.__anext__()
+
+
+@pytest.mark.unit
+def test_sse_error_for_rejects_unmapped() -> None:
+    from svoi_pravila.api.miniapp.decode_sse import _sse_error_for
+
+    with pytest.raises(TypeError, match="unmapped"):
+        _sse_error_for(RuntimeError("x"))
+
+
+@pytest.mark.unit
 async def test_decode_privacy_canary_absent_from_logs(
     world: AppWorld,
     capture_log_events: Callable[[], list[dict[str, Any]]],
@@ -565,6 +614,29 @@ async def test_suggest_from_decode_ok_and_unavailable(world: AppWorld) -> None:
             json={"token": "missing-token"},
         )
         assert missing.json()["outcome"] == "unavailable"
+
+
+@pytest.mark.unit
+async def test_suggest_from_decode_crisis_returns_support_copy(world: AppWorld) -> None:
+    contact_id = await _activate_contact(world)
+    sources = FakeRuleSources()
+    bundle = build_miniapp_decode_bundle(world, rule_sources=sources)
+    token = await sources.store(
+        FakePseudonymizer().pseudonymize("rule_source", str(_TG)),
+        RuleSourcePayload(contact_id=contact_id, incoming_text="хочу покончить с собой"),
+    )
+    app = _app(world, bundle)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/suggestions/from-decode",
+            headers=_auth(),
+            json={"token": token},
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["outcome"] == "crisis"
+    assert body["lead"] == load_crisis_lead()
+    assert body["resources"] == list(load_support_resources())
 
 
 @pytest.mark.unit

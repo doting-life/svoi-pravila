@@ -41,6 +41,7 @@ interface TelegramWebApp {
     expand: () => void;
     close: () => void;
     showConfirm?: (message: string, callback?: (confirmed: boolean) => void) => void;
+    openTelegramLink?: (url: string) => void;
     switchInlineQuery?: (query: string, chooseChatTypes?: TelegramInlineQueryChatType[]) => void;
     onEvent?: (eventType: string, callback: () => void) => void;
     offEvent?: (eventType: string, callback: () => void) => void;

@@ -55,6 +55,7 @@ class PrivacyTextsResponse(BaseModel):
     export: PrivacyExportTextsResponse
     revoke: PrivacyActionTextsResponse
     delete: PrivacyActionTextsResponse
+    leave_pair: PrivacyActionTextsResponse
 
 
 class ContactItem(BaseModel):
@@ -64,6 +65,7 @@ class ContactItem(BaseModel):
     label: str
     relationship: Literal["partner", "family", "friend", "work", "other"]
     pair_id: str | None = None
+    paired: bool
     created_at: datetime
 
 
@@ -94,6 +96,7 @@ class RuleItem(BaseModel):
     status: Literal["proposed", "active", "rejected", "archived"]
     text: str
     shared: bool
+    needs_my_approval: bool = False
     created_at: datetime
     effective_since: datetime | None = None
     has_pending_edit: bool = False
@@ -110,6 +113,14 @@ class CreateRuleRequest(BaseModel):
 
     category: Literal["taboo_topic", "how_to_ask", "apology", "conflict_protocol", "other"]
     text: str = Field(min_length=1, max_length=280)
+    shared: bool = False
+
+
+class InviteResponse(BaseModel):
+    """POST /contacts/{id}/invite — deep-link returned once."""
+
+    link: str = Field(min_length=1)
+    expires_at: datetime
 
 
 class SuggestionItem(BaseModel):

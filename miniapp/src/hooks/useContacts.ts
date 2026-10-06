@@ -8,6 +8,7 @@ import { useAsyncResource, type ResourceState } from "./useAsyncResource";
 
 export type Contact = components["schemas"]["ContactItem"];
 export type Relationship = components["schemas"]["CreateContactRequest"]["relationship"];
+export type InviteResult = components["schemas"]["InviteResponse"];
 
 export function useContacts(): ResourceState<readonly Contact[]> & {
     refetch: () => void;
@@ -20,6 +21,8 @@ export function useContacts(): ResourceState<readonly Contact[]> & {
         label: string,
     ) => Promise<{ data?: Contact; error?: ApiError }>;
     activateContact: (contactId: string) => Promise<{ error?: ApiError }>;
+    inviteContact: (contactId: string) => Promise<{ data?: InviteResult; error?: ApiError }>;
+    leavePair: (contactId: string) => Promise<{ error?: ApiError }>;
 } {
     const client = useApiClient();
     const loader = useCallback(async () => {
@@ -73,5 +76,38 @@ export function useContacts(): ResourceState<readonly Contact[]> & {
         [client, refetch],
     );
 
-    return { ...resource, refetch, createContact, renameContact, activateContact };
+    const inviteContact = useCallback(
+        async (contactId: string) => {
+            const result = await client.POST("/api/v1/contacts/{contact_id}/invite", {
+                params: { path: { contact_id: contactId } },
+            });
+            return unwrapApiResult(result);
+        },
+        [client],
+    );
+
+    const leavePair = useCallback(
+        async (contactId: string) => {
+            const result = await client.POST("/api/v1/contacts/{contact_id}/leave", {
+                params: { path: { contact_id: contactId } },
+                body: { confirm: true },
+            });
+            const unwrapped = unwrapEmptyResult(result);
+            if (unwrapped.error === undefined) {
+                refetch();
+            }
+            return unwrapped;
+        },
+        [client, refetch],
+    );
+
+    return {
+        ...resource,
+        refetch,
+        createContact,
+        renameContact,
+        activateContact,
+        inviteContact,
+        leavePair,
+    };
 }

@@ -303,6 +303,7 @@ def load_ru_strings() -> TelegramStrings:
     values["rights_export_caption"] = privacy.export.description
     values["rights_revoke_explain"] = privacy.revoke.confirm
     values["rights_delete_explain"] = privacy.delete.description
+    values["contacts_leave_confirm"] = privacy.leave_pair.confirm
     return TelegramStrings(**values)
 
 

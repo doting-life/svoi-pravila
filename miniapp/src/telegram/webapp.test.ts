@@ -192,6 +192,53 @@ describe("createTelegramAdapter", () => {
         expect(switchInlineQuery).toHaveBeenCalledWith("token", ["users", "groups", "channels"]);
     });
 
+    it("forwards openTelegramLink and copyText", async () => {
+        const openTelegramLink = vi.fn();
+        Object.defineProperty(navigator, "clipboard", {
+            configurable: true,
+            value: { writeText: vi.fn(() => Promise.resolve()) },
+        });
+        Object.defineProperty(window, "Telegram", {
+            configurable: true,
+            value: {
+                WebApp: {
+                    initData: "query_id=1",
+                    colorScheme: "light",
+                    themeParams: {},
+                    openTelegramLink,
+                    ready: vi.fn(),
+                    expand: vi.fn(),
+                    close: vi.fn(),
+                    showConfirm: vi.fn(),
+                    onEvent: vi.fn(),
+                    offEvent: vi.fn(),
+                    HapticFeedback: { notificationOccurred: vi.fn() },
+                },
+            },
+        });
+        const adapter = createTelegramAdapter();
+        adapter.openTelegramLink("https://t.me/share/url?url=x");
+        expect(openTelegramLink).toHaveBeenCalledWith("https://t.me/share/url?url=x");
+        await expect(adapter.copyText("hello")).resolves.toBe(true);
+    });
+
+    it("falls back when openTelegramLink and clipboard are unavailable", async () => {
+        const open = vi.spyOn(window, "open").mockImplementation(() => null);
+        Object.defineProperty(window, "Telegram", {
+            configurable: true,
+            value: undefined,
+        });
+        Object.defineProperty(navigator, "clipboard", {
+            configurable: true,
+            value: undefined,
+        });
+        const adapter = createTelegramAdapter();
+        adapter.openTelegramLink("https://t.me/share/url?url=x");
+        expect(open).toHaveBeenCalled();
+        await expect(adapter.copyText("hello")).resolves.toBe(false);
+        open.mockRestore();
+    });
+
     it("no-ops switchInlineQuery when WebApp is missing the method", () => {
         Object.defineProperty(window, "Telegram", {
             configurable: true,

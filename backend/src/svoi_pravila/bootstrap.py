@@ -146,6 +146,8 @@ class _MiniappWire:
     inline_reuse: InlineResultReuse
     decode: _DecodeWire
     pair_notifier: PairNotifier
+    bot_username: BotUsernameCache
+    invite_tokens: SecretsInviteTokenGenerator
 
 
 def _build_miniapp_mount(
@@ -183,6 +185,14 @@ def _build_miniapp_mount(
             create_contact=CreateContact(ports.uow_factory, ports.catalog, ports.ids, ports.clock),
             rename_contact=RenameContact(ports.uow_factory, ports.catalog),
             set_active_contact=SetActiveContact(ports.uow_factory, ports.catalog),
+            create_invite=CreateInvite(
+                ports.uow_factory,
+                ports.catalog,
+                ports.ids,
+                wire.invite_tokens,
+                ports.clock,
+            ),
+            leave_pair=LeavePair(ports.uow_factory, ports.ids, ports.clock, wire.pair_notifier),
             list_rules=ListRules(ports.uow_factory, ports.catalog),
             propose_rule=ProposeRule(
                 ports.uow_factory,
@@ -192,6 +202,12 @@ def _build_miniapp_mount(
                 wire.pair_notifier,
             ),
             archive_rule=ArchiveRule(ports.uow_factory, ports.catalog, ports.clock),
+            approve_rule=ApproveRule(
+                ports.uow_factory, ports.catalog, ports.clock, wire.pair_notifier
+            ),
+            reject_pending_rule=RejectPendingRule(
+                ports.uow_factory, ports.catalog, ports.clock, wire.pair_notifier
+            ),
             list_suggestions=ListSuggestions(ports.uow_factory, ports.catalog),
             accept_suggestion=AcceptSuggestion(
                 ports.uow_factory, ports.catalog, ports.ids, ports.clock
@@ -230,6 +246,7 @@ def _build_miniapp_mount(
             prepared_results=wire.decode.prepared_results,
             rule_sources=wire.decode.rule_sources,
             pseudonymizer=ports.pseudonymizer,
+            bot_username=wire.bot_username,
             enable_test_routes=settings.environment is Environment.TEST,
         )
     )
@@ -363,6 +380,8 @@ def create_application(settings: Settings) -> FastAPI:
                     inline_reuse=inline_reuse,
                     decode=decode_wire,
                     pair_notifier=pair_notifier,
+                    bot_username=bot_username,
+                    invite_tokens=invite_tokens,
                 ),
             )
         )

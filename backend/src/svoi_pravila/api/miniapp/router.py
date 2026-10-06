@@ -28,6 +28,7 @@ from svoi_pravila.api.miniapp.schemas import (
     DecodeRequest,
     DismissSuggestionResponse,
     ExportDeliveryResponse,
+    InviteResponse,
     MeResponse,
     PrivacyTextsResponse,
     RenameContactRequest,
@@ -39,6 +40,7 @@ from svoi_pravila.api.miniapp.schemas import (
     SuggestionListResponse,
 )
 from svoi_pravila.application.errors import NotFound
+from svoi_pravila.application.ports.bot_username import BotUsername
 from svoi_pravila.application.ports.prepared_results import PreparedResults
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.rate_limiter import RateLimiter
@@ -49,11 +51,13 @@ from svoi_pravila.application.use_cases.accept_suggestion import (
     AcceptSuggestion,
     AcceptSuggestionCommand,
 )
+from svoi_pravila.application.use_cases.approve_rule import ApproveRule, ApproveRuleCommand
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule, ArchiveRuleCommand
 from svoi_pravila.application.use_cases.create_contact import (
     CreateContact,
     CreateContactCommand,
 )
+from svoi_pravila.application.use_cases.create_invite import CreateInvite, CreateInviteCommand
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming
 from svoi_pravila.application.use_cases.delete_my_account import (
     DeleteMyAccount,
@@ -64,6 +68,7 @@ from svoi_pravila.application.use_cases.dismiss_suggestion import (
     DismissSuggestionCommand,
 )
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStepQuery
+from svoi_pravila.application.use_cases.leave_pair import LeavePair, LeavePairCommand
 from svoi_pravila.application.use_cases.list_contacts import ListContacts, ListContactsCommand
 from svoi_pravila.application.use_cases.list_rules import ListRules, ListRulesCommand
 from svoi_pravila.application.use_cases.list_suggestions import (
@@ -71,6 +76,10 @@ from svoi_pravila.application.use_cases.list_suggestions import (
     ListSuggestionsCommand,
 )
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule, ProposeRuleCommand
+from svoi_pravila.application.use_cases.reject_pending_rule import (
+    RejectPendingRule,
+    RejectPendingRuleCommand,
+)
 from svoi_pravila.application.use_cases.rename_contact import (
     RenameContact,
     RenameContactCommand,
@@ -93,8 +102,8 @@ from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
     SuggestRuleFromDecodeOutcome,
 )
 from svoi_pravila.domain.contact import MAX_CONTACTS_PER_USER, Contact
-from svoi_pravila.domain.enums import RelationshipKind, RuleCategory, UsageSurface
-from svoi_pravila.domain.ids import ContactId, RuleId, RuleSuggestionId
+from svoi_pravila.domain.enums import RelationshipKind, RuleCategory, RuleStatus, UsageSurface
+from svoi_pravila.domain.ids import ContactId, RuleId, RuleSuggestionId, UserId
 from svoi_pravila.domain.rules import MAX_OPEN_RULES_PER_SCOPE, PairScope, Rule
 from svoi_pravila.domain.text import ContactLabel, RuleText
 from svoi_pravila.domain.user import User
@@ -129,9 +138,13 @@ class MiniappRouterBindings:
     create_contact: CreateContact
     rename_contact: RenameContact
     set_active_contact: SetActiveContact
+    create_invite: CreateInvite
+    leave_pair: LeavePair
     list_rules: ListRules
     propose_rule: ProposeRule
     archive_rule: ArchiveRule
+    approve_rule: ApproveRule
+    reject_pending_rule: RejectPendingRule
     list_suggestions: ListSuggestions
     accept_suggestion: AcceptSuggestion
     dismiss_suggestion: DismissSuggestion
@@ -145,6 +158,7 @@ class MiniappRouterBindings:
     prepared_results: PreparedResults
     rule_sources: RuleSources
     pseudonymizer: Pseudonymizer
+    bot_username: BotUsername
     enable_test_routes: bool = False
 
 
@@ -155,12 +169,22 @@ def _contact_item(contact: Contact) -> ContactItem:
             "label": contact.label.value,
             "relationship": contact.relationship.value,
             "pair_id": str(contact.pair_id) if contact.pair_id is not None else None,
+            "paired": contact.pair_id is not None,
             "created_at": contact.created_at,
         }
     )
 
 
-def _rule_item_from_view(view: RuleListItemView) -> RuleItem:
+def _needs_my_approval(rule: Rule, actor_id: UserId) -> bool:
+    if not isinstance(rule.scope, PairScope):
+        return False
+    if rule.status is not RuleStatus.PROPOSED:
+        return False
+    pending = rule.pending_revision
+    return pending is not None and actor_id in rule.approvers and actor_id != pending.author_id
+
+
+def _rule_item_from_view(view: RuleListItemView, *, needs_my_approval: bool) -> RuleItem:
     return RuleItem.model_validate(
         {
             "id": str(view.rule_id),
@@ -168,6 +192,7 @@ def _rule_item_from_view(view: RuleListItemView) -> RuleItem:
             "status": view.status.value,
             "text": view.text.value,
             "shared": view.shared,
+            "needs_my_approval": needs_my_approval,
             "created_at": view.created_at,
             "effective_since": view.effective_since,
             "has_pending_edit": view.has_pending_edit,
@@ -175,11 +200,11 @@ def _rule_item_from_view(view: RuleListItemView) -> RuleItem:
     )
 
 
-def _rule_item(rule: Rule) -> RuleItem:
+def _rule_item(rule: Rule, actor_id: UserId) -> RuleItem:
     """Map a rule for mutation responses (list projection, or closed-status fallback)."""
     views = project_rules_for_list((rule,))
     if views:
-        return _rule_item_from_view(views[0])
+        return _rule_item_from_view(views[0], needs_my_approval=_needs_my_approval(rule, actor_id))
     shared = isinstance(rule.scope, PairScope)
     effective = rule.effective_revision
     if effective is not None:
@@ -196,6 +221,7 @@ def _rule_item(rule: Rule) -> RuleItem:
             "status": rule.status.value,
             "text": text.value,
             "shared": shared,
+            "needs_my_approval": _needs_my_approval(rule, actor_id),
             "created_at": rule.created_at,
             "effective_since": effective_since,
             "has_pending_edit": False,
@@ -419,6 +445,10 @@ def _register_me(
                     "description": catalog.delete.description,
                     "confirm": catalog.delete.confirm,
                 },
+                "leave_pair": {
+                    "description": catalog.leave_pair.description,
+                    "confirm": catalog.leave_pair.confirm,
+                },
             }
         )
 
@@ -550,6 +580,56 @@ def _register_contacts(
             headers={"Cache-Control": "no-store"},
         )
 
+    @router.post(
+        "/contacts/{contact_id}/invite",
+        operation_id="createInvite",
+        response_model=InviteResponse,
+        status_code=status.HTTP_201_CREATED,
+        responses=_ERROR_RESPONSES,
+    )
+    async def create_invite(
+        contact_id: str,
+        response: Response,
+        actor: actor_dep,
+    ) -> InviteResponse:
+        no_store(response)
+        cid = ContactId(parse_path_uuid(contact_id))
+        created = await bindings.create_invite.execute(
+            CreateInviteCommand(actor_id=actor.id, contact_id=cid)
+        )
+        username = bindings.bot_username.username or "test_bot"
+        link = f"https://t.me/{username}?start=inv_{created.raw_token}"
+        return InviteResponse(link=link, expires_at=created.invite.expires_at)
+
+    @router.post(
+        "/contacts/{contact_id}/leave",
+        operation_id="leavePair",
+        status_code=status.HTTP_204_NO_CONTENT,
+        responses=_ERROR_RESPONSES,
+    )
+    async def leave_pair(
+        contact_id: str,
+        body: ConfirmTrueRequest,
+        response: Response,
+        actor: actor_dep,
+    ) -> Response:
+        _ = body
+        no_store(response)
+        cid = ContactId(parse_path_uuid(contact_id))
+        listed = await bindings.list_contacts.execute(ListContactsCommand(actor_id=actor.id))
+        contact = next((item for item in listed.contacts if item.id == cid), None)
+        if contact is None:
+            raise NotFound()
+        if contact.pair_id is None:
+            raise MiniappHttpError(MiniappErrorCode.CONTACT_NOT_PAIRED, 409)
+        await bindings.leave_pair.execute(
+            LeavePairCommand(actor_id=actor.id, pair_id=contact.pair_id)
+        )
+        return Response(
+            status_code=status.HTTP_204_NO_CONTENT,
+            headers={"Cache-Control": "no-store"},
+        )
+
 
 def _register_rules(
     router: APIRouter,
@@ -574,8 +654,16 @@ def _register_rules(
         result = await bindings.list_rules.execute(
             ListRulesCommand(actor_id=actor.id, contact_id=cid)
         )
+        by_id = {rule.id: rule for rule in result.rules}
         views = project_rules_for_list(result.rules)
-        return RuleListResponse(rules=[_rule_item_from_view(view) for view in views])
+        items = [
+            _rule_item_from_view(
+                view,
+                needs_my_approval=_needs_my_approval(by_id[view.rule_id], actor.id),
+            )
+            for view in views
+        ]
+        return RuleListResponse(rules=items)
 
     @router.post(
         "/contacts/{contact_id}/rules",
@@ -592,16 +680,21 @@ def _register_rules(
     ) -> RuleItem:
         no_store(response)
         cid = ContactId(parse_path_uuid(contact_id))
+        if body.shared:
+            listed = await bindings.list_contacts.execute(ListContactsCommand(actor_id=actor.id))
+            contact = next((item for item in listed.contacts if item.id == cid), None)
+            if contact is None or contact.pair_id is None:
+                raise MiniappHttpError(MiniappErrorCode.CONTACT_NOT_PAIRED, 409)
         result = await bindings.propose_rule.execute(
             ProposeRuleCommand(
                 actor_id=actor.id,
                 contact_id=cid,
                 category=RuleCategory(body.category),
                 text=RuleText(body.text),
-                shared=False,
+                shared=body.shared,
             )
         )
-        return _rule_item(result.rule)
+        return _rule_item(result.rule, actor.id)
 
     @router.post(
         "/rules/{rule_id}/archive",
@@ -619,7 +712,43 @@ def _register_rules(
         result = await bindings.archive_rule.execute(
             ArchiveRuleCommand(actor_id=actor.id, rule_id=rid)
         )
-        return _rule_item(result.rule)
+        return _rule_item(result.rule, actor.id)
+
+    @router.post(
+        "/rules/{rule_id}/approve",
+        operation_id="approveRule",
+        response_model=RuleItem,
+        responses=_ERROR_RESPONSES,
+    )
+    async def approve_rule(
+        rule_id: str,
+        response: Response,
+        actor: actor_dep,
+    ) -> RuleItem:
+        no_store(response)
+        rid = RuleId(parse_path_uuid(rule_id))
+        result = await bindings.approve_rule.execute(
+            ApproveRuleCommand(actor_id=actor.id, rule_id=rid)
+        )
+        return _rule_item(result.rule, actor.id)
+
+    @router.post(
+        "/rules/{rule_id}/reject",
+        operation_id="rejectPendingRule",
+        response_model=RuleItem,
+        responses=_ERROR_RESPONSES,
+    )
+    async def reject_pending_rule(
+        rule_id: str,
+        response: Response,
+        actor: actor_dep,
+    ) -> RuleItem:
+        no_store(response)
+        rid = RuleId(parse_path_uuid(rule_id))
+        result = await bindings.reject_pending_rule.execute(
+            RejectPendingRuleCommand(actor_id=actor.id, rule_id=rid)
+        )
+        return _rule_item(result.rule, actor.id)
 
 
 def _register_suggestions(

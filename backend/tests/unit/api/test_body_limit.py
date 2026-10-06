@@ -24,6 +24,7 @@ from tests.support.init_data import build_webapp_init_data
 from tests.support.miniapp_decode import build_miniapp_decode_bundle
 from tests.unit.application.conftest import AppWorld
 
+from svoi_pravila.adapters.channels.telegram.bot_username import BotUsernameCache
 from svoi_pravila.adapters.channels.telegram.init_data import AiogramInitDataVerifier
 from svoi_pravila.api.app import AppLifecycleHooks, create_app
 from svoi_pravila.api.miniapp import MiniappDeps, MiniappRouterBindings, build_miniapp_router
@@ -31,9 +32,11 @@ from svoi_pravila.api.miniapp.body_limit import MAX_BODY_BYTES, BodyLimitMiddlew
 from svoi_pravila.api.miniapp.errors import MiniappErrorCode
 from svoi_pravila.application.errors import AccessNotGranted
 from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
+from svoi_pravila.application.use_cases.approve_rule import ApproveRule
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.create_contact import CreateContact
+from svoi_pravila.application.use_cases.create_invite import CreateInvite
 from svoi_pravila.application.use_cases.delete_my_account import (
     DeleteMyAccount,
     DeleteMyAccountPorts,
@@ -42,10 +45,12 @@ from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggest
 from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
+from svoi_pravila.application.use_cases.leave_pair import LeavePair
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
 from svoi_pravila.application.use_cases.list_rules import ListRules
 from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
+from svoi_pravila.application.use_cases.reject_pending_rule import RejectPendingRule
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.request_my_data_export import RequestMyDataExport
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
@@ -115,11 +120,19 @@ def _app(world: AppWorld, *, create_contact: CreateContact | _CountingCreateCont
         create_contact=cast(CreateContact, create_contact),
         rename_contact=RenameContact(world.uow_factory, world.catalog),
         set_active_contact=SetActiveContact(world.uow_factory, world.catalog),
+        create_invite=CreateInvite(
+            world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
+        ),
+        leave_pair=LeavePair(world.uow_factory, world.ids, world.clock, world.notifier),
         list_rules=ListRules(world.uow_factory, world.catalog),
         propose_rule=ProposeRule(
             world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
         ),
         archive_rule=ArchiveRule(world.uow_factory, world.catalog, world.clock),
+        approve_rule=ApproveRule(world.uow_factory, world.catalog, world.clock, world.notifier),
+        reject_pending_rule=RejectPendingRule(
+            world.uow_factory, world.catalog, world.clock, world.notifier
+        ),
         list_suggestions=ListSuggestions(world.uow_factory, world.catalog),
         accept_suggestion=AcceptSuggestion(
             world.uow_factory, world.catalog, world.ids, world.clock
@@ -147,6 +160,7 @@ def _app(world: AppWorld, *, create_contact: CreateContact | _CountingCreateCont
         prepared_results=decode_bundle.prepared_results,
         rule_sources=decode_bundle.rule_sources,
         pseudonymizer=decode_bundle.pseudonymizer,
+        bot_username=BotUsernameCache(username="test_bot"),
         enable_test_routes=True,
     )
     return create_app(

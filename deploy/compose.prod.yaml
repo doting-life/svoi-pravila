@@ -1,0 +1,275 @@
+name: svoi-pravila
+
+# Production stack. Images come from the registry by digest (see releases/<sha>.env written by
+# release.sh); nothing is built on the server. Run it through deploy/release.sh.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-service: &service
+  restart: unless-stopped
+  logging: *logging
+  stop_grace_period: 20s
+  security_opt:
+    - no-new-privileges:true
+
+x-hardened: &hardened
+  <<: *service
+  read_only: true
+  cap_drop:
+    - ALL
+  pids_limit: 512
+
+x-app-environment: &app-environment
+  SP_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  SP_VALKEY_URL: redis://:${VALKEY_PASSWORD}@valkey:6379/0
+  SP_HTTP_HOST: "0.0.0.0"
+  SP_FORWARDED_ALLOW_IPS: "172.30.250.10"
+  SP_GIGACHAT_CA_BUNDLE_FILE: /app/certs/russian_trusted_root_ca.pem
+  SP_TELEGRAM_UPDATES_MODE: webhook
+  SP_TELEGRAM_WEBHOOK_BASE_URL: https://${SP_DOMAIN}
+  SP_MINIAPP_URL: https://${SP_DOMAIN}
+
+services:
+  postgres:
+    <<: *service
+    image: postgres:18.6@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - data
+      - observability
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    mem_limit: 768m
+    stop_grace_period: 60s
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  valkey:
+    <<: *service
+    image: valkey/valkey:9.1.2@sha256:418652cfb58ef879d4978c33553735d7147016032d5aefaa14c828e611eb9dfd
+    environment:
+      VALKEY_PASSWORD: ${VALKEY_PASSWORD}
+    command: ["valkey-server", "--requirepass", "${VALKEY_PASSWORD}"]
+    volumes:
+      - valkey_data:/data
+    networks:
+      - data
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    mem_limit: 256m
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$VALKEY_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  migrate:
+    <<: *hardened
+    image: ${API_IMAGE}
+    restart: "no"
+    env_file:
+      - ${SP_ENV_FILE:-/etc/svoi-pravila/env}
+    environment:
+      <<: *app-environment
+    entrypoint: ["svoi-pravila-migrate"]
+    networks:
+      - data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    tmpfs:
+      - /tmp
+    mem_limit: 512m
+
+  api:
+    <<: *hardened
+    image: ${API_IMAGE}
+    env_file:
+      - ${SP_ENV_FILE:-/etc/svoi-pravila/env}
+    environment:
+      <<: *app-environment
+      SP_METRICS_ENABLED: "true"
+      SP_METRICS_HOST: "0.0.0.0"
+      SP_METRICS_PORT: "9100"
+    networks:
+      - edge
+      - data
+      - metrics
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "svoi-pravila-healthcheck"]
+      interval: 5s
+      timeout: 10s
+      retries: 12
+      start_period: 45s
+    tmpfs:
+      - /tmp
+    mem_limit: 512m
+
+  miniapp:
+    <<: *hardened
+    image: ${MINIAPP_IMAGE}
+    command: ["/usr/bin/caddy", "run", "--config", "/etc/caddy/Caddyfile.prod", "--adapter", "caddyfile"]
+    environment:
+      SP_DOMAIN: ${SP_DOMAIN}
+      SP_ACME_EMAIL: ${SP_ACME_EMAIL}
+      SP_TELEGRAM_WEBHOOK_PATH_SECRET: ${SP_TELEGRAM_WEBHOOK_PATH_SECRET}
+    ports:
+      - "80:8080"
+      - "443:8443"
+    volumes:
+      - caddy_data:/data
+    networks:
+      edge:
+        ipv4_address: 172.30.250.10
+    depends_on:
+      api:
+        condition: service_healthy
+    tmpfs:
+      - /tmp
+      - /config:uid=65532,gid=65532,mode=0755
+    mem_limit: 256m
+
+  prometheus:
+    <<: *hardened
+    image: ${PROMETHEUS_IMAGE}
+    user: "65534:65534"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.listen-address=0.0.0.0:9090
+    volumes:
+      - ../ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - metrics
+      - observability
+    tmpfs:
+      - /tmp
+    mem_limit: 512m
+
+  grafana:
+    <<: *hardened
+    image: ${GRAFANA_IMAGE}
+    user: "472"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${SP_GRAFANA_ADMIN_PASSWORD}
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+      GF_PATHS_PLUGINS: /usr/share/grafana/plugins
+      GF_SERVER_HTTP_ADDR: "0.0.0.0"
+      POSTGRES_DB: ${POSTGRES_DB}
+      SP_GRAFANA_DB_USER: ${SP_GRAFANA_DB_USER:-grafana_reader}
+      SP_GRAFANA_DB_PASSWORD: ${SP_GRAFANA_DB_PASSWORD}
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ../ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    networks:
+      - observability
+      - grafana_edge
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      prometheus:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://127.0.0.1:3000/api/health | grep -q '\"database\": \"ok\"'",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 18
+      start_period: 40s
+    tmpfs:
+      - /tmp
+    mem_limit: 512m
+
+  backup:
+    <<: *hardened
+    profiles: ["backup"]
+    image: ${BACKUP_IMAGE}
+    restart: "no"
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB}
+      SP_BACKUP_AGE_RECIPIENT: ${SP_BACKUP_AGE_RECIPIENT}
+      SP_BACKUP_REMOTE: sp:${SP_BACKUP_BUCKET}/${SP_BACKUP_PREFIX}
+      SP_RELEASE_SHA: ${SP_RELEASE_SHA:-}
+      RCLONE_CONFIG_SP_TYPE: s3
+      RCLONE_CONFIG_SP_PROVIDER: ${SP_BACKUP_S3_PROVIDER}
+      RCLONE_CONFIG_SP_ENDPOINT: ${SP_BACKUP_S3_ENDPOINT}
+      RCLONE_CONFIG_SP_REGION: ${SP_BACKUP_S3_REGION}
+      RCLONE_CONFIG_SP_ACCESS_KEY_ID: ${SP_BACKUP_S3_ACCESS_KEY_ID}
+      RCLONE_CONFIG_SP_SECRET_ACCESS_KEY: ${SP_BACKUP_S3_SECRET_ACCESS_KEY}
+    networks:
+      - data
+      - egress
+    tmpfs:
+      - /tmp
+    mem_limit: 256m
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.30.250.0/24
+  data:
+    internal: true
+  metrics:
+    internal: true
+  observability:
+    internal: true
+  grafana_edge:
+  egress:
+
+volumes:
+  postgres_data:
+  valkey_data:
+  caddy_data:
+  grafana_data:
+  prometheus_data:

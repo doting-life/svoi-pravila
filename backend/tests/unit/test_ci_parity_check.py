@@ -22,7 +22,15 @@ def _load() -> ModuleType:
     return module
 
 
-JOBS = ["backend", "miniapp", "secrets", "image", "stack-smoke", "ownership-guard"]
+JOBS = [
+    "backend",
+    "miniapp",
+    "secrets",
+    "image",
+    "stack-smoke",
+    "prod-smoke",
+    "ownership-guard",
+]
 
 VALID_ACTION = """
 runs:
@@ -48,6 +56,19 @@ VALID_JOB = """
       - run: make ci JOB={name}
 """
 
+VALID_PUBLISH_JOB = """
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: [backend, miniapp, secrets, image, stack-smoke, prod-smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: ./.github/actions/toolchain
+      - run: make ci JOB=publish
+"""
+
 VALID_CI_SH = """
 job_workflow() { :; }
 job_toolchain() { :; }
@@ -56,6 +77,8 @@ job_miniapp() { :; }
 job_secrets() { :; }
 job_image() { :; }
 job_stack_smoke() { :; }
+job_prod_smoke() { :; }
+job_publish() { :; }
 job_ownership_guard() { :; }
 """
 
@@ -65,10 +88,28 @@ def _workflow(jobs: dict[str, str]) -> str:
     return "jobs:\n" + body
 
 
+def _canonical_jobs() -> dict[str, str]:
+    jobs = dict.fromkeys(JOBS, VALID_JOB)
+    jobs["publish"] = VALID_PUBLISH_JOB
+    return jobs
+
+
+def _publish_errors(publish_job: str) -> list[str]:
+    module = _load()
+    jobs = _canonical_jobs()
+    jobs["publish"] = publish_job
+    errors: list[str] = module.check_workflow(
+        yaml.safe_load(_workflow(jobs)),
+        yaml.safe_load(VALID_ACTION),
+        JOBS,
+    )
+    return errors
+
+
 @pytest.mark.unit
 def test_parity_accepts_canonical_workflow() -> None:
     module = _load()
-    jobs = dict.fromkeys(JOBS, VALID_JOB)
+    jobs = _canonical_jobs()
     errors = module.check_workflow(
         yaml.safe_load(_workflow(jobs)),
         yaml.safe_load(VALID_ACTION),
@@ -82,7 +123,7 @@ def test_parity_accepts_canonical_workflow() -> None:
 @pytest.mark.unit
 def test_parity_rejects_inline_run_logic() -> None:
     module = _load()
-    jobs = dict.fromkeys(JOBS, VALID_JOB)
+    jobs = _canonical_jobs()
     jobs["backend"] = """
     runs-on: ubuntu-latest
     steps:
@@ -101,7 +142,7 @@ def test_parity_rejects_inline_run_logic() -> None:
 @pytest.mark.unit
 def test_parity_rejects_version_literal() -> None:
     module = _load()
-    jobs = dict.fromkeys(JOBS, VALID_JOB)
+    jobs = _canonical_jobs()
     action = """
 runs:
   using: composite
@@ -129,7 +170,7 @@ runs:
 @pytest.mark.unit
 def test_parity_rejects_pnpm_version_literal() -> None:
     module = _load()
-    jobs = dict.fromkeys(JOBS, VALID_JOB)
+    jobs = _canonical_jobs()
     action = """
 runs:
   using: composite
@@ -156,7 +197,7 @@ runs:
 @pytest.mark.unit
 def test_parity_rejects_missing_pnpm_step() -> None:
     module = _load()
-    jobs = dict.fromkeys(JOBS, VALID_JOB)
+    jobs = _canonical_jobs()
     action = """
 runs:
   using: composite
@@ -179,7 +220,7 @@ runs:
 @pytest.mark.unit
 def test_parity_rejects_missing_job() -> None:
     module = _load()
-    jobs = {name: VALID_JOB for name in JOBS if name != "miniapp"}
+    jobs = {name: spec for name, spec in _canonical_jobs().items() if name != "miniapp"}
     errors = module.check_workflow(
         yaml.safe_load(_workflow(jobs)),
         yaml.safe_load(VALID_ACTION),
@@ -214,3 +255,73 @@ def test_parity_rejects_extra_job_function() -> None:
     module = _load()
     errors = module.check_job_functions(VALID_CI_SH + "\njob_extra() { :; }\n", JOBS)
     assert any("unexpected job functions: job_extra" in item for item in errors)
+
+
+@pytest.mark.unit
+def test_parity_rejects_missing_publish_job() -> None:
+    module = _load()
+    jobs = {name: spec for name, spec in _canonical_jobs().items() if name != "publish"}
+    errors = module.check_workflow(
+        yaml.safe_load(_workflow(jobs)),
+        yaml.safe_load(VALID_ACTION),
+        JOBS,
+    )
+    assert any("does not equal" in item for item in errors)
+
+
+@pytest.mark.unit
+def test_parity_rejects_publish_in_ci_jobs() -> None:
+    module = _load()
+    errors = module.check_workflow(
+        yaml.safe_load(_workflow(_canonical_jobs())),
+        yaml.safe_load(VALID_ACTION),
+        [*JOBS, "publish"],
+    )
+    assert any("must not be listed in CI_JOBS" in item for item in errors)
+
+
+@pytest.mark.unit
+def test_parity_rejects_publish_on_pull_requests() -> None:
+    errors = _publish_errors(VALID_PUBLISH_JOB.replace("github.event_name == 'push' && ", ""))
+    assert any("job publish if" in item for item in errors)
+
+
+@pytest.mark.unit
+def test_parity_rejects_publish_missing_prod_smoke_need() -> None:
+    errors = _publish_errors(VALID_PUBLISH_JOB.replace(", prod-smoke]", "]"))
+    assert any("job publish needs" in item for item in errors)
+
+
+@pytest.mark.unit
+def test_parity_rejects_publish_without_packages_write() -> None:
+    errors = _publish_errors(VALID_PUBLISH_JOB.replace("packages: write", "packages: read"))
+    assert any("job publish permissions" in item for item in errors)
+
+
+@pytest.mark.unit
+def test_parity_rejects_packages_write_outside_publish() -> None:
+    module = _load()
+    jobs = _canonical_jobs()
+    jobs["image"] = VALID_JOB + "    permissions:\n      packages: write\n"
+    errors = module.check_workflow(
+        yaml.safe_load(_workflow(jobs)),
+        yaml.safe_load(VALID_ACTION),
+        JOBS,
+    )
+    assert any("job image must not have packages: write" in item for item in errors)
+
+
+@pytest.mark.unit
+def test_parity_rejects_workflow_level_packages_write() -> None:
+    module = _load()
+    workflow = yaml.safe_load(_workflow(_canonical_jobs()))
+    workflow["permissions"] = {"packages": "write"}
+    errors = module.check_workflow(workflow, yaml.safe_load(VALID_ACTION), JOBS)
+    assert any("workflow-level permissions" in item for item in errors)
+
+
+@pytest.mark.unit
+def test_parity_rejects_missing_publish_function() -> None:
+    module = _load()
+    errors = module.check_job_functions(VALID_CI_SH.replace("job_publish() { :; }\n", ""), JOBS)
+    assert any("missing job_publish" in item for item in errors)

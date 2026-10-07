@@ -1,0 +1,11 @@
+[Unit]
+Description=Svoi Pravila daily database backup at 03:30 UTC
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+Persistent=true
+RandomizedDelaySec=0
+Unit=svoi-pravila-backup.service
+
+[Install]
+WantedBy=timers.target

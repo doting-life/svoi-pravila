@@ -1,0 +1,64 @@
+{
+	admin off
+	email {$SP_ACME_EMAIL}
+	http_port 8080
+	https_port 8443
+	auto_https disable_redirects
+	servers {
+		protocols h1 h2
+	}
+}
+
+http://{$SP_DOMAIN} {
+	redir https://{$SP_DOMAIN}{uri} permanent
+}
+
+{$SP_DOMAIN} {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Content-Security-Policy "default-src 'none'; script-src 'self' https://telegram.org; style-src 'self'; font-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors https://web.telegram.org https://webk.telegram.org https://webz.telegram.org"
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), payment=(), usb=()"
+		-Server
+	}
+
+	handle /api/* {
+		request_body {
+			max_size 16KB
+		}
+		reverse_proxy api:8000 {
+			flush_interval -1
+		}
+	}
+
+	handle /tg/{$SP_TELEGRAM_WEBHOOK_PATH_SECRET} {
+		request_body {
+			max_size 256KB
+		}
+		rewrite * /telegram/webhook/{$SP_TELEGRAM_WEBHOOK_PATH_SECRET}
+		reverse_proxy api:8000
+	}
+
+	handle /tg/* {
+		respond 404
+	}
+
+	@healthz path /healthz /readyz
+	handle @healthz {
+		respond 404
+	}
+
+	handle /assets/* {
+		header Cache-Control "public, max-age=31536000, immutable"
+		root * /srv
+		file_server
+	}
+
+	handle {
+		header Cache-Control "no-store"
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

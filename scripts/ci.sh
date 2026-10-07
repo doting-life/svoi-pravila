@@ -140,6 +140,18 @@ job_stack_smoke() {
   run_stage stack-smoke smoke make -C "$ROOT" stack-smoke ENV_FILE="$ENV_FILE"
 }
 
+job_prod_smoke() {
+  run_stage prod-smoke toolchain job_toolchain
+  run_stage prod-smoke build make -C "$ROOT" image
+  run_stage prod-smoke smoke make -C "$ROOT" prod-smoke
+}
+
+job_publish() {
+  run_stage publish toolchain job_toolchain
+  run_stage publish build make -C "$ROOT" image
+  run_stage publish push make -C "$ROOT" publish
+}
+
 job_ownership_guard() {
   run_stage ownership-guard toolchain job_toolchain
   run_stage ownership-guard check make -C "$ROOT" ownership-guard BASE="$BASE"

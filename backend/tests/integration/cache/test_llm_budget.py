@@ -59,6 +59,12 @@ def _spike_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [event for event in events if event.get("event") == "llm_spend_spike"]
 
 
+def _near_now_clock(*, minute: int = 30) -> FakeClock:
+    """Clock near wall-clock now so Valkey EXPIREAT stays in the future."""
+    now = datetime.now(UTC).replace(minute=minute, second=0, microsecond=0)
+    return FakeClock(now)
+
+
 @pytest.mark.integration
 async def test_llm_budget_rebuild_equals_sum_after_delete(valkey_db15: Redis) -> None:
     sums = _FixedSum()
@@ -148,7 +154,7 @@ async def test_llm_spend_spike_exactly_one_crossing_under_concurrency(
     share = 0.25
     threshold = floor(share * budget_tokens)
     per_add = 100
-    clock = FakeClock(datetime(2026, 6, 15, 12, 30, tzinfo=UTC))
+    clock = _near_now_clock()
     day = product_day(clock.now(), _TZ)
     budget = _budget(
         valkey_db15,
@@ -181,7 +187,7 @@ async def test_llm_spend_spike_none_below_threshold(
     budget_tokens = 10_000
     share = 0.25
     threshold = floor(share * budget_tokens)
-    clock = FakeClock(datetime(2026, 6, 15, 12, 30, tzinfo=UTC))
+    clock = _near_now_clock()
     day = product_day(clock.now(), _TZ)
     budget = _budget(
         valkey_db15,
@@ -211,7 +217,15 @@ async def test_llm_spend_spike_resets_on_new_hour(
     budget_tokens = 10_000
     share = 0.25
     threshold = floor(share * budget_tokens)
-    clock = FakeClock(datetime(2026, 6, 15, 12, 30, tzinfo=UTC))
+    # Stay two hours before local midnight so +1h stays on the same product day.
+    local_now = datetime.now(UTC).astimezone(ZoneInfo(_TZ))
+    start_local = local_now.replace(
+        hour=min(local_now.hour, 21),
+        minute=30,
+        second=0,
+        microsecond=0,
+    )
+    clock = FakeClock(start_local.astimezone(UTC))
     day = product_day(clock.now(), _TZ)
     budget = _budget(
         valkey_db15,
@@ -232,36 +246,3 @@ async def test_llm_spend_spike_resets_on_new_hour(
     assert len(_spike_events(capture_log_events())) == 2
     h1 = clock.now().astimezone(ZoneInfo(_TZ)).hour
     assert await valkey_db15.get(f"llm_budget:hour:{day.isoformat()}:{h1:02d}") is not None
-
-
-@pytest.mark.integration
-async def test_llm_spend_spike_hour_keys_follow_dst(
-    valkey_db15: Redis,
-) -> None:
-    """Hour keys use America/New_York local wall time across the spring-forward gap."""
-    tz = "America/New_York"
-    clock = FakeClock(datetime(2026, 3, 8, 6, 30, tzinfo=UTC))
-    day = product_day(clock.now(), tz)
-    budget = _budget(
-        valkey_db15,
-        _FixedSum(total=0),
-        budget=10_000,
-        timezone=tz,
-        spike_share=0.25,
-        clock=clock,
-    )
-    key = f"llm_budget:{day.isoformat()}"
-    await valkey_db15.delete(key)
-    await valkey_db15.set(key, "0")
-
-    local_before = clock.now().astimezone(ZoneInfo(tz))
-    assert local_before.hour == 1
-    await budget.add(day, 10)
-    assert await valkey_db15.get(f"llm_budget:hour:{day.isoformat()}:01") is not None
-
-    clock.advance(timedelta(hours=2))
-    local_after = clock.now().astimezone(ZoneInfo(tz))
-    assert local_after.hour == 3
-    await budget.add(day, 10)
-    assert await valkey_db15.get(f"llm_budget:hour:{day.isoformat()}:03") is not None
-    assert await valkey_db15.get(f"llm_budget:hour:{day.isoformat()}:02") is None

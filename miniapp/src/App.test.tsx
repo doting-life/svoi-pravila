@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
+import { decodeRemainingLabel } from "./localization/plural";
 import { ru } from "./localization/ru";
 import { fakeAdapter, jsonResponse, mockFetch, privacyTexts } from "./test/fakeTelegram";
 import type { TelegramAdapter } from "./telegram/webapp";
@@ -12,6 +13,8 @@ const meDone = {
     consent_version: null,
     active_contact_id: "c1",
     account_exists: true,
+    bot_username: "svoi_test_bot",
+    decode_remaining: 5,
     max_contacts: 20,
     max_open_rules: 50,
     display_timezone: "Europe/Moscow",
@@ -60,11 +63,18 @@ function click(name: RegExp | string) {
     fireEvent.click(screen.getByRole("button", { name }));
 }
 
+async function openPeople() {
+    fireEvent.click(await screen.findByRole("button", { name: ru.tabPeople }));
+    await screen.findByRole("heading", { name: ru.contactsTitle });
+}
+
+const personalDoc = { kind: "personal_data", version: "1", text: "DOC_PERSONAL" };
+const specialDoc = { kind: "special_category", version: "1", text: "DOC_SPECIAL" };
+
 describe("App", () => {
     it("renders the open-from-Telegram message outside Telegram", () => {
         render(<App adapter={fakeAdapter({ isInsideTelegram: false, initData: "" })} />);
-        expect(screen.getByRole("heading", { name: ru.appTitle })).toBeInTheDocument();
-        expect(screen.getByText(ru.openFromTelegram)).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: ru.openFromTelegram })).toBeInTheDocument();
     });
 
     it("shows loading then contacts empty state", async () => {
@@ -74,6 +84,7 @@ describe("App", () => {
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
         expect(screen.getByText(ru.loading)).toBeInTheDocument();
+        await openPeople();
         expect(await screen.findByText(ru.contactsEmpty)).toBeInTheDocument();
     });
 
@@ -91,7 +102,7 @@ describe("App", () => {
                 );
             }
             contactsCalls += 1;
-            if (contactsCalls === 1) {
+            if (contactsCalls <= 2) {
                 return Promise.resolve(
                     new Response(JSON.stringify({ code: "not_found", message: "boom" }), {
                         status: 500,
@@ -107,6 +118,7 @@ describe("App", () => {
             );
         }) as typeof fetch;
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        await openPeople();
         expect(await screen.findByRole("alert")).toBeInTheDocument();
         click(ru.retry);
         expect(await screen.findByText(ru.contactsEmpty)).toBeInTheDocument();
@@ -137,9 +149,10 @@ describe("App", () => {
                 return Promise.resolve(jsonResponse(null, 204));
             }
             if (path === "/api/v1/consents/personal_data/document") {
-                return Promise.resolve(
-                    jsonResponse({ kind: "personal_data", version: "1", text: "DOC_AFTER_AGE" }),
-                );
+                return Promise.resolve(jsonResponse(personalDoc));
+            }
+            if (path === "/api/v1/consents/special_category/document") {
+                return Promise.resolve(jsonResponse(specialDoc));
             }
             if (path === "/api/v1/privacy/texts") {
                 return Promise.resolve(jsonResponse(privacyTexts));
@@ -147,24 +160,26 @@ describe("App", () => {
             return Promise.resolve(jsonResponse({ code: "not_found", message: "x" }, 404));
         }) as typeof fetch;
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        expect(await screen.findByText(ru.onboardingAgePrompt)).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: ru.onboardingAgeYes }));
-        expect(await screen.findByText("DOC_AFTER_AGE")).toBeInTheDocument();
+        expect(await screen.findByText(ru.onboardingTagline)).toBeInTheDocument();
+        fireEvent.click(screen.getByLabelText(ru.onboardingAgeCheckbox));
+        click(ru.continue);
+        expect(
+            await screen.findByRole("heading", { name: ru.onboardingConsentTitle }),
+        ).toBeInTheDocument();
     });
 
-    it("shows age declined copy when the user declines", async () => {
-        const adapter = fakeAdapter();
+    it("keeps the age continue button disabled until 18+ is confirmed", async () => {
         const fetchImpl = mockFetch([
             {
                 path: "/api/v1/me",
                 body: { ...meDone, onboarding_step: "age", account_exists: false },
             },
         ]);
-        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
-        fireEvent.click(await screen.findByRole("button", { name: ru.onboardingAgeNo }));
-        expect(await screen.findByText(ru.onboardingAgeDeclined)).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: ru.close }));
-        expect(adapter.close).toHaveBeenCalled();
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        const next = await screen.findByRole("button", { name: ru.continue });
+        expect(next).toBeDisabled();
+        fireEvent.click(screen.getByLabelText(ru.onboardingAgeCheckbox));
+        expect(next).toBeEnabled();
     });
 
     it("shows age confirmation API errors", async () => {
@@ -181,7 +196,8 @@ describe("App", () => {
             },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        fireEvent.click(await screen.findByRole("button", { name: ru.onboardingAgeYes }));
+        fireEvent.click(await screen.findByLabelText(ru.onboardingAgeCheckbox));
+        click(ru.continue);
         expect(await screen.findByText("age failed")).toBeInTheDocument();
     });
 
@@ -205,9 +221,10 @@ describe("App", () => {
                 return Promise.resolve(jsonResponse(meDone));
             }
             if (path === "/api/v1/consents/personal_data/document") {
-                return Promise.resolve(
-                    jsonResponse({ kind: "personal_data", version: "1", text: "DOC_PERSONAL" }),
-                );
+                return Promise.resolve(jsonResponse(personalDoc));
+            }
+            if (path === "/api/v1/consents/special_category/document") {
+                return Promise.resolve(jsonResponse(specialDoc));
             }
             if (path === "/api/v1/me/consents" && request.method === "POST") {
                 return Promise.resolve(jsonResponse(null, 204));
@@ -221,14 +238,42 @@ describe("App", () => {
             return Promise.resolve(jsonResponse({ code: "not_found", message: "x" }, 404));
         }) as typeof fetch;
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        expect(await screen.findByText("DOC_PERSONAL")).toBeInTheDocument();
-        expect(screen.getByText(/Что мы храним/)).toBeInTheDocument();
+        expect(
+            await screen.findByRole("heading", { name: ru.onboardingConsentTitle }),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByText(ru.onboardingViaBot.replace("{bot}", "svoi_test_bot")),
+        ).toBeInTheDocument();
         expect(
             await screen.findByRole("button", { name: ru.privacyExportAction }),
         ).toBeInTheDocument();
         expect(screen.getByRole("button", { name: ru.privacyDeleteAction })).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: ru.onboardingConsentAgree }));
+
+        const accept = screen.getByRole("button", { name: ru.onboardingAccept });
+        expect(accept).toBeDisabled();
+        fireEvent.click(
+            screen.getAllByRole("button", {
+                name: new RegExp(ru.consentDocLink),
+            })[0] as HTMLElement,
+        );
+        expect(within(screen.getByRole("dialog")).getByText("DOC_PERSONAL")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.consentDocsClose }));
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByLabelText(ru.consentKinds.personal_data));
+        expect(accept).toBeDisabled();
+        fireEvent.click(screen.getByLabelText(ru.consentKinds.special_category));
+        expect(accept).toBeEnabled();
+        fireEvent.click(accept);
         expect(await screen.findByText("Аня")).toBeInTheDocument();
+        const grants = vi
+            .mocked(fetchImpl)
+            .mock.calls.filter(
+                (call) =>
+                    call[0] instanceof Request &&
+                    new URL(call[0].url).pathname === "/api/v1/me/consents",
+            );
+        expect(grants).toHaveLength(2);
     });
 
     it("shows the unauthorized gate on 401 without rights actions", async () => {
@@ -288,7 +333,7 @@ describe("App", () => {
         ]);
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
         expect(await screen.findByText(ru.inviteTitle)).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: ru.cancel }));
+        fireEvent.click(screen.getByRole("button", { name: ru.inviteLater }));
         expect(await screen.findByText("Аня")).toBeInTheDocument();
     });
 
@@ -363,8 +408,7 @@ describe("App", () => {
         expect(await screen.findByText(ru.inviteOwn)).toBeInTheDocument();
     });
 
-    it("declines consent and closes", async () => {
-        const adapter = fakeAdapter();
+    it("asks only for the outstanding consent", async () => {
         const fetchImpl = mockFetch([
             {
                 path: "/api/v1/me",
@@ -375,18 +419,12 @@ describe("App", () => {
                     consent_version: "1",
                 },
             },
-            {
-                path: "/api/v1/consents/special_category/document",
-                body: { kind: "special_category", version: "1", text: "DOC_SPECIAL" },
-            },
+            { path: "/api/v1/consents/special_category/document", body: specialDoc },
         ]);
-        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
-        expect(await screen.findByText("DOC_SPECIAL")).toBeInTheDocument();
-        expect(screen.queryByText(/Что мы храним/)).not.toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: ru.onboardingConsentDecline }));
-        expect(await screen.findByText(ru.onboardingConsentDeclined)).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: ru.close }));
-        expect(adapter.close).toHaveBeenCalled();
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        expect(await screen.findByLabelText(ru.consentKinds.special_category)).toBeInTheDocument();
+        expect(screen.queryByLabelText(ru.consentKinds.personal_data)).not.toBeInTheDocument();
+        expect(screen.getByRole("button", { name: ru.onboardingAccept })).toBeDisabled();
     });
 
     it("handles stale consent grant and delete failure on consent screen", async () => {
@@ -407,9 +445,10 @@ describe("App", () => {
                 );
             }
             if (path === "/api/v1/consents/personal_data/document") {
-                return Promise.resolve(
-                    jsonResponse({ kind: "personal_data", version: "1", text: "DOC_STALE" }),
-                );
+                return Promise.resolve(jsonResponse(personalDoc));
+            }
+            if (path === "/api/v1/consents/special_category/document") {
+                return Promise.resolve(jsonResponse(specialDoc));
             }
             if (path === "/api/v1/privacy/texts") {
                 return Promise.resolve(jsonResponse(privacyTexts));
@@ -428,8 +467,9 @@ describe("App", () => {
             return Promise.resolve(jsonResponse({ code: "not_found", message: "x" }, 404));
         }) as typeof fetch;
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
-        expect(await screen.findByText("DOC_STALE")).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: ru.onboardingConsentAgree }));
+        fireEvent.click(await screen.findByLabelText(ru.consentKinds.personal_data));
+        fireEvent.click(screen.getByLabelText(ru.consentKinds.special_category));
+        fireEvent.click(screen.getByRole("button", { name: ru.onboardingAccept }));
         expect(await screen.findByText("stale now")).toBeInTheDocument();
         expect(grantCalls).toBe(1);
         fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
@@ -456,9 +496,7 @@ describe("App", () => {
         fireEvent.change(await screen.findByLabelText(ru.inviteLabel), {
             target: { value: "Партнёр" },
         });
-        fireEvent.change(screen.getByLabelText(ru.inviteRelationship), {
-            target: { value: "friend" },
-        });
+        fireEvent.click(screen.getByLabelText(ru.relationships.friend));
         fireEvent.click(screen.getByRole("button", { name: ru.inviteAccept }));
         expect(await screen.findByText(ru.inviteInvalid)).toBeInTheDocument();
     });
@@ -509,9 +547,10 @@ describe("App", () => {
                         jsonResponse({ code: "not_found", message: "doc missing" }, 404),
                     );
                 }
-                return Promise.resolve(
-                    jsonResponse({ kind: "personal_data", version: "1", text: "DOC_RETRY" }),
-                );
+                return Promise.resolve(jsonResponse(personalDoc));
+            }
+            if (path === "/api/v1/consents/special_category/document") {
+                return Promise.resolve(jsonResponse(specialDoc));
             }
             if (path === "/api/v1/privacy/texts") {
                 return Promise.resolve(jsonResponse(privacyTexts));
@@ -521,7 +560,9 @@ describe("App", () => {
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
         expect(await screen.findByRole("alert")).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: ru.retry }));
-        expect(await screen.findByText("DOC_RETRY")).toBeInTheDocument();
+        expect(
+            await screen.findByRole("heading", { name: ru.onboardingConsentTitle }),
+        ).toBeInTheDocument();
     });
 
     it("shows export failed when downloadFile is rejected", async () => {
@@ -554,13 +595,13 @@ describe("App", () => {
                 status: 403,
                 body: { code: "consent_required", message: "need consent" },
             },
-            {
-                path: "/api/v1/consents/personal_data/document",
-                body: { kind: "personal_data", version: "1", text: "DOC_REQUIRED" },
-            },
+            { path: "/api/v1/consents/personal_data/document", body: personalDoc },
+            { path: "/api/v1/consents/special_category/document", body: specialDoc },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        expect(await screen.findByText("DOC_REQUIRED")).toBeInTheDocument();
+        expect(
+            await screen.findByRole("heading", { name: ru.onboardingConsentTitle }),
+        ).toBeInTheDocument();
         expect(
             await screen.findByRole("button", { name: ru.privacyExportAction }),
         ).toBeInTheDocument();
@@ -579,10 +620,8 @@ describe("App", () => {
                     consent_version: "1",
                 },
             },
-            {
-                path: "/api/v1/consents/personal_data/document",
-                body: { kind: "personal_data", version: "1", text: "DOC" },
-            },
+            { path: "/api/v1/consents/personal_data/document", body: personalDoc },
+            { path: "/api/v1/consents/special_category/document", body: specialDoc },
             {
                 method: "POST",
                 path: "/api/v1/me/export",
@@ -627,9 +666,10 @@ describe("App", () => {
                 );
             }
             if (path === "/api/v1/consents/personal_data/document") {
-                return Promise.resolve(
-                    jsonResponse({ kind: "personal_data", version: "1", text: "DOC" }),
-                );
+                return Promise.resolve(jsonResponse(personalDoc));
+            }
+            if (path === "/api/v1/consents/special_category/document") {
+                return Promise.resolve(jsonResponse(specialDoc));
             }
             if (path === "/api/v1/privacy/texts") {
                 return Promise.resolve(jsonResponse(privacyTexts));
@@ -683,6 +723,7 @@ describe("App", () => {
         ]);
         const adapter = fakeAdapter();
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        await openPeople();
         expect(await screen.findByText("Аня")).toBeInTheDocument();
         expect(screen.getByText(new RegExp(ru.contactsActiveBadge))).toBeInTheDocument();
         click(/Аня/);
@@ -716,6 +757,7 @@ describe("App", () => {
             { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
         ]);
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        await openPeople();
         expect(await screen.findByText("Аня")).toBeInTheDocument();
         click(/Аня/);
         expect(await screen.findByText(ru.rulesEmpty)).toBeInTheDocument();
@@ -742,6 +784,7 @@ describe("App", () => {
             },
         ]);
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        await openPeople();
         fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
         fireEvent.click(await screen.findByRole("button", { name: ru.ruleArchive }));
         expect(showConfirm).toHaveBeenCalled();
@@ -778,6 +821,7 @@ describe("App", () => {
             },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        await openPeople();
         expect(await screen.findByText(ru.contactsEmpty)).toBeInTheDocument();
         click(ru.contactsAdd);
         const dialog = screen.getByRole("dialog");
@@ -801,6 +845,7 @@ describe("App", () => {
             { method: "POST", path: "/api/v1/contacts/c1/activate", body: null, status: 204 },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        await openPeople();
         expect(await screen.findByText("Аня")).toBeInTheDocument();
         click(ru.contactsRename);
         const dialog = await screen.findByRole("dialog");
@@ -857,6 +902,7 @@ describe("App", () => {
             },
         ]);
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        await openPeople();
         expect(await screen.findByText("Аня")).toBeInTheDocument();
         click(ru.contactsAdd);
         const addDialog = screen.getByRole("dialog");
@@ -899,6 +945,7 @@ describe("App", () => {
             },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        await openPeople();
         fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
         fireEvent.click(await screen.findByRole("button", { name: ru.contactAddRule }));
         fireEvent.change(screen.getByRole("textbox"), { target: { value: "правило" } });
@@ -924,6 +971,7 @@ describe("App", () => {
             },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        await openPeople();
         fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
         expect(await screen.findByText("извиняться спокойно")).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: ru.suggestionAccept }));
@@ -962,6 +1010,7 @@ describe("App", () => {
             },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        await openPeople();
         fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
         fireEvent.click(await screen.findByRole("button", { name: ru.contactAddRule }));
         const textarea = screen.getByRole("textbox");
@@ -985,6 +1034,7 @@ describe("App", () => {
             },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        await openPeople();
         fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
         fireEvent.click(await screen.findByRole("button", { name: ru.contactAddRule }));
         fireEvent.change(screen.getByRole("textbox"), { target: { value: "правило" } });
@@ -1007,6 +1057,7 @@ describe("App", () => {
         ]);
         const adapter = fakeAdapter();
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        await openPeople();
         fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
         fireEvent.click(await screen.findByRole("button", { name: ru.contactAddRule }));
         fireEvent.click(screen.getByLabelText(ru.categories.taboo_topic));
@@ -1026,6 +1077,7 @@ describe("App", () => {
             { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        await openPeople();
         fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
         fireEvent.click(await screen.findByRole("button", { name: ru.contactAddRule }));
         fireEvent.click(screen.getByRole("button", { name: ru.addRuleSubmit }));
@@ -1045,6 +1097,7 @@ describe("App", () => {
         ]);
         const adapter = fakeAdapter();
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        await openPeople();
         expect(await screen.findByText(ru.contactsEmpty)).toBeInTheDocument();
         click(ru.contactsAdd);
         const dialog = screen.getByRole("dialog");
@@ -1067,6 +1120,7 @@ describe("App", () => {
             { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        await openPeople();
         fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
         expect(await screen.findByRole("alert")).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: ru.retry }));
@@ -1101,6 +1155,7 @@ describe("App", () => {
             },
         ]);
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        await openPeople();
         fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
         fireEvent.click(await screen.findByRole("button", { name: ru.ruleArchive }));
         await waitFor(() => {
@@ -1128,9 +1183,14 @@ describe("App", () => {
             { path: "/api/v1/contacts", body: { contacts: [] } },
         ]);
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
-        await screen.findByText(ru.contactsEmpty);
-        themeHandler?.("dark");
+        await screen.findByRole("heading", { name: ru.homeTitle });
+        expect(document.documentElement.dataset.colorScheme).toBe("light");
+        document.documentElement.style.setProperty("--bg", "#1b1916");
+        act(() => {
+            themeHandler?.("dark");
+        });
         expect(document.documentElement.dataset.colorScheme).toBe("dark");
+        expect(adapter.applyChromeColor).toHaveBeenLastCalledWith("#1b1916");
     });
 
     it("exports data with success, 409 and 429 handling", async () => {
@@ -1192,10 +1252,8 @@ describe("App", () => {
             { path: "/api/v1/me", body: meDone },
             { path: "/api/v1/contacts", body: { contacts: [contact] } },
             { method: "POST", path: "/api/v1/me/consents/revoke", status: 204, body: null },
-            {
-                path: "/api/v1/consents/personal_data/document",
-                body: { kind: "personal_data", version: "1", text: "DOC_AFTER_REVOKE" },
-            },
+            { path: "/api/v1/consents/personal_data/document", body: personalDoc },
+            { path: "/api/v1/consents/special_category/document", body: specialDoc },
         ]);
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
         fireEvent.click(await screen.findByRole("button", { name: ru.privacyTitle }));
@@ -1211,7 +1269,9 @@ describe("App", () => {
 
         showConfirm.mockResolvedValueOnce(true);
         fireEvent.click(screen.getByRole("button", { name: ru.privacyRevokeAction }));
-        expect(await screen.findByText("DOC_AFTER_REVOKE")).toBeInTheDocument();
+        expect(
+            await screen.findByRole("heading", { name: ru.onboardingConsentTitle }),
+        ).toBeInTheDocument();
         expect(
             vi.mocked(fetchImpl).mock.calls.some((call) => {
                 const request = call[0];
@@ -1231,12 +1291,12 @@ describe("App", () => {
         ]);
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
         fireEvent.click(await screen.findByRole("button", { name: ru.privacyTitle }));
-        fireEvent.click(await screen.findByRole("button", { name: ru.privacyDeleteAction }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyDeleteButton }));
         expect(showConfirm).toHaveBeenCalled();
         expect(screen.queryByText(ru.privacyDeleteForever)).not.toBeInTheDocument();
 
         showConfirm.mockResolvedValueOnce(true);
-        fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteButton }));
         expect(
             await screen.findByRole("button", { name: ru.privacyDeleteForever }),
         ).toBeInTheDocument();
@@ -1244,7 +1304,7 @@ describe("App", () => {
         expect(await screen.findByText(privacyTexts.export.description)).toBeInTheDocument();
 
         showConfirm.mockResolvedValueOnce(true);
-        fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteButton }));
         fireEvent.click(await screen.findByRole("button", { name: ru.privacyDeleteForever }));
         expect(await screen.findByText(ru.privacyDeleted)).toBeInTheDocument();
         expect(screen.queryByText("Аня")).not.toBeInTheDocument();
@@ -1297,13 +1357,13 @@ describe("App", () => {
         });
         expect(screen.getByText(privacyTexts.export.description)).toBeInTheDocument();
 
-        fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteButton }));
         fireEvent.click(await screen.findByRole("button", { name: ru.privacyDeleteForever }));
         expect(await screen.findByText("delete failed")).toBeInTheDocument();
         expect(exportCalls).toBe(1);
     });
 
-    it("shows BackButton on the privacy screen", async () => {
+    it("shows BackButton on the delete confirmation and returns to privacy", async () => {
         let backCallback: (() => void) | undefined;
         const adapter = fakeAdapter({
             BackButton: {
@@ -1322,11 +1382,18 @@ describe("App", () => {
             { path: "/api/v1/contacts", body: { contacts: [contact] } },
         ]);
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
-        fireEvent.click(await screen.findByRole("button", { name: ru.privacyTitle }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.tabPrivacy }));
         expect(await screen.findByText(privacyTexts.export.description)).toBeInTheDocument();
+        expect(adapter.BackButton.show).not.toHaveBeenCalled();
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteButton }));
+        expect(
+            await screen.findByRole("button", { name: ru.privacyDeleteForever }),
+        ).toBeInTheDocument();
         expect(adapter.BackButton.show).toHaveBeenCalled();
-        backCallback?.();
-        expect(await screen.findByText("Аня")).toBeInTheDocument();
+        act(() => {
+            backCallback?.();
+        });
+        expect(await screen.findByText(privacyTexts.export.description)).toBeInTheDocument();
     });
 
     it("opens decode and prefills addRule from a suggestion edit", async () => {
@@ -1366,7 +1433,7 @@ describe("App", () => {
             return base(input, init);
         };
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        fireEvent.click(await screen.findByRole("button", { name: ru.decodeEntry }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.homeDecodeCta }));
         expect(await screen.findByRole("heading", { name: ru.decodeTitle })).toBeInTheDocument();
         fireEvent.change(screen.getByRole("textbox"), { target: { value: "входящее" } });
         fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
@@ -1396,6 +1463,7 @@ describe("App", () => {
             },
         ]);
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        await openPeople();
         fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
         fireEvent.click(await screen.findByRole("button", { name: ru.contactInvite }));
         expect(
@@ -1480,6 +1548,7 @@ describe("App", () => {
             },
         ]);
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        await openPeople();
         fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
         expect(await screen.findByText(ru.contactPairedBadge)).toBeInTheDocument();
         expect(screen.getByText(ru.rulesPersonalTitle)).toBeInTheDocument();
@@ -1520,7 +1589,7 @@ describe("App", () => {
         expect(await screen.findByText(ru.addRuleScope)).toBeInTheDocument();
         fireEvent.click(screen.getByLabelText(ru.addRuleScopeShared));
         fireEvent.change(screen.getByRole("textbox"), { target: { value: "общее новое" } });
-        fireEvent.click(screen.getByRole("button", { name: ru.addRuleSubmit }));
+        fireEvent.click(screen.getByRole("button", { name: ru.addRuleSubmitShared }));
         await waitFor(() => {
             expect(
                 vi.mocked(fetchImpl).mock.calls.some((call) => {
@@ -1557,6 +1626,7 @@ describe("App", () => {
             { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
         ]);
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        await openPeople();
         fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
         await waitFor(() => {
             expect(screen.getByRole("button", { name: ru.contactLeavePair })).toBeEnabled();
@@ -1583,9 +1653,389 @@ describe("App", () => {
             { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        await openPeople();
         fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
         fireEvent.click(await screen.findByRole("button", { name: ru.contactAddRule }));
         expect(screen.queryByText(ru.addRuleScope)).not.toBeInTheDocument();
+    });
+});
+
+function sseFetch(base: typeof fetch, sse: string, init: ResponseInit = {}): typeof fetch {
+    return async (input, requestInit) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url.includes("/api/v1/decode") && !url.includes("from-decode")) {
+            return new Response(sse, {
+                status: 200,
+                headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-store" },
+                ...init,
+            });
+        }
+        return base(input, requestInit);
+    };
+}
+
+describe("Home and navigation", () => {
+    const boris = { ...contact, id: "c2", label: "Боря", relationship: "friend" };
+
+    it("greets the user, shows the active contact and the inline hint", async () => {
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [suggestion] } },
+            {
+                method: "POST",
+                path: "/api/v1/suggestions/s1/accept",
+                body: { outcome: "accepted", suggestion_id: "s1", rule_id: "r1" },
+            },
+            {
+                method: "POST",
+                path: "/api/v1/suggestions/s1/dismiss",
+                body: { outcome: "dismissed", suggestion_id: "s1" },
+            },
+        ]);
+        const adapter = fakeAdapter();
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        expect(await screen.findByRole("heading", { name: ru.homeTitle })).toBeInTheDocument();
+        expect(
+            await screen.findByText(ru.relationships.partner.toLowerCase(), { exact: false }),
+        ).toBeInTheDocument();
+        expect(screen.getByText("@svoi_test_bot")).toBeInTheDocument();
+        expect(screen.getByRole("navigation", { name: ru.tabsLabel })).toBeInTheDocument();
+        expect(await screen.findByText(new RegExp(suggestion.text))).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.suggestionAccept }));
+        await waitFor(() => {
+            expect(adapter.hapticNotification).toHaveBeenCalledWith("success");
+        });
+    });
+
+    it("dismisses the latest suggestion and reports a failed dismissal", async () => {
+        const adapter = fakeAdapter();
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [suggestion] } },
+        ]);
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.suggestionDismiss }));
+        await waitFor(() => {
+            expect(adapter.hapticNotification).toHaveBeenCalledWith("error");
+        });
+    });
+
+    it("switches the active contact from the picker without a reload", async () => {
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact, boris] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+            { path: "/api/v1/contacts/c2/suggestions", body: { suggestions: [] } },
+            { method: "POST", path: "/api/v1/contacts/c2/activate", status: 204, body: null },
+        ]);
+        const adapter = fakeAdapter();
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.homeChange }));
+        const dialog = screen.getByRole("dialog", { name: ru.pickerTitle });
+        fireEvent.click(within(dialog).getByRole("button", { name: /Аня/ }));
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("button", { name: ru.homeChange }));
+        fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /Боря/ }));
+        expect(await screen.findByText("Боря")).toBeInTheDocument();
+        expect(adapter.hapticNotification).toHaveBeenCalledWith("success");
+        expect(
+            vi.mocked(fetchImpl).mock.calls.filter((call) => {
+                const request = call[0];
+                return request instanceof Request && new URL(request.url).pathname === "/api/v1/me";
+            }),
+        ).toHaveLength(1);
+        fireEvent.click(screen.getByRole("button", { name: ru.homeChange }));
+        fireEvent.click(
+            within(screen.getByRole("dialog")).getByRole("button", { name: ru.cancel }),
+        );
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("reports a failed activation from the picker", async () => {
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact, boris] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+            {
+                method: "POST",
+                path: "/api/v1/contacts/c2/activate",
+                status: 500,
+                body: { code: "not_found", message: "no" },
+            },
+        ]);
+        const adapter = fakeAdapter();
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.homeChange }));
+        fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /Боря/ }));
+        await waitFor(() => {
+            expect(adapter.hapticNotification).toHaveBeenCalledWith("error");
+        });
+    });
+
+    it("asks to choose a contact when none is active", async () => {
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: { ...meDone, active_contact_id: null } },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        expect(await screen.findByText(ru.homeNoActiveTitle)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.homeChoose }));
+        expect(screen.getByRole("dialog", { name: ru.pickerTitle })).toBeInTheDocument();
+    });
+
+    it("sends a user without contacts to the People tab", async () => {
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: { ...meDone, active_contact_id: null } },
+            { path: "/api/v1/contacts", body: { contacts: [] } },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        expect(await screen.findByText(ru.homeNoContactTitle)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.contactsAdd }));
+        expect(await screen.findByRole("heading", { name: ru.contactsTitle })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: ru.tabPeople })).toHaveAttribute(
+            "aria-current",
+            "page",
+        );
+    });
+
+    it("shows a retryable error when the Home contacts fail to load", async () => {
+        let calls = 0;
+        const fetchImpl = vi.fn((input: RequestInfo | URL) => {
+            const request = input instanceof Request ? input : new Request(String(input));
+            const path = new URL(request.url).pathname;
+            if (path === "/api/v1/me") {
+                return Promise.resolve(jsonResponse(meDone));
+            }
+            calls += 1;
+            return Promise.resolve(
+                calls === 1
+                    ? jsonResponse({ code: "not_found", message: "home boom" }, 500)
+                    : jsonResponse({ contacts: [] }),
+            );
+        }) as typeof fetch;
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        expect(await screen.findByText("home boom")).toBeInTheDocument();
+        click(ru.retry);
+        expect(await screen.findByText(ru.homeNoContactTitle)).toBeInTheDocument();
+    });
+
+    it("keeps the tab bar on root screens only", async () => {
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.homeDecodeCta }));
+        expect(await screen.findByRole("heading", { name: ru.decodeTitle })).toBeInTheDocument();
+        expect(screen.queryByRole("navigation", { name: ru.tabsLabel })).not.toBeInTheDocument();
+    });
+});
+
+describe("Decode limits and crisis", () => {
+    function decodeBase() {
+        return mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+        ]);
+    }
+
+    async function startDecode(fetchImpl: typeof fetch) {
+        const adapter = fakeAdapter();
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.homeDecodeCta }));
+        fireEvent.change(await screen.findByRole("textbox"), { target: { value: "входящее" } });
+        fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
+        return adapter;
+    }
+
+    it("shows the limit screen for an exhausted daily quota and returns home", async () => {
+        const base = decodeBase();
+        const fetchImpl: typeof fetch = async (input, init) => {
+            const url = input instanceof Request ? input.url : String(input);
+            if (url.includes("/api/v1/decode")) {
+                return jsonResponse({ code: "quota_exhausted", message: "Лимит до 00:00." }, 429);
+            }
+            return base(input, init);
+        };
+        await startDecode(fetchImpl);
+        expect(
+            await screen.findByRole("heading", { name: ru.limitTitleQuota }),
+        ).toBeInTheDocument();
+        expect(screen.getByText("Лимит до 00:00.")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.limitOk }));
+        expect(await screen.findByRole("heading", { name: ru.homeTitle })).toBeInTheDocument();
+    });
+
+    it("opens the crisis screen from the limit screen and comes back", async () => {
+        const base = decodeBase();
+        const fetchImpl: typeof fetch = async (input, init) => {
+            const url = input instanceof Request ? input.url : String(input);
+            if (url.includes("/api/v1/decode")) {
+                return jsonResponse(
+                    { code: "service_budget_exhausted", message: "Перегрузка." },
+                    503,
+                );
+            }
+            return base(input, init);
+        };
+        await startDecode(fetchImpl);
+        expect(
+            await screen.findByRole("heading", { name: ru.limitTitleBudget }),
+        ).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.limitHelpLink }));
+        expect(await screen.findByRole("heading", { name: ru.crisisTitle })).toBeInTheDocument();
+        expect(
+            screen.getByRole("link", { name: new RegExp(ru.crisisEmergencyTitle) }),
+        ).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.crisisBack }));
+        expect(
+            await screen.findByRole("heading", { name: ru.limitTitleBudget }),
+        ).toBeInTheDocument();
+    });
+
+    it("replaces the decode screen with crisis resources", async () => {
+        const crisis =
+            'event: crisis\ndata: {"lead":"SERVER_CRISIS_LEAD","resources":["112 — единый номер"]}\n\n';
+        await startDecode(sseFetch(decodeBase(), crisis));
+        expect(await screen.findByRole("heading", { name: ru.crisisTitle })).toBeInTheDocument();
+        expect(screen.getByText("SERVER_CRISIS_LEAD")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.crisisBack }));
+        expect(await screen.findByRole("heading", { name: ru.homeTitle })).toBeInTheDocument();
+    });
+
+    it("counts down the remaining decodes locally after a completed decode", async () => {
+        const completed =
+            'event: analysis\ndata: {"chunk":"разбор"}\n\n' +
+            'event: completed\ndata: {"safety":"ok","variants":[{"firmness":"gentle","text":"вариант","insert_query":null}],"applied_rules":[],"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":null}\n\n';
+        const base = decodeBase();
+        const fetchImpl = sseFetch(base, completed);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.homeDecodeCta }));
+        expect(await screen.findByText(decodeRemainingLabel(5))).toBeInTheDocument();
+        fireEvent.change(screen.getByRole("textbox"), { target: { value: "входящее" } });
+        fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
+        expect(await screen.findByText("вариант")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.decodeAgain }));
+        expect(await screen.findByText(decodeRemainingLabel(4))).toBeInTheDocument();
+    });
+
+    it("keeps the typed message when the contact changes inside decode", async () => {
+        const boris = { ...contact, id: "c2", label: "Боря", relationship: "friend" };
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact, boris] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+            { method: "POST", path: "/api/v1/contacts/c2/activate", status: 204, body: null },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.homeDecodeCta }));
+        fireEvent.change(await screen.findByRole("textbox"), { target: { value: "не потерять" } });
+        fireEvent.click(
+            await screen.findByRole("button", { name: ru.decodeFrom.replace("{name}", "Аня") }),
+        );
+        fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /Боря/ }));
+        expect(
+            await screen.findByRole("button", { name: ru.decodeFrom.replace("{name}", "Боря") }),
+        ).toBeInTheDocument();
+        expect(screen.getByRole("textbox")).toHaveValue("не потерять");
+    });
+});
+
+describe("Contact detail editing", () => {
+    it("renames the contact from the detail header", async () => {
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+            { method: "PATCH", path: "/api/v1/contacts/c1", body: { ...contact, label: "Анна" } },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        await openPeople();
+        fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.contactEdit }));
+        const dialog = screen.getByRole("dialog", { name: ru.contactsRename });
+        expect(within(dialog).queryByLabelText(ru.relationships.family)).not.toBeInTheDocument();
+        fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "Анна" } });
+        fireEvent.click(within(dialog).getByRole("button", { name: ru.save }));
+        expect(await screen.findByRole("heading", { name: "Анна" })).toBeInTheDocument();
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("keeps the sheet open and shows the error when renaming fails", async () => {
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+            {
+                method: "PATCH",
+                path: "/api/v1/contacts/c1",
+                status: 500,
+                body: { code: "not_found", message: "rename boom" },
+            },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        await openPeople();
+        fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.contactEdit }));
+        fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: ru.save }));
+        expect(await screen.findByText("rename boom")).toBeInTheDocument();
+        expect(screen.getByRole("dialog")).toBeInTheDocument();
+    });
+
+    it("shows the consent texts from the privacy tab", async () => {
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/consents/personal_data/document", body: personalDoc },
+            { path: "/api/v1/consents/special_category/document", body: specialDoc },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.tabPrivacy }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyConsentsAction }));
+        const dialog = await screen.findByRole("dialog", { name: ru.privacyConsentsAction });
+        expect(await within(dialog).findByText("DOC_PERSONAL")).toBeInTheDocument();
+        expect(within(dialog).getByText("DOC_SPECIAL")).toBeInTheDocument();
+        fireEvent.click(within(dialog).getByRole("button", { name: ru.consentDocsClose }));
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("offers a retry when the consent texts fail to load", async () => {
+        let calls = 0;
+        const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(String(input), init);
+            const path = new URL(request.url).pathname;
+            if (path === "/api/v1/me") {
+                return Promise.resolve(jsonResponse(meDone));
+            }
+            if (path === "/api/v1/privacy/texts") {
+                return Promise.resolve(jsonResponse(privacyTexts));
+            }
+            if (path === "/api/v1/contacts") {
+                return Promise.resolve(jsonResponse({ contacts: [contact] }));
+            }
+            if (path === "/api/v1/consents/personal_data/document") {
+                calls += 1;
+                return Promise.resolve(
+                    calls === 1
+                        ? jsonResponse({ code: "not_found", message: "no doc" }, 500)
+                        : jsonResponse(personalDoc),
+                );
+            }
+            return Promise.resolve(jsonResponse(specialDoc));
+        }) as typeof fetch;
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.tabPrivacy }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyConsentsAction }));
+        const dialog = await screen.findByRole("dialog");
+        fireEvent.click(await within(dialog).findByRole("button", { name: ru.retry }));
+        expect(await within(dialog).findByText("DOC_PERSONAL")).toBeInTheDocument();
     });
 });
 
@@ -1597,7 +2047,7 @@ describe("Telegram adapter wiring", () => {
             { path: "/api/v1/contacts", body: { contacts: [] } },
         ]);
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
-        await screen.findByText(ru.contactsEmpty);
+        await screen.findByRole("heading", { name: ru.homeTitle });
         expect(adapter.ready).toHaveBeenCalledTimes(1);
         expect(adapter.expand).toHaveBeenCalledTimes(1);
     });

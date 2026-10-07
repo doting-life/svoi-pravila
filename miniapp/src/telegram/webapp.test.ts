@@ -1,10 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import {
-    applyThemeCssVariables,
-    createTelegramAdapter,
-    resetTelegramAdapterGuardsForTests,
-} from "./webapp";
+import { applyColorScheme, createTelegramAdapter, hapticImpact, hapticSelection } from "./webapp";
 
 function installMockWebApp(
     initData: string,
@@ -47,10 +43,6 @@ function installMockWebApp(
                         ? { start_param: options.startParam }
                         : undefined,
                 colorScheme: "dark",
-                themeParams: {
-                    bg_color: "#101010",
-                    text_color: "#eeeeee",
-                },
                 BackButton: {
                     show: backShow,
                     hide: backHide,
@@ -119,7 +111,6 @@ describe("createTelegramAdapter", () => {
                 WebApp: {
                     initData: "x",
                     colorScheme: "light",
-                    themeParams: {},
                     BackButton: {
                         show: vi.fn(),
                         hide: vi.fn(),
@@ -141,13 +132,11 @@ describe("createTelegramAdapter", () => {
         stop();
     });
 
-    it("maps theme params and calls ready/expand once inside Telegram", () => {
+    it("reads the colour scheme and calls ready/expand once inside Telegram", () => {
         const { ready, expand } = installMockWebApp("query_id=1&user=%7B%7D");
         const adapter = createTelegramAdapter();
         expect(adapter.isInsideTelegram).toBe(true);
         expect(adapter.colorScheme).toBe("dark");
-        expect(adapter.themeCssVariables["--tg-bg-color"]).toBe("#101010");
-        expect(adapter.themeCssVariables["--tg-text-color"]).toBe("#eeeeee");
 
         adapter.ready();
         adapter.ready();
@@ -196,11 +185,74 @@ describe("createTelegramAdapter", () => {
         expect(mocks.offEvent).toHaveBeenCalled();
     });
 
-    it("applies CSS variables to the document element", () => {
-        resetTelegramAdapterGuardsForTests();
-        applyThemeCssVariables(document.documentElement, { "--tg-bg-color": "#abcdef" }, "light");
+    it("marks the document with the colour scheme", () => {
+        applyColorScheme(document.documentElement, "dark");
+        expect(document.documentElement.dataset.colorScheme).toBe("dark");
+        applyColorScheme(document.documentElement, "light");
         expect(document.documentElement.dataset.colorScheme).toBe("light");
-        expect(document.documentElement.style.getPropertyValue("--tg-bg-color")).toBe("#abcdef");
+    });
+
+    it("reports the current scheme on themeChanged", () => {
+        const mocks = installMockWebApp("query_id=1");
+        const adapter = createTelegramAdapter();
+        const schemes: string[] = [];
+        adapter.onColorSchemeChanged((scheme) => {
+            schemes.push(scheme);
+        });
+        const handler = mocks.onEvent.mock.calls[0]?.[1] as () => void;
+        handler();
+        expect(schemes).toEqual(["dark"]);
+    });
+
+    it("paints the Telegram chrome with one colour", () => {
+        const setHeaderColor = vi.fn();
+        const setBackgroundColor = vi.fn();
+        const setBottomBarColor = vi.fn();
+        Object.defineProperty(window, "Telegram", {
+            configurable: true,
+            value: {
+                WebApp: {
+                    initData: "query_id=1",
+                    colorScheme: "light",
+                    setHeaderColor,
+                    setBackgroundColor,
+                    setBottomBarColor,
+                },
+            },
+        });
+        createTelegramAdapter().applyChromeColor("#f5f0e8");
+        expect(setHeaderColor).toHaveBeenCalledWith("#f5f0e8");
+        expect(setBackgroundColor).toHaveBeenCalledWith("#f5f0e8");
+        expect(setBottomBarColor).toHaveBeenCalledWith("#f5f0e8");
+    });
+
+    it("tolerates a WebApp without chrome colour or haptic support", () => {
+        Object.defineProperty(window, "Telegram", {
+            configurable: true,
+            value: { WebApp: { initData: "query_id=1", colorScheme: "light" } },
+        });
+        createTelegramAdapter().applyChromeColor("#f5f0e8");
+        hapticImpact("light");
+        hapticSelection();
+    });
+
+    it("forwards impact and selection haptics", () => {
+        const impactOccurred = vi.fn();
+        const selectionChanged = vi.fn();
+        Object.defineProperty(window, "Telegram", {
+            configurable: true,
+            value: {
+                WebApp: {
+                    initData: "query_id=1",
+                    colorScheme: "light",
+                    HapticFeedback: { impactOccurred, selectionChanged },
+                },
+            },
+        });
+        hapticImpact("light");
+        hapticSelection();
+        expect(impactOccurred).toHaveBeenCalledWith("light");
+        expect(selectionChanged).toHaveBeenCalledTimes(1);
     });
 
     it("forwards switchInlineQuery when the WebApp method exists", () => {
@@ -211,7 +263,6 @@ describe("createTelegramAdapter", () => {
                 WebApp: {
                     initData: "query_id=1",
                     colorScheme: "light",
-                    themeParams: {},
                     switchInlineQuery,
                     ready: vi.fn(),
                     expand: vi.fn(),
@@ -240,7 +291,6 @@ describe("createTelegramAdapter", () => {
                 WebApp: {
                     initData: "query_id=1",
                     colorScheme: "light",
-                    themeParams: {},
                     openTelegramLink,
                     ready: vi.fn(),
                     expand: vi.fn(),

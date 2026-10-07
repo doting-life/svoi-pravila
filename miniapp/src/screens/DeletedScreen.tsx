@@ -1,3 +1,6 @@
+import { Button } from "../components/Button";
+import { EmptyState } from "../components/EmptyState";
+import { MoonIllustration } from "../components/icons";
 import { ru } from "../localization/ru";
 import type { TelegramAdapter } from "../telegram/webapp";
 
@@ -7,21 +10,21 @@ export type DeletedScreenProps = {
 
 export function DeletedScreen({ telegram }: DeletedScreenProps) {
     return (
-        <section className="screen" aria-labelledby="deleted-title">
-            <header className="screen-header">
-                <h2 id="deleted-title" className="screen-title">
-                    {ru.privacyDeleted}
-                </h2>
-            </header>
-            <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => {
-                    telegram.close();
-                }}
-            >
-                {ru.close}
-            </button>
+        <section className="screen screen--centered" aria-labelledby="deleted-title">
+            <EmptyState
+                illustration={<MoonIllustration />}
+                title={ru.privacyDeleted}
+                titleId="deleted-title"
+                action={
+                    <Button
+                        onClick={() => {
+                            telegram.close();
+                        }}
+                    >
+                        {ru.close}
+                    </Button>
+                }
+            />
         </section>
     );
 }

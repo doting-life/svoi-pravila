@@ -87,6 +87,11 @@ asset_path="$(grep -oE '/assets/[^"]+' "${CI_TMPDIR}/miniapp-index.html" | head 
 test -n "$asset_path"
 asset_code="$(curl -s -o /dev/null -w '%{http_code}' "${MINIAPP_BASE}${asset_path}")"
 test "$asset_code" = "200"
+font_type="$(curl -s -o /dev/null -w '%{http_code} %{content_type}' "${MINIAPP_BASE}/fonts/literata-cyrillic-600-normal.woff2")"
+case "$font_type" in
+  "200 font/"*) ;;
+  *) echo "stack-smoke: self-hosted font not served as a font: ${font_type}" >&2; exit 1 ;;
+esac
 health_code="$(curl -s -o /dev/null -w '%{http_code}' "${MINIAPP_BASE}/healthz")"
 test "$health_code" = "404"
 

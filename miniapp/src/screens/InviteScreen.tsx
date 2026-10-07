@@ -3,13 +3,23 @@ import { useCallback, useState } from "react";
 import { useApiClient } from "../api/ApiContext";
 import type { ApiError } from "../api/errors";
 import { unwrapApiResult, unwrapEmptyResult } from "../api/request";
+import { Button } from "../components/Button";
+import { ChipGroup } from "../components/ChipGroup";
+import { TextInput } from "../components/Field";
+import { PairCircles } from "../components/icons";
+import { EmptyState } from "../components/EmptyState";
 import { LoadingView } from "../components/StatusViews";
 import { formatDisplayDate } from "../dates/formatDisplayDate";
 import { useAsyncResource } from "../hooks/useAsyncResource";
 import { ru, type RelationshipKey } from "../localization/ru";
 import type { TelegramAdapter } from "../telegram/webapp";
 
-const RELATIONSHIPS = Object.keys(ru.relationships) as RelationshipKey[];
+const RELATIONSHIP_OPTIONS = (Object.keys(ru.relationships) as RelationshipKey[]).map((key) => ({
+    value: key,
+    label: ru.relationships[key],
+}));
+
+const LABEL_MAX = 32;
 
 export type InviteScreenProps = {
     readonly telegram: TelegramAdapter;
@@ -52,7 +62,7 @@ export function InviteScreen({
 
     const accept = async () => {
         const trimmed = label.trim();
-        if (trimmed.length === 0 || trimmed.length > 32) {
+        if (trimmed.length === 0 || trimmed.length > LABEL_MAX) {
             setFormError(ru.addRuleValidation);
             return;
         }
@@ -81,85 +91,94 @@ export function InviteScreen({
     }
     if (resolved.status === "error") {
         return (
-            <section className="screen" aria-labelledby="invite-title">
-                <h2 id="invite-title" className="screen-title">
-                    {ru.inviteTitle}
-                </h2>
-                <p className="status-message" role="alert">
-                    {inviteErrorMessage(resolved.error)}
-                </p>
-                <button type="button" className="btn btn-primary" onClick={onDismiss}>
-                    {ru.continue}
-                </button>
+            <section className="screen screen--centered" aria-labelledby="invite-title">
+                <EmptyState
+                    illustration={<PairCircles />}
+                    title={ru.inviteTitle}
+                    titleId="invite-title"
+                    message={inviteErrorMessage(resolved.error)}
+                    action={<Button onClick={onDismiss}>{ru.continue}</Button>}
+                />
             </section>
         );
     }
 
     return (
         <section className="screen" aria-labelledby="invite-title">
-            <h2 id="invite-title" className="screen-title">
-                {ru.inviteTitle}
-            </h2>
-            <p className="status-message">{ru.inviteExplain}</p>
-            <p className="status-message">
+            <div className="invite-art">
+                <PairCircles />
+            </div>
+            <header className="screen-header">
+                <div className="screen-header__text">
+                    <h1 id="invite-title" className="screen-title">
+                        {ru.inviteTitle}
+                    </h1>
+                    <p className="screen-lead">{ru.inviteLead}</p>
+                </div>
+            </header>
+
+            <ol className="invite-steps">
+                <li className="invite-steps__item">
+                    <span className="invite-steps__num" aria-hidden="true">
+                        1
+                    </span>
+                    {ru.inviteStepShared}
+                </li>
+                <li className="invite-steps__item">
+                    <span className="invite-steps__num" aria-hidden="true">
+                        2
+                    </span>
+                    {ru.inviteStepConfirm}
+                </li>
+                <li className="invite-steps__item">
+                    <span className="invite-steps__num" aria-hidden="true">
+                        3
+                    </span>
+                    {ru.inviteStepLeave}
+                </li>
+            </ol>
+
+            <p className="hint-text">
                 {ru.inviteExpires.replace(
                     "{date}",
                     formatDisplayDate(resolved.data.expires_at, displayTimezone),
                 )}
             </p>
-            <label className="field">
-                <span className="field-label">{ru.inviteLabel}</span>
-                <input
-                    className="field-input"
-                    aria-label={ru.inviteLabel}
-                    value={label}
-                    maxLength={32}
-                    onChange={(event) => {
-                        setLabel(event.target.value);
-                    }}
-                />
-            </label>
-            <label className="field">
-                <span className="field-label">{ru.inviteRelationship}</span>
-                <select
-                    className="field-input"
-                    aria-label={ru.inviteRelationship}
-                    value={relationship}
-                    onChange={(event) => {
-                        setRelationship(event.target.value as RelationshipKey);
-                    }}
-                >
-                    {RELATIONSHIPS.map((key) => (
-                        <option key={key} value={key}>
-                            {ru.relationships[key]}
-                        </option>
-                    ))}
-                </select>
-            </label>
+
+            <TextInput
+                label={ru.inviteLabel}
+                value={label}
+                maxLength={LABEL_MAX}
+                disabled={busy}
+                onChange={setLabel}
+            />
+            <ChipGroup
+                legend={ru.inviteRelationship}
+                options={RELATIONSHIP_OPTIONS}
+                value={relationship}
+                onChange={setRelationship}
+            />
+
             {formError !== null ? (
-                <p className="status-message" role="alert">
+                <p className="form-error" role="alert">
                     {formError}
                 </p>
             ) : null}
-            <div className="list-item-actions">
-                <button
-                    type="button"
-                    className="btn btn-primary"
+
+            <div className="screen-footer">
+                <Button
+                    size="lg"
+                    block
                     disabled={busy}
                     onClick={() => {
                         void accept();
                     }}
                 >
                     {busy ? ru.loading : ru.inviteAccept}
-                </button>
-                <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={busy}
-                    onClick={onDismiss}
-                >
-                    {ru.cancel}
-                </button>
+                </Button>
+                <Button variant="ghost" block disabled={busy} onClick={onDismiss}>
+                    {ru.inviteLater}
+                </Button>
             </div>
         </section>
     );

@@ -1,13 +1,28 @@
 import { useState } from "react";
 
+import { Button } from "../components/Button";
+import { ChipGroup } from "../components/ChipGroup";
+import { TextArea } from "../components/Field";
+import { SegmentedControl } from "../components/SegmentedControl";
 import { useRules, type RuleCategory } from "../hooks/useRules";
 import { ru, type CategoryKey } from "../localization/ru";
 import type { TelegramAdapter } from "../telegram/webapp";
 
-const CATEGORIES = Object.keys(ru.categories) as CategoryKey[];
+const CATEGORY_OPTIONS = (Object.keys(ru.categories) as CategoryKey[]).map((key) => ({
+    value: key,
+    label: ru.categories[key],
+}));
+
+const SCOPE_OPTIONS = [
+    { value: "personal", label: ru.addRuleScopePersonal },
+    { value: "shared", label: ru.addRuleScopeShared },
+] as const;
+
+const RULE_TEXT_MAX = 280;
 
 export type AddRuleScreenProps = {
     readonly contactId: string;
+    readonly contactLabel: string;
     readonly paired: boolean;
     readonly telegram: TelegramAdapter;
     readonly onCreated: () => void;
@@ -17,6 +32,7 @@ export type AddRuleScreenProps = {
 
 export function AddRuleScreen({
     contactId,
+    contactLabel,
     paired,
     telegram,
     onCreated,
@@ -26,23 +42,21 @@ export function AddRuleScreen({
     const rules = useRules(contactId);
     const [category, setCategory] = useState<RuleCategory>(initialCategory);
     const [text, setText] = useState(initialText);
-    const [shared, setShared] = useState(false);
+    const [scope, setScope] = useState<"personal" | "shared">("personal");
     const [formError, setFormError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
 
+    const shared = paired && scope === "shared";
+
     const submit = async () => {
         const trimmed = text.trim();
-        if (trimmed.length === 0 || trimmed.length > 280) {
+        if (trimmed.length === 0 || trimmed.length > RULE_TEXT_MAX) {
             setFormError(ru.addRuleValidation);
             return;
         }
         setBusy(true);
         setFormError(null);
-        const result = await rules.createRule({
-            category,
-            text: trimmed,
-            shared: paired ? shared : false,
-        });
+        const result = await rules.createRule({ category, text: trimmed, shared });
         setBusy(false);
         if (result.error !== undefined) {
             if (result.error.code === "open_rule_limit") {
@@ -64,92 +78,64 @@ export function AddRuleScreen({
 
     return (
         <section className="screen" aria-labelledby="add-rule-title">
-            <h2 id="add-rule-title" className="screen-title">
-                {ru.addRuleTitle}
-            </h2>
+            <header className="screen-header">
+                <div className="screen-header__text">
+                    <p className="screen-eyebrow">
+                        {ru.addRuleFor.replace("{label}", contactLabel)}
+                    </p>
+                    <h1 id="add-rule-title" className="screen-title">
+                        {ru.addRuleTitle}
+                    </h1>
+                </div>
+            </header>
 
             {paired ? (
-                <fieldset className="field">
-                    <legend className="field-label">{ru.addRuleScope}</legend>
-                    <div className="choice-row">
-                        <label className="choice">
-                            <input
-                                type="radio"
-                                name="scope"
-                                checked={!shared}
-                                onChange={() => {
-                                    setShared(false);
-                                }}
-                            />
-                            <span>{ru.addRuleScopePersonal}</span>
-                        </label>
-                        <label className="choice">
-                            <input
-                                type="radio"
-                                name="scope"
-                                checked={shared}
-                                onChange={() => {
-                                    setShared(true);
-                                }}
-                            />
-                            <span>{ru.addRuleScopeShared}</span>
-                        </label>
-                    </div>
-                </fieldset>
+                <>
+                    <SegmentedControl
+                        legend={ru.addRuleScope}
+                        options={SCOPE_OPTIONS}
+                        value={scope}
+                        onChange={setScope}
+                    />
+                    {shared ? <p className="hint-text">{ru.addRuleSharedNote}</p> : null}
+                </>
             ) : null}
 
-            <fieldset className="field">
-                <legend className="field-label">{ru.addRuleCategory}</legend>
-                <div className="choice-row">
-                    {CATEGORIES.map((key) => (
-                        <label key={key} className="choice">
-                            <input
-                                type="radio"
-                                name="category"
-                                value={key}
-                                checked={category === key}
-                                onChange={() => {
-                                    setCategory(key);
-                                }}
-                            />
-                            <span>{ru.categories[key]}</span>
-                        </label>
-                    ))}
-                </div>
-            </fieldset>
+            <ChipGroup
+                legend={ru.addRuleCategory}
+                options={CATEGORY_OPTIONS}
+                value={category}
+                onChange={setCategory}
+            />
 
-            <label className="field">
-                <span className="field-label">{ru.addRuleText}</span>
-                <textarea
-                    className="field-input field-textarea"
-                    value={text}
-                    maxLength={280}
-                    rows={5}
-                    onChange={(event) => {
-                        setText(event.target.value);
-                    }}
-                />
-                <span className="field-counter" aria-live="polite">
-                    {text.length}/280
-                </span>
-            </label>
+            <TextArea
+                label={ru.addRuleText}
+                value={text}
+                maxLength={RULE_TEXT_MAX}
+                disabled={busy}
+                footer={ru.addRuleHint}
+                large
+                onChange={setText}
+            />
 
             {formError !== null ? (
-                <p className="status-message" role="alert">
+                <p className="form-error" role="alert">
                     {formError}
                 </p>
             ) : null}
 
-            <button
-                type="button"
-                className="btn btn-primary"
-                disabled={busy}
-                onClick={() => {
-                    void submit();
-                }}
-            >
-                {ru.addRuleSubmit}
-            </button>
+            <div className="screen-footer">
+                <Button
+                    size="lg"
+                    block
+                    disabled={busy}
+                    onClick={() => {
+                        void submit();
+                    }}
+                >
+                    {shared ? ru.addRuleSubmitShared : ru.addRuleSubmit}
+                </Button>
+            </div>
         </section>
     );
 }

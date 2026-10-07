@@ -3,9 +3,21 @@ import { useEffect, useRef, useState } from "react";
 import { useApiClient } from "../api/ApiContext";
 import { unwrapApiResult } from "../api/request";
 import { consumeDecodeSse, type DecodeCompletedPayload } from "../api/sse";
-import { formatAppliedRuleCitation } from "../decode/formatAppliedRuleCitation";
+import { Badge } from "../components/Badge";
+import { Button } from "../components/Button";
+import { Card } from "../components/Card";
+import { ContactPicker } from "../components/ContactPicker";
+import { TextArea } from "../components/Field";
+import { Avatar } from "../components/Avatar";
+import { ChevronDownIcon, ClipboardIcon } from "../components/icons";
+import { ScreenHeader } from "../components/ScreenHeader";
+import { Skeleton } from "../components/Skeleton";
 import { formatDisplayDate } from "../dates/formatDisplayDate";
+import { formatAppliedRuleCitation } from "../decode/formatAppliedRuleCitation";
+import { useContacts, type Contact } from "../hooks/useContacts";
+import { decodeRemainingLabel } from "../localization/plural";
 import { ru, type CategoryKey } from "../localization/ru";
+import type { LimitKind } from "../navigation/stack";
 import type { TelegramAdapter } from "../telegram/webapp";
 
 const DECODE_MAX = 4000;
@@ -14,7 +26,12 @@ export type DecodeScreenProps = {
     readonly telegram: TelegramAdapter;
     readonly displayTimezone: string;
     readonly activeContactId: string | null;
-    readonly onEditSuggestion: (category: string, text: string) => void;
+    readonly decodeRemaining: number | null;
+    readonly onDecodeUsed: () => void;
+    readonly onActivated: (contactId: string) => void;
+    readonly onEditSuggestion: (contact: Contact, category: string, text: string) => void;
+    readonly onLimit: (kind: LimitKind, message: string | null) => void;
+    readonly onCrisis: (lead: string | null, resources: readonly string[]) => void;
     readonly fetchImpl?: typeof fetch;
 };
 
@@ -26,11 +43,6 @@ type Phase =
           readonly analysis: string;
           readonly payload: DecodeCompletedPayload;
       }
-    | {
-          readonly kind: "crisis";
-          readonly lead: string;
-          readonly resources: readonly string[];
-      }
     | { readonly kind: "refused" }
     | { readonly kind: "error"; readonly message: string };
 
@@ -39,6 +51,16 @@ type SuggestionCard = {
     readonly category: string;
     readonly text: string;
 };
+
+function limitKindForCode(code: string | undefined): LimitKind | null {
+    if (code === "quota_exhausted") {
+        return "quota";
+    }
+    if (code === "service_budget_exhausted") {
+        return "budget";
+    }
+    return null;
+}
 
 function errorMessageForCode(code: string): string {
     switch (code) {
@@ -68,15 +90,23 @@ export function DecodeScreen({
     telegram,
     displayTimezone,
     activeContactId,
+    decodeRemaining,
+    onDecodeUsed,
+    onActivated,
     onEditSuggestion,
+    onLimit,
+    onCrisis,
     fetchImpl = fetch,
 }: DecodeScreenProps) {
     const client = useApiClient();
+    const contacts = useContacts();
     const [text, setText] = useState("");
     const [phase, setPhase] = useState<Phase>({ kind: "idle" });
     const [suggestion, setSuggestion] = useState<SuggestionCard | null>(null);
     const [suggestBusy, setSuggestBusy] = useState(false);
     const [suggestMessage, setSuggestMessage] = useState<string | null>(null);
+    const [pasteHint, setPasteHint] = useState<string | null>(null);
+    const [pickerOpen, setPickerOpen] = useState(false);
     const abortRef = useRef<AbortController | null>(null);
 
     useEffect(() => {
@@ -85,6 +115,9 @@ export function DecodeScreen({
             abortRef.current = null;
         };
     }, []);
+
+    const contactList = contacts.status === "success" ? contacts.data : [];
+    const active = contactList.find((contact) => contact.id === activeContactId);
 
     const submit = async () => {
         const trimmed = text.trim();
@@ -115,7 +148,7 @@ export function DecodeScreen({
             });
             if (!response.ok) {
                 let code = "generation_unavailable";
-                let serverMessage: string | undefined;
+                let serverMessage: string | null = null;
                 try {
                     const body = (await response.json()) as { code?: string; message?: string };
                     if (typeof body.code === "string") {
@@ -127,13 +160,13 @@ export function DecodeScreen({
                 } catch {
                     // keep default
                 }
-                const message =
-                    (code === "quota_exhausted" || code === "service_budget_exhausted") &&
-                    serverMessage !== undefined
-                        ? serverMessage
-                        : errorMessageForCode(code);
-                setPhase({ kind: "error", message });
                 telegram.hapticNotification("error");
+                const limitKind = limitKindForCode(code);
+                if (limitKind !== null) {
+                    onLimit(limitKind, serverMessage);
+                    return;
+                }
+                setPhase({ kind: "error", message: errorMessageForCode(code) });
                 return;
             }
             let analysis = "";
@@ -147,20 +180,22 @@ export function DecodeScreen({
                     onCompleted: (payload) => {
                         setPhase({ kind: "completed", analysis, payload });
                         telegram.hapticNotification("success");
+                        onDecodeUsed();
                     },
                     onCrisis: (payload) => {
-                        setPhase({
-                            kind: "crisis",
-                            lead: payload.lead,
-                            resources: payload.resources,
-                        });
+                        onCrisis(payload.lead, payload.resources);
                     },
                     onRefused: () => {
                         setPhase({ kind: "refused" });
                     },
                     onError: (code) => {
-                        setPhase({ kind: "error", message: errorMessageForCode(code) });
                         telegram.hapticNotification("error");
+                        const limitKind = limitKindForCode(code);
+                        if (limitKind !== null) {
+                            onLimit(limitKind, null);
+                            return;
+                        }
+                        setPhase({ kind: "error", message: errorMessageForCode(code) });
                     },
                 },
                 controller.signal,
@@ -171,6 +206,16 @@ export function DecodeScreen({
             }
             setPhase({ kind: "error", message: ru.decodeErrorUnavailable });
             telegram.hapticNotification("error");
+        }
+    };
+
+    const pasteFromClipboard = async () => {
+        setPasteHint(null);
+        try {
+            const clipboardText = await navigator.clipboard.readText();
+            setText(clipboardText.slice(0, DECODE_MAX));
+        } catch {
+            setPasteHint(ru.decodePasteFailed);
         }
     };
 
@@ -200,14 +245,13 @@ export function DecodeScreen({
         );
         setSuggestBusy(false);
         if (unwrapped.error !== undefined || unwrapped.data === undefined) {
-            const err = unwrapped.error;
-            const code = err?.code;
-            const useServer =
-                (code === "quota_exhausted" || code === "service_budget_exhausted") &&
-                typeof err?.message === "string" &&
-                err.message.length > 0;
-            setSuggestMessage(useServer ? err.message : ru.decodeErrorUnavailable);
             telegram.hapticNotification("error");
+            const limitKind = limitKindForCode(unwrapped.error?.code);
+            if (limitKind !== null) {
+                onLimit(limitKind, unwrapped.error?.message || null);
+                return;
+            }
+            setSuggestMessage(ru.decodeErrorUnavailable);
             return;
         }
         const outcome = unwrapped.data.outcome;
@@ -218,9 +262,7 @@ export function DecodeScreen({
             return;
         }
         if (outcome === "crisis") {
-            const lead = unwrapped.data.lead ?? "";
-            const resources = unwrapped.data.resources ?? [];
-            setPhase({ kind: "crisis", lead, resources });
+            onCrisis(unwrapped.data.lead ?? null, unwrapped.data.resources ?? []);
             return;
         }
         const messages: Record<string, string> = {
@@ -231,218 +273,321 @@ export function DecodeScreen({
         setSuggestMessage(messages[outcome] ?? ru.decodeErrorUnavailable);
     };
 
-    const acceptSuggestion = async () => {
+    const settleSuggestion = async (action: "accept" | "dismiss") => {
         if (suggestion === null) {
             return;
         }
         setSuggestBusy(true);
-        const unwrapped = unwrapApiResult(
-            await client.POST("/api/v1/suggestions/{suggestion_id}/accept", {
-                params: { path: { suggestion_id: suggestion.id } },
-            }),
-        );
+        const failed =
+            action === "accept"
+                ? unwrapApiResult(
+                      await client.POST("/api/v1/suggestions/{suggestion_id}/accept", {
+                          params: { path: { suggestion_id: suggestion.id } },
+                      }),
+                  ).error !== undefined
+                : unwrapApiResult(
+                      await client.POST("/api/v1/suggestions/{suggestion_id}/dismiss", {
+                          params: { path: { suggestion_id: suggestion.id } },
+                      }),
+                  ).error !== undefined;
         setSuggestBusy(false);
-        if (unwrapped.error !== undefined) {
+        if (failed) {
             telegram.hapticNotification("error");
             return;
         }
         setSuggestion(null);
-        telegram.hapticNotification("success");
+        if (action === "accept") {
+            telegram.hapticNotification("success");
+        }
     };
 
-    const dismissSuggestion = async () => {
-        if (suggestion === null) {
+    const selectContact = async (contact: Contact) => {
+        setPickerOpen(false);
+        if (contact.id === activeContactId) {
             return;
         }
-        setSuggestBusy(true);
-        const unwrapped = unwrapApiResult(
-            await client.POST("/api/v1/suggestions/{suggestion_id}/dismiss", {
-                params: { path: { suggestion_id: suggestion.id } },
-            }),
-        );
-        setSuggestBusy(false);
-        if (unwrapped.error !== undefined) {
+        const result = await contacts.activateContact(contact.id);
+        if (result.error !== undefined) {
             telegram.hapticNotification("error");
             return;
         }
-        setSuggestion(null);
+        onActivated(contact.id);
     };
 
-    const streaming = phase.kind === "streaming";
-    const analysisText =
-        phase.kind === "streaming" || phase.kind === "completed" ? phase.analysis : "";
+    const reset = () => {
+        abortRef.current?.abort();
+        abortRef.current = null;
+        setText("");
+        setSuggestion(null);
+        setSuggestMessage(null);
+        setPhase({ kind: "idle" });
+    };
+
+    const showingResult = phase.kind === "streaming" || phase.kind === "completed";
+    const analysisText = showingResult ? phase.analysis : "";
+
+    if (showingResult) {
+        const ruleToken = phase.kind === "completed" ? phase.payload.rule_source_token : null;
+        return (
+            <section className="screen" aria-labelledby="decode-title">
+                <ScreenHeader title={ru.decodeTitle} titleId="decode-title" />
+
+                <Card className="quote" tone="sunken">
+                    <span className="quote__label">{ru.decodeIncoming}</span>
+                    <p className="quote__text">{text.trim()}</p>
+                </Card>
+
+                <section className="section" aria-labelledby="decode-analysis-title">
+                    <h2 id="decode-analysis-title" className="section-title">
+                        {ru.decodeAnalysis}
+                    </h2>
+                    {analysisText.length > 0 ? (
+                        <p className="analysis-text">{analysisText}</p>
+                    ) : (
+                        <div role="status">
+                            <span className="visually-hidden">{ru.loading}</span>
+                            <Skeleton shape="line" />
+                            <Skeleton shape="line" short />
+                        </div>
+                    )}
+                </section>
+
+                {phase.kind === "completed" ? (
+                    <>
+                        <section className="section" aria-labelledby="decode-replies-title">
+                            <h2 id="decode-replies-title" className="section-title">
+                                {ru.decodeReplies}
+                            </h2>
+                            <ul className="rule-list">
+                                {phase.payload.variants.map((variant) => (
+                                    <li key={`${variant.firmness}-${variant.text}`}>
+                                        <Card as="article" className="variant">
+                                            <Badge tone="neutral">
+                                                {firmnessLabel(variant.firmness)}
+                                            </Badge>
+                                            <p className="variant__text">{variant.text}</p>
+                                            <div className="variant__actions">
+                                                <Button
+                                                    disabled={variant.insert_query === null}
+                                                    onClick={() => {
+                                                        insertVariant(variant.insert_query);
+                                                    }}
+                                                >
+                                                    {ru.decodeInsert}
+                                                </Button>
+                                                <Button
+                                                    variant="outline"
+                                                    onClick={() => {
+                                                        void copyVariant(variant.text);
+                                                    }}
+                                                >
+                                                    {ru.decodeCopy}
+                                                </Button>
+                                            </div>
+                                        </Card>
+                                    </li>
+                                ))}
+                            </ul>
+                        </section>
+
+                        {phase.payload.applied_rules.length > 0 ? (
+                            <ul className="stack stack--tight">
+                                {phase.payload.applied_rules.slice(0, 3).map((rule) => (
+                                    <li key={`${rule.category}-${rule.text}`} className="citation">
+                                        {formatAppliedRuleCitation(
+                                            phase.payload.applied_rule_template,
+                                            {
+                                                date: formatDisplayDate(
+                                                    rule.effective_since,
+                                                    displayTimezone,
+                                                ),
+                                                text: rule.text,
+                                            },
+                                        )}
+                                    </li>
+                                ))}
+                            </ul>
+                        ) : null}
+
+                        {ruleToken !== null && suggestion === null ? (
+                            <Card tone="warm" aria-labelledby="decode-rule-title">
+                                <h2 id="decode-rule-title" className="hint-title">
+                                    {ru.decodeRuleTitle}
+                                </h2>
+                                <p className="hint-text">{ru.decodeRuleText}</p>
+                                <Button
+                                    disabled={suggestBusy}
+                                    onClick={() => {
+                                        void makeRule(ruleToken);
+                                    }}
+                                >
+                                    {ru.decodeMakeRule}
+                                </Button>
+                            </Card>
+                        ) : null}
+
+                        {suggestMessage !== null ? (
+                            <p className="form-error" role="alert">
+                                {suggestMessage}
+                            </p>
+                        ) : null}
+
+                        {suggestion !== null ? (
+                            <Card tone="warm" aria-labelledby="decode-suggestion-title">
+                                <h2 id="decode-suggestion-title" className="hint-title">
+                                    {ru.suggestionsTitle}
+                                </h2>
+                                <p className="rule-text">{suggestion.text}</p>
+                                <p className="rule-card__meta">
+                                    {suggestion.category in ru.categories
+                                        ? ru.categories[suggestion.category as CategoryKey]
+                                        : suggestion.category}
+                                </p>
+                                <div className="rule-card__footer">
+                                    <Button
+                                        disabled={suggestBusy}
+                                        onClick={() => {
+                                            void settleSuggestion("accept");
+                                        }}
+                                    >
+                                        {ru.suggestionAccept}
+                                    </Button>
+                                    <Button
+                                        variant="outline"
+                                        disabled={suggestBusy}
+                                        onClick={() => {
+                                            if (active !== undefined) {
+                                                onEditSuggestion(
+                                                    active,
+                                                    suggestion.category,
+                                                    suggestion.text,
+                                                );
+                                            }
+                                        }}
+                                    >
+                                        {ru.decodeSuggestionEdit}
+                                    </Button>
+                                    <Button
+                                        variant="ghost"
+                                        tone="warm"
+                                        disabled={suggestBusy}
+                                        onClick={() => {
+                                            void settleSuggestion("dismiss");
+                                        }}
+                                    >
+                                        {ru.suggestionDismiss}
+                                    </Button>
+                                </div>
+                            </Card>
+                        ) : null}
+
+                        <div className="screen-footer">
+                            <Button variant="outline" size="lg" block onClick={reset}>
+                                {ru.decodeAgain}
+                            </Button>
+                        </div>
+                    </>
+                ) : null}
+            </section>
+        );
+    }
 
     return (
         <section className="screen" aria-labelledby="decode-title">
-            <h2 id="decode-title" className="screen-title">
-                {ru.decodeTitle}
-            </h2>
-
-            <label className="field">
-                <span className="field-label">{ru.decodePlaceholder}</span>
-                <textarea
-                    className="field-input field-textarea"
-                    value={text}
-                    maxLength={DECODE_MAX}
-                    rows={6}
-                    disabled={streaming}
-                    onChange={(event) => {
-                        setText(event.target.value);
-                    }}
-                />
-                <span className="field-counter" aria-live="polite">
-                    {text.length}/{DECODE_MAX}
-                </span>
-            </label>
+            <ScreenHeader
+                title={ru.decodeTitle}
+                titleId="decode-title"
+                lead={ru.decodeLead}
+                trailing={
+                    decodeRemaining !== null ? (
+                        <Badge tone="accent">{decodeRemainingLabel(decodeRemaining)}</Badge>
+                    ) : undefined
+                }
+            />
 
             <button
                 type="button"
-                className="btn btn-primary"
-                disabled={streaming || activeContactId === null}
+                className="contact-chip"
                 onClick={() => {
-                    void submit();
+                    setPickerOpen(true);
                 }}
             >
-                {ru.decodeSubmit}
+                {active !== undefined ? <Avatar name={active.label} size="sm" /> : null}
+                <span>
+                    {active !== undefined
+                        ? ru.decodeFrom.replace("{name}", active.label)
+                        : ru.decodeFromNone}
+                </span>
+                <ChevronDownIcon size={18} />
             </button>
 
-            {analysisText.length > 0 ? (
-                <section className="block" aria-labelledby="decode-analysis-title">
-                    <h3 id="decode-analysis-title" className="block-title">
-                        {ru.decodeAnalysis}
-                    </h3>
-                    <p className="decode-analysis">{analysisText}</p>
-                </section>
+            <TextArea
+                label={ru.decodeField}
+                value={text}
+                maxLength={DECODE_MAX}
+                placeholder={ru.decodePlaceholder}
+                rows={7}
+                large
+                footer={
+                    <button
+                        type="button"
+                        className="paste-button"
+                        onClick={() => {
+                            void pasteFromClipboard();
+                        }}
+                    >
+                        <ClipboardIcon size={18} />
+                        {ru.decodePaste}
+                    </button>
+                }
+                onChange={setText}
+            />
+
+            {pasteHint !== null ? (
+                <p className="form-error" role="alert">
+                    {pasteHint}
+                </p>
+            ) : null}
+            {phase.kind === "refused" ? (
+                <p className="form-error" role="alert">
+                    {ru.decodeRefused}
+                </p>
+            ) : null}
+            {phase.kind === "error" ? (
+                <p className="form-error" role="alert">
+                    {phase.message}
+                </p>
             ) : null}
 
-            {phase.kind === "completed" ? (
-                <>
-                    <ul className="list">
-                        {phase.payload.variants.map((variant) => (
-                            <li key={`${variant.firmness}-${variant.text}`} className="list-item">
-                                <p className="list-item-meta">{firmnessLabel(variant.firmness)}</p>
-                                <p className="list-item-title">{variant.text}</p>
-                                <div className="list-item-actions">
-                                    <button
-                                        type="button"
-                                        className="btn btn-secondary"
-                                        onClick={() => {
-                                            void copyVariant(variant.text);
-                                        }}
-                                    >
-                                        {ru.decodeCopy}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="btn btn-secondary"
-                                        disabled={variant.insert_query === null}
-                                        onClick={() => {
-                                            insertVariant(variant.insert_query);
-                                        }}
-                                    >
-                                        {ru.decodeInsert}
-                                    </button>
-                                </div>
-                            </li>
-                        ))}
-                    </ul>
-                    {phase.payload.applied_rules.length > 0 ? (
-                        <ul className="list">
-                            {phase.payload.applied_rules.slice(0, 3).map((rule) => (
-                                <li
-                                    key={`${rule.category}-${rule.text}`}
-                                    className="list-item-meta"
-                                >
-                                    {formatAppliedRuleCitation(
-                                        phase.payload.applied_rule_template,
-                                        {
-                                            date: formatDisplayDate(
-                                                rule.effective_since,
-                                                displayTimezone,
-                                            ),
-                                            text: rule.text,
-                                        },
-                                    )}
-                                </li>
-                            ))}
-                        </ul>
-                    ) : null}
-                    {phase.payload.rule_source_token !== null ? (
-                        <button
-                            type="button"
-                            className="btn btn-primary"
-                            disabled={suggestBusy}
-                            onClick={() => {
-                                void makeRule(phase.payload.rule_source_token as string);
-                            }}
-                        >
-                            {ru.decodeMakeRule}
-                        </button>
-                    ) : null}
-                </>
-            ) : null}
+            <div className="screen-footer">
+                <p className="hint-text">
+                    {active !== undefined
+                        ? ru.decodePrivacyNamed.replace("{name}", active.label)
+                        : ru.decodePrivacy}
+                </p>
+                <Button
+                    size="lg"
+                    block
+                    disabled={activeContactId === null}
+                    onClick={() => {
+                        void submit();
+                    }}
+                >
+                    {ru.decodeSubmit}
+                </Button>
+            </div>
 
-            {phase.kind === "crisis" ? (
-                <section className="block">
-                    <p>{phase.lead}</p>
-                    <ul className="list">
-                        {phase.resources.map((line) => (
-                            <li key={line} className="list-item-meta">
-                                {line}
-                            </li>
-                        ))}
-                    </ul>
-                </section>
-            ) : null}
-
-            {phase.kind === "refused" ? <p className="field-error">{ru.decodeRefused}</p> : null}
-            {phase.kind === "error" ? <p className="field-error">{phase.message}</p> : null}
-            {suggestMessage !== null ? <p className="field-error">{suggestMessage}</p> : null}
-
-            {suggestion !== null ? (
-                <section className="block" aria-labelledby="decode-suggestion-title">
-                    <h3 id="decode-suggestion-title" className="block-title">
-                        {ru.suggestionsTitle}
-                    </h3>
-                    <p className="list-item-title">{suggestion.text}</p>
-                    <p className="list-item-meta">
-                        {suggestion.category in ru.categories
-                            ? ru.categories[suggestion.category as CategoryKey]
-                            : suggestion.category}
-                    </p>
-                    <div className="list-item-actions">
-                        <button
-                            type="button"
-                            className="btn btn-primary"
-                            disabled={suggestBusy}
-                            onClick={() => {
-                                void acceptSuggestion();
-                            }}
-                        >
-                            {ru.suggestionAccept}
-                        </button>
-                        <button
-                            type="button"
-                            className="btn btn-secondary"
-                            disabled={suggestBusy}
-                            onClick={() => {
-                                onEditSuggestion(suggestion.category, suggestion.text);
-                            }}
-                        >
-                            {ru.decodeSuggestionEdit}
-                        </button>
-                        <button
-                            type="button"
-                            className="btn btn-secondary"
-                            disabled={suggestBusy}
-                            onClick={() => {
-                                void dismissSuggestion();
-                            }}
-                        >
-                            {ru.suggestionDismiss}
-                        </button>
-                    </div>
-                </section>
+            {pickerOpen ? (
+                <ContactPicker
+                    contacts={contactList}
+                    activeContactId={activeContactId}
+                    onSelect={(contact) => {
+                        void selectContact(contact);
+                    }}
+                    onClose={() => {
+                        setPickerOpen(false);
+                    }}
+                />
             ) : null}
         </section>
     );

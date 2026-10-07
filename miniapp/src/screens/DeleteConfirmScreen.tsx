@@ -1,5 +1,8 @@
 import { useState } from "react";
 
+import { Button } from "../components/Button";
+import { Card } from "../components/Card";
+import { ScreenHeader } from "../components/ScreenHeader";
 import { ErrorView, LoadingView } from "../components/StatusViews";
 import { usePrivacyActions } from "../hooks/usePrivacyActions";
 import { usePrivacyTexts } from "../hooks/usePrivacyTexts";
@@ -45,37 +48,31 @@ export function DeleteConfirmScreen({
 
     return (
         <section className="screen" aria-labelledby="delete-confirm-title">
-            <header className="screen-header">
-                <h2 id="delete-confirm-title" className="screen-title">
-                    {ru.privacyDeleteAction}
-                </h2>
-            </header>
-            <p className="status-message">{texts.data.delete.confirm}</p>
-            <div className="list-item-actions">
-                <button
-                    type="button"
-                    className="btn btn-danger"
+            <ScreenHeader title={ru.privacyDeleteAction} titleId="delete-confirm-title" />
+            <Card tone="danger">
+                <p className="hint-text">{texts.data.delete.confirm}</p>
+            </Card>
+            {error !== null ? (
+                <p className="form-error" role="alert">
+                    {error}
+                </p>
+            ) : null}
+            <div className="screen-footer">
+                <Button
+                    variant="danger"
+                    size="lg"
+                    block
                     disabled={busy}
                     onClick={() => {
                         void confirmDelete();
                     }}
                 >
                     {busy ? ru.loading : ru.privacyDeleteForever}
-                </button>
-                <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={busy}
-                    onClick={onCancelled}
-                >
+                </Button>
+                <Button variant="ghost" block disabled={busy} onClick={onCancelled}>
                     {ru.cancel}
-                </button>
+                </Button>
             </div>
-            {error !== null ? (
-                <p className="status-message" role="alert">
-                    {error}
-                </p>
-            ) : null}
         </section>
     );
 }

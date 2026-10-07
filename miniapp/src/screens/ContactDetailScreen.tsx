@@ -1,12 +1,18 @@
 import { useState } from "react";
 
-import { formatDisplayDate } from "../dates/formatDisplayDate";
+import { Avatar } from "../components/Avatar";
+import { Badge } from "../components/Badge";
+import { Button } from "../components/Button";
+import { Card } from "../components/Card";
+import { PencilIcon, PlusIcon } from "../components/icons";
 import { EmptyView, ErrorView, LoadingView } from "../components/StatusViews";
+import { formatDisplayDate } from "../dates/formatDisplayDate";
 import { useContacts } from "../hooks/useContacts";
 import { usePrivacyTexts } from "../hooks/usePrivacyTexts";
 import { useRules, type Rule } from "../hooks/useRules";
 import { useSuggestions } from "../hooks/useSuggestions";
 import { ru, type RelationshipKey } from "../localization/ru";
+import { ContactFormSheet } from "../sheets/ContactFormSheet";
 import type { TelegramAdapter } from "../telegram/webapp";
 
 export type ContactDetailScreenProps = {
@@ -17,106 +23,120 @@ export type ContactDetailScreenProps = {
     readonly displayTimezone: string;
     readonly telegram: TelegramAdapter;
     readonly onAddRule: () => void;
-    readonly onRulesChanged: () => void;
     readonly onPairingChanged: (paired: boolean) => void;
+    readonly onRenamed: (label: string) => void;
 };
 
-function RuleList({
-    rules,
-    title,
-    titleId,
-    emptyMessage,
-    displayTimezone,
-    onArchive,
-    onApprove,
-    onReject,
-}: {
-    readonly rules: readonly Rule[];
-    readonly title: string;
-    readonly titleId: string;
-    readonly emptyMessage: string | null;
+type RuleActions = {
     readonly displayTimezone: string;
+    readonly partnerLabel: string;
     readonly onArchive: (ruleId: string, text: string) => void;
     readonly onApprove: (ruleId: string) => void;
     readonly onReject: (ruleId: string) => void;
-}) {
+};
+
+function ruleMeta(rule: Rule, displayTimezone: string): string {
+    const parts: string[] = [ru.categories[rule.category]];
+    if (
+        rule.status === "active" &&
+        rule.effective_since !== null &&
+        rule.effective_since !== undefined
+    ) {
+        parts.push(
+            ru.ruleEffectiveSince.replace(
+                "{date}",
+                formatDisplayDate(rule.effective_since, displayTimezone),
+            ),
+        );
+    }
+    if (rule.status === "proposed" && !rule.needs_my_approval) {
+        parts.push(rule.shared ? ru.ruleAwaitingPartner : ru.ruleProposed);
+    }
+    return parts.join(" · ");
+}
+
+function RuleCard({ rule, actions }: { readonly rule: Rule; readonly actions: RuleActions }) {
+    const needsApproval = rule.needs_my_approval;
     return (
-        <section className="block" aria-labelledby={titleId}>
-            <h3 id={titleId} className="block-title">
+        <li>
+            <Card as="article" tone={needsApproval ? "warm" : "outlined"} className="rule-card">
+                {needsApproval ? (
+                    <Badge tone="warm">
+                        {ru.ruleNeedsApproval.replace("{name}", actions.partnerLabel)}
+                    </Badge>
+                ) : null}
+                <p className="rule-text">{rule.text}</p>
+                <p className="rule-card__meta">{ruleMeta(rule, actions.displayTimezone)}</p>
+                {rule.has_pending_edit ? <Badge tone="warm">{ru.rulePendingEdit}</Badge> : null}
+                {needsApproval ? (
+                    <div className="rule-card__footer">
+                        <Button
+                            onClick={() => {
+                                actions.onApprove(rule.id);
+                            }}
+                        >
+                            {ru.ruleApprove}
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            tone="warm"
+                            onClick={() => {
+                                actions.onReject(rule.id);
+                            }}
+                        >
+                            {ru.ruleReject}
+                        </Button>
+                    </div>
+                ) : null}
+                {!needsApproval && (rule.status === "active" || rule.status === "proposed") ? (
+                    <Button
+                        variant="ghost"
+                        tone="danger"
+                        bare
+                        className="rule-card__archive"
+                        onClick={() => {
+                            actions.onArchive(rule.id, rule.text);
+                        }}
+                    >
+                        {ru.ruleArchive}
+                    </Button>
+                ) : null}
+            </Card>
+        </li>
+    );
+}
+
+function RuleSection({
+    title,
+    titleId,
+    note,
+    rules,
+    actions,
+    emptyMessage,
+}: {
+    readonly title: string;
+    readonly titleId: string;
+    readonly note?: string;
+    readonly rules: readonly Rule[];
+    readonly actions: RuleActions;
+    readonly emptyMessage: string | null;
+}) {
+    if (rules.length === 0 && emptyMessage === null) {
+        return null;
+    }
+    return (
+        <section className="section" aria-labelledby={titleId}>
+            <h2 id={titleId} className="section-title">
                 {title}
-            </h3>
+                {note !== undefined ? <span className="section-title__note"> {note}</span> : null}
+            </h2>
             {rules.length === 0 && emptyMessage !== null ? (
                 <EmptyView message={emptyMessage} />
             ) : null}
             {rules.length > 0 ? (
-                <ul className="list">
+                <ul className="rule-list">
                     {rules.map((rule) => (
-                        <li key={rule.id} className="list-item">
-                            <p className="list-item-title">{rule.text}</p>
-                            <p className="list-item-meta">
-                                {ru.categories[rule.category]}
-                                {rule.status === "active" &&
-                                rule.effective_since !== null &&
-                                rule.effective_since !== undefined
-                                    ? ` · ${ru.ruleEffectiveSince.replace(
-                                          "{date}",
-                                          formatDisplayDate(rule.effective_since, displayTimezone),
-                                      )}`
-                                    : ""}
-                                {rule.status === "proposed" && rule.needs_my_approval
-                                    ? ` · ${ru.ruleProposed}`
-                                    : ""}
-                                {rule.status === "proposed" &&
-                                !rule.needs_my_approval &&
-                                rule.shared
-                                    ? ` · ${ru.ruleAwaitingPartner}`
-                                    : ""}
-                                {rule.status === "proposed" &&
-                                !rule.needs_my_approval &&
-                                !rule.shared
-                                    ? ` · ${ru.ruleProposed}`
-                                    : ""}
-                            </p>
-                            {rule.has_pending_edit ? (
-                                <p className="badge">{ru.rulePendingEdit}</p>
-                            ) : null}
-                            {rule.needs_my_approval ? (
-                                <div className="list-item-actions">
-                                    <button
-                                        type="button"
-                                        className="btn btn-primary"
-                                        onClick={() => {
-                                            onApprove(rule.id);
-                                        }}
-                                    >
-                                        {ru.ruleApprove}
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="btn btn-secondary"
-                                        onClick={() => {
-                                            onReject(rule.id);
-                                        }}
-                                    >
-                                        {ru.ruleReject}
-                                    </button>
-                                </div>
-                            ) : null}
-                            {!rule.needs_my_approval &&
-                            (rule.status === "active" || rule.status === "proposed") ? (
-                                <div className="list-item-actions">
-                                    <button
-                                        type="button"
-                                        className="btn btn-danger"
-                                        onClick={() => {
-                                            onArchive(rule.id, rule.text);
-                                        }}
-                                    >
-                                        {ru.ruleArchive}
-                                    </button>
-                                </div>
-                            ) : null}
-                        </li>
+                        <RuleCard key={rule.id} rule={rule} actions={actions} />
                     ))}
                 </ul>
             ) : null}
@@ -132,8 +152,8 @@ export function ContactDetailScreen({
     displayTimezone,
     telegram,
     onAddRule,
-    onRulesChanged,
     onPairingChanged,
+    onRenamed,
 }: ContactDetailScreenProps) {
     const suggestions = useSuggestions(contactId);
     const rules = useRules(contactId);
@@ -142,61 +162,40 @@ export function ContactDetailScreen({
     const [inviteLink, setInviteLink] = useState<string | null>(null);
     const [inviteBusy, setInviteBusy] = useState(false);
     const [copyHint, setCopyHint] = useState(false);
+    const [renaming, setRenaming] = useState(false);
+
+    const settle = (error: unknown): boolean => {
+        telegram.hapticNotification(error === undefined ? "success" : "error");
+        return error === undefined;
+    };
 
     const archive = async (ruleId: string, text: string) => {
         const confirmed = await telegram.showConfirm(ru.ruleArchiveConfirm.replace("{text}", text));
         if (!confirmed) {
             return;
         }
-        const result = await rules.archiveRule(ruleId);
-        if (result.error !== undefined) {
-            telegram.hapticNotification("error");
-            return;
-        }
-        telegram.hapticNotification("success");
-        onRulesChanged();
+        settle((await rules.archiveRule(ruleId)).error);
     };
 
     const approve = async (ruleId: string) => {
-        const result = await rules.approveRule(ruleId);
-        if (result.error !== undefined) {
-            telegram.hapticNotification("error");
-            return;
-        }
-        telegram.hapticNotification("success");
-        onRulesChanged();
+        settle((await rules.approveRule(ruleId)).error);
     };
 
     const reject = async (ruleId: string) => {
-        const result = await rules.rejectRule(ruleId);
-        if (result.error !== undefined) {
-            telegram.hapticNotification("error");
-            return;
-        }
-        telegram.hapticNotification("success");
-        onRulesChanged();
+        settle((await rules.rejectRule(ruleId)).error);
     };
 
     const accept = async (suggestionId: string) => {
-        const result = await suggestions.acceptSuggestion(suggestionId);
-        if (result.error !== undefined) {
-            telegram.hapticNotification("error");
-            return;
+        if (settle((await suggestions.acceptSuggestion(suggestionId)).error)) {
+            suggestions.refetch();
+            rules.refetch();
         }
-        telegram.hapticNotification("success");
-        suggestions.refetch();
-        rules.refetch();
-        onRulesChanged();
     };
 
     const dismiss = async (suggestionId: string) => {
-        const result = await suggestions.dismissSuggestion(suggestionId);
-        if (result.error !== undefined) {
-            telegram.hapticNotification("error");
-            return;
+        if (settle((await suggestions.dismissSuggestion(suggestionId)).error)) {
+            suggestions.refetch();
         }
-        telegram.hapticNotification("success");
-        suggestions.refetch();
     };
 
     const invite = async () => {
@@ -212,8 +211,7 @@ export function ContactDetailScreen({
     };
 
     const shareInvite = (link: string) => {
-        const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}`;
-        telegram.openTelegramLink(shareUrl);
+        telegram.openTelegramLink(`https://t.me/share/url?url=${encodeURIComponent(link)}`);
     };
 
     const copyInvite = async (link: string) => {
@@ -235,15 +233,24 @@ export function ContactDetailScreen({
             return;
         }
         const result = await contacts.leavePair(contactId);
-        if (result.error !== undefined) {
-            telegram.hapticNotification("error");
+        if (!settle(result.error)) {
             return;
         }
         setInviteLink(null);
-        telegram.hapticNotification("success");
         onPairingChanged(false);
         rules.refetch();
-        onRulesChanged();
+    };
+
+    const rename = async (input: { readonly label: string }): Promise<{ error?: string }> => {
+        const result = await contacts.renameContact(contactId, input.label);
+        if (result.error !== undefined) {
+            telegram.hapticNotification("error");
+            return { error: result.error.message || ru.errorGeneric };
+        }
+        telegram.hapticNotification("success");
+        setRenaming(false);
+        onRenamed(input.label);
+        return {};
     };
 
     const loading = suggestions.status === "loading" || rules.status === "loading";
@@ -257,75 +264,48 @@ export function ContactDetailScreen({
     const allRules = rules.status === "success" ? rules.data : [];
     const personalRules = allRules.filter((rule) => !rule.shared);
     const sharedRules = allRules.filter((rule) => rule.shared);
+    const actions: RuleActions = {
+        displayTimezone,
+        partnerLabel: label,
+        onArchive: (ruleId, text) => {
+            void archive(ruleId, text);
+        },
+        onApprove: (ruleId) => {
+            void approve(ruleId);
+        },
+        onReject: (ruleId) => {
+            void reject(ruleId);
+        },
+    };
+    const relationshipLabel =
+        relationship in ru.relationships
+            ? ru.relationships[relationship as RelationshipKey]
+            : relationship;
 
     return (
         <section className="screen" aria-labelledby="detail-title">
-            <header className="screen-header">
-                <div>
-                    <h2 id="detail-title" className="screen-title">
+            <header className="detail-header">
+                <Avatar name={label} size="lg" />
+                <div className="detail-header__text">
+                    <h1 id="detail-title" className="screen-title">
                         {label}
-                    </h2>
-                    <p className="screen-subtitle">
-                        {relationship in ru.relationships
-                            ? ru.relationships[relationship as RelationshipKey]
-                            : relationship}
+                    </h1>
+                    <p className="detail-header__meta">
+                        {relationshipLabel}
+                        {paired ? <Badge tone="warm">{ru.contactPairedBadge}</Badge> : null}
                     </p>
-                    {paired ? <p className="badge">{ru.contactPairedBadge}</p> : null}
                 </div>
-                <button type="button" className="btn btn-primary" onClick={onAddRule}>
-                    {ru.contactAddRule}
-                </button>
+                <Button
+                    variant="ghost"
+                    className="btn--icon"
+                    aria-label={ru.contactEdit}
+                    onClick={() => {
+                        setRenaming(true);
+                    }}
+                >
+                    <PencilIcon size={20} />
+                </Button>
             </header>
-
-            {!paired ? (
-                <section className="block" aria-labelledby="invite-title">
-                    <h3 id="invite-title" className="block-title">
-                        {ru.contactInvite}
-                    </h3>
-                    {inviteLink === null ? (
-                        <button
-                            type="button"
-                            className="btn btn-secondary"
-                            disabled={inviteBusy}
-                            onClick={() => {
-                                void invite();
-                            }}
-                        >
-                            {ru.contactInvite}
-                        </button>
-                    ) : (
-                        <>
-                            <p className="screen-subtitle">{ru.contactInviteExplain}</p>
-                            <p className="list-item-meta">{inviteLink}</p>
-                            <div className="list-item-actions">
-                                <button
-                                    type="button"
-                                    className="btn btn-primary"
-                                    onClick={() => {
-                                        shareInvite(inviteLink);
-                                    }}
-                                >
-                                    {ru.contactInviteShare}
-                                </button>
-                                <button
-                                    type="button"
-                                    className="btn btn-secondary"
-                                    onClick={() => {
-                                        void copyInvite(inviteLink);
-                                    }}
-                                >
-                                    {ru.contactInviteCopy}
-                                </button>
-                            </div>
-                            {copyHint ? (
-                                <p className="status-message" role="status">
-                                    {ru.contactInviteCopied}
-                                </p>
-                            ) : null}
-                        </>
-                    )}
-                </section>
-            ) : null}
 
             {loading ? <LoadingView /> : null}
             {error !== undefined ? (
@@ -338,114 +318,156 @@ export function ContactDetailScreen({
                 />
             ) : null}
 
-            {!loading && error === undefined && suggestions.status === "success" ? (
-                <section className="block" aria-labelledby="suggestions-title">
-                    <h3 id="suggestions-title" className="block-title">
+            {!loading &&
+            error === undefined &&
+            suggestions.status === "success" &&
+            suggestions.data.length > 0 ? (
+                <section className="section" aria-labelledby="suggestions-title">
+                    <h2 id="suggestions-title" className="section-title">
                         {ru.suggestionsTitle}
-                    </h3>
-                    {suggestions.data.length === 0 ? null : (
-                        <ul className="list">
-                            {suggestions.data.map((item) => (
-                                <li key={item.id} className="list-item">
-                                    <p className="list-item-title">{item.text}</p>
-                                    <p className="list-item-meta">{ru.categories[item.category]}</p>
-                                    <div className="list-item-actions">
-                                        <button
-                                            type="button"
-                                            className="btn btn-primary"
+                    </h2>
+                    <ul className="rule-list">
+                        {suggestions.data.map((item) => (
+                            <li key={item.id}>
+                                <Card as="article" tone="warm" className="rule-card">
+                                    <p className="rule-text">{item.text}</p>
+                                    <p className="rule-card__meta">
+                                        {ru.categories[item.category]}
+                                    </p>
+                                    <div className="rule-card__footer">
+                                        <Button
                                             onClick={() => {
                                                 void accept(item.id);
                                             }}
                                         >
                                             {ru.suggestionAccept}
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="btn btn-secondary"
+                                        </Button>
+                                        <Button
+                                            variant="ghost"
+                                            tone="warm"
                                             onClick={() => {
                                                 void dismiss(item.id);
                                             }}
                                         >
                                             {ru.suggestionDismiss}
-                                        </button>
+                                        </Button>
                                     </div>
-                                </li>
-                            ))}
-                        </ul>
-                    )}
+                                </Card>
+                            </li>
+                        ))}
+                    </ul>
                 </section>
             ) : null}
 
             {!loading && error === undefined && rules.status === "success" ? (
                 paired ? (
                     <>
-                        <RuleList
-                            rules={personalRules}
-                            title={ru.rulesPersonalTitle}
-                            titleId="rules-personal-title"
-                            emptyMessage={null}
-                            displayTimezone={displayTimezone}
-                            onArchive={(ruleId, text) => {
-                                void archive(ruleId, text);
-                            }}
-                            onApprove={(ruleId) => {
-                                void approve(ruleId);
-                            }}
-                            onReject={(ruleId) => {
-                                void reject(ruleId);
-                            }}
-                        />
-                        <RuleList
-                            rules={sharedRules}
+                        <RuleSection
                             title={ru.rulesSharedTitle}
                             titleId="rules-shared-title"
+                            rules={sharedRules}
+                            actions={actions}
                             emptyMessage={null}
-                            displayTimezone={displayTimezone}
-                            onArchive={(ruleId, text) => {
-                                void archive(ruleId, text);
-                            }}
-                            onApprove={(ruleId) => {
-                                void approve(ruleId);
-                            }}
-                            onReject={(ruleId) => {
-                                void reject(ruleId);
-                            }}
+                        />
+                        <RuleSection
+                            title={ru.rulesPersonalTitle}
+                            titleId="rules-personal-title"
+                            note={ru.rulesPersonalNote}
+                            rules={personalRules}
+                            actions={actions}
+                            emptyMessage={null}
                         />
                         {allRules.length === 0 ? <EmptyView message={ru.rulesEmpty} /> : null}
                     </>
                 ) : (
-                    <RuleList
-                        rules={allRules}
+                    <RuleSection
                         title={ru.rulesTitle}
                         titleId="rules-title"
+                        rules={allRules}
+                        actions={actions}
                         emptyMessage={ru.rulesEmpty}
-                        displayTimezone={displayTimezone}
-                        onArchive={(ruleId, text) => {
-                            void archive(ruleId, text);
-                        }}
-                        onApprove={(ruleId) => {
-                            void approve(ruleId);
-                        }}
-                        onReject={(ruleId) => {
-                            void reject(ruleId);
-                        }}
                     />
                 )
             ) : null}
 
+            <Button variant="outline" block onClick={onAddRule}>
+                <PlusIcon size={20} />
+                {ru.contactAddRule}
+            </Button>
+
+            {!paired ? (
+                <Card tone="dashed" aria-labelledby="invite-title">
+                    <h2 id="invite-title" className="hint-title">
+                        {ru.contactInvite}
+                    </h2>
+                    {inviteLink === null ? (
+                        <Button
+                            variant="outline"
+                            disabled={inviteBusy}
+                            onClick={() => {
+                                void invite();
+                            }}
+                        >
+                            {ru.contactInvite}
+                        </Button>
+                    ) : (
+                        <>
+                            <p className="hint-text">{ru.contactInviteExplain}</p>
+                            <p className="invite-link">{inviteLink}</p>
+                            <div className="row">
+                                <Button
+                                    className="row__grow"
+                                    onClick={() => {
+                                        shareInvite(inviteLink);
+                                    }}
+                                >
+                                    {ru.contactInviteShare}
+                                </Button>
+                                <Button
+                                    className="row__grow"
+                                    variant="outline"
+                                    onClick={() => {
+                                        void copyInvite(inviteLink);
+                                    }}
+                                >
+                                    {ru.contactInviteCopy}
+                                </Button>
+                            </div>
+                            {copyHint ? (
+                                <p className="form-status" role="status">
+                                    {ru.contactInviteCopied}
+                                </p>
+                            ) : null}
+                        </>
+                    )}
+                </Card>
+            ) : null}
+
             {paired ? (
-                <section className="block block-leave" aria-label={ru.contactLeavePair}>
-                    <button
-                        type="button"
-                        className="btn btn-danger"
+                <section className="leave-zone" aria-label={ru.contactLeavePair}>
+                    <p className="hint-text">{ru.contactLeaveNote}</p>
+                    <Button
+                        variant="ghost"
+                        tone="danger"
                         disabled={privacyTexts.status !== "success"}
                         onClick={() => {
                             void leave();
                         }}
                     >
                         {ru.contactLeavePair}
-                    </button>
+                    </Button>
                 </section>
+            ) : null}
+
+            {renaming ? (
+                <ContactFormSheet
+                    mode="rename"
+                    initialLabel={label}
+                    onSubmit={rename}
+                    onClose={() => {
+                        setRenaming(false);
+                    }}
+                />
             ) : null}
         </section>
     );

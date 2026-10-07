@@ -6,11 +6,15 @@ import {
     resetTelegramAdapterGuardsForTests,
 } from "./webapp";
 
-function installMockWebApp(initData: string): {
+function installMockWebApp(
+    initData: string,
+    options: { startParam?: string; withDownloadFile?: boolean } = {},
+): {
     ready: ReturnType<typeof vi.fn>;
     expand: ReturnType<typeof vi.fn>;
     close: ReturnType<typeof vi.fn>;
     showConfirm: ReturnType<typeof vi.fn>;
+    downloadFile: ReturnType<typeof vi.fn>;
     notificationOccurred: ReturnType<typeof vi.fn>;
     backShow: ReturnType<typeof vi.fn>;
     backHide: ReturnType<typeof vi.fn>;
@@ -23,6 +27,11 @@ function installMockWebApp(initData: string): {
     const showConfirm = vi.fn((_message: string, callback?: (ok: boolean) => void) => {
         callback?.(true);
     });
+    const downloadFile = vi.fn(
+        (_params: { url: string; file_name: string }, callback?: (accepted: boolean) => void) => {
+            callback?.(true);
+        },
+    );
     const notificationOccurred = vi.fn();
     const backShow = vi.fn();
     const backHide = vi.fn();
@@ -33,6 +42,10 @@ function installMockWebApp(initData: string): {
         value: {
             WebApp: {
                 initData,
+                initDataUnsafe:
+                    options.startParam !== undefined
+                        ? { start_param: options.startParam }
+                        : undefined,
                 colorScheme: "dark",
                 themeParams: {
                     bg_color: "#101010",
@@ -51,6 +64,7 @@ function installMockWebApp(initData: string): {
                 expand,
                 close,
                 showConfirm,
+                ...(options.withDownloadFile === false ? {} : { downloadFile }),
                 onEvent,
                 offEvent,
             },
@@ -61,6 +75,7 @@ function installMockWebApp(initData: string): {
         expand,
         close,
         showConfirm,
+        downloadFile,
         notificationOccurred,
         backShow,
         backHide,
@@ -140,6 +155,27 @@ describe("createTelegramAdapter", () => {
         adapter.expand();
         expect(ready).toHaveBeenCalledTimes(1);
         expect(expand).toHaveBeenCalledTimes(1);
+    });
+
+    it("reads startParam and downloadFile from WebApp", async () => {
+        const mocks = installMockWebApp("query_id=1", { startParam: "inv_abc" });
+        const adapter = createTelegramAdapter();
+        expect(adapter.startParam).toBe("inv_abc");
+        await expect(
+            adapter.downloadFile("https://example.test/f.json", "export.json"),
+        ).resolves.toBe(true);
+        expect(mocks.downloadFile).toHaveBeenCalledWith(
+            { url: "https://example.test/f.json", file_name: "export.json" },
+            expect.any(Function),
+        );
+    });
+
+    it("returns false from downloadFile when the method is missing", async () => {
+        installMockWebApp("query_id=1", { withDownloadFile: false });
+        const adapter = createTelegramAdapter();
+        await expect(adapter.downloadFile("https://example.test/f.json", "x.json")).resolves.toBe(
+            false,
+        );
     });
 
     it("exposes confirm, haptic, close, back button and theme events", async () => {

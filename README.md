@@ -47,9 +47,23 @@ make ps      # compose status
 make down    # stop the full stack; keep named volumes
 ```
 
+### Telegram setup (BotFather)
+
+Configure the bot once in [@BotFather](https://t.me/BotFather):
+
+1. **Main Mini App** — set the HTTPS origin of the mini-app (same value as `SP_MINIAPP_URL`, no path). This is the only UI for onboarding, rules, invites, export, and privacy.
+2. **`/setjoingroups`** → **Disable** — the bot must not join groups; if it is added, it leaves immediately.
+3. **Inline mode** — enable. Soften / help-say work via `@bot` in any chat; the button above inline results opens the mini-app (`web_app`), not a deep link into the bot chat.
+4. **Description** (calm, short):  
+   `Помощник для трудных разговоров: общие правила с близким человеком и мягкие подсказки в любом чате.`
+5. **Short description**:  
+   `Правила для двоих и спокойные подсказки в чате.`
+
+There is no command menu. The chat menu button is the mini-app («Мои правила»). Private messages get a single throttled welcome with an «Открыть приложение» button.
+
 ### Mini-app over HTTPS (Telegram menu button)
 
-Telegram requires HTTPS for the Web App menu button. For local checks, use the Compose `tunnel` profile (Cloudflare quick tunnel to the `miniapp` service):
+Telegram requires HTTPS for the Main Mini App and the menu button. For local checks, use the Compose `tunnel` profile (Cloudflare quick tunnel to the `miniapp` service):
 
 ```bash
 make up

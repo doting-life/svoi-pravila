@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from svoi_pravila.application.errors import NotFound
 from svoi_pravila.application.ports.clock import Clock
@@ -23,9 +24,10 @@ class ResolveInviteCommand:
 
 @dataclass(frozen=True, slots=True)
 class ResolveInviteResult:
-    """Resolved invite id; the raw token may be discarded by the caller."""
+    """Resolved invite id and expiry; the raw token may be discarded by the caller."""
 
     invite_id: InviteId
+    expires_at: datetime
 
 
 class ResolveInvite:
@@ -53,4 +55,4 @@ class ResolveInvite:
             if not inviter_access.granted:
                 raise NotFound()
             invite.require_acceptable(command.actor_id, self._clock.now())
-            return ResolveInviteResult(invite_id=invite.id)
+            return ResolveInviteResult(invite_id=invite.id, expires_at=invite.expires_at)

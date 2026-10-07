@@ -19,7 +19,13 @@ from svoi_pravila.application.errors import (
     ServiceBudgetExhausted,
     UserQuotaExhausted,
 )
-from svoi_pravila.domain.errors import InvalidTransitionError, InvalidValueError
+from svoi_pravila.domain.errors import (
+    InvalidTransitionError,
+    InvalidValueError,
+    InviteAlreadyAcceptedError,
+    InviteExpiredError,
+    SelfInviteAcceptError,
+)
 
 _MINIAPP_PREFIX = "/api/v1"
 
@@ -126,6 +132,20 @@ def register_miniapp_exception_handlers(app: FastAPI, *, display_timezone: str) 
     @app.exception_handler(InvalidTransitionError)
     async def _invalid_transition(_request: Request, _exc: InvalidTransitionError) -> JSONResponse:
         return _miniapp_json(MiniappErrorCode.INVALID_TRANSITION, 409)
+
+    @app.exception_handler(InviteExpiredError)
+    async def _invite_expired(_request: Request, _exc: InviteExpiredError) -> JSONResponse:
+        return _miniapp_json(MiniappErrorCode.INVITE_EXPIRED, 409)
+
+    @app.exception_handler(InviteAlreadyAcceptedError)
+    async def _invite_already_accepted(
+        _request: Request, _exc: InviteAlreadyAcceptedError
+    ) -> JSONResponse:
+        return _miniapp_json(MiniappErrorCode.INVITE_INVALID, 409)
+
+    @app.exception_handler(SelfInviteAcceptError)
+    async def _invite_own(_request: Request, _exc: SelfInviteAcceptError) -> JSONResponse:
+        return _miniapp_json(MiniappErrorCode.INVITE_OWN, 409)
 
     @app.exception_handler(InvalidValueError)
     async def _invalid_value(_request: Request, _exc: InvalidValueError) -> JSONResponse:

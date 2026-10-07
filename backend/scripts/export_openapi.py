@@ -18,6 +18,8 @@ from svoi_pravila.application.ports.prepared_results import PreparedResults
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.rate_limiter import RateLimiter
 from svoi_pravila.application.ports.rule_sources import RuleSources
+from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
+from svoi_pravila.application.use_cases.accept_invite import AcceptInvite
 from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
 from svoi_pravila.application.use_cases.approve_rule import ApproveRule
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
@@ -27,6 +29,9 @@ from svoi_pravila.application.use_cases.create_invite import CreateInvite
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming
 from svoi_pravila.application.use_cases.delete_my_account import DeleteMyAccount
 from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggestion
+from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocument
+from svoi_pravila.application.use_cases.grant_consent import GrantConsent
+from svoi_pravila.application.use_cases.issue_export_download import IssueExportDownload
 from svoi_pravila.application.use_cases.leave_pair import LeavePair
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
 from svoi_pravila.application.use_cases.list_rules import ListRules
@@ -34,8 +39,9 @@ from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
 from svoi_pravila.application.use_cases.reject_pending_rule import RejectPendingRule
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
-from svoi_pravila.application.use_cases.request_my_data_export import RequestMyDataExport
+from svoi_pravila.application.use_cases.resolve_invite import ResolveInvite
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
+from svoi_pravila.application.use_cases.serve_export_download import ServeExportDownload
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from svoi_pravila.application.use_cases.suggest_rule_from_decode import SuggestRuleFromDecode
 from svoi_pravila.config import Environment
@@ -63,11 +69,18 @@ def _openapi_bindings() -> MiniappRouterBindings:
         list_suggestions=cast(ListSuggestions, _stub()),
         accept_suggestion=cast(AcceptSuggestion, _stub()),
         dismiss_suggestion=cast(DismissSuggestion, _stub()),
-        request_my_data_export=cast(RequestMyDataExport, _stub()),
+        accept_age=cast(AcceptAgeConfirmation, _stub()),
+        grant_consent=cast(GrantConsent, _stub()),
+        get_consent_document=cast(GetConsentDocument, _stub()),
+        resolve_invite=cast(ResolveInvite, _stub()),
+        accept_invite=cast(AcceptInvite, _stub()),
+        issue_export_download=cast(IssueExportDownload, _stub()),
+        serve_export_download=cast(ServeExportDownload, _stub()),
         revoke_all_consents=cast(RevokeAllConsents, _stub()),
         delete_my_account=cast(DeleteMyAccount, _stub()),
         export_rate_limiter=cast(RateLimiter, _stub()),
         display_timezone="Europe/Moscow",
+        miniapp_url="https://miniapp.example",
         decode_incoming=cast(DecodeIncoming, _stub()),
         suggest_rule_from_decode=cast(SuggestRuleFromDecode, _stub()),
         prepared_results=cast(PreparedResults, _stub()),

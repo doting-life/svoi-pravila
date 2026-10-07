@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -12,7 +12,6 @@ from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 from tests.fakes.clock import FakeClock
 from tests.fakes.consent_catalog import FakeConsentCatalog
-from tests.fakes.export_delivery import FakeExportDelivery
 from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
 from tests.fakes.pair_notifier import FakePairNotifier
@@ -20,40 +19,29 @@ from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
 from tests.fakes.tokens import FakeTokenGenerator
 from tests.fakes.uow import InMemoryUnitOfWorkFactory
 from tests.support.init_data import build_webapp_init_data
+from tests.support.miniapp_bindings import build_test_miniapp_bindings
 from tests.support.miniapp_decode import build_miniapp_decode_bundle
 from tests.unit.application.conftest import AppWorld
 
-from svoi_pravila.adapters.channels.telegram.bot_username import BotUsernameCache
 from svoi_pravila.adapters.channels.telegram.init_data import AiogramInitDataVerifier
 from svoi_pravila.api.app import AppLifecycleHooks, create_app
-from svoi_pravila.api.miniapp import MiniappDeps, MiniappRouterBindings, build_miniapp_router
+from svoi_pravila.api.miniapp import MiniappDeps, build_miniapp_router
 from svoi_pravila.api.miniapp.errors import MiniappErrorCode
 from svoi_pravila.api.miniapp.localization import load_ru_messages
 from svoi_pravila.application.errors import AccessNotGranted, NotFound
 from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
-from svoi_pravila.application.use_cases.approve_rule import ApproveRule
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.create_contact import CreateContact
-from svoi_pravila.application.use_cases.create_invite import CreateInvite
-from svoi_pravila.application.use_cases.delete_my_account import (
-    DeleteMyAccount,
-    DeleteMyAccountPorts,
-)
 from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggestion
 from svoi_pravila.application.use_cases.ensure_user import EnsureUser, EnsureUserCommand
-from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
-from svoi_pravila.application.use_cases.leave_pair import LeavePair
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
 from svoi_pravila.application.use_cases.list_rules import ListRules
 from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
-from svoi_pravila.application.use_cases.reject_pending_rule import RejectPendingRule
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
-from svoi_pravila.application.use_cases.request_my_data_export import RequestMyDataExport
-from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from svoi_pravila.config import Environment
 from svoi_pravila.domain.access import AccessStatus
@@ -114,81 +102,33 @@ def _app_with_bindings(
     )
     reuse = make_inline_reuse(world.clock)
     decode_bundle = build_miniapp_decode_bundle(world)
-    bindings = MiniappRouterBindings(
+    overrides: dict[str, Any] = {}
+    if list_contacts is not None:
+        overrides["list_contacts"] = list_contacts
+    if create_contact is not None:
+        overrides["create_contact"] = create_contact
+    if rename_contact is not None:
+        overrides["rename_contact"] = rename_contact
+    if set_active_contact is not None:
+        overrides["set_active_contact"] = set_active_contact
+    if list_rules is not None:
+        overrides["list_rules"] = list_rules
+    if propose_rule is not None:
+        overrides["propose_rule"] = propose_rule
+    if archive_rule is not None:
+        overrides["archive_rule"] = archive_rule
+    if list_suggestions is not None:
+        overrides["list_suggestions"] = list_suggestions
+    if accept_suggestion is not None:
+        overrides["accept_suggestion"] = accept_suggestion
+    if dismiss_suggestion is not None:
+        overrides["dismiss_suggestion"] = dismiss_suggestion
+    bindings = build_test_miniapp_bindings(
         auth=auth,
-        list_contacts=cast(
-            ListContacts, list_contacts or ListContacts(world.uow_factory, world.catalog)
-        ),
-        create_contact=cast(
-            CreateContact,
-            create_contact
-            or CreateContact(world.uow_factory, world.catalog, world.ids, world.clock),
-        ),
-        rename_contact=cast(
-            RenameContact,
-            rename_contact or RenameContact(world.uow_factory, world.catalog),
-        ),
-        set_active_contact=cast(
-            SetActiveContact,
-            set_active_contact or SetActiveContact(world.uow_factory, world.catalog),
-        ),
-        create_invite=CreateInvite(
-            world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
-        ),
-        leave_pair=LeavePair(world.uow_factory, world.ids, world.clock, world.notifier),
-        list_rules=cast(ListRules, list_rules or ListRules(world.uow_factory, world.catalog)),
-        propose_rule=cast(
-            ProposeRule,
-            propose_rule
-            or ProposeRule(
-                world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
-            ),
-        ),
-        archive_rule=cast(
-            ArchiveRule,
-            archive_rule or ArchiveRule(world.uow_factory, world.catalog, world.clock),
-        ),
-        approve_rule=ApproveRule(world.uow_factory, world.catalog, world.clock, world.notifier),
-        reject_pending_rule=RejectPendingRule(
-            world.uow_factory, world.catalog, world.clock, world.notifier
-        ),
-        list_suggestions=cast(
-            ListSuggestions,
-            list_suggestions or ListSuggestions(world.uow_factory, world.catalog),
-        ),
-        accept_suggestion=cast(
-            AcceptSuggestion,
-            accept_suggestion
-            or AcceptSuggestion(world.uow_factory, world.catalog, world.ids, world.clock),
-        ),
-        dismiss_suggestion=cast(
-            DismissSuggestion,
-            dismiss_suggestion or DismissSuggestion(world.uow_factory, world.catalog, world.clock),
-        ),
-        request_my_data_export=RequestMyDataExport(
-            ExportMyData(world.uow_factory, world.clock),
-            FakeExportDelivery(),
-        ),
-        revoke_all_consents=RevokeAllConsents(world.uow_factory, world.clock, reuse),
-        delete_my_account=DeleteMyAccount(
-            DeleteMyAccountPorts(
-                world.uow_factory,
-                world.ids,
-                FakePseudonymizer(),
-                world.clock,
-                reuse,
-                world.notifier,
-            )
-        ),
-        export_rate_limiter=FakeRateLimiter(limit=3),
-        display_timezone="Europe/Moscow",
-        decode_incoming=decode_bundle.decode_incoming,
-        suggest_rule_from_decode=decode_bundle.suggest_rule_from_decode,
-        prepared_results=decode_bundle.prepared_results,
-        rule_sources=decode_bundle.rule_sources,
-        pseudonymizer=decode_bundle.pseudonymizer,
-        bot_username=BotUsernameCache(username="test_bot"),
-        enable_test_routes=True,
+        world=world,
+        decode_bundle=decode_bundle,
+        reuse=reuse,
+        overrides=overrides or None,
     )
     return create_app(
         CheckReadiness(probes=(), timeout_seconds=1.0),

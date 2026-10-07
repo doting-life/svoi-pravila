@@ -5,6 +5,7 @@ import type { TelegramAdapter } from "../telegram/webapp";
 export function fakeAdapter(overrides: Partial<TelegramAdapter> = {}): TelegramAdapter {
     return {
         initData: "query_id=1",
+        startParam: null,
         colorScheme: "light",
         themeCssVariables: {
             "--tg-bg-color": "#ffffff",
@@ -27,6 +28,7 @@ export function fakeAdapter(overrides: Partial<TelegramAdapter> = {}): TelegramA
         close: vi.fn(),
         showConfirm: vi.fn(() => Promise.resolve(true)),
         openTelegramLink: vi.fn(),
+        downloadFile: vi.fn(() => Promise.resolve(true)),
         copyText: vi.fn(() => Promise.resolve(true)),
         hapticNotification: vi.fn(),
         switchInlineQuery: vi.fn(),

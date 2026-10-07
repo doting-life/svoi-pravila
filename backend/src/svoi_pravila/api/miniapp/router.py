@@ -6,28 +6,33 @@ from dataclasses import dataclass
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request, Response, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from svoi_pravila.api.miniapp.decode_sse import DecodeStreamPorts, format_sse, iter_decode_sse
 from svoi_pravila.api.miniapp.deps import (
     MiniappAuthContext,
     MiniappAuthenticator,
     MiniappDeps,
+    invite_raw_token_from_start_param,
     no_store,
     parse_path_uuid,
 )
 from svoi_pravila.api.miniapp.errors import ErrorBody, LimitErrorBody, MiniappErrorCode
 from svoi_pravila.api.miniapp.http import MiniappHttpError
 from svoi_pravila.api.miniapp.schemas import (
+    AcceptInviteRequest,
     AcceptSuggestionResponse,
     ConfirmTrueRequest,
+    ConsentDocumentResponse,
     ContactItem,
     ContactListResponse,
     CreateContactRequest,
     CreateRuleRequest,
     DecodeRequest,
     DismissSuggestionResponse,
-    ExportDeliveryResponse,
+    ExportDownloadResponse,
+    GrantConsentRequest,
+    InviteResolveResponse,
     InviteResponse,
     MeResponse,
     PrivacyTextsResponse,
@@ -47,6 +52,11 @@ from svoi_pravila.application.ports.rate_limiter import RateLimiter
 from svoi_pravila.application.ports.rule_sources import RuleSources
 from svoi_pravila.application.rule_view import RuleListItemView, project_rules_for_list
 from svoi_pravila.application.support_resources import load_crisis_lead, load_support_resources
+from svoi_pravila.application.use_cases.accept_age_confirmation import (
+    AcceptAgeConfirmation,
+    AcceptAgeConfirmationCommand,
+)
+from svoi_pravila.application.use_cases.accept_invite import AcceptInvite, AcceptInviteCommand
 from svoi_pravila.application.use_cases.accept_suggestion import (
     AcceptSuggestion,
     AcceptSuggestionCommand,
@@ -67,7 +77,20 @@ from svoi_pravila.application.use_cases.dismiss_suggestion import (
     DismissSuggestion,
     DismissSuggestionCommand,
 )
+from svoi_pravila.application.use_cases.get_consent_document import (
+    GetConsentDocument,
+    GetConsentDocumentQuery,
+)
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStepQuery
+from svoi_pravila.application.use_cases.grant_consent import (
+    GrantConsent,
+    GrantConsentCommand,
+    GrantConsentOutcome,
+)
+from svoi_pravila.application.use_cases.issue_export_download import (
+    IssueExportDownload,
+    IssueExportDownloadCommand,
+)
 from svoi_pravila.application.use_cases.leave_pair import LeavePair, LeavePairCommand
 from svoi_pravila.application.use_cases.list_contacts import ListContacts, ListContactsCommand
 from svoi_pravila.application.use_cases.list_rules import ListRules, ListRulesCommand
@@ -84,13 +107,14 @@ from svoi_pravila.application.use_cases.rename_contact import (
     RenameContact,
     RenameContactCommand,
 )
-from svoi_pravila.application.use_cases.request_my_data_export import (
-    RequestMyDataExport,
-    RequestMyDataExportCommand,
-)
+from svoi_pravila.application.use_cases.resolve_invite import ResolveInvite, ResolveInviteCommand
 from svoi_pravila.application.use_cases.revoke_all_consents import (
     RevokeAllConsents,
     RevokeAllConsentsCommand,
+)
+from svoi_pravila.application.use_cases.serve_export_download import (
+    ServeExportDownload,
+    ServeExportDownloadCommand,
 )
 from svoi_pravila.application.use_cases.set_active_contact import (
     SetActiveContact,
@@ -102,7 +126,13 @@ from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
     SuggestRuleFromDecodeOutcome,
 )
 from svoi_pravila.domain.contact import MAX_CONTACTS_PER_USER, Contact
-from svoi_pravila.domain.enums import RelationshipKind, RuleCategory, RuleStatus, UsageSurface
+from svoi_pravila.domain.enums import (
+    ConsentKind,
+    RelationshipKind,
+    RuleCategory,
+    RuleStatus,
+    UsageSurface,
+)
 from svoi_pravila.domain.ids import ContactId, RuleId, RuleSuggestionId, UserId
 from svoi_pravila.domain.rules import MAX_OPEN_RULES_PER_SCOPE, PairScope, Rule
 from svoi_pravila.domain.text import ContactLabel, RuleText
@@ -155,11 +185,18 @@ class MiniappRouterBindings:
     list_suggestions: ListSuggestions
     accept_suggestion: AcceptSuggestion
     dismiss_suggestion: DismissSuggestion
-    request_my_data_export: RequestMyDataExport
+    accept_age: AcceptAgeConfirmation
+    grant_consent: GrantConsent
+    get_consent_document: GetConsentDocument
+    resolve_invite: ResolveInvite
+    accept_invite: AcceptInvite
+    issue_export_download: IssueExportDownload
+    serve_export_download: ServeExportDownload
     revoke_all_consents: RevokeAllConsents
     delete_my_account: DeleteMyAccount
     export_rate_limiter: RateLimiter
     display_timezone: str
+    miniapp_url: str | None
     decode_incoming: DecodeIncoming
     suggest_rule_from_decode: SuggestRuleFromDecode
     prepared_results: PreparedResults
@@ -243,6 +280,8 @@ def build_miniapp_router(bindings: MiniappRouterBindings) -> APIRouter:
     actor_dep = Annotated[User, Depends(authenticator.require_actor)]
     router = APIRouter(prefix="/api/v1", tags=["miniapp"])
     _register_me(router, bindings, auth_dep, actor_dep)
+    _register_invites(router, bindings, auth_dep, actor_dep)
+    _register_downloads(router, bindings)
     _register_contacts(router, bindings, actor_dep)
     _register_rules(router, bindings, actor_dep)
     _register_suggestions(router, bindings, actor_dep)
@@ -414,16 +453,88 @@ def _register_me(
         )
 
     @router.post(
+        "/me/age-confirmation",
+        operation_id="acceptAgeConfirmation",
+        status_code=status.HTTP_204_NO_CONTENT,
+        response_model=None,
+        responses=_ERROR_RESPONSES,
+    )
+    async def accept_age_confirmation(
+        response: Response,
+        auth: auth_dep,
+    ) -> Response:
+        no_store(response)
+        await bindings.accept_age.execute(
+            AcceptAgeConfirmationCommand(telegram_user_id=auth.telegram_user_id)
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @router.get(
+        "/consents/{kind}/document",
+        operation_id="getConsentDocument",
+        response_model=ConsentDocumentResponse,
+        responses=_ERROR_RESPONSES,
+    )
+    async def get_consent_document(
+        kind: str,
+        response: Response,
+        auth: auth_dep,
+    ) -> ConsentDocumentResponse:
+        _ = auth
+        no_store(response)
+        try:
+            consent_kind = ConsentKind(kind)
+        except ValueError as exc:
+            raise MiniappHttpError(MiniappErrorCode.NOT_FOUND, 404) from exc
+        result = await bindings.get_consent_document.execute(
+            GetConsentDocumentQuery(kind=consent_kind)
+        )
+        document = result.document
+        return ConsentDocumentResponse.model_validate(
+            {
+                "kind": document.kind.value,
+                "version": document.version,
+                "text": document.text,
+            }
+        )
+
+    @router.post(
+        "/me/consents",
+        operation_id="grantConsent",
+        status_code=status.HTTP_204_NO_CONTENT,
+        response_model=None,
+        responses=_ERROR_RESPONSES,
+    )
+    async def grant_consent(
+        body: GrantConsentRequest,
+        response: Response,
+        auth: auth_dep,
+    ) -> Response:
+        no_store(response)
+        if auth.user is None:
+            raise MiniappHttpError(MiniappErrorCode.ONBOARDING_REQUIRED, 403)
+        result = await bindings.grant_consent.execute(
+            GrantConsentCommand(
+                user_id=auth.user.id,
+                kind=ConsentKind(body.kind),
+                text_version=body.text_version,
+            )
+        )
+        if result.outcome is GrantConsentOutcome.STALE_VERSION:
+            raise MiniappHttpError(MiniappErrorCode.CONSENT_STALE, 409)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @router.post(
         "/me/export",
         operation_id="exportMyData",
-        status_code=status.HTTP_202_ACCEPTED,
-        response_model=ExportDeliveryResponse,
+        status_code=status.HTTP_200_OK,
+        response_model=ExportDownloadResponse,
         responses=_ERROR_RESPONSES,
     )
     async def export_my_data(
         response: Response,
         auth: auth_dep,
-    ) -> ExportDeliveryResponse:
+    ) -> ExportDownloadResponse:
         no_store(response)
         pseudonym = bindings.auth.pseudonymizer.pseudonymize(
             _EXPORT_RATE_PURPOSE,
@@ -432,12 +543,16 @@ def _register_me(
         decision = await bindings.export_rate_limiter.check(pseudonym)
         if not decision.allowed:
             raise MiniappHttpError(MiniappErrorCode.RATE_LIMITED, 429)
-        if auth.user is None:
-            raise NotFound
-        result = await bindings.request_my_data_export.execute(
-            RequestMyDataExportCommand(telegram_user_id=auth.telegram_user_id)
+        if bindings.miniapp_url is None:
+            raise MiniappHttpError(MiniappErrorCode.SERVICE_UNAVAILABLE, 503)
+        result = await bindings.issue_export_download.execute(
+            IssueExportDownloadCommand(telegram_user_id=auth.telegram_user_id)
         )
-        return ExportDeliveryResponse.model_validate({"delivered_to": result.delivered_to})
+        download_url = f"{bindings.miniapp_url}/api/v1/downloads/{result.grant.raw_token}"
+        return ExportDownloadResponse(
+            download_url=download_url,
+            expires_at=result.grant.expires_at,
+        )
 
     @router.get(
         "/privacy/texts",
@@ -619,7 +734,7 @@ def _register_contacts(
             CreateInviteCommand(actor_id=actor.id, contact_id=cid)
         )
         username = bindings.bot_username.username or "test_bot"
-        link = f"https://t.me/{username}?start=inv_{created.raw_token}"
+        link = f"https://t.me/{username}?startapp=inv_{created.raw_token}"
         return InviteResponse(link=link, expires_at=created.invite.expires_at)
 
     @router.post(
@@ -649,6 +764,92 @@ def _register_contacts(
         return Response(
             status_code=status.HTTP_204_NO_CONTENT,
             headers={"Cache-Control": "no-store"},
+        )
+
+
+def _register_invites(
+    router: APIRouter,
+    bindings: MiniappRouterBindings,
+    auth_dep: Any,
+    actor_dep: Any,
+) -> None:
+    """Register invite resolve/accept routes (token from verified start_param)."""
+
+    @router.post(
+        "/invites/resolve",
+        operation_id="resolveInvite",
+        response_model=InviteResolveResponse,
+        responses=_ERROR_RESPONSES,
+    )
+    async def resolve_invite(
+        response: Response,
+        auth: auth_dep,
+    ) -> InviteResolveResponse:
+        no_store(response)
+        if auth.user is None:
+            raise MiniappHttpError(MiniappErrorCode.ONBOARDING_REQUIRED, 403)
+        raw_token = invite_raw_token_from_start_param(auth.start_param)
+        result = await bindings.resolve_invite.execute(
+            ResolveInviteCommand(actor_id=auth.user.id, raw_token=raw_token)
+        )
+        return InviteResolveResponse(expires_at=result.expires_at)
+
+    @router.post(
+        "/invites/accept",
+        operation_id="acceptInvite",
+        status_code=status.HTTP_204_NO_CONTENT,
+        response_model=None,
+        responses=_ERROR_RESPONSES,
+    )
+    async def accept_invite(
+        body: AcceptInviteRequest,
+        response: Response,
+        actor: actor_dep,
+        auth: auth_dep,
+    ) -> Response:
+        no_store(response)
+        raw_token = invite_raw_token_from_start_param(auth.start_param)
+        resolved = await bindings.resolve_invite.execute(
+            ResolveInviteCommand(actor_id=actor.id, raw_token=raw_token)
+        )
+        await bindings.accept_invite.execute(
+            AcceptInviteCommand(
+                actor_id=actor.id,
+                invite_id=resolved.invite_id,
+                label_for_inviter=ContactLabel(body.label),
+                relationship=RelationshipKind(body.relationship),
+            )
+        )
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+def _register_downloads(
+    router: APIRouter,
+    bindings: MiniappRouterBindings,
+) -> None:
+    """Register unauthenticated one-time export download."""
+
+    @router.get(
+        "/downloads/{token}",
+        operation_id="serveExportDownload",
+        responses={
+            **_ERROR_RESPONSES,
+            200: {
+                "description": "Export JSON payload (single use).",
+                "content": {"application/json": {}},
+            },
+        },
+    )
+    async def serve_export_download(token: str) -> JSONResponse:
+        result = await bindings.serve_export_download.execute(
+            ServeExportDownloadCommand(raw_token=token)
+        )
+        return JSONResponse(
+            content=result.payload,
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Disposition": 'attachment; filename="svoi-pravila-export.json"',
+            },
         )
 
 

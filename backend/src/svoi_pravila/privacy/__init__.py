@@ -1,4 +1,4 @@
-"""Shared privacy copy (export / revoke / delete) for bot and mini-app API."""
+"""Shared privacy copy (export / revoke / delete) for the mini-app API."""
 
 from svoi_pravila.privacy.catalog import PrivacyCatalog, load_privacy_catalog
 

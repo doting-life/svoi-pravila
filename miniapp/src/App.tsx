@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ApiProvider } from "./api/ApiContext";
 import { ErrorView, LoadingView } from "./components/StatusViews";
 import { useMe } from "./hooks/useMe";
+import type { RuleCategory } from "./hooks/useRules";
 import { ru } from "./localization/ru";
 import {
     canGoBack,
@@ -20,8 +21,10 @@ import { DecodeScreen } from "./screens/DecodeScreen";
 import { DeleteConfirmScreen } from "./screens/DeleteConfirmScreen";
 import { DeletedScreen } from "./screens/DeletedScreen";
 import { GateScreen } from "./screens/GateScreen";
+import { InviteScreen } from "./screens/InviteScreen";
+import { OnboardingAgeScreen } from "./screens/OnboardingAgeScreen";
+import { OnboardingConsentScreen } from "./screens/OnboardingConsentScreen";
 import { PrivacyScreen } from "./screens/PrivacyScreen";
-import type { RuleCategory } from "./hooks/useRules";
 import {
     applyThemeCssVariables,
     createTelegramAdapter,
@@ -45,12 +48,17 @@ function MiniappShell({
     const me = useMe();
     const [nav, setNav] = useState<NavigationState>(createInitialNavigation());
     const [forceConsentGate, setForceConsentGate] = useState(false);
+    const [inviteDismissed, setInviteDismissed] = useState(false);
+
+    const invitePending =
+        !inviteDismissed && telegram.startParam !== null && telegram.startParam.startsWith("inv_");
 
     useEffect(() => {
         const showBack =
             me.status === "success" &&
             me.data.onboarding_step === "done" &&
             !forceConsentGate &&
+            !invitePending &&
             canGoBack(nav);
         if (showBack) {
             telegram.BackButton.show();
@@ -60,18 +68,7 @@ function MiniappShell({
         return telegram.BackButton.onClick(() => {
             setNav((current) => popScreen(current));
         });
-    }, [forceConsentGate, me, nav, telegram]);
-
-    if (forceConsentGate) {
-        return (
-            <GateScreen
-                kind="consent"
-                telegram={telegram}
-                showRightsActions
-                onAccountDeleted={onAccountDeleted}
-            />
-        );
-    }
+    }, [forceConsentGate, invitePending, me, nav, telegram]);
 
     if (me.status === "loading") {
         return <LoadingView />;
@@ -81,12 +78,24 @@ function MiniappShell({
         if (me.error.kind === "unauthorized") {
             return <GateScreen kind="unauthorized" telegram={telegram} />;
         }
-        if (me.error.code === "consent_required") {
+        if (me.error.code === "consent_required" || forceConsentGate) {
             return (
-                <GateScreen
-                    kind="consent"
+                <OnboardingConsentScreen
                     telegram={telegram}
-                    showRightsActions
+                    me={{
+                        onboarding_step: "consent",
+                        consent_kind: "personal_data",
+                        consent_version: null,
+                        active_contact_id: null,
+                        account_exists: true,
+                        max_contacts: 20,
+                        max_open_rules: 50,
+                        display_timezone: "Europe/Moscow",
+                    }}
+                    onAdvanced={() => {
+                        setForceConsentGate(false);
+                        me.refetch();
+                    }}
                     onAccountDeleted={onAccountDeleted}
                 />
             );
@@ -94,23 +103,44 @@ function MiniappShell({
         return <ErrorView message={me.error.message} onRetry={me.refetch} />;
     }
 
-    if (me.data.onboarding_step !== "done") {
-        const incomplete = me.data.onboarding_step === "age";
-        const showRightsActions = incomplete ? me.data.account_exists : true;
-        if (showRightsActions) {
-            return (
-                <GateScreen
-                    kind={me.data.onboarding_step === "consent" ? "consent" : "incomplete"}
-                    telegram={telegram}
-                    showRightsActions
-                    onAccountDeleted={onAccountDeleted}
-                />
-            );
-        }
+    if (forceConsentGate || me.data.onboarding_step === "consent") {
         return (
-            <GateScreen
-                kind={me.data.onboarding_step === "consent" ? "consent" : "incomplete"}
+            <OnboardingConsentScreen
                 telegram={telegram}
+                me={me.data}
+                onAdvanced={() => {
+                    setForceConsentGate(false);
+                    me.refetch();
+                }}
+                onAccountDeleted={onAccountDeleted}
+            />
+        );
+    }
+
+    if (me.data.onboarding_step === "age") {
+        return (
+            <OnboardingAgeScreen
+                telegram={telegram}
+                onConfirmed={() => {
+                    me.refetch();
+                }}
+            />
+        );
+    }
+
+    if (invitePending) {
+        return (
+            <InviteScreen
+                telegram={telegram}
+                displayTimezone={me.data.display_timezone}
+                onAccepted={() => {
+                    setInviteDismissed(true);
+                    me.refetch();
+                    setNav(resetToContacts());
+                }}
+                onDismiss={() => {
+                    setInviteDismissed(true);
+                }}
             />
         );
     }

@@ -16,7 +16,6 @@ from pydantic import SecretStr
 from tests.fakes.clock import FakeClock
 from tests.fakes.concurrency import FakeConcurrencyGuard
 from tests.fakes.consent_catalog import FakeConsentCatalog
-from tests.fakes.export_delivery import FakeExportDelivery
 from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
@@ -32,7 +31,6 @@ from tests.support.init_data import InitDataOptions, build_webapp_init_data
 from tests.support.miniapp_decode import MiniappDecodeBundle, build_miniapp_decode_bundle
 from tests.unit.application.conftest import AppWorld
 
-from svoi_pravila.adapters.channels.telegram.bot_username import BotUsernameCache
 from svoi_pravila.adapters.channels.telegram.init_data import AiogramInitDataVerifier
 from svoi_pravila.adapters.channels.telegram.localization import render_crisis_message
 from svoi_pravila.api.app import AppLifecycleHooks, create_app
@@ -69,36 +67,17 @@ from svoi_pravila.application.ports.generation import (
     TokenUsage,
     Variant,
 )
-from svoi_pravila.application.rule_source import RuleSourcePayload, rule_source_callback_data
+from svoi_pravila.application.rule_source import RuleSourcePayload
 from svoi_pravila.application.support_resources import (
     load_applied_rule_template,
     load_crisis_lead,
     load_support_resources,
 )
-from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
-from svoi_pravila.application.use_cases.approve_rule import ApproveRule
-from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.create_contact import CreateContact, CreateContactCommand
-from svoi_pravila.application.use_cases.create_invite import CreateInvite
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
-from svoi_pravila.application.use_cases.delete_my_account import (
-    DeleteMyAccount,
-    DeleteMyAccountPorts,
-)
-from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggestion
-from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
-from svoi_pravila.application.use_cases.leave_pair import LeavePair
-from svoi_pravila.application.use_cases.list_contacts import ListContacts
-from svoi_pravila.application.use_cases.list_rules import ListRules
-from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
-from svoi_pravila.application.use_cases.propose_rule import ProposeRule
-from svoi_pravila.application.use_cases.reject_pending_rule import RejectPendingRule
-from svoi_pravila.application.use_cases.rename_contact import RenameContact
-from svoi_pravila.application.use_cases.request_my_data_export import RequestMyDataExport
-from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.application.use_cases.set_active_contact import (
     SetActiveContact,
     SetActiveContactCommand,
@@ -214,6 +193,8 @@ def _bindings(
     *,
     enable_test_routes: bool = True,
 ) -> MiniappRouterBindings:
+    from tests.support.miniapp_bindings import build_test_miniapp_bindings
+
     reuse = make_inline_reuse(world.clock)
     auth = MiniappDeps(
         init_data_verifier=AiogramInitDataVerifier(
@@ -224,53 +205,11 @@ def _bindings(
         get_user_by_telegram_id=GetUserByTelegramId(world.uow_factory),
         get_onboarding_step=GetOnboardingStep(world.uow_factory, world.catalog),
     )
-    return MiniappRouterBindings(
+    return build_test_miniapp_bindings(
         auth=auth,
-        list_contacts=ListContacts(world.uow_factory, world.catalog),
-        create_contact=CreateContact(world.uow_factory, world.catalog, world.ids, world.clock),
-        rename_contact=RenameContact(world.uow_factory, world.catalog),
-        set_active_contact=SetActiveContact(world.uow_factory, world.catalog),
-        create_invite=CreateInvite(
-            world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
-        ),
-        leave_pair=LeavePair(world.uow_factory, world.ids, world.clock, world.notifier),
-        list_rules=ListRules(world.uow_factory, world.catalog),
-        propose_rule=ProposeRule(
-            world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
-        ),
-        archive_rule=ArchiveRule(world.uow_factory, world.catalog, world.clock),
-        approve_rule=ApproveRule(world.uow_factory, world.catalog, world.clock, world.notifier),
-        reject_pending_rule=RejectPendingRule(
-            world.uow_factory, world.catalog, world.clock, world.notifier
-        ),
-        list_suggestions=ListSuggestions(world.uow_factory, world.catalog),
-        accept_suggestion=AcceptSuggestion(
-            world.uow_factory, world.catalog, world.ids, world.clock
-        ),
-        dismiss_suggestion=DismissSuggestion(world.uow_factory, world.catalog, world.clock),
-        request_my_data_export=RequestMyDataExport(
-            ExportMyData(world.uow_factory, world.clock),
-            FakeExportDelivery(),
-        ),
-        revoke_all_consents=RevokeAllConsents(world.uow_factory, world.clock, reuse),
-        delete_my_account=DeleteMyAccount(
-            DeleteMyAccountPorts(
-                world.uow_factory,
-                world.ids,
-                FakePseudonymizer(),
-                world.clock,
-                reuse,
-                world.notifier,
-            )
-        ),
-        export_rate_limiter=FakeRateLimiter(limit=3),
-        display_timezone="Europe/Moscow",
-        decode_incoming=bundle.decode_incoming,
-        suggest_rule_from_decode=bundle.suggest_rule_from_decode,
-        prepared_results=bundle.prepared_results,
-        rule_sources=bundle.rule_sources,
-        pseudonymizer=bundle.pseudonymizer,
-        bot_username=BotUsernameCache(username="test_bot"),
+        world=world,
+        decode_bundle=bundle,
+        reuse=reuse,
         enable_test_routes=enable_test_routes,
     )
 
@@ -795,7 +734,7 @@ async def test_seal_helper_parity_insert_and_rule_source_token() -> None:
     )
     assert all(query is not None and query.startswith("p_") for query in sealed.insert_queries)
     assert sealed.rule_source_token is not None
-    assert rule_source_callback_data(sealed.rule_source_token).startswith("sn:")
+    assert len(sealed.rule_source_token) > 0
 
 
 @pytest.mark.unit

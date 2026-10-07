@@ -112,56 +112,127 @@ describe("App", () => {
         expect(await screen.findByText(ru.contactsEmpty)).toBeInTheDocument();
     });
 
-    it("shows the incomplete onboarding gate without rights when no account", async () => {
+    it("shows the age onboarding screen and advances after confirmation", async () => {
+        let meCalls = 0;
+        const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(String(input), init);
+            const path = new URL(request.url).pathname;
+            if (path === "/api/v1/me") {
+                meCalls += 1;
+                if (meCalls === 1) {
+                    return Promise.resolve(
+                        jsonResponse({ ...meDone, onboarding_step: "age", account_exists: false }),
+                    );
+                }
+                return Promise.resolve(
+                    jsonResponse({
+                        ...meDone,
+                        onboarding_step: "consent",
+                        consent_kind: "personal_data",
+                        consent_version: "1",
+                    }),
+                );
+            }
+            if (path === "/api/v1/me/age-confirmation" && request.method === "POST") {
+                return Promise.resolve(jsonResponse(null, 204));
+            }
+            if (path === "/api/v1/consents/personal_data/document") {
+                return Promise.resolve(
+                    jsonResponse({ kind: "personal_data", version: "1", text: "DOC_AFTER_AGE" }),
+                );
+            }
+            if (path === "/api/v1/privacy/texts") {
+                return Promise.resolve(jsonResponse(privacyTexts));
+            }
+            return Promise.resolve(jsonResponse({ code: "not_found", message: "x" }, 404));
+        }) as typeof fetch;
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        expect(await screen.findByText(ru.onboardingAgePrompt)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.onboardingAgeYes }));
+        expect(await screen.findByText("DOC_AFTER_AGE")).toBeInTheDocument();
+    });
+
+    it("shows age declined copy when the user declines", async () => {
+        const adapter = fakeAdapter();
         const fetchImpl = mockFetch([
             {
                 path: "/api/v1/me",
                 body: { ...meDone, onboarding_step: "age", account_exists: false },
             },
         ]);
-        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        expect(await screen.findByText(ru.gateIncomplete)).toBeInTheDocument();
-        expect(screen.queryByText(ru.gateConsentExtra)).not.toBeInTheDocument();
-        expect(
-            screen.queryByRole("button", { name: ru.privacyExportAction }),
-        ).not.toBeInTheDocument();
-        expect(
-            screen.queryByRole("button", { name: ru.privacyDeleteAction }),
-        ).not.toBeInTheDocument();
-    });
-
-    it("shows export and delete on incomplete gate when account exists", async () => {
-        const fetchImpl = mockFetch([
-            {
-                path: "/api/v1/me",
-                body: { ...meDone, onboarding_step: "age", account_exists: true },
-            },
-        ]);
-        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        expect(await screen.findByText(ru.gateIncomplete)).toBeInTheDocument();
-        expect(
-            await screen.findByRole("button", { name: ru.privacyExportAction }),
-        ).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: ru.privacyDeleteAction })).toBeInTheDocument();
-    });
-
-    it("shows the consent gate with rights actions and closes", async () => {
-        const fetchImpl = mockFetch([
-            { path: "/api/v1/me", body: { ...meDone, onboarding_step: "consent" } },
-        ]);
-        const adapter = fakeAdapter();
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
-        expect(await screen.findByText(ru.gateIncomplete)).toBeInTheDocument();
-        expect(screen.getByText(ru.gateConsentExtra)).toBeInTheDocument();
-        expect(
-            await screen.findByRole("button", { name: ru.privacyExportAction }),
-        ).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: ru.privacyDeleteAction })).toBeInTheDocument();
-        click(ru.close);
+        fireEvent.click(await screen.findByRole("button", { name: ru.onboardingAgeNo }));
+        expect(await screen.findByText(ru.onboardingAgeDeclined)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.close }));
         expect(adapter.close).toHaveBeenCalled();
     });
 
+    it("shows age confirmation API errors", async () => {
+        const fetchImpl = mockFetch([
+            {
+                path: "/api/v1/me",
+                body: { ...meDone, onboarding_step: "age", account_exists: false },
+            },
+            {
+                method: "POST",
+                path: "/api/v1/me/age-confirmation",
+                status: 500,
+                body: { code: "not_found", message: "age failed" },
+            },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.onboardingAgeYes }));
+        expect(await screen.findByText("age failed")).toBeInTheDocument();
+    });
+
+    it("shows the consent onboarding screen with document and rights", async () => {
+        let meCalls = 0;
+        const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(String(input), init);
+            const path = new URL(request.url).pathname;
+            if (path === "/api/v1/me") {
+                meCalls += 1;
+                if (meCalls === 1) {
+                    return Promise.resolve(
+                        jsonResponse({
+                            ...meDone,
+                            onboarding_step: "consent",
+                            consent_kind: "personal_data",
+                            consent_version: "1",
+                        }),
+                    );
+                }
+                return Promise.resolve(jsonResponse(meDone));
+            }
+            if (path === "/api/v1/consents/personal_data/document") {
+                return Promise.resolve(
+                    jsonResponse({ kind: "personal_data", version: "1", text: "DOC_PERSONAL" }),
+                );
+            }
+            if (path === "/api/v1/me/consents" && request.method === "POST") {
+                return Promise.resolve(jsonResponse(null, 204));
+            }
+            if (path === "/api/v1/contacts") {
+                return Promise.resolve(jsonResponse({ contacts: [contact] }));
+            }
+            if (path === "/api/v1/privacy/texts") {
+                return Promise.resolve(jsonResponse(privacyTexts));
+            }
+            return Promise.resolve(jsonResponse({ code: "not_found", message: "x" }, 404));
+        }) as typeof fetch;
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        expect(await screen.findByText("DOC_PERSONAL")).toBeInTheDocument();
+        expect(screen.getByText(/Что мы храним/)).toBeInTheDocument();
+        expect(
+            await screen.findByRole("button", { name: ru.privacyExportAction }),
+        ).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: ru.privacyDeleteAction })).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.onboardingConsentAgree }));
+        expect(await screen.findByText("Аня")).toBeInTheDocument();
+    });
+
     it("shows the unauthorized gate on 401 without rights actions", async () => {
+        const adapter = fakeAdapter();
         const fetchImpl = mockFetch([
             {
                 path: "/api/v1/me",
@@ -169,7 +240,7 @@ describe("App", () => {
                 body: { code: "unauthorized", message: "no" },
             },
         ]);
-        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
         expect(await screen.findByText(ru.gateUnauthorized)).toBeInTheDocument();
         expect(
             screen.queryByRole("button", { name: ru.privacyExportAction }),
@@ -177,60 +248,388 @@ describe("App", () => {
         expect(
             screen.queryByRole("button", { name: ru.privacyDeleteAction }),
         ).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.close }));
+        expect(adapter.close).toHaveBeenCalled();
     });
 
-    it("shows consent gate when /me returns consent_required", async () => {
+    it("shows invite screen from startParam and accepts", async () => {
+        const adapter = fakeAdapter({ startParam: "inv_token123" });
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            {
+                method: "POST",
+                path: "/api/v1/invites/resolve",
+                body: { expires_at: "2026-10-14T12:00:00.000Z" },
+            },
+            { method: "POST", path: "/api/v1/invites/accept", status: 204, body: null },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+        ]);
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        expect(await screen.findByText(ru.inviteTitle)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.inviteAccept }));
+        expect(await screen.findByText(ru.addRuleValidation)).toBeInTheDocument();
+        fireEvent.change(screen.getByLabelText(ru.inviteLabel), {
+            target: { value: "Партнёр" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: ru.inviteAccept }));
+        expect(await screen.findByText("Аня")).toBeInTheDocument();
+    });
+
+    it("cancels invite screen without accepting", async () => {
+        const adapter = fakeAdapter({ startParam: "inv_token123" });
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            {
+                method: "POST",
+                path: "/api/v1/invites/resolve",
+                body: { expires_at: "2026-10-14T12:00:00.000Z" },
+            },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+        ]);
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        expect(await screen.findByText(ru.inviteTitle)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.cancel }));
+        expect(await screen.findByText("Аня")).toBeInTheDocument();
+    });
+
+    it("shows accept errors on invite screen", async () => {
+        const adapter = fakeAdapter({ startParam: "inv_token123" });
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            {
+                method: "POST",
+                path: "/api/v1/invites/resolve",
+                body: { expires_at: "2026-10-14T12:00:00.000Z" },
+            },
+            {
+                method: "POST",
+                path: "/api/v1/invites/accept",
+                status: 409,
+                body: { code: "contact_limit", message: "limit" },
+            },
+        ]);
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        fireEvent.change(await screen.findByLabelText(ru.inviteLabel), {
+            target: { value: "Партнёр" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: ru.inviteAccept }));
+        expect(await screen.findByText(ru.contactsLimit)).toBeInTheDocument();
+    });
+
+    it("dismisses invite screen on resolve error", async () => {
+        const adapter = fakeAdapter({ startParam: "inv_bad" });
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            {
+                method: "POST",
+                path: "/api/v1/invites/resolve",
+                status: 404,
+                body: { code: "not_found", message: "missing" },
+            },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+        ]);
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        expect(await screen.findByText(ru.inviteInvalid)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.continue }));
+        expect(await screen.findByText("Аня")).toBeInTheDocument();
+    });
+
+    it("maps invite expired and own errors", async () => {
+        const expired = fakeAdapter({ startParam: "inv_expired" });
+        const fetchExpired = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            {
+                method: "POST",
+                path: "/api/v1/invites/resolve",
+                status: 409,
+                body: { code: "invite_expired", message: "gone" },
+            },
+        ]);
+        const { unmount } = render(<App adapter={expired} fetchImpl={fetchExpired} />);
+        expect(await screen.findByText(ru.inviteExpired)).toBeInTheDocument();
+        unmount();
+
+        const own = fakeAdapter({ startParam: "inv_own" });
+        const fetchOwn = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            {
+                method: "POST",
+                path: "/api/v1/invites/resolve",
+                status: 409,
+                body: { code: "invite_own", message: "self" },
+            },
+        ]);
+        render(<App adapter={own} fetchImpl={fetchOwn} />);
+        expect(await screen.findByText(ru.inviteOwn)).toBeInTheDocument();
+    });
+
+    it("declines consent and closes", async () => {
+        const adapter = fakeAdapter();
+        const fetchImpl = mockFetch([
+            {
+                path: "/api/v1/me",
+                body: {
+                    ...meDone,
+                    onboarding_step: "consent",
+                    consent_kind: "special_category",
+                    consent_version: "1",
+                },
+            },
+            {
+                path: "/api/v1/consents/special_category/document",
+                body: { kind: "special_category", version: "1", text: "DOC_SPECIAL" },
+            },
+        ]);
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        expect(await screen.findByText("DOC_SPECIAL")).toBeInTheDocument();
+        expect(screen.queryByText(/Что мы храним/)).not.toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.onboardingConsentDecline }));
+        expect(await screen.findByText(ru.onboardingConsentDeclined)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.close }));
+        expect(adapter.close).toHaveBeenCalled();
+    });
+
+    it("handles stale consent grant and delete failure on consent screen", async () => {
+        const showConfirm = vi.fn(() => Promise.resolve(true));
+        const adapter = fakeAdapter({ showConfirm });
+        let grantCalls = 0;
+        const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(String(input), init);
+            const path = new URL(request.url).pathname;
+            if (path === "/api/v1/me") {
+                return Promise.resolve(
+                    jsonResponse({
+                        ...meDone,
+                        onboarding_step: "consent",
+                        consent_kind: "personal_data",
+                        consent_version: "1",
+                    }),
+                );
+            }
+            if (path === "/api/v1/consents/personal_data/document") {
+                return Promise.resolve(
+                    jsonResponse({ kind: "personal_data", version: "1", text: "DOC_STALE" }),
+                );
+            }
+            if (path === "/api/v1/privacy/texts") {
+                return Promise.resolve(jsonResponse(privacyTexts));
+            }
+            if (path === "/api/v1/me/consents" && request.method === "POST") {
+                grantCalls += 1;
+                return Promise.resolve(
+                    jsonResponse({ code: "consent_stale", message: "stale now" }, 409),
+                );
+            }
+            if (path === "/api/v1/me/delete" && request.method === "POST") {
+                return Promise.resolve(
+                    jsonResponse({ code: "not_found", message: "delete failed" }, 500),
+                );
+            }
+            return Promise.resolve(jsonResponse({ code: "not_found", message: "x" }, 404));
+        }) as typeof fetch;
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        expect(await screen.findByText("DOC_STALE")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.onboardingConsentAgree }));
+        expect(await screen.findByText("stale now")).toBeInTheDocument();
+        expect(grantCalls).toBe(1);
+        fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
+        expect(await screen.findByText("delete failed")).toBeInTheDocument();
+    });
+
+    it("maps invite_invalid on accept", async () => {
+        const adapter = fakeAdapter({ startParam: "inv_token123" });
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            {
+                method: "POST",
+                path: "/api/v1/invites/resolve",
+                body: { expires_at: "2026-10-14T12:00:00.000Z" },
+            },
+            {
+                method: "POST",
+                path: "/api/v1/invites/accept",
+                status: 409,
+                body: { code: "invite_invalid", message: "used" },
+            },
+        ]);
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        fireEvent.change(await screen.findByLabelText(ru.inviteLabel), {
+            target: { value: "Партнёр" },
+        });
+        fireEvent.change(screen.getByLabelText(ru.inviteRelationship), {
+            target: { value: "friend" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: ru.inviteAccept }));
+        expect(await screen.findByText(ru.inviteInvalid)).toBeInTheDocument();
+    });
+
+    it("maps invite_expired on accept", async () => {
+        const adapter = fakeAdapter({ startParam: "inv_token123" });
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            {
+                method: "POST",
+                path: "/api/v1/invites/resolve",
+                body: { expires_at: "2026-10-14T12:00:00.000Z" },
+            },
+            {
+                method: "POST",
+                path: "/api/v1/invites/accept",
+                status: 409,
+                body: { code: "invite_expired", message: "late" },
+            },
+        ]);
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        fireEvent.change(await screen.findByLabelText(ru.inviteLabel), {
+            target: { value: "Партнёр" },
+        });
+        fireEvent.click(screen.getByRole("button", { name: ru.inviteAccept }));
+        expect(await screen.findByText(ru.inviteExpired)).toBeInTheDocument();
+    });
+
+    it("shows consent document load error with retry", async () => {
+        let docCalls = 0;
+        const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(String(input), init);
+            const path = new URL(request.url).pathname;
+            if (path === "/api/v1/me") {
+                return Promise.resolve(
+                    jsonResponse({
+                        ...meDone,
+                        onboarding_step: "consent",
+                        consent_kind: "personal_data",
+                        consent_version: "1",
+                    }),
+                );
+            }
+            if (path === "/api/v1/consents/personal_data/document") {
+                docCalls += 1;
+                if (docCalls === 1) {
+                    return Promise.resolve(
+                        jsonResponse({ code: "not_found", message: "doc missing" }, 404),
+                    );
+                }
+                return Promise.resolve(
+                    jsonResponse({ kind: "personal_data", version: "1", text: "DOC_RETRY" }),
+                );
+            }
+            if (path === "/api/v1/privacy/texts") {
+                return Promise.resolve(jsonResponse(privacyTexts));
+            }
+            return Promise.resolve(jsonResponse({ code: "not_found", message: "x" }, 404));
+        }) as typeof fetch;
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        expect(await screen.findByRole("alert")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.retry }));
+        expect(await screen.findByText("DOC_RETRY")).toBeInTheDocument();
+    });
+
+    it("shows export failed when downloadFile is rejected", async () => {
+        const adapter = fakeAdapter({
+            downloadFile: vi.fn(() => Promise.resolve(false)),
+        });
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            {
+                method: "POST",
+                path: "/api/v1/me/export",
+                status: 200,
+                body: {
+                    download_url: "https://miniapp.test/api/v1/downloads/t",
+                    expires_at: "2026-10-07T12:00:00.000Z",
+                },
+            },
+        ]);
+        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyTitle }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.privacyExportAction }));
+        expect(await screen.findByText(ru.privacyExportFailed)).toBeInTheDocument();
+    });
+
+    it("shows consent screen when /me returns consent_required", async () => {
         const fetchImpl = mockFetch([
             {
                 path: "/api/v1/me",
                 status: 403,
                 body: { code: "consent_required", message: "need consent" },
             },
+            {
+                path: "/api/v1/consents/personal_data/document",
+                body: { kind: "personal_data", version: "1", text: "DOC_REQUIRED" },
+            },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        expect(await screen.findByText(ru.gateIncomplete)).toBeInTheDocument();
-        expect(screen.getByText(ru.gateConsentExtra)).toBeInTheDocument();
+        expect(await screen.findByText("DOC_REQUIRED")).toBeInTheDocument();
         expect(
             await screen.findByRole("button", { name: ru.privacyExportAction }),
         ).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: ru.privacyDeleteAction })).toBeInTheDocument();
     });
 
-    it("exports from consent gate and completes delete two-step to deleted screen", async () => {
+    it("exports from consent screen via downloadFile and deletes account", async () => {
         const showConfirm = vi.fn(() => Promise.resolve(true));
         const adapter = fakeAdapter({ showConfirm });
         const fetchImpl = mockFetch([
-            { path: "/api/v1/me", body: { ...meDone, onboarding_step: "consent" } },
+            {
+                path: "/api/v1/me",
+                body: {
+                    ...meDone,
+                    onboarding_step: "consent",
+                    consent_kind: "personal_data",
+                    consent_version: "1",
+                },
+            },
+            {
+                path: "/api/v1/consents/personal_data/document",
+                body: { kind: "personal_data", version: "1", text: "DOC" },
+            },
             {
                 method: "POST",
                 path: "/api/v1/me/export",
-                status: 202,
-                body: { delivered_to: "bot_chat" },
+                status: 200,
+                body: {
+                    download_url: "https://miniapp.test/api/v1/downloads/tok",
+                    expires_at: "2026-10-07T12:00:00.000Z",
+                },
             },
             { method: "POST", path: "/api/v1/me/delete", status: 204, body: null },
         ]);
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
         fireEvent.click(await screen.findByRole("button", { name: ru.privacyExportAction }));
         expect(await screen.findByText(ru.privacyExportDone)).toBeInTheDocument();
+        expect(adapter.downloadFile).toHaveBeenCalledWith(
+            "https://miniapp.test/api/v1/downloads/tok",
+            "svoi-pravila-export.json",
+        );
         expect(adapter.hapticNotification).toHaveBeenCalledWith("success");
 
         fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
         expect(showConfirm).toHaveBeenCalled();
-        fireEvent.click(await screen.findByRole("button", { name: ru.privacyDeleteForever }));
         expect(await screen.findByText(ru.privacyDeleted)).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: ru.close }));
         expect(adapter.close).toHaveBeenCalled();
     });
 
-    it("handles gate export errors and delete cancel / failure paths", async () => {
-        const showConfirm = vi.fn(() => Promise.resolve(false));
-        const adapter = fakeAdapter({ showConfirm });
+    it("handles consent-screen export errors", async () => {
+        const adapter = fakeAdapter();
         let exportCalls = 0;
         const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
             const request = input instanceof Request ? input : new Request(String(input), init);
             const path = new URL(request.url).pathname;
             if (path === "/api/v1/me") {
-                return Promise.resolve(jsonResponse({ ...meDone, onboarding_step: "consent" }));
+                return Promise.resolve(
+                    jsonResponse({
+                        ...meDone,
+                        onboarding_step: "consent",
+                        consent_kind: "personal_data",
+                        consent_version: "1",
+                    }),
+                );
+            }
+            if (path === "/api/v1/consents/personal_data/document") {
+                return Promise.resolve(
+                    jsonResponse({ kind: "personal_data", version: "1", text: "DOC" }),
+                );
             }
             if (path === "/api/v1/privacy/texts") {
                 return Promise.resolve(jsonResponse(privacyTexts));
@@ -239,7 +638,7 @@ describe("App", () => {
                 exportCalls += 1;
                 if (exportCalls === 1) {
                     return Promise.resolve(
-                        jsonResponse({ code: "bot_chat_unavailable", message: "start" }, 409),
+                        jsonResponse({ code: "service_unavailable", message: "down" }, 503),
                     );
                 }
                 if (exportCalls === 2) {
@@ -251,11 +650,6 @@ describe("App", () => {
                     jsonResponse({ code: "not_found", message: "export failed" }, 500),
                 );
             }
-            if (path === "/api/v1/me/delete" && request.method === "POST") {
-                return Promise.resolve(
-                    jsonResponse({ code: "open_rule_limit", message: "delete failed" }, 409),
-                );
-            }
             return Promise.resolve(jsonResponse({ code: "not_found", message: "x" }, 404));
         }) as typeof fetch;
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
@@ -265,24 +659,6 @@ describe("App", () => {
         expect(await screen.findByText(ru.rateLimited)).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: ru.privacyExportAction }));
         expect(await screen.findByText("export failed")).toBeInTheDocument();
-
-        fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
-        expect(showConfirm).toHaveBeenCalled();
-        expect(screen.queryByText(ru.privacyDeleteForever)).not.toBeInTheDocument();
-
-        showConfirm.mockResolvedValueOnce(true);
-        fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
-        expect(
-            await screen.findByRole("button", { name: ru.privacyDeleteForever }),
-        ).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: ru.cancel }));
-        expect(screen.getByRole("button", { name: ru.privacyExportAction })).toBeInTheDocument();
-
-        showConfirm.mockResolvedValueOnce(true);
-        fireEvent.click(screen.getByRole("button", { name: ru.privacyDeleteAction }));
-        fireEvent.click(await screen.findByRole("button", { name: ru.privacyDeleteForever }));
-        expect(await screen.findByText("delete failed")).toBeInTheDocument();
-        expect(adapter.hapticNotification).toHaveBeenCalledWith("error");
     });
 
     it("shows a generic me error with retry", async () => {
@@ -775,11 +1151,19 @@ describe("App", () => {
             if (path === "/api/v1/me/export" && request.method === "POST") {
                 exportCalls += 1;
                 if (exportCalls === 1) {
-                    return Promise.resolve(jsonResponse({ delivered_to: "bot_chat" }, 202));
+                    return Promise.resolve(
+                        jsonResponse(
+                            {
+                                download_url: "https://miniapp.test/api/v1/downloads/t",
+                                expires_at: "2026-10-07T12:00:00.000Z",
+                            },
+                            200,
+                        ),
+                    );
                 }
                 if (exportCalls === 2) {
                     return Promise.resolve(
-                        jsonResponse({ code: "bot_chat_unavailable", message: "start bot" }, 409),
+                        jsonResponse({ code: "service_unavailable", message: "down" }, 503),
                     );
                 }
                 return Promise.resolve(
@@ -793,6 +1177,7 @@ describe("App", () => {
         expect(await screen.findByText(privacyTexts.export.description)).toBeInTheDocument();
         fireEvent.click(await screen.findByRole("button", { name: ru.privacyExportAction }));
         expect(await screen.findByText(ru.privacyExportDone)).toBeInTheDocument();
+        expect(adapter.downloadFile).toHaveBeenCalled();
         expect(adapter.hapticNotification).toHaveBeenCalledWith("success");
         fireEvent.click(screen.getByRole("button", { name: ru.privacyExportAction }));
         expect(await screen.findByText(ru.privacyExportUnavailable)).toBeInTheDocument();
@@ -800,13 +1185,17 @@ describe("App", () => {
         expect(await screen.findByText(ru.rateLimited)).toBeInTheDocument();
     });
 
-    it("revokes consents only when confirm accepts and shows consent gate", async () => {
+    it("revokes consents only when confirm accepts and shows consent screen", async () => {
         const showConfirm = vi.fn(() => Promise.resolve(false));
         const adapter = fakeAdapter({ showConfirm });
         const fetchImpl = mockFetch([
             { path: "/api/v1/me", body: meDone },
             { path: "/api/v1/contacts", body: { contacts: [contact] } },
             { method: "POST", path: "/api/v1/me/consents/revoke", status: 204, body: null },
+            {
+                path: "/api/v1/consents/personal_data/document",
+                body: { kind: "personal_data", version: "1", text: "DOC_AFTER_REVOKE" },
+            },
         ]);
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
         fireEvent.click(await screen.findByRole("button", { name: ru.privacyTitle }));
@@ -822,7 +1211,7 @@ describe("App", () => {
 
         showConfirm.mockResolvedValueOnce(true);
         fireEvent.click(screen.getByRole("button", { name: ru.privacyRevokeAction }));
-        expect(await screen.findByText(ru.gateConsentExtra)).toBeInTheDocument();
+        expect(await screen.findByText("DOC_AFTER_REVOKE")).toBeInTheDocument();
         expect(
             vi.mocked(fetchImpl).mock.calls.some((call) => {
                 const request = call[0];

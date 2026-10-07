@@ -25,6 +25,7 @@ class MiniappErrorCode(StrEnum):
     CONTACT_LIMIT = "contact_limit"
     OPEN_RULE_LIMIT = "open_rule_limit"
     BOT_CHAT_UNAVAILABLE = "bot_chat_unavailable"
+    SERVICE_UNAVAILABLE = "service_unavailable"
     CONTACT_ALREADY_LINKED = "contact_already_linked"
     CONTACT_NOT_PAIRED = "contact_not_paired"
     INVALID_TRANSITION = "invalid_transition"
@@ -38,6 +39,10 @@ class MiniappErrorCode(StrEnum):
     GENERATION_UNAVAILABLE = "generation_unavailable"
     INVALID_OUTPUT = "invalid_output"
     BUSY = "busy"
+    INVITE_INVALID = "invite_invalid"
+    INVITE_EXPIRED = "invite_expired"
+    INVITE_OWN = "invite_own"
+    CONSENT_STALE = "consent_stale"
 
 
 class ErrorBody(BaseModel):

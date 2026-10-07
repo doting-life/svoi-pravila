@@ -20,10 +20,11 @@ class InitDataExpired(ApplicationError):
 
 @dataclass(frozen=True, slots=True)
 class VerifiedInitData:
-    """Boundary DTO: only Telegram id and auth_date cross into use cases."""
+    """Boundary DTO: Telegram id, auth_date, and optional start_param (C0/C1)."""
 
     telegram_user_id: TelegramUserId
     auth_date: datetime
+    start_param: str | None = None
 
 
 class InitDataVerifier(Protocol):

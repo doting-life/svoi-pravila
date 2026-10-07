@@ -44,7 +44,6 @@ from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
     SuggestRuleFromDecodeOutcome,
     SuggestRuleFromDecodePorts,
 )
-from svoi_pravila.domain.cancelled_billable import estimate_cancelled_billable
 from svoi_pravila.domain.contact import Contact
 from svoi_pravila.domain.enums import (
     RelationshipKind,
@@ -101,7 +100,6 @@ def _ports(
         pseudonymizer=FakePseudonymizer(),
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
-        max_output_tokens=1000,
         analytics_timezone="Europe/Moscow",
     )
 
@@ -188,7 +186,7 @@ async def test_suggest_rule_cancel_after_provider_charges_estimate(world: AppWor
         await SuggestRuleFromDecode(ports).execute(
             SuggestRuleFromDecodeCommand(tg, token, surface=UsageSurface.DM)
         )
-    assert budget.spent == estimate_cancelled_billable(len(incoming), 1000)
+    assert budget.spent == 1000
 
 
 @pytest.mark.unit
@@ -357,7 +355,6 @@ async def test_suggest_rule_not_found_paths(world: AppWorld) -> None:
         pseudonymizer=FakePseudonymizer(),
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
-        max_output_tokens=1000,
         analytics_timezone="Europe/Moscow",
     )
     with pytest.raises(NotFound):
@@ -410,7 +407,6 @@ async def test_suggest_rule_generation_errors_and_sink_fail(world: AppWorld) -> 
             pseudonymizer=FakePseudonymizer(),
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
-            max_output_tokens=1000,
             analytics_timezone="Europe/Moscow",
         )
         with pytest.raises(type(error)):
@@ -441,7 +437,6 @@ async def test_suggest_rule_generation_errors_and_sink_fail(world: AppWorld) -> 
         pseudonymizer=FakePseudonymizer(),
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
-        max_output_tokens=1000,
         analytics_timezone="Europe/Moscow",
     )
     ok_despite_sink = await SuggestRuleFromDecode(ports_ok_fail).execute(
@@ -478,7 +473,6 @@ async def test_suggest_rule_generation_errors_and_sink_fail(world: AppWorld) -> 
         pseudonymizer=FakePseudonymizer(),
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
-        max_output_tokens=1000,
         analytics_timezone="Europe/Moscow",
     )
     with pytest.raises(GenerationUnavailable):
@@ -581,7 +575,6 @@ async def test_suggest_rule_conflict_on_add_returns_pending_exists(world: AppWor
         pseudonymizer=FakePseudonymizer(),
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
-        max_output_tokens=1000,
         analytics_timezone="Europe/Moscow",
     )
     result = await SuggestRuleFromDecode(ports).execute(
@@ -670,7 +663,6 @@ async def test_suggest_rule_conflict_without_pending_raises_not_found(world: App
         pseudonymizer=FakePseudonymizer(),
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
-        max_output_tokens=1000,
         analytics_timezone="Europe/Moscow",
     )
     with pytest.raises(NotFound):

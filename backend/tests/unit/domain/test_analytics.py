@@ -241,11 +241,28 @@ def test_limited_events_are_not_generation_errors() -> None:
         user_pseudonym="cd" * 32,
     )
     packed = (limited_quota, limited_budget)
-    day_agg = aggregate(packed, _TZ, date(2026, 3, 15), _NOW)
+    day_agg = aggregate(packed, _TZ, date(2026, 3, 15), _NOW, 50_000)
     assert day_agg.daily.generations == 2
     assert day_agg.daily.generation_errors == 0
     assert day_agg.daily.appeals == 0
     assert day_agg.daily.active_users == 0
+    assert day_agg.daily.users_limited == 1
+    assert day_agg.daily.billable_tokens == 0
+    assert day_agg.daily.llm_budget_tokens == 50_000
+    quota_slice = next(
+        row
+        for row in day_agg.scenarios
+        if row.surface is UsageSurface.DM and row.limited_user_quota
+    )
+    assert quota_slice.limited_user_quota == 1
+    assert quota_slice.limited_global_budget == 0
+    budget_slice = next(
+        row
+        for row in day_agg.scenarios
+        if row.surface is UsageSurface.MINIAPP and row.limited_global_budget
+    )
+    assert budget_slice.limited_global_budget == 1
+    assert budget_slice.limited_user_quota == 0
 
 
 @pytest.mark.unit
@@ -279,13 +296,13 @@ def test_aggregate_splits_moscow_midnight_and_new_users() -> None:
     chosen = _chosen(occurred_at=before_midnight, user_pseudonym="cc" * 32, event_id=5)
     computed = datetime(2026, 3, 16, 0, 30, 0, tzinfo=UTC)
     packed = (prior, returning, newbie, inline_ok, chosen)
-    first = aggregate(packed, _TZ, date(2026, 3, 15), computed)
+    first = aggregate(packed, _TZ, date(2026, 3, 15), computed, 50_000)
     assert first.daily.active_users == 2
     assert first.daily.appeals == 2
     assert first.daily.new_users == 1
     assert first.daily.generations == 2
     assert first.daily.generation_errors == 0
-    second = aggregate(packed, _TZ, date(2026, 3, 16), computed)
+    second = aggregate(packed, _TZ, date(2026, 3, 16), computed, 50_000)
     assert second.daily.active_users == 1
     assert second.daily.new_users == 1
     inline_slice = next(

@@ -16,6 +16,7 @@ from svoi_pravila.adapters.llm.gigachat.attempt_policy import (
     AttemptState,
     token_usage_from_state,
 )
+from svoi_pravila.adapters.llm.gigachat.estimate import max_billable_for_request
 from svoi_pravila.adapters.llm.gigachat.prepared import (
     PreparedMessages,
     prepare_decode,
@@ -53,6 +54,7 @@ from svoi_pravila.application.ports.generation import (
     DecodeRequest,
     DecodeResult,
     GenerationMeta,
+    GenerationRequest,
     HelpSayRequest,
     HelpSayResult,
     SoftenRequest,
@@ -145,6 +147,10 @@ class GigaChatTextGenerator:
     def prepare_suggest_rule(self, request: SuggestRuleRequest) -> PreparedMessages:
         """Build rendered system/user messages for suggest_rule."""
         return prepare_suggest_rule(request)
+
+    def max_billable(self, request: GenerationRequest) -> int:
+        """Worst-case billable tokens from rendered messages, caps, and retries."""
+        return max_billable_for_request(request)
 
     async def soften(self, request: SoftenRequest) -> SoftenResult:
         prepared = self.prepare_soften(request)

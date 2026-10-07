@@ -39,6 +39,7 @@ from tests.fakes.ids import FakeIdGenerator
 
 TZ = "Europe/Moscow"
 COMPUTED = datetime(2026, 3, 17, 0, 30, tzinfo=UTC)
+LLM_BUDGET = 100_000
 
 
 def _pseudo(n: int) -> str:
@@ -188,6 +189,9 @@ async def test_aggregate_tables_column_allowlist(engine: AsyncEngine) -> None:
             "new_users",
             "generations",
             "generation_errors",
+            "users_limited",
+            "billable_tokens",
+            "llm_budget_tokens",
             "computed_at",
         },
         "analytics_daily_scenario": {
@@ -202,6 +206,8 @@ async def test_aggregate_tables_column_allowlist(engine: AsyncEngine) -> None:
             "invalid_output",
             "unavailable",
             "chosen",
+            "limited_user_quota",
+            "limited_global_budget",
             "latency_p50_ms",
             "latency_p95_ms",
             "ttfc_p50_ms",
@@ -257,15 +263,18 @@ async def test_oracle_parity_every_field(
     await _insert(uow_factory, events)
     store = SqlAlchemyAnalyticsStore(engine)
     for day in (date(2026, 3, 15), date(2026, 3, 16)):
-        await store.compute_day(day, TZ, COMPUTED)
+        await store.compute_day(day, TZ, COMPUTED, LLM_BUDGET)
         got = await store.fetch_day(day)
-        want = aggregate(events, TZ, day, COMPUTED)
+        want = aggregate(events, TZ, day, COMPUTED, LLM_BUDGET)
         assert got is not None
         assert got.daily.active_users == want.daily.active_users
         assert got.daily.appeals == want.daily.appeals
         assert got.daily.new_users == want.daily.new_users
         assert got.daily.generations == want.daily.generations
         assert got.daily.generation_errors == want.daily.generation_errors
+        assert got.daily.users_limited == want.daily.users_limited
+        assert got.daily.billable_tokens == want.daily.billable_tokens
+        assert got.daily.llm_budget_tokens == want.daily.llm_budget_tokens
         assert got.daily.day == want.daily.day
         assert len(got.scenarios) == len(want.scenarios)
         for left, right in zip(got.scenarios, want.scenarios, strict=True):
@@ -279,6 +288,8 @@ async def test_oracle_parity_every_field(
             assert left.invalid_output == right.invalid_output
             assert left.unavailable == right.unavailable
             assert left.chosen == right.chosen
+            assert left.limited_user_quota == right.limited_user_quota
+            assert left.limited_global_budget == right.limited_global_budget
             assert left.input_tokens == right.input_tokens
             assert left.output_tokens == right.output_tokens
             assert left.billable_tokens == right.billable_tokens
@@ -307,12 +318,12 @@ async def test_compute_day_rolls_back_when_scenario_insert_fails(
     events = (_gen(1, datetime(2026, 3, 16, 12, 0, 0, tzinfo=UTC), _pseudo(1)),)
     await _insert(uow_factory, events)
     store = SqlAlchemyAnalyticsStore(engine)
-    await store.compute_day(day, TZ, COMPUTED)
+    await store.compute_day(day, TZ, COMPUTED, LLM_BUDGET)
     before = await store.fetch_day(day)
     assert before is not None
     monkeypatch.setattr(store_mod, "_SCENARIO_INSERT", "SELECT 1/0")
     with pytest.raises(AnalyticsJobFailed) as exc:
-        await store.compute_day(day, TZ, COMPUTED)
+        await store.compute_day(day, TZ, COMPUTED, LLM_BUDGET)
     assert exc.value.kind is AnalyticsErrorKind.DATABASE
     after = await store.fetch_day(day)
     assert after == before
@@ -336,7 +347,7 @@ async def test_compute_day_new_day_absent_after_mid_failure(
         "INSERT INTO analytics_daily_scenario (day) VALUES (:day)",
     )
     with pytest.raises(AnalyticsJobFailed) as exc:
-        await store.compute_day(day, TZ, COMPUTED)
+        await store.compute_day(day, TZ, COMPUTED, LLM_BUDGET)
     assert exc.value.kind is AnalyticsErrorKind.DATABASE
     assert await store.fetch_day(day) is None
 
@@ -381,6 +392,7 @@ async def test_second_instance_closes_stale_running_then_proceeds(
             ids=FakeIdGenerator(),
             clock=FakeClock(COMPUTED),
             timezone=TZ,
+            llm_budget_tokens=LLM_BUDGET,
         )
     )
     await job_b.execute(COMPUTED)
@@ -440,7 +452,7 @@ async def test_purge_boundary_batches_leave_aggregates(
         ),
     )
     kept_day = event_day(kept_at, TZ)
-    await store.compute_day(kept_day, TZ, now)
+    await store.compute_day(kept_day, TZ, now, LLM_BUDGET)
     snapshot = await store.fetch_day(kept_day)
     assert snapshot is not None
     deleted = await store.purge_usage_events(now, 1)
@@ -476,7 +488,13 @@ async def test_idempotent_daily_job_two_runs(
         )
     )
     job = RunDailyAnalytics(
-        RunDailyAnalyticsPorts(store=store, ids=ids, clock=FakeClock(COMPUTED), timezone=TZ)
+        RunDailyAnalyticsPorts(
+            store=store,
+            ids=ids,
+            clock=FakeClock(COMPUTED),
+            timezone=TZ,
+            llm_budget_tokens=LLM_BUDGET,
+        )
     )
     await job.execute(COMPUTED)
     first = await store.fetch_day(date(2026, 3, 16))
@@ -521,7 +539,9 @@ async def test_catch_up_three_days_and_cap(
         )
     )
     job = RunDailyAnalytics(
-        RunDailyAnalyticsPorts(store=store, ids=ids, clock=FakeClock(now), timezone=TZ)
+        RunDailyAnalyticsPorts(
+            store=store, ids=ids, clock=FakeClock(now), timezone=TZ, llm_budget_tokens=LLM_BUDGET
+        )
     )
     await job.execute(now)
     filled = [
@@ -541,7 +561,9 @@ async def test_catch_up_three_days_and_cap(
     store2 = SqlAlchemyAnalyticsStore(engine)
     ids2 = FakeIdGenerator()
     job2 = RunDailyAnalytics(
-        RunDailyAnalyticsPorts(store=store2, ids=ids2, clock=FakeClock(now), timezone=TZ)
+        RunDailyAnalyticsPorts(
+            store=store2, ids=ids2, clock=FakeClock(now), timezone=TZ, llm_budget_tokens=LLM_BUDGET
+        )
     )
     async with engine.begin() as conn:
         await conn.execute(text("DELETE FROM job_runs"))
@@ -582,7 +604,13 @@ async def test_lock_second_run_skipped(
     store = SqlAlchemyAnalyticsStore(engine)
     clock = FakeClock(COMPUTED)
     job = RunDailyAnalytics(
-        RunDailyAnalyticsPorts(store=store, ids=FakeIdGenerator(), clock=clock, timezone=TZ)
+        RunDailyAnalyticsPorts(
+            store=store,
+            ids=FakeIdGenerator(),
+            clock=clock,
+            timezone=TZ,
+            llm_budget_tokens=LLM_BUDGET,
+        )
     )
     held = asyncio.Event()
     release = asyncio.Event()

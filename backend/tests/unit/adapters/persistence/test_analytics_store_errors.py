@@ -214,10 +214,10 @@ async def test_compute_day_maps_begin_errors() -> None:
     day = datetime(2026, 1, 1, tzinfo=UTC).date()
     now = datetime(2026, 1, 1, tzinfo=UTC)
     with pytest.raises(AnalyticsJobFailed) as exc:
-        await _store(_BoomConnect()).compute_day(day, "Europe/Moscow", now)
+        await _store(_BoomConnect()).compute_day(day, "Europe/Moscow", now, 100_000)
     assert exc.value.kind is AnalyticsErrorKind.NETWORK
     with pytest.raises(AnalyticsJobFailed) as exc_sql:
-        await _store(_BoomSql()).compute_day(day, "Europe/Moscow", now)
+        await _store(_BoomSql()).compute_day(day, "Europe/Moscow", now, 100_000)
     assert exc_sql.value.kind is AnalyticsErrorKind.DATABASE
 
 
@@ -255,6 +255,7 @@ async def test_compute_day_maps_mid_transaction_oserror() -> None:
             datetime(2026, 1, 1, tzinfo=UTC).date(),
             "Europe/Moscow",
             datetime(2026, 1, 1, tzinfo=UTC),
+            100_000,
         )
     assert exc.value.kind is AnalyticsErrorKind.NETWORK
 

@@ -43,12 +43,6 @@ from svoi_pravila.adapters.channels.telegram.sleeper import AsyncioSleeper
 from svoi_pravila.adapters.consents import PackageConsentCatalog
 from svoi_pravila.adapters.llm.gigachat.adapter import GigaChatTextGenerator
 from svoi_pravila.adapters.llm.gigachat.client import close_gigachat_client, create_gigachat_client
-from svoi_pravila.adapters.llm.gigachat.validation import (
-    MAX_TOKENS_ANALYSIS,
-    MAX_TOKENS_DECODE,
-    MAX_TOKENS_SOFTEN,
-    MAX_TOKENS_SUGGEST,
-)
 from svoi_pravila.adapters.persistence.analytics_store import SqlAlchemyAnalyticsStore
 from svoi_pravila.adapters.persistence.billable_token_sum import UowBillableTokenSum
 from svoi_pravila.adapters.persistence.engine import create_engine, dispose_engine
@@ -320,6 +314,7 @@ def _wire_quota_budget(
     settings: Settings,
     valkey: Redis,
     uow_factory: SqlAlchemyUnitOfWorkFactory,
+    clock: SystemClock,
 ) -> tuple[ValkeyConcurrencyGuard, ValkeyQuotaGate, ValkeyLlmBudget]:
     """Compose daily QuotaGate and LlmBudget; concurrency guard is for decode locks."""
     guard = ValkeyConcurrencyGuard(valkey)
@@ -334,8 +329,10 @@ def _wire_quota_budget(
         config=ValkeyLlmBudgetConfig(
             budget=settings.llm_daily_token_budget,
             timezone=settings.analytics_timezone,
+            hourly_spike_share=settings.llm_hourly_spike_share,
         ),
         sums=UowBillableTokenSum(uow_factory, timezone=settings.analytics_timezone),
+        clock=clock,
     )
     return guard, quota_gate, llm_budget
 
@@ -386,7 +383,9 @@ def create_application(settings: Settings) -> FastAPI:
         valkey,
         ttl_seconds=settings.rule_source_ttl_seconds,
     )
-    concurrency_guard, quota_gate, llm_budget = _wire_quota_budget(settings, valkey, uow_factory)
+    concurrency_guard, quota_gate, llm_budget = _wire_quota_budget(
+        settings, valkey, uow_factory, clock
+    )
     decode_wire = _DecodeWire(
         decode_incoming=DecodeIncoming(
             DecodeIncomingPorts(
@@ -403,7 +402,6 @@ def create_application(settings: Settings) -> FastAPI:
                 pseudonymizer=pseudonymizer,
                 crisis_screen=crisis_screen,
                 deadline_seconds=settings.decode_deadline_seconds,
-                max_output_tokens=MAX_TOKENS_ANALYSIS + MAX_TOKENS_DECODE,
                 analytics_timezone=settings.analytics_timezone,
             )
         ),
@@ -421,7 +419,6 @@ def create_application(settings: Settings) -> FastAPI:
                 pseudonymizer=pseudonymizer,
                 crisis_screen=crisis_screen,
                 deadline_seconds=settings.decode_deadline_seconds,
-                max_output_tokens=MAX_TOKENS_SUGGEST,
                 analytics_timezone=settings.analytics_timezone,
             )
         ),
@@ -473,7 +470,6 @@ def create_application(settings: Settings) -> FastAPI:
                 reuse=inline_reuse,
                 min_chars=settings.inline_min_chars,
                 deadline_seconds=settings.inline_deadline_seconds,
-                max_output_tokens=MAX_TOKENS_SOFTEN,
                 intent_prefixes=help_say_intent_prefixes(strings),
                 analytics_timezone=settings.analytics_timezone,
             )
@@ -618,6 +614,7 @@ def _analytics_scheduler(
                 ids=ids,
                 clock=clock,
                 timezone=settings.analytics_timezone,
+                llm_budget_tokens=settings.llm_daily_token_budget,
             )
         ),
         clock,

@@ -129,8 +129,10 @@ class _FakeBackfillStore:
     async def ensure_timezone(self, tz_name: str) -> None:
         _ = tz_name
 
-    async def compute_day(self, day: date, tz_name: str, computed_at: object) -> int:
-        _ = tz_name, computed_at
+    async def compute_day(
+        self, day: date, tz_name: str, computed_at: object, llm_budget_tokens: int
+    ) -> int:
+        _ = tz_name, computed_at, llm_budget_tokens
         self.days.append(day)
         return 1
 

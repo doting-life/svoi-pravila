@@ -25,6 +25,9 @@ from svoi_pravila.application.ports.generation import TokenUsage
 
 logger = structlog.get_logger(__name__)
 
+# Initial attempt plus one invalid-output retry.
+MAX_ATTEMPTS = 2
+
 # Provider errors handled inside attempt loops (TimeoutError owned by deadline boundary).
 ATTEMPT_PROVIDER_EXCEPTIONS = (
     AuthenticationError,
@@ -80,7 +83,7 @@ def should_retry_invalid(*, attempt: int, yielded: bool | None) -> bool:
     """Return whether a validation failure may be retried."""
     if yielded is True:
         return False
-    return attempt == 0
+    return attempt < MAX_ATTEMPTS - 1
 
 
 def note_invalid_reason(state: AttemptState, reason: InvalidOutputReason) -> None:

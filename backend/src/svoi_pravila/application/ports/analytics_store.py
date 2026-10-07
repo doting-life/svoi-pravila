@@ -40,7 +40,13 @@ class AnalyticsStore(Protocol):
         """Reject names absent from ``pg_timezone_names``."""
         ...
 
-    async def compute_day(self, day: date, tz_name: str, computed_at: datetime) -> int:
+    async def compute_day(
+        self,
+        day: date,
+        tz_name: str,
+        computed_at: datetime,
+        llm_budget_tokens: int,
+    ) -> int:
         """Upsert ``analytics_daily`` and scenario rows for ``day``. Return rows written."""
         ...
 

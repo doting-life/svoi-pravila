@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -148,14 +149,21 @@ class _BudgetClient:
     def register_script(self, lua: str) -> Any:
         del lua
 
-        async def _add(*, keys: list[str], args: list[Any]) -> int:
-            key = keys[0]
-            if key not in self.data:
-                return 0
-            current = self.data[key]
+        async def _add(*, keys: list[str], args: list[Any]) -> list[int]:
+            day_key, hour_key = keys
+            if day_key not in self.data:
+                return [0, 0, 0]
+            delta = int(args[0])
+            threshold = int(args[2])
+            current = self.data[day_key]
             as_str = current.decode() if isinstance(current, bytes) else current
-            self.data[key] = str(int(as_str) + int(args[0]))
-            return 1
+            self.data[day_key] = str(int(as_str) + delta)
+            prev_raw = self.data.get(hour_key)
+            prev = int(prev_raw.decode() if isinstance(prev_raw, bytes) else prev_raw or 0)
+            hour_tokens = prev + delta
+            self.data[hour_key] = str(hour_tokens)
+            crossed = 1 if prev < threshold <= hour_tokens else 0
+            return [1, crossed, hour_tokens]
 
         return _add
 
@@ -201,10 +209,13 @@ def _make_budget(
     *,
     budget: int = 10,
 ) -> ValkeyLlmBudget:
+    from tests.fakes.clock import FakeClock
+
     return ValkeyLlmBudget(
         cast(Redis, client),
         config=ValkeyLlmBudgetConfig(budget=budget, timezone=_TZ),
         sums=sums,
+        clock=FakeClock(),
     )
 
 
@@ -351,3 +362,28 @@ async def test_llm_budget_read_after_set_requires_key() -> None:
     with pytest.raises(CacheUnavailable) as missing:
         await budget.check(_DAY)
     assert missing.value.kind is CacheErrorKind.SERVER
+
+
+@pytest.mark.unit
+async def test_llm_budget_add_logs_and_raises_on_valkey_failure(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    class _BoomClient(_BudgetClient):
+        def register_script(self, lua: str) -> Any:
+            del lua
+
+            async def _add(*, keys: list[str], args: list[Any]) -> list[int]:
+                del keys, args
+                raise RedisConnectionError("down")
+
+            return _add
+
+    client = _BoomClient()
+    client.data[_KEY] = "0"
+    budget = _make_budget(client, _CountingSum())
+    with pytest.raises(CacheUnavailable) as caught:
+        await budget.add(_DAY, 10)
+    assert caught.value.kind is CacheErrorKind.NETWORK
+    failures = [e for e in capture_log_events() if e.get("event") == "llm_budget_add_failed"]
+    assert len(failures) == 1
+    assert failures[0]["error_kind"] == CacheErrorKind.NETWORK.value

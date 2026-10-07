@@ -129,7 +129,6 @@ def _ports(
             reuse=reuse,
             min_chars=chosen.min_chars,
             deadline_seconds=8.0,
-            max_output_tokens=1000,
             intent_prefixes=_PREFIXES,
             analytics_timezone="Europe/Moscow",
         )
@@ -332,8 +331,6 @@ async def test_inline_compose_refund_matrix(world: AppWorld) -> None:
             self.soften_calls.append(request)
             raise asyncio.CancelledError
 
-    from svoi_pravila.domain.cancelled_billable import estimate_cancelled_billable
-
     quota_cancel = FakeQuotaGate(limit=30)
     budget_cancel = FakeLlmBudget()
     query = "long enough"
@@ -343,7 +340,7 @@ async def test_inline_compose_refund_matrix(world: AppWorld) -> None:
     with pytest.raises(asyncio.CancelledError):
         await use_case.execute(InlineComposeCommand(TelegramUserId(100), query))
     assert quota_cancel.refund_calls == []
-    assert budget_cancel.spent == estimate_cancelled_billable(len(query), 1000)
+    assert budget_cancel.spent == 1000
 
 
 @pytest.mark.unit
@@ -407,7 +404,6 @@ async def test_inline_compose_skips_blank_prefix_entries(world: AppWorld) -> Non
             reuse=make_inline_reuse(world.clock),
             min_chars=8,
             deadline_seconds=8.0,
-            max_output_tokens=1000,
             intent_prefixes=(("", HelpSayIntent.OTHER), *_PREFIXES),
             analytics_timezone="Europe/Moscow",
         )

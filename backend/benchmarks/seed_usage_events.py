@@ -148,12 +148,12 @@ async def _run(scale: str, purge_expired: int) -> None:
         from_day = yesterday - timedelta(days=8)
         to_day = yesterday - timedelta(days=1)
         t1 = time.perf_counter()
-        await store.compute_day(yesterday, TZ, now)
+        await store.compute_day(yesterday, TZ, now, 100_000)
         print(f"compute_day_seconds={time.perf_counter() - t1:.3f}")
         t2 = time.perf_counter()
         await store.compute_cohorts(from_day, to_day, TZ, yesterday, now)
         print(f"compute_cohorts_seconds={time.perf_counter() - t2:.3f}")
-        day_params = {"day": yesterday, "tz": TZ, "computed_at": now}
+        day_params = {"day": yesterday, "tz": TZ, "computed_at": now, "llm_budget_tokens": 100_000}
         print("explain_compute_day:")
         print(await _explain(engine, _DAILY_UPSERT, day_params))
         print("explain_scenario_insert:")

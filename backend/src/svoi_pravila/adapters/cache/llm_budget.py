@@ -3,21 +3,37 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta
+from math import floor
+from zoneinfo import ZoneInfo
 
+import structlog
 from redis.asyncio import Redis
 
 from svoi_pravila.adapters.cache._lua import load_lua
 from svoi_pravila.adapters.cache._redis_map import map_redis
 from svoi_pravila.adapters.cache.errors import CacheErrorKind, CacheUnavailable
 from svoi_pravila.application.ports.billable_token_sum import BillableTokenSum
+from svoi_pravila.application.ports.clock import Clock
 from svoi_pravila.application.ports.llm_budget import BudgetExhausted, BudgetOk
 from svoi_pravila.domain.product_day import expire_at_utc, resets_at_utc
+
+_logger = structlog.get_logger(__name__)
 
 
 def _expire_unix(day: date, timezone: str) -> int:
     """Unix seconds for EXPIREAT at the product-day boundary."""
     return int(expire_at_utc(day, timezone).timestamp())
+
+
+def _local_hour_parts(moment: datetime, tz_name: str) -> tuple[date, int, int]:
+    """Product-local calendar day, hour (0-23), and hour-key EXPIREAT unix."""
+    local = moment.astimezone(ZoneInfo(tz_name))
+    hour = local.hour
+    day = local.date()
+    hour_end_local = local.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    expire_at = hour_end_local + timedelta(hours=1)
+    return day, hour, int(expire_at.timestamp())
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +42,7 @@ class ValkeyLlmBudgetConfig:
 
     budget: int
     timezone: str
+    hourly_spike_share: float = 0.25
     key_prefix: str = "llm_budget"
 
 
@@ -47,16 +64,25 @@ class ValkeyLlmBudget:
         *,
         config: ValkeyLlmBudgetConfig,
         sums: BillableTokenSum,
+        clock: Clock,
     ) -> None:
         self._client = client
         self._budget = config.budget
         self._timezone = config.timezone
+        self._spike_share = config.hourly_spike_share
         self._sums = sums
+        self._clock = clock
         self._key_prefix = config.key_prefix
         self._add = client.register_script(load_lua("budget_add.lua"))
 
     def _key(self, day: date) -> str:
         return f"{self._key_prefix}:{day.isoformat()}"
+
+    def _hour_key(self, day: date, hour: int) -> str:
+        return f"{self._key_prefix}:hour:{day.isoformat()}:{hour:02d}"
+
+    def _spike_threshold(self) -> int:
+        return floor(self._spike_share * self._budget)
 
     async def check(self, day: date) -> BudgetOk | BudgetExhausted:
         """Rebuild if missing; exhausted when spent >= budget."""
@@ -71,21 +97,45 @@ class ValkeyLlmBudget:
 
         Callers persist the usage event before ``add``. A missing key is rebuilt
         from ``usage_events``, which already includes that event, so a further
-        ``INCRBY`` would double-count.
+        ``INCRBY`` would double-count. Rebuild does not touch the hourly key.
         """
         if billable_tokens < 0:
             msg = "billable_tokens must be non-negative"
             raise ValueError(msg)
+        try:
+            await self._add_or_rebuild(day, billable_tokens)
+        except CacheUnavailable as exc:
+            _logger.warning("llm_budget_add_failed", error_kind=exc.kind.value)
+            raise
+
+    async def _add_or_rebuild(self, day: date, billable_tokens: int) -> None:
         if billable_tokens == 0:
             await self._ensure_key(day)
             return
         key = self._key(day)
+        _, hour, hour_expire = _local_hour_parts(self._clock.now(), self._timezone)
+        hour_key = self._hour_key(day, hour)
+        threshold = self._spike_threshold()
 
-        async def _try_add() -> int:
-            return int(await self._add(keys=[key], args=[billable_tokens]))
+        async def _try_add() -> tuple[int, int, int]:
+            raw = await self._add(
+                keys=[key, hour_key],
+                args=[billable_tokens, hour_expire, threshold],
+            )
+            added, crossed, hour_tokens = (int(raw[0]), int(raw[1]), int(raw[2]))
+            return added, crossed, hour_tokens
 
-        added = await map_redis(_try_add)
+        added, crossed, hour_tokens = await map_redis(_try_add)
         if added == 1:
+            if crossed == 1:
+                _logger.warning(
+                    "llm_spend_spike",
+                    day=day.isoformat(),
+                    hour=hour,
+                    hour_tokens=hour_tokens,
+                    threshold_tokens=threshold,
+                    budget_tokens=self._budget,
+                )
             return
         await self._ensure_key(day)
 

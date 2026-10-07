@@ -158,6 +158,74 @@ async def test_me_unknown_user_age_step(mini_world: AppWorld) -> None:
     assert body["onboarding_step"] == "age"
     assert body["account_exists"] is False
     assert body["display_timezone"] == "Europe/Moscow"
+    assert body["bot_username"] == "test_bot"
+    assert body["decode_remaining"] == 40
+
+
+@pytest.mark.unit
+async def test_me_without_bot_username_unavailable(mini_world: AppWorld) -> None:
+    from svoi_pravila.adapters.channels.telegram.bot_username import BotUsernameCache
+
+    auth = MiniappDeps(
+        init_data_verifier=AiogramInitDataVerifier(
+            SecretStr(_TOKEN), mini_world.clock, max_age_seconds=3600
+        ),
+        rate_limiter=FakeRateLimiter(limit=120),
+        pseudonymizer=FakePseudonymizer(),
+        get_user_by_telegram_id=GetUserByTelegramId(mini_world.uow_factory),
+        get_onboarding_step=GetOnboardingStep(mini_world.uow_factory, mini_world.catalog),
+    )
+    bindings = build_test_miniapp_bindings(
+        auth=auth,
+        world=mini_world,
+        decode_bundle=build_miniapp_decode_bundle(mini_world),
+        reuse=make_inline_reuse(mini_world.clock),
+        overrides={"bot_username": BotUsernameCache(username=None)},
+    )
+    app = create_app(
+        CheckReadiness(probes=(), timeout_seconds=1.0),
+        Environment.TEST,
+        AppLifecycleHooks(extra_routers=(build_miniapp_router(bindings),)),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/v1/me", headers=_auth_header(_TG_A))
+    assert response.status_code == 503
+    assert response.json()["code"] == MiniappErrorCode.SERVICE_UNAVAILABLE
+
+
+@pytest.mark.unit
+async def test_me_cache_unavailable_maps_to_service_unavailable(mini_world: AppWorld) -> None:
+    from tests.fakes.quota_budget import FakeQuotaGate
+
+    from svoi_pravila.application.errors import CacheErrorKind, CacheUnavailable
+
+    auth = MiniappDeps(
+        init_data_verifier=AiogramInitDataVerifier(
+            SecretStr(_TOKEN), mini_world.clock, max_age_seconds=3600
+        ),
+        rate_limiter=FakeRateLimiter(limit=120),
+        pseudonymizer=FakePseudonymizer(),
+        get_user_by_telegram_id=GetUserByTelegramId(mini_world.uow_factory),
+        get_onboarding_step=GetOnboardingStep(mini_world.uow_factory, mini_world.catalog),
+    )
+    bindings = build_test_miniapp_bindings(
+        auth=auth,
+        world=mini_world,
+        decode_bundle=build_miniapp_decode_bundle(mini_world),
+        reuse=make_inline_reuse(mini_world.clock),
+        overrides={
+            "quota_gate": FakeQuotaGate(cache_unavailable=CacheUnavailable(CacheErrorKind.SERVER))
+        },
+    )
+    app = create_app(
+        CheckReadiness(probes=(), timeout_seconds=1.0),
+        Environment.TEST,
+        AppLifecycleHooks(extra_routers=(build_miniapp_router(bindings),)),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/api/v1/me", headers=_auth_header(_TG_A))
+    assert response.status_code == 503
+    assert response.json()["code"] == MiniappErrorCode.SERVICE_UNAVAILABLE
 
 
 @pytest.mark.unit

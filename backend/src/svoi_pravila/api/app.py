@@ -10,6 +10,7 @@ from typing import Any
 from fastapi import APIRouter, FastAPI, Response, status
 from fastapi.responses import JSONResponse
 
+from svoi_pravila.api.metrics_middleware import HttpMetricsMiddleware
 from svoi_pravila.api.middleware import RequestLoggingMiddleware
 from svoi_pravila.api.miniapp.body_limit import BodyLimitMiddleware
 from svoi_pravila.api.miniapp.http import register_miniapp_exception_handlers
@@ -59,6 +60,7 @@ def create_app(
         openapi_url="/openapi.json" if docs_enabled else None,
     )
     app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(HttpMetricsMiddleware)
     app.add_middleware(BodyLimitMiddleware)
     register_miniapp_exception_handlers(app, display_timezone=display_timezone)
     for router in lifecycle.extra_routers:

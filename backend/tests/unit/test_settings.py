@@ -67,6 +67,28 @@ def test_settings_analytics_defaults() -> None:
 
 
 @pytest.mark.unit
+def test_settings_metrics_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SP_METRICS_ENABLED", raising=False)
+    monkeypatch.delenv("SP_METRICS_HOST", raising=False)
+    monkeypatch.delenv("SP_METRICS_PORT", raising=False)
+    values = make_settings().model_dump()
+    del values["metrics_enabled"]
+    del values["metrics_host"]
+    del values["metrics_port"]
+    settings = Settings.model_validate(values)
+    assert settings.metrics_enabled is True
+    assert settings.metrics_host == "127.0.0.1"
+    assert settings.metrics_port == 9100
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", ["localhost", "metrics", "not-an-ip", ""])
+def test_settings_rejects_non_ip_metrics_host(value: str) -> None:
+    with pytest.raises(ValidationError, match="metrics_host"):
+        make_settings(metrics_host=value)
+
+
+@pytest.mark.unit
 def test_settings_accepts_https_miniapp_url_origin() -> None:
     settings = make_settings(miniapp_url="https://example.trycloudflare.com/")
     assert settings.miniapp_url == "https://example.trycloudflare.com"

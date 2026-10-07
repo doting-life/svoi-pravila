@@ -2,7 +2,7 @@
 	audit secrets migrations-check image image-scan openapi miniapp-install miniapp-api-check \
 	miniapp-check miniapp-tunnel miniapp-tunnel-down observability-up observability-down \
 	dev-env infra-up infra-down build up down logs ps bench-llm eval-llm analytics check \
-	toolchain-check stack-smoke ownership-guard hooks ci
+	toolchain-check stack-smoke ownership-guard hooks ci quick
 
 BACKEND := backend
 MINIAPP := miniapp
@@ -115,6 +115,9 @@ hooks:
 ci:
 	./scripts/ci.sh
 
+quick:
+	./scripts/quick.sh
+
 openapi:
 	cd $(BACKEND) && uv run python scripts/export_openapi.py --out ../$(MINIAPP)/src/api/openapi.json
 	$(PNPM) run openapi:types
@@ -139,12 +142,12 @@ miniapp-tunnel-down:
 	$(COMPOSE) --profile app --profile tunnel rm -f tunnel
 
 observability-up: build
-	$(COMPOSE) --profile observability up -d --wait migrate grafana
+	$(COMPOSE) --profile observability up -d --wait migrate prometheus grafana
 	@echo "Grafana: http://127.0.0.1:$$(docker compose $(COMPOSE_ENV) port grafana 3000 | sed 's/.*://') (loopback only; SSH tunnel on VPS)"
 
 observability-down:
-	$(COMPOSE) --profile observability stop grafana
-	$(COMPOSE) --profile observability rm -f grafana
+	$(COMPOSE) --profile observability stop grafana prometheus
+	$(COMPOSE) --profile observability rm -f grafana prometheus
 
 migrations-check:
 	$(UV) alembic upgrade head

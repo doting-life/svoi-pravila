@@ -15,6 +15,7 @@ from svoi_pravila.adapters.channels.telegram.lifecycle import (
     TelegramRuntimeConfig,
 )
 from svoi_pravila.adapters.channels.telegram.middlewares.dedup import DedupMiddleware
+from svoi_pravila.adapters.channels.telegram.middlewares.metrics import TelegramMetricsMiddleware
 from svoi_pravila.adapters.channels.telegram.middlewares.private_chat import (
     PrivateChatMiddleware,
 )
@@ -40,6 +41,7 @@ def build_telegram_lifecycle(
     bot_instance = bot or Bot(token=settings.telegram_bot_token.get_secret_value())
     dispatcher = Dispatcher()
     dispatcher["tg_deps"] = deps
+    dispatcher.update.outer_middleware(TelegramMetricsMiddleware())
     dispatcher.update.outer_middleware(PrivateChatMiddleware())
     dispatcher.update.outer_middleware(DedupMiddleware())
     dispatcher.update.outer_middleware(RateLimitMiddleware())

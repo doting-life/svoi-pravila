@@ -61,6 +61,7 @@ def materialize(*, env_file: Path, stack_smoke: bool) -> None:
     text = _set_key(text, "SP_LLM_HOURLY_SPIKE_SHARE", "0.25")
     text = _set_key(text, "SP_HTTP_HOST", "0.0.0.0")
     text = _set_key(text, "SP_HTTP_PORT", "8000")
+    text = _set_key(text, "SP_METRICS_HOST", "0.0.0.0")
     user = _get_key(text, "POSTGRES_USER") or "svoi"
     password = _get_key(text, "POSTGRES_PASSWORD") or "svoi_local_dev_only"
     db_name = _get_key(text, "POSTGRES_DB") or "svoi_pravila"

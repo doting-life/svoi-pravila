@@ -45,6 +45,7 @@ Thumbs.db
 # Tooling
 .pre-commit-cache/
 *.log
+.ci-logs/
 
 # Mini-app
 miniapp/node_modules/

@@ -23,7 +23,9 @@ from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
 from svoi_pravila.adapters.cache.confirmation_tokens import ValkeyConfirmationTokens
 from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
 from svoi_pravila.adapters.cache.dialog_state import ValkeyDialogState
+from svoi_pravila.adapters.cache.llm_budget import ValkeyLlmBudget, ValkeyLlmBudgetConfig
 from svoi_pravila.adapters.cache.prepared_results import ValkeyPreparedResults
+from svoi_pravila.adapters.cache.quota_gate import ValkeyQuotaGate
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
 from svoi_pravila.adapters.cache.rule_sources import ValkeyRuleSources
 from svoi_pravila.adapters.channels.telegram.bot_username import BotUsernameCache
@@ -37,6 +39,7 @@ from svoi_pravila.adapters.channels.telegram.localization import (
 )
 from svoi_pravila.adapters.channels.telegram.sleeper import AsyncioSleeper
 from svoi_pravila.adapters.consents import PackageConsentCatalog
+from svoi_pravila.adapters.persistence.billable_token_sum import UowBillableTokenSum
 from svoi_pravila.adapters.persistence.uow import SqlAlchemyUnitOfWorkFactory
 from svoi_pravila.adapters.persistence.usage_sink import UnitOfWorkUsageEventSink
 from svoi_pravila.adapters.system.clock import SystemClock
@@ -205,6 +208,22 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
     pepper = HmacPseudonymizer(settings.pseudonym_pepper_bytes())
     strings = load_ru_strings()
     sink = UnitOfWorkUsageEventSink(uow_factory)
+    concurrency_guard = ValkeyConcurrencyGuard(valkey)
+    quota_gate = ValkeyQuotaGate(
+        valkey,
+        inline_limit=settings.quota_inline_per_day,
+        decode_limit=settings.quota_decode_per_day,
+        timezone=settings.analytics_timezone,
+    )
+    llm_budget = ValkeyLlmBudget(
+        valkey,
+        config=ValkeyLlmBudgetConfig(
+            budget=settings.llm_daily_token_budget,
+            timezone=settings.analytics_timezone,
+        ),
+        sums=UowBillableTokenSum(uow_factory, timezone=settings.analytics_timezone),
+        guard=concurrency_guard,
+    )
     decode = DecodeIncoming(
         DecodeIncomingPorts(
             uow_factory=uow_factory,
@@ -226,10 +245,9 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
                     ),
                 ),
             ),
-            guard=ValkeyConcurrencyGuard(valkey),
-            quota=ValkeyRateLimiter(
-                valkey, limit=20, window_seconds=3600, key_prefix="tg:decode:quota"
-            ),
+            guard=concurrency_guard,
+            quota_gate=quota_gate,
+            llm_budget=llm_budget,
             sink=sink,
             clock=clock,
             monotonic=monotonic,
@@ -237,6 +255,7 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             pseudonymizer=pepper,
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
+            analytics_timezone=settings.analytics_timezone,
         )
     )
     reuse = make_inline_reuse(monotonic, ttl_seconds=30.0)
@@ -245,9 +264,8 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             uow_factory=uow_factory,
             catalog=catalog,
             generator=FakeTextGenerator(),
-            quota=ValkeyRateLimiter(
-                valkey, limit=30, window_seconds=3600, key_prefix="tg:inline:quota"
-            ),
+            quota_gate=quota_gate,
+            llm_budget=llm_budget,
             sink=sink,
             clock=clock,
             monotonic=monotonic,
@@ -258,6 +276,7 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             min_chars=8,
             deadline_seconds=8.0,
             intent_prefixes=help_say_intent_prefixes(strings),
+            analytics_timezone=settings.analytics_timezone,
         )
     )
     rule_sources = ValkeyRuleSources(valkey, ttl_seconds=600)
@@ -267,9 +286,7 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             catalog=catalog,
             rule_sources=rule_sources,
             generator=FakeTextGenerator(),
-            quota=ValkeyRateLimiter(
-                valkey, limit=10, window_seconds=3600, key_prefix="tg:suggest:quota"
-            ),
+            llm_budget=llm_budget,
             sink=sink,
             clock=clock,
             monotonic=monotonic,
@@ -277,6 +294,7 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             pseudonymizer=pepper,
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
+            analytics_timezone=settings.analytics_timezone,
         )
     )
     deps = TelegramDeps(
@@ -509,16 +527,31 @@ def _contact_privacy_lifecycle(
     pepper = HmacPseudonymizer(settings.pseudonym_pepper_bytes())
     strings = load_ru_strings()
     sink = UnitOfWorkUsageEventSink(uow_factory)
+    concurrency_guard = ValkeyConcurrencyGuard(valkey)
+    quota_gate = ValkeyQuotaGate(
+        valkey,
+        inline_limit=settings.quota_inline_per_day,
+        decode_limit=settings.quota_decode_per_day,
+        timezone=settings.analytics_timezone,
+    )
+    llm_budget = ValkeyLlmBudget(
+        valkey,
+        config=ValkeyLlmBudgetConfig(
+            budget=settings.llm_daily_token_budget,
+            timezone=settings.analytics_timezone,
+        ),
+        sums=UowBillableTokenSum(uow_factory, timezone=settings.analytics_timezone),
+        guard=concurrency_guard,
+    )
     generator = FakeTextGenerator()
     decode = DecodeIncoming(
         DecodeIncomingPorts(
             uow_factory=uow_factory,
             catalog=catalog,
             generator=generator,
-            guard=ValkeyConcurrencyGuard(valkey),
-            quota=ValkeyRateLimiter(
-                valkey, limit=20, window_seconds=3600, key_prefix="tg:decode:quota"
-            ),
+            guard=concurrency_guard,
+            quota_gate=quota_gate,
+            llm_budget=llm_budget,
             sink=sink,
             clock=clock,
             monotonic=monotonic,
@@ -526,6 +559,7 @@ def _contact_privacy_lifecycle(
             pseudonymizer=pepper,
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
+            analytics_timezone=settings.analytics_timezone,
         )
     )
     reuse = make_inline_reuse(monotonic, ttl_seconds=30.0)
@@ -534,9 +568,8 @@ def _contact_privacy_lifecycle(
             uow_factory=uow_factory,
             catalog=catalog,
             generator=generator,
-            quota=ValkeyRateLimiter(
-                valkey, limit=30, window_seconds=3600, key_prefix="tg:inline:quota"
-            ),
+            quota_gate=quota_gate,
+            llm_budget=llm_budget,
             sink=sink,
             clock=clock,
             monotonic=monotonic,
@@ -547,6 +580,7 @@ def _contact_privacy_lifecycle(
             min_chars=8,
             deadline_seconds=8.0,
             intent_prefixes=help_say_intent_prefixes(strings),
+            analytics_timezone=settings.analytics_timezone,
         )
     )
     rule_sources = ValkeyRuleSources(valkey, ttl_seconds=600)
@@ -556,9 +590,7 @@ def _contact_privacy_lifecycle(
             catalog=catalog,
             rule_sources=rule_sources,
             generator=generator,
-            quota=ValkeyRateLimiter(
-                valkey, limit=10, window_seconds=3600, key_prefix="tg:suggest:quota"
-            ),
+            llm_budget=llm_budget,
             sink=sink,
             clock=clock,
             monotonic=monotonic,
@@ -566,6 +598,7 @@ def _contact_privacy_lifecycle(
             pseudonymizer=pepper,
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
+            analytics_timezone=settings.analytics_timezone,
         )
     )
     deps = TelegramDeps(

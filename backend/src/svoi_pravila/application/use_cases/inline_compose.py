@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from asyncio import CancelledError
 from dataclasses import dataclass
+from datetime import date
 
 from svoi_pravila.application.applied_rules import applied_rule_views
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.errors import (
+    CacheUnavailable,
     GenerationRefusedByProvider,
     GenerationUnavailable,
     IncomingTextTooLong,
@@ -15,8 +18,9 @@ from svoi_pravila.application.errors import (
     InlineQueryTooShort,
     InvalidGenerationOutput,
     NotFound,
-    ScenarioQuotaExceeded,
+    ServiceBudgetExhausted,
     UsageEventWriteFailed,
+    UserQuotaExhausted,
 )
 from svoi_pravila.application.inline_reuse_key import InlineReuseKeyMaterial, inline_reuse_key
 from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
@@ -43,14 +47,18 @@ from svoi_pravila.application.ports.inline_result_reuse import (
     InlineReuseValue,
     ReuseFailed,
 )
+from svoi_pravila.application.ports.llm_budget import BudgetExhausted, LlmBudget
 from svoi_pravila.application.ports.monotonic import MonotonicClock
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
-from svoi_pravila.application.ports.rate_limiter import RateLimiter
+from svoi_pravila.application.ports.quota_gate import QuotaExhausted, QuotaGate, Reserved
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.ports.usage_event_sink import UsageEventSink
 from svoi_pravila.application.use_cases._access import require_access
 from svoi_pravila.application.use_cases._generation_context import load_active_contact_rule_context
+from svoi_pravila.application.use_cases._limits import generation_unavailable_from_cache
 from svoi_pravila.domain.enums import (
+    LimitKind,
+    QuotaClass,
     RelationshipKind,
     UsageEventKind,
     UsageOutcome,
@@ -58,6 +66,7 @@ from svoi_pravila.domain.enums import (
     UsageSurface,
 )
 from svoi_pravila.domain.ids import TelegramUserId, UsageEventId
+from svoi_pravila.domain.product_day import product_day
 from svoi_pravila.domain.usage import UsageEvent
 
 _QUOTA_PURPOSE = "inline_quota"
@@ -90,7 +99,8 @@ class InlineComposePorts:
     uow_factory: UnitOfWorkFactory
     catalog: ConsentCatalog
     generator: TextGenerator
-    quota: RateLimiter
+    quota_gate: QuotaGate
+    llm_budget: LlmBudget
     sink: UsageEventSink
     clock: Clock
     monotonic: MonotonicClock
@@ -101,6 +111,7 @@ class InlineComposePorts:
     min_chars: int
     deadline_seconds: float
     intent_prefixes: tuple[tuple[str, HelpSayIntent], ...]
+    analytics_timezone: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,32 +195,48 @@ class InlineCompose:
     async def _produce(
         self, material: InlineReuseKeyMaterial
     ) -> InlineReuseValue | InlineProduceError:
+        # Normative order: budget check → quota reserve → provider → persist → budget.add
+        day = product_day(self._ports.clock.now(), self._ports.analytics_timezone)
+        reserved = await self._budget_and_reserve(material, day)
+        if not isinstance(reserved, Reserved):
+            return reserved
+        return await self._generate_after_reserve(material, day, reserved)
+
+    async def _budget_and_reserve(
+        self, material: InlineReuseKeyMaterial, day: date
+    ) -> Reserved | InlineProduceError:
+        try:
+            budget = await self._ports.llm_budget.check(day)
+        except CacheUnavailable as exc:
+            return generation_unavailable_from_cache(exc)
+        if isinstance(budget, BudgetExhausted):
+            await self._persist(
+                self._event_from_limited(
+                    material.user_key, material.scenario, LimitKind.GLOBAL_BUDGET
+                )
+            )
+            return ServiceBudgetExhausted(resets_at=budget.resets_at)
         quota_pseudonym = self._ports.pseudonymizer.pseudonymize(_QUOTA_PURPOSE, material.user_key)
-        decision = await self._ports.quota.check(quota_pseudonym)
-        if not decision.allowed:
-            return ScenarioQuotaExceeded()
+        try:
+            decision = await self._ports.quota_gate.reserve(quota_pseudonym, QuotaClass.INLINE, day)
+        except CacheUnavailable as exc:
+            return generation_unavailable_from_cache(exc)
+        if isinstance(decision, QuotaExhausted):
+            await self._persist(
+                self._event_from_limited(material.user_key, material.scenario, LimitKind.USER_QUOTA)
+            )
+            return UserQuotaExhausted(resets_at=decision.resets_at)
+        return decision
+
+    async def _generate_after_reserve(
+        self, material: InlineReuseKeyMaterial, day: date, reserved: Reserved
+    ) -> InlineReuseValue | InlineProduceError:
+        reservation = reserved.reservation
         started = self._ports.monotonic.monotonic()
         try:
-            if material.intent is not None:
-                generated: SoftenResult | HelpSayResult = await self._ports.generator.help_say(
-                    HelpSayRequest(
-                        intent=material.intent,
-                        details=material.draft,
-                        rules=material.rules,
-                        relationship=material.relationship,
-                        deadline_seconds=self._ports.deadline_seconds,
-                    )
-                )
-            else:
-                generated = await self._ports.generator.soften(
-                    SoftenRequest(
-                        draft=material.draft,
-                        rules=material.rules,
-                        relationship=material.relationship,
-                        deadline_seconds=self._ports.deadline_seconds,
-                    )
-                )
+            generated = await self._call_generator(material)
         except GenerationUnavailable as exc:
+            await self._ports.quota_gate.refund(reservation)
             await self._persist(
                 self._event_from_error(material.user_key, started, material.scenario, exc)
             )
@@ -218,21 +245,54 @@ class InlineCompose:
             await self._persist(
                 self._event_from_error(material.user_key, started, material.scenario, exc)
             )
+            await self._budget_add(day, exc.usage.billable)
             return exc
         except InvalidGenerationOutput as exc:
             await self._persist(
                 self._event_from_error(material.user_key, started, material.scenario, exc)
             )
+            await self._budget_add(day, exc.usage.billable)
             return exc
-        await self._persist(
-            self._event_from_ok(material.user_key, started, material.scenario, generated)
-        )
+        except CancelledError:
+            await self._ports.quota_gate.refund(reservation)
+            raise
+        event = self._event_from_ok(material.user_key, started, material.scenario, generated)
+        await self._persist(event)
+        await self._budget_add(day, generated.meta.usage.billable)
         return InlineReuseValue(
             scenario=material.scenario,
             variants=generated.variants,
             safety=generated.safety,
             applied_rules=applied_rule_views(material.rules, generated.applied_rule_indexes),
         )
+
+    async def _call_generator(
+        self, material: InlineReuseKeyMaterial
+    ) -> SoftenResult | HelpSayResult:
+        if material.intent is not None:
+            return await self._ports.generator.help_say(
+                HelpSayRequest(
+                    intent=material.intent,
+                    details=material.draft,
+                    rules=material.rules,
+                    relationship=material.relationship,
+                    deadline_seconds=self._ports.deadline_seconds,
+                )
+            )
+        return await self._ports.generator.soften(
+            SoftenRequest(
+                draft=material.draft,
+                rules=material.rules,
+                relationship=material.relationship,
+                deadline_seconds=self._ports.deadline_seconds,
+            )
+        )
+
+    async def _budget_add(self, day: date, billable_tokens: int) -> None:
+        try:
+            await self._ports.llm_budget.add(day, billable_tokens)
+        except CacheUnavailable as exc:
+            raise generation_unavailable_from_cache(exc) from exc
 
     async def _load_context(
         self, telegram_user_id: TelegramUserId
@@ -289,6 +349,33 @@ class InlineCompose:
                 safety=SafetyVerdict.CRISIS.value,
                 scenario=scenario,
             )
+        )
+
+    def _event_from_limited(
+        self, user_key: str, scenario: UsageScenario, limit_kind: LimitKind
+    ) -> UsageEvent:
+        occurred = self._ports.clock.now().replace(microsecond=0)
+        analytics = self._ports.pseudonymizer.pseudonymize(_ANALYTICS_PURPOSE, user_key)
+        return UsageEvent(
+            id=UsageEventId(self._ports.ids.new_id()),
+            occurred_at=occurred,
+            user_pseudonym=analytics,
+            scenario=scenario,
+            surface=UsageSurface.INLINE,
+            outcome=UsageOutcome.LIMITED,
+            unavailable_kind=None,
+            safety=None,
+            model=None,
+            prompt_version=None,
+            latency_ms=0,
+            ttfc_ms=None,
+            attempts=0,
+            input_tokens=0,
+            output_tokens=0,
+            billable_tokens=0,
+            event_kind=UsageEventKind.GENERATION,
+            variant_firmness=None,
+            limit_kind=limit_kind,
         )
 
     def _event_from_ok(

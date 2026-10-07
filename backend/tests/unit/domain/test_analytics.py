@@ -15,6 +15,7 @@ from svoi_pravila.domain.analytics import (
 )
 from svoi_pravila.domain.enums import (
     Firmness,
+    LimitKind,
     UsageEventKind,
     UsageOutcome,
     UsageScenario,
@@ -110,6 +111,35 @@ def _chosen(
     )
 
 
+def _limited(
+    *,
+    limit_kind: LimitKind,
+    surface: UsageSurface = UsageSurface.DM,
+    occurred_at: datetime = _NOW,
+    user_pseudonym: str = _PSEUDO,
+    event_id: int = 1,
+) -> UsageEvent:
+    return UsageEvent(
+        id=UsageEventId(UUID(int=event_id)),
+        occurred_at=occurred_at,
+        user_pseudonym=user_pseudonym,
+        scenario=UsageScenario.DECODE,
+        surface=surface,
+        outcome=UsageOutcome.LIMITED,
+        unavailable_kind=None,
+        safety=None,
+        model=None,
+        prompt_version=None,
+        latency_ms=0,
+        ttfc_ms=None,
+        attempts=0,
+        input_tokens=0,
+        output_tokens=0,
+        billable_tokens=0,
+        limit_kind=limit_kind,
+    )
+
+
 def _expected_appeal(
     kind: UsageEventKind,
     surface: UsageSurface,
@@ -185,6 +215,37 @@ def test_percentile_cont_linear(values: tuple[int, ...], p: float, expected: flo
         assert got is None
     else:
         assert got == pytest.approx(expected)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("limit_kind", "surface"),
+    [
+        (LimitKind.USER_QUOTA, UsageSurface.DM),
+        (LimitKind.GLOBAL_BUDGET, UsageSurface.MINIAPP),
+        (LimitKind.USER_QUOTA, UsageSurface.INLINE),
+    ],
+)
+def test_limited_events_are_not_appeals(limit_kind: LimitKind, surface: UsageSurface) -> None:
+    event = _limited(limit_kind=limit_kind, surface=surface)
+    assert is_appeal(event) is False
+
+
+@pytest.mark.unit
+def test_limited_events_are_not_generation_errors() -> None:
+    limited_quota = _limited(limit_kind=LimitKind.USER_QUOTA, event_id=10)
+    limited_budget = _limited(
+        limit_kind=LimitKind.GLOBAL_BUDGET,
+        surface=UsageSurface.MINIAPP,
+        event_id=11,
+        user_pseudonym="cd" * 32,
+    )
+    packed = (limited_quota, limited_budget)
+    day_agg = aggregate(packed, _TZ, date(2026, 3, 15), _NOW)
+    assert day_agg.daily.generations == 2
+    assert day_agg.daily.generation_errors == 0
+    assert day_agg.daily.appeals == 0
+    assert day_agg.daily.active_users == 0
 
 
 @pytest.mark.unit

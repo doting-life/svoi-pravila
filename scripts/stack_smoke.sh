@@ -202,14 +202,39 @@ if printf '%s\n' "$forbidden_env" | grep -E '^(SP_TELEGRAM_|SP_GIGACHAT_|SP_DATA
 fi
 echo "grafana_env_names_ok"
 
-# B2 — Grafana shares the internal observability network with Postgres.
+# B2 — From inside Grafana: Postgres reachable; api and valkey isolated.
 project="${COMPOSE_PROJECT_NAME:-svoi-pravila-ci}"
-grafana_cid="$(docker compose -p "$project" --env-file "$ENV_FILE" ps -q grafana)"
-postgres_cid="$(docker compose -p "$project" --env-file "$ENV_FILE" ps -q postgres)"
+compose=(docker compose -p "$project" --env-file "$ENV_FILE")
 obs_net="$(docker network ls --format '{{.Name}}' | grep -E "^${project}_observability$" | head -n1)"
+edge_net="$(docker network ls --format '{{.Name}}' | grep -E "^${project}_grafana_edge$" | head -n1)"
 test -n "$obs_net"
+test -n "$edge_net"
 internal="$(docker network inspect "$obs_net" --format '{{.Internal}}')"
 test "$internal" = "true"
-docker inspect "$grafana_cid" --format '{{json .NetworkSettings.Networks}}' | grep -q "$obs_net"
-docker inspect "$postgres_cid" --format '{{json .NetworkSettings.Networks}}' | grep -q "$obs_net"
-echo "grafana_internal_network_ok"
+edge_internal="$(docker network inspect "$edge_net" --format '{{.Internal}}')"
+test "$edge_internal" = "false"
+
+"${compose[@]}" exec -T grafana sh -c '
+set -eu
+# BusyBox wget: TCP open then protocol failure still proves the port is reachable.
+# "bad address" / resolve failure means the hostname is not on Grafana networks.
+probe_ok() {
+  host="$1"
+  port="$2"
+  err="$(wget -T 2 -O /dev/null "http://${host}:${port}/" 2>&1 || true)"
+  printf "%s\n" "$err" | grep -qiE "bad address|Name or service not known|nodename nor servname" && return 1
+  printf "%s\n" "$err" | grep -qiE "connection refused" && return 1
+  return 0
+}
+probe_fail() {
+  host="$1"
+  port="$2"
+  err="$(wget -T 2 -O /dev/null "http://${host}:${port}/" 2>&1 || true)"
+  printf "%s\n" "$err" | grep -qiE "bad address|Name or service not known|nodename nor servname|connection refused|timed out|Network is unreachable" && return 0
+  return 1
+}
+probe_ok postgres 5432
+probe_fail api 8000
+probe_fail valkey 6379
+'
+echo "grafana_isolation_ok"

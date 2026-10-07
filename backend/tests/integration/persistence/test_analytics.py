@@ -26,6 +26,7 @@ from svoi_pravila.application.use_cases.run_daily_analytics import (
 from svoi_pravila.domain.analytics import aggregate, cohorts, event_day
 from svoi_pravila.domain.enums import (
     Firmness,
+    LimitKind,
     UsageEventKind,
     UsageOutcome,
     UsageScenario,
@@ -118,11 +119,40 @@ def _chosen(event_id: int, when: datetime, user: str, scenario: UsageScenario) -
     )
 
 
+def _limited(
+    event_id: int,
+    when: datetime,
+    user: str,
+    *,
+    limit_kind: LimitKind,
+    surface: UsageSurface = UsageSurface.DM,
+) -> UsageEvent:
+    return UsageEvent(
+        id=UsageEventId(UUID(int=event_id)),
+        occurred_at=when,
+        user_pseudonym=user,
+        scenario=UsageScenario.DECODE,
+        surface=surface,
+        outcome=UsageOutcome.LIMITED,
+        unavailable_kind=None,
+        safety=None,
+        model=None,
+        prompt_version=None,
+        latency_ms=0,
+        ttfc_ms=None,
+        attempts=0,
+        input_tokens=0,
+        output_tokens=0,
+        billable_tokens=0,
+        limit_kind=limit_kind,
+    )
+
+
 def _dataset() -> tuple[UsageEvent, ...]:
     before = datetime(2026, 3, 14, 12, 0, 0, tzinfo=UTC)
     t_a = datetime(2026, 3, 15, 20, 59, 59, tzinfo=UTC)
     t_b = datetime(2026, 3, 15, 21, 0, 0, tzinfo=UTC)
-    u1, u2, u3, u4 = _pseudo(1), _pseudo(2), _pseudo(3), _pseudo(4)
+    u1, u2, u3, u4, u5 = _pseudo(1), _pseudo(2), _pseudo(3), _pseudo(4), _pseudo(5)
     return (
         _gen(1, before, u1),
         _gen(2, t_a, u1),
@@ -136,6 +166,8 @@ def _dataset() -> tuple[UsageEvent, ...]:
         _gen(10, t_a, u4, scenario=UsageScenario.SUGGEST_RULE),
         _gen(11, t_b, u2, scenario=UsageScenario.HELP_SAY, latency_ms=30, ttfc_ms=8),
         _chosen(12, t_b, u2, UsageScenario.HELP_SAY),
+        _limited(13, t_a, u5, limit_kind=LimitKind.USER_QUOTA),
+        _limited(14, t_a, u5, limit_kind=LimitKind.GLOBAL_BUDGET, surface=UsageSurface.MINIAPP),
     )
 
 

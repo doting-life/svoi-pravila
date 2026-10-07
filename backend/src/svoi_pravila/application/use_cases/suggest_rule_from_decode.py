@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import contextlib
 from dataclasses import dataclass
+from datetime import date
 from enum import StrEnum
 
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.errors import (
+    CacheUnavailable,
     ConflictError,
     GenerationRefusedByProvider,
     GenerationUnavailable,
     InvalidGenerationOutput,
     NotFound,
     RuleSourceUnavailable,
+    ServiceBudgetExhausted,
     UsageEventWriteFailed,
 )
 from svoi_pravila.application.ports.clock import Clock
@@ -27,9 +30,9 @@ from svoi_pravila.application.ports.generation import (
     TextGenerator,
 )
 from svoi_pravila.application.ports.id_generator import IdGenerator
+from svoi_pravila.application.ports.llm_budget import BudgetExhausted, LlmBudget
 from svoi_pravila.application.ports.monotonic import MonotonicClock
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
-from svoi_pravila.application.ports.rate_limiter import RateLimiter
 from svoi_pravila.application.ports.rule_sources import RuleSources
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.ports.usage_event_sink import UsageEventSink
@@ -37,9 +40,12 @@ from svoi_pravila.application.rule_source import RuleSourcePayload
 from svoi_pravila.application.use_cases._access import require_access
 from svoi_pravila.application.use_cases._contact_access import load_owned_contact
 from svoi_pravila.application.use_cases._effective_rules import collect_effective_rules
+from svoi_pravila.application.use_cases._limits import generation_unavailable_from_cache
 from svoi_pravila.domain.enums import (
+    LimitKind,
     RelationshipKind,
     SuggestionSource,
+    UsageEventKind,
     UsageOutcome,
     UsageScenario,
     UsageSurface,
@@ -51,12 +57,12 @@ from svoi_pravila.domain.ids import (
     UsageEventId,
     UserId,
 )
+from svoi_pravila.domain.product_day import product_day
 from svoi_pravila.domain.rule_suggestion import RuleSuggestion
 from svoi_pravila.domain.usage import UsageEvent
 
 _ANALYTICS_PURPOSE = "analytics"
 RULE_SOURCE_PURPOSE = "rule_source"
-_QUOTA_PURPOSE = "suggest_quota"
 
 
 class SuggestRuleFromDecodeOutcome(StrEnum):
@@ -66,7 +72,6 @@ class SuggestRuleFromDecodeOutcome(StrEnum):
     NONE = "none"
     UNAVAILABLE = "unavailable"
     CRISIS = "crisis"
-    QUOTA_EXCEEDED = "quota_exceeded"
     PENDING_EXISTS = "pending_exists"
 
 
@@ -95,7 +100,7 @@ class SuggestRuleFromDecodePorts:
     catalog: ConsentCatalog
     rule_sources: RuleSources
     generator: TextGenerator
-    quota: RateLimiter
+    llm_budget: LlmBudget
     sink: UsageEventSink
     clock: Clock
     monotonic: MonotonicClock
@@ -103,6 +108,7 @@ class SuggestRuleFromDecodePorts:
     pseudonymizer: Pseudonymizer
     crisis_screen: CrisisScreen
     deadline_seconds: float
+    analytics_timezone: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,7 +126,7 @@ class SuggestRuleFromDecode:
         self._ports = ports
 
     async def execute(self, command: SuggestRuleFromDecodeCommand) -> SuggestRuleFromDecodeResult:
-        """Access → redeem → crisis → ownership → pending → quota → generate."""
+        """Access → redeem → crisis → ownership → pending → budget → generate."""
         async with self._ports.uow_factory() as uow:
             user = await uow.users.get_by_telegram_id(command.telegram_user_id)
             if user is None:
@@ -134,13 +140,19 @@ class SuggestRuleFromDecode:
         prepared = await self._load_for_generation(command.telegram_user_id, early)
         if isinstance(prepared, SuggestRuleFromDecodeResult):
             return prepared
-        quota_pseudonym = self._ports.pseudonymizer.pseudonymize(_QUOTA_PURPOSE, user_key)
-        if not (await self._ports.quota.check(quota_pseudonym)).allowed:
-            return SuggestRuleFromDecodeResult(outcome=SuggestRuleFromDecodeOutcome.QUOTA_EXCEEDED)
+        day = product_day(self._ports.clock.now(), self._ports.analytics_timezone)
+        try:
+            budget = await self._ports.llm_budget.check(day)
+        except CacheUnavailable as exc:
+            raise generation_unavailable_from_cache(exc) from exc
+        if isinstance(budget, BudgetExhausted):
+            await self._persist_limited(user_key=user_key, surface=command.surface)
+            raise ServiceBudgetExhausted(resets_at=budget.resets_at)
         return await self._generate_and_store(
             user_key=user_key,
             surface=command.surface,
             prepared=prepared,
+            day=day,
         )
 
     async def _redeem_and_screen(
@@ -197,7 +209,12 @@ class SuggestRuleFromDecode:
             )
 
     async def _generate_and_store(
-        self, *, user_key: str, surface: UsageSurface, prepared: _PreparedCall
+        self,
+        *,
+        user_key: str,
+        surface: UsageSurface,
+        prepared: _PreparedCall,
+        day: date,
     ) -> SuggestRuleFromDecodeResult:
         started = self._ports.monotonic.monotonic()
         try:
@@ -209,19 +226,34 @@ class SuggestRuleFromDecode:
                     deadline_seconds=self._ports.deadline_seconds,
                 )
             )
-        except (
-            GenerationUnavailable,
-            GenerationRefusedByProvider,
-            InvalidGenerationOutput,
-        ) as exc:
+        except GenerationUnavailable as exc:
             await self._persist_error(
                 user_key=user_key, surface=surface, started=started, error=exc
             )
             raise
+        except GenerationRefusedByProvider as exc:
+            await self._persist_error(
+                user_key=user_key, surface=surface, started=started, error=exc
+            )
+            await self._budget_add(day, exc.usage.billable)
+            raise
+        except InvalidGenerationOutput as exc:
+            await self._persist_error(
+                user_key=user_key, surface=surface, started=started, error=exc
+            )
+            await self._budget_add(day, exc.usage.billable)
+            raise
         await self._persist_ok(user_key=user_key, surface=surface, result=generated)
+        await self._budget_add(day, generated.meta.usage.billable)
         if isinstance(generated, SuggestRuleNothing):
             return SuggestRuleFromDecodeResult(outcome=SuggestRuleFromDecodeOutcome.NONE)
         return await self._persist_suggestion(prepared=prepared, proposed=generated)
+
+    async def _budget_add(self, day: date, billable_tokens: int) -> None:
+        try:
+            await self._ports.llm_budget.add(day, billable_tokens)
+        except CacheUnavailable as exc:
+            raise generation_unavailable_from_cache(exc) from exc
 
     async def _persist_suggestion(
         self,
@@ -263,6 +295,32 @@ class SuggestRuleFromDecode:
                 outcome=SuggestRuleFromDecodeOutcome.PENDING_EXISTS,
                 suggestion=decode_pending,
             )
+
+    async def _persist_limited(self, *, user_key: str, surface: UsageSurface) -> None:
+        analytics = self._ports.pseudonymizer.pseudonymize(_ANALYTICS_PURPOSE, user_key)
+        event = UsageEvent(
+            id=UsageEventId(self._ports.ids.new_id()),
+            occurred_at=self._ports.clock.now().replace(microsecond=0),
+            user_pseudonym=analytics,
+            scenario=UsageScenario.SUGGEST_RULE,
+            surface=surface,
+            outcome=UsageOutcome.LIMITED,
+            unavailable_kind=None,
+            safety=None,
+            model=None,
+            prompt_version=None,
+            latency_ms=0,
+            ttfc_ms=None,
+            attempts=0,
+            input_tokens=0,
+            output_tokens=0,
+            billable_tokens=0,
+            event_kind=UsageEventKind.GENERATION,
+            variant_firmness=None,
+            limit_kind=LimitKind.GLOBAL_BUDGET,
+        )
+        with contextlib.suppress(UsageEventWriteFailed):
+            await self._ports.sink.record(event)
 
     async def _persist_ok(
         self, *, user_key: str, surface: UsageSurface, result: SuggestRuleResult

@@ -161,9 +161,7 @@ async def test_sn_callback_expired_none_crisis_quota() -> None:
             usage=TokenUsage(1, 1, 0),
         ),
     )
-    deps = make_telegram_deps(
-        TelegramTestDeps(uow=uow, catalog=catalog, generator=none_gen, suggest_quota_limit=1)
-    )
+    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, generator=none_gen))
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
@@ -201,19 +199,20 @@ async def test_sn_callback_expired_none_crisis_quota() -> None:
 
     assert render_crisis_message() in _sent_texts(session)
 
-    deps_q = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, suggest_quota_limit=0))
+    deps_q = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, budget_exhausted=True))
     session_q = FakeTelegramSession()
     bot_q = Bot(token="1:TEST", session=session_q)
     lifecycle_q = build_telegram_lifecycle(_settings(), deps_q, bot=bot_q)
     token_q = await deps_q.rule_sources.store(
         deps_q.pseudonymizer.pseudonymize(RULE_SOURCE_PURPOSE, "7102"),
-        RuleSourcePayload(contact_id=contact_id, incoming_text="квота"),
+        RuleSourcePayload(contact_id=contact_id, incoming_text="бюджет"),
     )
     session_q.requests.clear()
     await lifecycle_q.dispatcher.feed_update(
         bot_q, _callback(903, 7102, rule_source_callback_data(token_q))
     )
-    assert deps_q.strings.suggestion_decode_quota in _sent_texts(session_q)
+    texts = _sent_texts(session_q)
+    assert any("лимита нагрузки" in text for text in texts)
 
 
 @pytest.mark.unit

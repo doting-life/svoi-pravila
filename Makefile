@@ -62,6 +62,11 @@ test:
 	$(UV) coverage report --include='*/svoi_pravila/adapters/llm/*' --fail-under=100
 	$(UV) coverage report --include='*/svoi_pravila/adapters/channels/*' --fail-under=95
 	$(UV) coverage report --include='*/svoi_pravila/adapters/cache/*' --fail-under=95
+	$(UV) coverage report --include='*/svoi_pravila/adapters/cache/quota_gate.py' --fail-under=100
+	$(UV) coverage report --include='*/svoi_pravila/adapters/cache/llm_budget.py' --fail-under=100
+	$(UV) coverage report --include='*/svoi_pravila/adapters/cache/_redis_map.py' --fail-under=100
+	$(UV) coverage report --include='*/svoi_pravila/adapters/cache/_lua.py' --fail-under=100
+	$(UV) coverage report --include='*/svoi_pravila/adapters/cache/errors.py' --fail-under=100
 	$(UV) coverage report --include='*/svoi_pravila/adapters/system/inline_result_reuse.py' --fail-under=100
 	$(UV) coverage report --include='*/handlers/inline.py' --fail-under=100
 	$(UV) coverage report --include='*/handlers/contacts.py' --fail-under=95

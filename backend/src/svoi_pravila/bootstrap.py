@@ -21,8 +21,10 @@ from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
 from svoi_pravila.adapters.cache.confirmation_tokens import ValkeyConfirmationTokens
 from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
 from svoi_pravila.adapters.cache.dialog_state import ValkeyDialogState
+from svoi_pravila.adapters.cache.llm_budget import ValkeyLlmBudget, ValkeyLlmBudgetConfig
 from svoi_pravila.adapters.cache.prepared_results import ValkeyPreparedResults
 from svoi_pravila.adapters.cache.probe import ValkeyProbe
+from svoi_pravila.adapters.cache.quota_gate import ValkeyQuotaGate
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
 from svoi_pravila.adapters.cache.rule_sources import ValkeyRuleSources
 from svoi_pravila.adapters.channels.telegram import build_telegram_lifecycle
@@ -42,6 +44,7 @@ from svoi_pravila.adapters.consents import PackageConsentCatalog
 from svoi_pravila.adapters.llm.gigachat.adapter import GigaChatTextGenerator
 from svoi_pravila.adapters.llm.gigachat.client import close_gigachat_client, create_gigachat_client
 from svoi_pravila.adapters.persistence.analytics_store import SqlAlchemyAnalyticsStore
+from svoi_pravila.adapters.persistence.billable_token_sum import UowBillableTokenSum
 from svoi_pravila.adapters.persistence.engine import create_engine, dispose_engine
 from svoi_pravila.adapters.persistence.probe import DatabaseProbe
 from svoi_pravila.adapters.persistence.uow import SqlAlchemyUnitOfWorkFactory
@@ -116,6 +119,7 @@ from svoi_pravila.config import (
     DatabaseSettings,
     Environment,
     GrafanaDbPasswordMissingError,
+    LlmDailyTokenBudgetMissingError,
     MigrateSettings,
     Settings,
     TelegramUpdatesMode,
@@ -291,8 +295,44 @@ def load_test_infra_settings() -> TestInfraSettings:
 
 
 def load_settings() -> Settings:
-    """Load full API-process Settings from the process environment."""
-    return Settings()
+    """Load full API-process Settings from the process environment.
+
+    Raises:
+        LlmDailyTokenBudgetMissingError: when ``SP_LLM_DAILY_TOKEN_BUDGET`` is unset.
+    """
+    try:
+        return Settings()
+    except ValidationError as exc:
+        for err in exc.errors():
+            loc = err.get("loc", ())
+            if loc and loc[0] == "llm_daily_token_budget":
+                raise LlmDailyTokenBudgetMissingError() from exc
+        raise
+
+
+def _wire_quota_budget(
+    settings: Settings,
+    valkey: Redis,
+    uow_factory: SqlAlchemyUnitOfWorkFactory,
+) -> tuple[ValkeyConcurrencyGuard, ValkeyQuotaGate, ValkeyLlmBudget]:
+    """Compose daily QuotaGate and LlmBudget sharing one concurrency guard."""
+    guard = ValkeyConcurrencyGuard(valkey)
+    quota_gate = ValkeyQuotaGate(
+        valkey,
+        inline_limit=settings.quota_inline_per_day,
+        decode_limit=settings.quota_decode_per_day,
+        timezone=settings.analytics_timezone,
+    )
+    llm_budget = ValkeyLlmBudget(
+        valkey,
+        config=ValkeyLlmBudgetConfig(
+            budget=settings.llm_daily_token_budget,
+            timezone=settings.analytics_timezone,
+        ),
+        sums=UowBillableTokenSum(uow_factory, timezone=settings.analytics_timezone),
+        guard=guard,
+    )
+    return guard, quota_gate, llm_budget
 
 
 def create_application(settings: Settings) -> FastAPI:
@@ -312,9 +352,7 @@ def create_application(settings: Settings) -> FastAPI:
         kek=settings.data_kek_bytes(),
         kek_id=settings.data_kek_id,
     )
-    clock = SystemClock()
-    monotonic = SystemMonotonicClock()
-    ids = Uuid7IdGenerator()
+    clock, monotonic, ids = SystemClock(), SystemMonotonicClock(), Uuid7IdGenerator()
     catalog = PackageConsentCatalog()
     tone_catalog = StaticToneSuggestionCatalog()
     generator = GigaChatTextGenerator(gigachat, settings)
@@ -343,19 +381,16 @@ def create_application(settings: Settings) -> FastAPI:
         valkey,
         ttl_seconds=settings.rule_source_ttl_seconds,
     )
+    concurrency_guard, quota_gate, llm_budget = _wire_quota_budget(settings, valkey, uow_factory)
     decode_wire = _DecodeWire(
         decode_incoming=DecodeIncoming(
             DecodeIncomingPorts(
                 uow_factory=uow_factory,
                 catalog=catalog,
                 generator=generator,
-                guard=ValkeyConcurrencyGuard(valkey),
-                quota=ValkeyRateLimiter(
-                    valkey,
-                    limit=settings.decode_per_hour,
-                    window_seconds=3600,
-                    key_prefix="tg:decode:quota",
-                ),
+                guard=concurrency_guard,
+                quota_gate=quota_gate,
+                llm_budget=llm_budget,
                 sink=sink,
                 clock=clock,
                 monotonic=monotonic,
@@ -363,6 +398,7 @@ def create_application(settings: Settings) -> FastAPI:
                 pseudonymizer=pseudonymizer,
                 crisis_screen=crisis_screen,
                 deadline_seconds=settings.decode_deadline_seconds,
+                analytics_timezone=settings.analytics_timezone,
             )
         ),
         suggest_rule_from_decode=SuggestRuleFromDecode(
@@ -371,12 +407,7 @@ def create_application(settings: Settings) -> FastAPI:
                 catalog=catalog,
                 rule_sources=rule_sources,
                 generator=generator,
-                quota=ValkeyRateLimiter(
-                    valkey,
-                    limit=settings.suggest_per_hour,
-                    window_seconds=3600,
-                    key_prefix="tg:suggest:quota",
-                ),
+                llm_budget=llm_budget,
                 sink=sink,
                 clock=clock,
                 monotonic=monotonic,
@@ -384,6 +415,7 @@ def create_application(settings: Settings) -> FastAPI:
                 pseudonymizer=pseudonymizer,
                 crisis_screen=crisis_screen,
                 deadline_seconds=settings.decode_deadline_seconds,
+                analytics_timezone=settings.analytics_timezone,
             )
         ),
         prepared_results=prepared_results,
@@ -423,12 +455,8 @@ def create_application(settings: Settings) -> FastAPI:
                 uow_factory=uow_factory,
                 catalog=catalog,
                 generator=generator,
-                quota=ValkeyRateLimiter(
-                    valkey,
-                    limit=settings.inline_per_hour,
-                    window_seconds=3600,
-                    key_prefix="tg:inline:quota",
-                ),
+                quota_gate=quota_gate,
+                llm_budget=llm_budget,
                 sink=sink,
                 clock=clock,
                 monotonic=monotonic,
@@ -439,6 +467,7 @@ def create_application(settings: Settings) -> FastAPI:
                 min_chars=settings.inline_min_chars,
                 deadline_seconds=settings.inline_deadline_seconds,
                 intent_prefixes=help_say_intent_prefixes(strings),
+                analytics_timezone=settings.analytics_timezone,
             )
         )
         deps = TelegramDeps(
@@ -554,6 +583,7 @@ def create_application(settings: Settings) -> FastAPI:
             extra_shutdown=_miniapp_bot_shutdown(lifecycle, shared_bot),
             analytics_scheduler=_analytics_scheduler(settings, engine, ids, clock),
         ),
+        display_timezone=settings.display_timezone,
     )
 
 

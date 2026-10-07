@@ -34,7 +34,8 @@ from svoi_pravila.application.errors import (
     InvalidInlineResultRef,
     NotFound,
     PreparedResultUnavailable,
-    ScenarioQuotaExceeded,
+    ServiceBudgetExhausted,
+    UserQuotaExhausted,
 )
 from svoi_pravila.application.inline_result_ref import encode_inline_result_ref
 from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
@@ -51,8 +52,12 @@ from svoi_pravila.application.use_cases.list_suggestions import ListSuggestionsC
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoiceCommand
 from svoi_pravila.domain.enums import UsageScenario
 from svoi_pravila.domain.ids import RuleSuggestionId, TelegramUserId
+from svoi_pravila.limits import load_limits_catalog
+from svoi_pravila.limits.catalog import format_reset_hhmm
 
 _PREVIEW_MAX = 256
+_INLINE_TITLE_MAX = 64
+_LIMIT_CACHE_SECONDS = 10
 _PREPARED_PURPOSE = "prepared"
 
 logger = structlog.get_logger(__name__)
@@ -176,7 +181,8 @@ async def _answer_composed(query: InlineQuery, bot: Bot, tg_deps: TelegramDeps) 
         AccessNotGranted,
         InlineQueryTooShort,
         IncomingTextTooLong,
-        ScenarioQuotaExceeded,
+        UserQuotaExhausted,
+        ServiceBudgetExhausted,
         InlineComposeFailed,
     ) as exc:
         await _answer_compose_error(query, bot, tg_deps, started=started, error=exc)
@@ -197,15 +203,20 @@ async def _answer_compose_error(
         | AccessNotGranted
         | InlineQueryTooShort
         | IncomingTextTooLong
-        | ScenarioQuotaExceeded
+        | UserQuotaExhausted
+        | ServiceBudgetExhausted
         | InlineComposeFailed
     ),
 ) -> None:
     user_id = query.from_user.id
     if not tg_deps.inline_queries.is_current_task(user_id):
         return
-    onboard = isinstance(error, (NotFound, AccessNotGranted))
-    telegram_ok = await _answer_empty(query, bot, tg_deps, onboard=onboard)
+    limit_error = _limit_error(error)
+    if limit_error is not None:
+        telegram_ok = await _answer_limit_message(query, bot, tg_deps, error=limit_error)
+    else:
+        onboard = isinstance(error, (NotFound, AccessNotGranted))
+        telegram_ok = await _answer_empty(query, bot, tg_deps, onboard=onboard)
     outcome = _error_outcome(error, telegram_ok=telegram_ok)
     _log_answered(
         _AnsweredLog(
@@ -224,7 +235,8 @@ def _error_outcome(
         | AccessNotGranted
         | InlineQueryTooShort
         | IncomingTextTooLong
-        | ScenarioQuotaExceeded
+        | UserQuotaExhausted
+        | ServiceBudgetExhausted
         | InlineComposeFailed
     ),
     *,
@@ -320,7 +332,8 @@ def _reuse_from_error(
         | AccessNotGranted
         | InlineQueryTooShort
         | IncomingTextTooLong
-        | ScenarioQuotaExceeded
+        | UserQuotaExhausted
+        | ServiceBudgetExhausted
         | InlineComposeFailed
     ),
 ) -> str:
@@ -400,6 +413,54 @@ def _preview(text: str) -> str:
     if len(collapsed) <= _PREVIEW_MAX:
         return collapsed
     return collapsed[:_PREVIEW_MAX]
+
+
+def _limit_error(
+    error: (
+        NotFound
+        | AccessNotGranted
+        | InlineQueryTooShort
+        | IncomingTextTooLong
+        | UserQuotaExhausted
+        | ServiceBudgetExhausted
+        | InlineComposeFailed
+    ),
+) -> UserQuotaExhausted | ServiceBudgetExhausted | None:
+    cause = error.cause if isinstance(error, InlineComposeFailed) else error
+    if isinstance(cause, (UserQuotaExhausted, ServiceBudgetExhausted)):
+        return cause
+    return None
+
+
+async def _answer_limit_message(
+    query: InlineQuery,
+    bot: Bot,
+    tg_deps: TelegramDeps,
+    *,
+    error: UserQuotaExhausted | ServiceBudgetExhausted,
+) -> bool:
+    """One personal article with shared catalog text; no prepared result."""
+    reset = format_reset_hhmm(error.resets_at, str(tg_deps.display_timezone))
+    catalog = load_limits_catalog()
+    if isinstance(error, UserQuotaExhausted):
+        text = catalog.user_quota_message(reset)
+    else:
+        text = catalog.service_budget_message(reset)
+    article = InlineQueryResultArticle(
+        id="limit",
+        title=_preview(text)[:_INLINE_TITLE_MAX],
+        description=_preview(text),
+        input_message_content=InputTextMessageContent(
+            message_text=text,
+            parse_mode=None,
+        ),
+    )
+    return await _send_inline_answer(
+        bot,
+        inline_query_id=query.id,
+        results=[article],
+        cache_time=min(tg_deps.inline_cache_seconds, _LIMIT_CACHE_SECONDS),
+    )
 
 
 async def _answer_empty(

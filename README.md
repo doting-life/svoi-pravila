@@ -93,6 +93,8 @@ That destroys local PostgreSQL and Valkey data.
 
 Tests never write to the manual-testing database: they use a dedicated PostgreSQL database named `<POSTGRES_DB>_test` (for example `svoi_pravila_test`) and Valkey logical database `15`.
 
+The integration suite connects to Postgres as the compose admin role (`POSTGRES_USER`) and requires that role to be a **superuser** (the default `postgres` image user is). At session start it asserts `rolsuper`; otherwise it fails with a clear message naming that requirement. A non-superuser admin cannot create/drop the temporary databases and roles the suite needs.
+
 ## Make targets
 
 | Target | Purpose |

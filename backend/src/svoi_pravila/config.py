@@ -166,6 +166,13 @@ class GrafanaDbPasswordMissingError(Exception):
         super().__init__("SP_GRAFANA_DB_PASSWORD is required and must be non-empty")
 
 
+class LlmDailyTokenBudgetMissingError(Exception):
+    """``SP_LLM_DAILY_TOKEN_BUDGET`` is unset; no default budget exists."""
+
+    def __init__(self) -> None:
+        super().__init__("SP_LLM_DAILY_TOKEN_BUDGET is required and must be a positive integer")
+
+
 _GRAFANA_DB_USER_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 
 
@@ -256,11 +263,11 @@ class Settings(BaseSettings):
     telegram_dedup_ttl_seconds: int = Field(default=300, ge=1, le=86_400)
     telegram_shutdown_grace_seconds: float = Field(default=10.0, gt=0, le=120)
     decode_deadline_seconds: float = Field(default=45.0, gt=0, le=120)
-    decode_per_hour: int = Field(default=20, ge=1, le=10_000)
-    suggest_per_hour: int = Field(default=10, ge=1, le=10_000)
     telegram_draft_min_interval_ms: int = Field(default=500, ge=50, le=5_000)
     inline_min_chars: int = Field(default=8, ge=1, le=64)
-    inline_per_hour: int = Field(default=30, ge=1, le=10_000)
+    quota_inline_per_day: int = Field(default=300, ge=1)
+    quota_decode_per_day: int = Field(default=40, ge=1)
+    llm_daily_token_budget: int = Field(gt=0)
     inline_deadline_seconds: float = Field(default=8.0, gt=0, le=30)
     inline_debounce_ms: int = Field(default=600, ge=0, le=5_000)
     inline_cache_seconds: int = Field(default=30, ge=0, le=300)

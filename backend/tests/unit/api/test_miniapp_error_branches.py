@@ -363,6 +363,18 @@ def test_localization_rejects_non_object(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 @pytest.mark.unit
+def test_limit_error_body_rejects_non_limit_codes() -> None:
+    from svoi_pravila.api.miniapp.errors import limit_error_body
+
+    with pytest.raises(ValueError, match="does not support"):
+        limit_error_body(
+            MiniappErrorCode.UNAUTHORIZED,
+            resets_at=_NOW,
+            display_timezone="Europe/Moscow",
+        )
+
+
+@pytest.mark.unit
 def test_localization_rejects_bad_entries(monkeypatch: pytest.MonkeyPatch) -> None:
     load_ru_messages.cache_clear()
 

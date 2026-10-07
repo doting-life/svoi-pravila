@@ -52,8 +52,9 @@ from svoi_pravila.application.errors import (
     InlineComposeFailed,
     InvalidGenerationOutput,
     InvalidOutputReason,
-    ScenarioQuotaExceeded,
+    ServiceBudgetExhausted,
     UnavailableKind,
+    UserQuotaExhausted,
 )
 from svoi_pravila.application.inline_result_ref import encode_inline_result_ref
 from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
@@ -730,9 +731,13 @@ async def test_inline_quota_and_long_preview() -> None:
     await quota_life.dispatcher.feed_update(quota_bot, _inline(141, 31, "long enough draft"))
     await _await_inline(quota_deps)
     quota_answers = [req for req in quota_session.requests if isinstance(req, AnswerInlineQuery)]
-    assert quota_answers[-1].results == []
-    assert quota_answers[-1].button is not None
-    assert quota_answers[-1].button.start_parameter == "help"
+    assert len(quota_answers[-1].results) == 1
+    limit_article = quota_answers[-1].results[0]
+    assert isinstance(limit_article, InlineQueryResultArticle)
+    assert limit_article.id == "limit"
+    content = limit_article.input_message_content
+    assert isinstance(content, InputTextMessageContent)
+    assert "лимит" in (content.message_text or "").casefold()
 
 
 class _BoomThenOk(FakeTextGenerator):
@@ -1145,7 +1150,12 @@ async def test_inline_answered_absent_when_stale(
             InlineReuseStatus.HIT,
         ),
         (
-            ScenarioQuotaExceeded(),
+            UserQuotaExhausted(resets_at=datetime(2026, 1, 2, tzinfo=UTC)),
+            "empty",
+            InlineReuseStatus.MISS,
+        ),
+        (
+            ServiceBudgetExhausted(resets_at=datetime(2026, 1, 2, tzinfo=UTC)),
             "empty",
             InlineReuseStatus.MISS,
         ),
@@ -1173,7 +1183,8 @@ async def test_inline_answered_maps_compose_failed_outcomes(
                     InvalidGenerationOutput,
                     GenerationRefusedByProvider,
                     GenerationUnavailable,
-                    ScenarioQuotaExceeded,
+                    UserQuotaExhausted,
+                    ServiceBudgetExhausted,
                 ),
             )
             raise InlineComposeFailed(cause, reuse=reuse)
@@ -1192,7 +1203,7 @@ async def test_inline_answered_maps_compose_failed_outcomes(
 
 
 @pytest.mark.unit
-async def test_inline_answered_maps_bare_quota_exceeded(
+async def test_inline_answered_maps_bare_user_quota_exhausted(
     capture_log_events: Callable[[], list[dict[str, Any]]],
 ) -> None:
     catalog = FakeConsentCatalog()
@@ -1205,7 +1216,7 @@ async def test_inline_answered_maps_bare_quota_exceeded(
 
         async def execute(self, command: InlineComposeCommand) -> InlineComposeResult:
             _ = command
-            raise ScenarioQuotaExceeded()
+            raise UserQuotaExhausted(resets_at=datetime(2026, 1, 2, tzinfo=UTC))
 
     deps = replace(base, inline_compose=_QuotaCompose(base.inline_compose))
     session = FakeTelegramSession()

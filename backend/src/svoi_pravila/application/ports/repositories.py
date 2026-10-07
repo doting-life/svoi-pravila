@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Protocol
 
 from svoi_pravila.domain.consent import Consent
@@ -203,6 +204,10 @@ class UsageEventRepository(Protocol):
 
     async def delete_for_pseudonym(self, user_pseudonym: str) -> None:
         """Delete usage events keyed by analytics HMAC hex, not a Telegram id."""
+        ...
+
+    async def sum_billable_for_day(self, day: date, timezone: str) -> int:
+        """Sum ``billable_tokens`` for the product day (Postgres computes bounds)."""
         ...
 
 

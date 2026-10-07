@@ -7,6 +7,7 @@ from datetime import datetime
 
 from svoi_pravila.domain.enums import (
     Firmness,
+    LimitKind,
     UsageEventKind,
     UsageOutcome,
     UsageScenario,
@@ -21,7 +22,7 @@ _HEX64 = 64
 
 @dataclass(frozen=True, slots=True)
 class UsageEvent:
-    """C0 analytics row: a generation, a pre-LLM crisis screen, or an inline choice."""
+    """C0 analytics row: a generation, a pre-LLM crisis screen, a limit stop, or a choice."""
 
     id: UsageEventId
     occurred_at: datetime
@@ -41,6 +42,7 @@ class UsageEvent:
     billable_tokens: int
     event_kind: UsageEventKind = UsageEventKind.GENERATION
     variant_firmness: Firmness | None = None
+    limit_kind: LimitKind | None = None
 
     def __post_init__(self) -> None:
         require_utc(self.occurred_at)
@@ -58,6 +60,13 @@ class UsageEvent:
         if self.input_tokens < 0 or self.output_tokens < 0 or self.billable_tokens < 0:
             msg = "token counts must be non-negative"
             raise InvalidValueError(msg)
+        if self.outcome is UsageOutcome.LIMITED:
+            if self.limit_kind is None:
+                msg = "limited events require limit_kind"
+                raise InvalidValueError(msg)
+        elif self.limit_kind is not None:
+            msg = "limit_kind is only allowed when outcome is limited"
+            raise InvalidValueError(msg)
         if self.event_kind is UsageEventKind.GENERATION:
             self._validate_generation()
             return
@@ -66,6 +75,9 @@ class UsageEvent:
     def _validate_generation(self) -> None:
         if self.outcome is UsageOutcome.SCREENED:
             self._validate_screened()
+            return
+        if self.outcome is UsageOutcome.LIMITED:
+            self._validate_limited()
             return
         if not self.model or not self.prompt_version:
             msg = "model and prompt_version must be non-empty"
@@ -92,8 +104,28 @@ class UsageEvent:
             or self.ttfc_ms is not None
             or self.unavailable_kind is not None
             or self.variant_firmness is not None
+            or self.limit_kind is not None
         ):
             msg = "screened events must not carry generation metrics"
+            raise InvalidValueError(msg)
+
+    def _validate_limited(self) -> None:
+        if self.safety is not None:
+            msg = "limited events must not set safety"
+            raise InvalidValueError(msg)
+        if self.model is not None or self.prompt_version is not None:
+            msg = "limited events must not set model or prompt_version"
+            raise InvalidValueError(msg)
+        if (
+            self.attempts != 0
+            or self.input_tokens != 0
+            or self.output_tokens != 0
+            or self.billable_tokens != 0
+            or self.ttfc_ms is not None
+            or self.unavailable_kind is not None
+            or self.variant_firmness is not None
+        ):
+            msg = "limited events must not carry generation metrics"
             raise InvalidValueError(msg)
 
     def _validate_result_chosen(self) -> None:
@@ -112,6 +144,7 @@ class UsageEvent:
             or self.billable_tokens != 0
             or self.safety is not None
             or self.unavailable_kind is not None
+            or self.limit_kind is not None
         ):
             msg = "result_chosen events must not carry generation metrics"
             raise InvalidValueError(msg)

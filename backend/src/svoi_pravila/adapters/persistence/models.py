@@ -460,6 +460,7 @@ class UsageEventRow(Base):
     billable_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     event_kind: Mapped[str] = mapped_column(Text(), nullable=False)
     variant_firmness: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    limit_kind: Mapped[str | None] = mapped_column(Text(), nullable=True)
 
     __table_args__ = (
         CheckConstraint(
@@ -475,7 +476,7 @@ class UsageEventRow(Base):
             name="usage_surface",
         ),
         CheckConstraint(
-            "outcome IN ('ok', 'invalid_output', 'refused', 'unavailable', 'screened')",
+            "outcome IN ('ok', 'invalid_output', 'refused', 'unavailable', 'screened', 'limited')",
             name="usage_outcome",
         ),
         CheckConstraint(
@@ -487,22 +488,42 @@ class UsageEventRow(Base):
             name="usage_variant_firmness",
         ),
         CheckConstraint(
+            "limit_kind IS NULL OR limit_kind IN ('user_quota', 'global_budget')",
+            name="usage_limit_kind",
+        ),
+        CheckConstraint(
+            "("
+            "outcome = 'limited' AND limit_kind IS NOT NULL"
+            ") OR ("
+            "outcome <> 'limited' AND limit_kind IS NULL"
+            ")",
+            name="usage_limit_kind_outcome",
+        ),
+        CheckConstraint(
             "("
             "event_kind = 'generation' AND outcome = 'screened' AND safety = 'crisis' "
             "AND model IS NULL AND prompt_version IS NULL AND attempts = 0 "
             "AND input_tokens = 0 AND output_tokens = 0 AND billable_tokens = 0 "
-            "AND ttfc_ms IS NULL AND unavailable_kind IS NULL AND variant_firmness IS NULL"
+            "AND ttfc_ms IS NULL AND unavailable_kind IS NULL AND variant_firmness IS NULL "
+            "AND limit_kind IS NULL"
             ") OR ("
-            "event_kind = 'generation' AND outcome <> 'screened' "
+            "event_kind = 'generation' AND outcome = 'limited' "
+            "AND limit_kind IN ('user_quota', 'global_budget') "
+            "AND safety IS NULL AND model IS NULL AND prompt_version IS NULL "
+            "AND attempts = 0 AND input_tokens = 0 AND output_tokens = 0 "
+            "AND billable_tokens = 0 AND ttfc_ms IS NULL AND unavailable_kind IS NULL "
+            "AND variant_firmness IS NULL"
+            ") OR ("
+            "event_kind = 'generation' AND outcome NOT IN ('screened', 'limited') "
             "AND model IS NOT NULL AND model <> '' "
             "AND prompt_version IS NOT NULL AND prompt_version <> '' "
-            "AND attempts >= 1 AND variant_firmness IS NULL"
+            "AND attempts >= 1 AND variant_firmness IS NULL AND limit_kind IS NULL"
             ") OR ("
             "event_kind = 'result_chosen' AND model IS NULL AND prompt_version IS NULL "
             "AND attempts = 0 AND latency_ms = 0 AND ttfc_ms IS NULL "
             "AND input_tokens = 0 AND output_tokens = 0 AND billable_tokens = 0 "
             "AND safety IS NULL AND unavailable_kind IS NULL AND outcome = 'ok' "
-            "AND variant_firmness IN ('gentle', 'balanced', 'firm')"
+            "AND variant_firmness IN ('gentle', 'balanced', 'firm') AND limit_kind IS NULL"
             ")",
             name="usage_event_kind_shape",
         ),

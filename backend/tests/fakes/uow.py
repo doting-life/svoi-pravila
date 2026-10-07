@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
 from types import TracebackType
+from zoneinfo import ZoneInfo
 
 from svoi_pravila.application.errors import ConflictError
 from svoi_pravila.application.ports.repositories import (
@@ -257,6 +259,17 @@ class InMemoryUsageEventRepository:
         ]
         for eid in to_drop:
             del self._working.usage_events[eid]
+
+    async def sum_billable_for_day(self, day: date, timezone: str) -> int:
+        start = datetime(day.year, day.month, day.day, tzinfo=ZoneInfo(timezone))
+        end = start + timedelta(days=1)
+        start_utc = start.astimezone(UTC)
+        end_utc = end.astimezone(UTC)
+        total = 0
+        for event in self._working.usage_events.values():
+            if start_utc <= event.occurred_at < end_utc:
+                total += event.billable_tokens
+        return total
 
 
 class InMemoryRuleSuggestionRepository:

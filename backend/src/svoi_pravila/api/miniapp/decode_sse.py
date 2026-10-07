@@ -20,7 +20,6 @@ from svoi_pravila.application.errors import (
     IncomingTextTooShort,
     InvalidGenerationOutput,
     ScenarioBusy,
-    ScenarioQuotaExceeded,
 )
 from svoi_pravila.application.ports.generation import (
     AnalysisChunk,
@@ -102,7 +101,6 @@ async def _drain_use_case(agen: AsyncGenerator[object]) -> None:
 _MAPPED_DECODE_ERRORS: tuple[tuple[type[BaseException], MiniappErrorCode], ...] = (
     (IncomingTextTooShort, MiniappErrorCode.TEXT_TOO_SHORT),
     (IncomingTextTooLong, MiniappErrorCode.TEXT_TOO_LONG),
-    (ScenarioQuotaExceeded, MiniappErrorCode.QUOTA_EXCEEDED),
     (ScenarioBusy, MiniappErrorCode.BUSY),
     (GenerationUnavailable, MiniappErrorCode.GENERATION_UNAVAILABLE),
     (InvalidGenerationOutput, MiniappErrorCode.INVALID_OUTPUT),

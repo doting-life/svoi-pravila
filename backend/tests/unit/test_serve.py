@@ -43,6 +43,7 @@ def test_load_settings_reads_process_environment(monkeypatch: pytest.MonkeyPatch
         "SP_PSEUDONYM_PEPPER",
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
     )
+    monkeypatch.setenv("SP_LLM_DAILY_TOKEN_BUDGET", "20000")
     monkeypatch.setenv("SP_TELEGRAM_UPDATES_MODE", "disabled")
     monkeypatch.delenv("SP_TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("SP_TELEGRAM_WEBHOOK_BASE_URL", raising=False)

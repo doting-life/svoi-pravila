@@ -5,13 +5,15 @@ from __future__ import annotations
 import asyncio
 import unicodedata
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
 
 import pytest
 
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.errors import (
     AccessNotGranted,
+    CacheErrorKind,
+    CacheUnavailable,
     GenerationRefusedByProvider,
     GenerationUnavailable,
     IncomingTextTooLong,
@@ -20,8 +22,9 @@ from svoi_pravila.application.errors import (
     InvalidGenerationOutput,
     InvalidOutputReason,
     NotFound,
-    ScenarioQuotaExceeded,
+    ServiceBudgetExhausted,
     UnavailableKind,
+    UserQuotaExhausted,
 )
 from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
 from svoi_pravila.application.ports.generation import (
@@ -30,6 +33,7 @@ from svoi_pravila.application.ports.generation import (
     HelpSayIntent,
     HelpSayResult,
     SafetyVerdict,
+    SoftenRequest,
     SoftenResult,
     TokenUsage,
     Variant,
@@ -58,6 +62,7 @@ from svoi_pravila.application.use_cases.set_active_contact import (
 )
 from svoi_pravila.domain.enums import (
     Firmness,
+    LimitKind,
     RelationshipKind,
     RuleCategory,
     UsageEventKind,
@@ -67,9 +72,11 @@ from svoi_pravila.domain.enums import (
 )
 from svoi_pravila.domain.ids import TelegramUserId
 from svoi_pravila.domain.text import ContactLabel, RuleText
+from svoi_pravila.domain.usage import UsageEvent
 from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
-from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
+from tests.fakes.quota_budget import FakeLlmBudget, FakeQuotaGate
+from tests.fakes.rate_limit import FakePseudonymizer
 from tests.fakes.usage_sink import FailingUsageEventSink, RecordingUsageEventSink
 from tests.unit.application.conftest import AppWorld
 from tests.unit.domain.test_crisis_screen import THREAT_AND_HYPERBOLE_NEGATIVES
@@ -86,7 +93,8 @@ _PREFIXES = (
 @dataclass(frozen=True, slots=True)
 class _Fakes:
     generator: FakeTextGenerator | None = None
-    quota: FakeRateLimiter | None = None
+    quota_gate: FakeQuotaGate | None = None
+    llm_budget: FakeLlmBudget | None = None
     sink: RecordingUsageEventSink | FailingUsageEventSink | None = None
     reuse: InlineResultReuse | None = None
     min_chars: int = 8
@@ -109,7 +117,8 @@ def _ports(
             uow_factory=world.uow_factory,
             catalog=world.catalog,
             generator=chosen.generator or FakeTextGenerator(),
-            quota=chosen.quota or FakeRateLimiter(limit=30),
+            quota_gate=chosen.quota_gate or FakeQuotaGate(limit=30),
+            llm_budget=chosen.llm_budget or FakeLlmBudget(),
             sink=sink,
             clock=world.clock,
             monotonic=world.clock,
@@ -120,6 +129,7 @@ def _ports(
             min_chars=chosen.min_chars,
             deadline_seconds=8.0,
             intent_prefixes=_PREFIXES,
+            analytics_timezone="Europe/Moscow",
         )
     )
     return use_case, sink, reuse
@@ -209,15 +219,16 @@ async def test_inline_compose_quota_before_generation(world: AppWorld) -> None:
     await world.ensure_granted_user(100)
     generator = FakeTextGenerator()
     use_case, sink, _reuse = _ports(
-        world, _Fakes(generator=generator, quota=FakeRateLimiter(limit=0))
+        world, _Fakes(generator=generator, quota_gate=FakeQuotaGate(limit=0))
     )
     with pytest.raises(InlineComposeFailed) as quota_info:
         await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
-    assert isinstance(quota_info.value.cause, ScenarioQuotaExceeded)
+    assert isinstance(quota_info.value.cause, UserQuotaExhausted)
     assert quota_info.value.reuse is InlineReuseStatus.MISS
     assert generator.soften_calls == []
     assert isinstance(sink, RecordingUsageEventSink)
-    assert sink.events == []
+    assert len(sink.events) == 1
+    assert sink.events[0].outcome is UsageOutcome.LIMITED
 
 
 @pytest.mark.unit
@@ -270,6 +281,86 @@ async def test_inline_compose_records_errors_and_swallows_sink_failure(world: Ap
 
 
 @pytest.mark.unit
+async def test_inline_compose_refund_matrix(world: AppWorld) -> None:
+    await world.ensure_granted_user(100)
+
+    unavailable = FakeTextGenerator()
+    unavailable.soften_error = GenerationUnavailable(
+        UnavailableKind.TIMEOUT,
+        usage=TokenUsage(),
+        attempts=1,
+        model="fake",
+        prompt_version="soften@v1",
+    )
+    quota_unavail = FakeQuotaGate(limit=30)
+    use_case, _sink, _ = _ports(world, _Fakes(generator=unavailable, quota_gate=quota_unavail))
+    with pytest.raises(InlineComposeFailed):
+        await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
+    assert len(quota_unavail.refund_calls) == 1
+
+    refused = FakeTextGenerator()
+    refused.soften_error = GenerationRefusedByProvider(
+        usage=TokenUsage(input=1, output=0),
+        attempts=1,
+        model="fake",
+        prompt_version="soften@v1",
+    )
+    quota_refused = FakeQuotaGate(limit=30)
+    use_case, _sink, _ = _ports(world, _Fakes(generator=refused, quota_gate=quota_refused))
+    with pytest.raises(InlineComposeFailed):
+        await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
+    assert quota_refused.refund_calls == []
+
+    invalid = FakeTextGenerator()
+    invalid.soften_error = InvalidGenerationOutput(
+        (InvalidOutputReason.VARIANT_COUNT,),
+        usage=TokenUsage(),
+        attempts=1,
+        model="fake",
+        prompt_version="soften@v1",
+    )
+    quota_invalid = FakeQuotaGate(limit=30)
+    use_case, _sink, _ = _ports(world, _Fakes(generator=invalid, quota_gate=quota_invalid))
+    with pytest.raises(InlineComposeFailed):
+        await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
+    assert quota_invalid.refund_calls == []
+
+    class _CancelSoft(FakeTextGenerator):
+        async def soften(self, request: SoftenRequest) -> SoftenResult:
+            self.soften_calls.append(request)
+            raise asyncio.CancelledError
+
+    quota_cancel = FakeQuotaGate(limit=30)
+    use_case, _sink, _ = _ports(world, _Fakes(generator=_CancelSoft(), quota_gate=quota_cancel))
+    with pytest.raises(asyncio.CancelledError):
+        await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
+    assert len(quota_cancel.refund_calls) == 1
+
+
+@pytest.mark.unit
+async def test_inline_compose_persist_before_budget_add(world: AppWorld) -> None:
+    await world.ensure_granted_user(100)
+    order: list[str] = []
+
+    class _OrderSink(RecordingUsageEventSink):
+        async def record(self, event: UsageEvent) -> None:
+            order.append("persist")
+            self.events.append(event)
+
+    class _OrderBudget(FakeLlmBudget):
+        async def add(self, day: date, billable_tokens: int) -> None:
+            order.append("add")
+            await super().add(day, billable_tokens)
+
+    use_case, _sink, _ = _ports(
+        world,
+        _Fakes(sink=_OrderSink(), llm_budget=_OrderBudget()),
+    )
+    await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
+    assert order == ["persist", "add"]
+
+
+@pytest.mark.unit
 async def test_inline_compose_skips_blank_prefix_entries(world: AppWorld) -> None:
     await world.ensure_granted_user(100)
     generator = FakeTextGenerator()
@@ -278,7 +369,8 @@ async def test_inline_compose_skips_blank_prefix_entries(world: AppWorld) -> Non
             uow_factory=world.uow_factory,
             catalog=world.catalog,
             generator=generator,
-            quota=FakeRateLimiter(limit=30),
+            quota_gate=FakeQuotaGate(limit=30),
+            llm_budget=FakeLlmBudget(),
             sink=RecordingUsageEventSink(),
             clock=world.clock,
             monotonic=world.clock,
@@ -289,6 +381,7 @@ async def test_inline_compose_skips_blank_prefix_entries(world: AppWorld) -> Non
             min_chars=8,
             deadline_seconds=8.0,
             intent_prefixes=(("", HelpSayIntent.OTHER), *_PREFIXES),
+            analytics_timezone="Europe/Moscow",
         )
     )
     await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough draft"))
@@ -296,11 +389,64 @@ async def test_inline_compose_skips_blank_prefix_entries(world: AppWorld) -> Non
 
 
 @pytest.mark.unit
+async def test_inline_compose_service_budget_exhausted(world: AppWorld) -> None:
+    await world.ensure_granted_user(100)
+    generator = FakeTextGenerator()
+    use_case, sink, _reuse = _ports(
+        world,
+        _Fakes(generator=generator, llm_budget=FakeLlmBudget(exhausted=True)),
+    )
+    with pytest.raises(InlineComposeFailed) as info:
+        await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
+    assert isinstance(info.value.cause, ServiceBudgetExhausted)
+    assert generator.soften_calls == []
+    assert isinstance(sink, RecordingUsageEventSink)
+    assert sink.events[0].outcome is UsageOutcome.LIMITED
+    assert sink.events[0].limit_kind is LimitKind.GLOBAL_BUDGET
+
+
+@pytest.mark.unit
+async def test_inline_compose_valkey_fail_closed(world: AppWorld) -> None:
+    await world.ensure_granted_user(100)
+    unavailable = CacheUnavailable(CacheErrorKind.TIMEOUT)
+
+    check_uc, _, _ = _ports(
+        world,
+        _Fakes(llm_budget=FakeLlmBudget(check_unavailable=unavailable)),
+    )
+    with pytest.raises(InlineComposeFailed) as check_info:
+        await check_uc.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
+    assert isinstance(check_info.value.cause, GenerationUnavailable)
+    assert check_info.value.cause.kind is UnavailableKind.TIMEOUT
+
+    reserve_uc, _, _ = _ports(
+        world,
+        _Fakes(quota_gate=FakeQuotaGate(cache_unavailable=unavailable)),
+    )
+    with pytest.raises(InlineComposeFailed) as reserve_info:
+        await reserve_uc.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
+    assert isinstance(reserve_info.value.cause, GenerationUnavailable)
+    assert reserve_info.value.cause.kind is UnavailableKind.TIMEOUT
+
+    add_uc, _, _ = _ports(
+        world,
+        _Fakes(llm_budget=FakeLlmBudget(add_unavailable=unavailable)),
+    )
+    with pytest.raises(GenerationUnavailable) as add_info:
+        await add_uc.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
+    assert add_info.value.kind is UnavailableKind.TIMEOUT
+
+
+@pytest.mark.unit
 async def test_inline_compose_crisis_screen_skips_quota_and_generator(world: AppWorld) -> None:
     await world.ensure_granted_user(100)
     generator = FakeTextGenerator()
-    quota = FakeRateLimiter(limit=0)
-    use_case, sink, _reuse = _ports(world, _Fakes(generator=generator, quota=quota))
+    quota_gate = FakeQuotaGate(limit=0)
+    llm_budget = FakeLlmBudget(exhausted=True)
+    use_case, sink, _reuse = _ports(
+        world,
+        _Fakes(generator=generator, quota_gate=quota_gate, llm_budget=llm_budget),
+    )
     result = await use_case.execute(
         InlineComposeCommand(TelegramUserId(100), "я не хочу жить больше")
     )
@@ -310,7 +456,8 @@ async def test_inline_compose_crisis_screen_skips_quota_and_generator(world: App
     assert result.variants == ()
     assert result.scenario is UsageScenario.SOFTEN
     assert generator.soften_calls == []
-    assert quota.check_count() == 0
+    assert quota_gate.reserve_count() == 0
+    assert llm_budget.check_count() == 0
     assert isinstance(sink, RecordingUsageEventSink)
     event = sink.events[0]
     assert event.outcome is UsageOutcome.SCREENED

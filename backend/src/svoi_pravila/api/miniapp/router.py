@@ -16,7 +16,7 @@ from svoi_pravila.api.miniapp.deps import (
     no_store,
     parse_path_uuid,
 )
-from svoi_pravila.api.miniapp.errors import ErrorBody, MiniappErrorCode
+from svoi_pravila.api.miniapp.errors import ErrorBody, LimitErrorBody, MiniappErrorCode
 from svoi_pravila.api.miniapp.http import MiniappHttpError
 from svoi_pravila.api.miniapp.schemas import (
     AcceptSuggestionResponse,
@@ -123,6 +123,13 @@ _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     413: {"model": ErrorBody},
     422: {"model": ErrorBody},
     429: {"model": ErrorBody},
+    503: {"model": LimitErrorBody},
+}
+
+_LIMIT_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    **_ERROR_RESPONSES,
+    429: {"model": LimitErrorBody},
+    503: {"model": LimitErrorBody},
 }
 
 
@@ -273,7 +280,7 @@ def _register_decode(
         "/decode",
         operation_id="decodeIncoming",
         responses={
-            **_ERROR_RESPONSES,
+            **_LIMIT_ERROR_RESPONSES,
             200: {
                 "description": "Server-Sent Events stream (analysis, then one terminal event).",
                 "content": {"text/event-stream": {}},
@@ -292,18 +299,32 @@ def _register_decode(
             pseudonymizer=bindings.pseudonymizer,
         )
         _ = request  # ASGI cancels ``frames`` on client disconnect (no orphan tasks).
+        agen = iter_decode_sse(
+            stream_ports,
+            actor=actor,
+            telegram_user_id=actor.telegram_user_id,
+            text=body.text,
+        )
+        # Peek the first frame so quota/budget errors become HTTP JSON before SSE opens.
+        try:
+            first = await agen.__anext__()
+        except StopAsyncIteration:
+            await agen.aclose()
+            return StreamingResponse(iter(()), media_type="text/event-stream", headers=_SSE_HEADERS)
+        except BaseException:
+            await agen.aclose()
+            raise
 
         async def frames() -> AsyncIterator[str]:
             # Do not poll ``is_disconnected`` between frames: after the terminal
             # event the client may already look disconnected, and breaking would
             # cancel DecodeIncoming before usage accounting runs.
-            async for frame in iter_decode_sse(
-                stream_ports,
-                actor=actor,
-                telegram_user_id=actor.telegram_user_id,
-                text=body.text,
-            ):
-                yield frame
+            try:
+                yield first
+                async for frame in agen:
+                    yield frame
+            finally:
+                await agen.aclose()
 
         return StreamingResponse(frames(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
@@ -311,7 +332,7 @@ def _register_decode(
         "/suggestions/from-decode",
         operation_id="suggestFromDecode",
         response_model=SuggestFromDecodeResponse,
-        responses=_ERROR_RESPONSES,
+        responses=_LIMIT_ERROR_RESPONSES,
     )
     async def suggest_from_decode(
         body: SuggestFromDecodeRequest,

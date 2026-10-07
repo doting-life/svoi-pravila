@@ -32,7 +32,12 @@ from svoi_pravila.adapters.channels.telegram.presenters import (
     display_rule_text,
     render_rules_list,
 )
-from svoi_pravila.application.errors import AccessNotGranted, NotFound, OpenRuleLimitReached
+from svoi_pravila.application.errors import (
+    AccessNotGranted,
+    NotFound,
+    OpenRuleLimitReached,
+    ServiceBudgetExhausted,
+)
 from svoi_pravila.application.ports.dialog_state import DialogRecord
 from svoi_pravila.application.rule_source import RULE_SOURCE_CALLBACK_PREFIX
 from svoi_pravila.application.use_cases.accept_suggestion import (
@@ -62,6 +67,8 @@ from svoi_pravila.domain.rule_suggestion import RuleSuggestion
 from svoi_pravila.domain.rules import Rule
 from svoi_pravila.domain.text import RuleText
 from svoi_pravila.domain.user import User
+from svoi_pravila.limits import load_limits_catalog
+from svoi_pravila.limits.catalog import format_reset_hhmm
 
 _CALLBACK_PARTS = 3
 logger = structlog.get_logger(__name__)
@@ -540,6 +547,10 @@ async def suggest_from_decode(callback: CallbackQuery, tg_deps: TelegramDeps, bo
     except (NotFound, AccessNotGranted):
         await send_current_step(bot, callback, tg_deps, callback.from_user.id)
         return
+    except ServiceBudgetExhausted as exc:
+        reset = format_reset_hhmm(exc.resets_at, str(tg_deps.display_timezone))
+        await reply_callback(bot, callback, load_limits_catalog().service_budget_message(reset))
+        return
     await _reply_suggest_from_decode(bot, callback, tg_deps, chat_id, result)
 
 
@@ -555,7 +566,6 @@ async def _reply_suggest_from_decode(
         return
     simple = {
         SuggestRuleFromDecodeOutcome.UNAVAILABLE: tg_deps.strings.suggestion_decode_expired,
-        SuggestRuleFromDecodeOutcome.QUOTA_EXCEEDED: tg_deps.strings.suggestion_decode_quota,
         SuggestRuleFromDecodeOutcome.NONE: tg_deps.strings.suggestion_decode_none,
     }
     text = simple.get(result.outcome)

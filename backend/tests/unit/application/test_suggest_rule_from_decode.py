@@ -11,12 +11,15 @@ import pytest
 
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.errors import (
+    CacheErrorKind,
+    CacheUnavailable,
     ConflictError,
     GenerationRefusedByProvider,
     GenerationUnavailable,
     InvalidGenerationOutput,
     InvalidOutputReason,
     NotFound,
+    ServiceBudgetExhausted,
     UnavailableKind,
 )
 from svoi_pravila.application.ports.generation import (
@@ -51,7 +54,8 @@ from svoi_pravila.domain.ids import ContactId, RuleSuggestionId, TelegramUserId,
 from svoi_pravila.domain.rule_suggestion import RuleSuggestion
 from svoi_pravila.domain.text import ContactLabel, RuleText
 from tests.fakes.generation import FakeTextGenerator
-from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
+from tests.fakes.quota_budget import FakeLlmBudget
+from tests.fakes.rate_limit import FakePseudonymizer
 from tests.fakes.rule_sources import FakeRuleSources
 from tests.fakes.usage_sink import FailingUsageEventSink, RecordingUsageEventSink
 from tests.unit.application.conftest import AppWorld
@@ -78,14 +82,14 @@ def _ports(
     sources: FakeRuleSources,
     generator: FakeTextGenerator,
     sink: RecordingUsageEventSink | None = None,
-    quota: FakeRateLimiter | None = None,
+    llm_budget: FakeLlmBudget | None = None,
 ) -> SuggestRuleFromDecodePorts:
     return SuggestRuleFromDecodePorts(
         uow_factory=world.uow_factory,
         catalog=world.catalog,
         rule_sources=sources,
         generator=generator,
-        quota=quota or FakeRateLimiter(limit=10),
+        llm_budget=llm_budget or FakeLlmBudget(),
         sink=sink or RecordingUsageEventSink(),
         clock=world.clock,
         monotonic=world.clock,
@@ -93,6 +97,7 @@ def _ports(
         pseudonymizer=FakePseudonymizer(),
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
+        analytics_timezone="Europe/Moscow",
     )
 
 
@@ -149,13 +154,50 @@ async def test_suggest_rule_none_unavailable_quota(world: AppWorld) -> None:
         world,
         sources=sources,
         generator=FakeTextGenerator(),
-        quota=FakeRateLimiter(limit=0),
+        llm_budget=FakeLlmBudget(exhausted=True),
     )
-    assert (
+    with pytest.raises(ServiceBudgetExhausted):
         await SuggestRuleFromDecode(ports_q).execute(
             SuggestRuleFromDecodeCommand(tg, token2, surface=UsageSurface.DM)
         )
-    ).outcome is SuggestRuleFromDecodeOutcome.QUOTA_EXCEEDED
+
+
+@pytest.mark.unit
+async def test_suggest_rule_valkey_fail_closed(world: AppWorld) -> None:
+    tg, contact = await _active_contact(world, 920)
+    sources = FakeRuleSources()
+    pseudo = FakePseudonymizer().pseudonymize(RULE_SOURCE_PURPOSE, str(tg.value))
+    unavailable = CacheUnavailable(CacheErrorKind.SERVER)
+
+    token_check = await sources.store(
+        pseudo, RuleSourcePayload(contact_id=contact.id, incoming_text="check fail")
+    )
+    ports_check = _ports(
+        world,
+        sources=sources,
+        generator=FakeTextGenerator(),
+        llm_budget=FakeLlmBudget(check_unavailable=unavailable),
+    )
+    with pytest.raises(GenerationUnavailable) as check_info:
+        await SuggestRuleFromDecode(ports_check).execute(
+            SuggestRuleFromDecodeCommand(tg, token_check, surface=UsageSurface.DM)
+        )
+    assert check_info.value.kind is UnavailableKind.SERVER
+
+    token_add = await sources.store(
+        pseudo, RuleSourcePayload(contact_id=contact.id, incoming_text="add fail")
+    )
+    ports_add = _ports(
+        world,
+        sources=sources,
+        generator=FakeTextGenerator(),
+        llm_budget=FakeLlmBudget(add_unavailable=unavailable),
+    )
+    with pytest.raises(GenerationUnavailable) as add_info:
+        await SuggestRuleFromDecode(ports_add).execute(
+            SuggestRuleFromDecodeCommand(tg, token_add, surface=UsageSurface.DM)
+        )
+    assert add_info.value.kind is UnavailableKind.SERVER
 
 
 @pytest.mark.unit
@@ -278,7 +320,7 @@ async def test_suggest_rule_not_found_paths(world: AppWorld) -> None:
         catalog=world.catalog,
         rule_sources=sources,
         generator=FakeTextGenerator(),
-        quota=FakeRateLimiter(limit=10),
+        llm_budget=FakeLlmBudget(),
         sink=RecordingUsageEventSink(),
         clock=world.clock,
         monotonic=world.clock,
@@ -286,6 +328,7 @@ async def test_suggest_rule_not_found_paths(world: AppWorld) -> None:
         pseudonymizer=FakePseudonymizer(),
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
+        analytics_timezone="Europe/Moscow",
     )
     with pytest.raises(NotFound):
         await SuggestRuleFromDecode(ports_gone).execute(
@@ -329,7 +372,7 @@ async def test_suggest_rule_generation_errors_and_sink_fail(world: AppWorld) -> 
             catalog=world.catalog,
             rule_sources=sources,
             generator=generator,
-            quota=FakeRateLimiter(limit=100),
+            llm_budget=FakeLlmBudget(),
             sink=sink,
             clock=world.clock,
             monotonic=world.clock,
@@ -337,6 +380,7 @@ async def test_suggest_rule_generation_errors_and_sink_fail(world: AppWorld) -> 
             pseudonymizer=FakePseudonymizer(),
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
+            analytics_timezone="Europe/Moscow",
         )
         with pytest.raises(type(error)):
             await SuggestRuleFromDecode(ports).execute(
@@ -358,7 +402,7 @@ async def test_suggest_rule_generation_errors_and_sink_fail(world: AppWorld) -> 
         catalog=world.catalog,
         rule_sources=sources,
         generator=FakeTextGenerator(),
-        quota=FakeRateLimiter(limit=100),
+        llm_budget=FakeLlmBudget(),
         sink=FailingUsageEventSink(),
         clock=world.clock,
         monotonic=world.clock,
@@ -366,6 +410,7 @@ async def test_suggest_rule_generation_errors_and_sink_fail(world: AppWorld) -> 
         pseudonymizer=FakePseudonymizer(),
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
+        analytics_timezone="Europe/Moscow",
     )
     ok_despite_sink = await SuggestRuleFromDecode(ports_ok_fail).execute(
         SuggestRuleFromDecodeCommand(tg, token_ok, surface=UsageSurface.DM)
@@ -393,7 +438,7 @@ async def test_suggest_rule_generation_errors_and_sink_fail(world: AppWorld) -> 
         catalog=world.catalog,
         rule_sources=sources,
         generator=gen_err,
-        quota=FakeRateLimiter(limit=100),
+        llm_budget=FakeLlmBudget(),
         sink=FailingUsageEventSink(),
         clock=world.clock,
         monotonic=world.clock,
@@ -401,6 +446,7 @@ async def test_suggest_rule_generation_errors_and_sink_fail(world: AppWorld) -> 
         pseudonymizer=FakePseudonymizer(),
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
+        analytics_timezone="Europe/Moscow",
     )
     with pytest.raises(GenerationUnavailable):
         await SuggestRuleFromDecode(ports_err_fail).execute(
@@ -494,7 +540,7 @@ async def test_suggest_rule_conflict_on_add_returns_pending_exists(world: AppWor
         catalog=world.catalog,
         rule_sources=sources,
         generator=FakeTextGenerator(),
-        quota=FakeRateLimiter(limit=10),
+        llm_budget=FakeLlmBudget(),
         sink=RecordingUsageEventSink(),
         clock=world.clock,
         monotonic=world.clock,
@@ -502,6 +548,7 @@ async def test_suggest_rule_conflict_on_add_returns_pending_exists(world: AppWor
         pseudonymizer=FakePseudonymizer(),
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
+        analytics_timezone="Europe/Moscow",
     )
     result = await SuggestRuleFromDecode(ports).execute(
         SuggestRuleFromDecodeCommand(tg, token, surface=UsageSurface.DM)
@@ -581,7 +628,7 @@ async def test_suggest_rule_conflict_without_pending_raises_not_found(world: App
         catalog=world.catalog,
         rule_sources=sources,
         generator=FakeTextGenerator(),
-        quota=FakeRateLimiter(limit=10),
+        llm_budget=FakeLlmBudget(),
         sink=RecordingUsageEventSink(),
         clock=world.clock,
         monotonic=world.clock,
@@ -589,6 +636,7 @@ async def test_suggest_rule_conflict_without_pending_raises_not_found(world: App
         pseudonymizer=FakePseudonymizer(),
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
+        analytics_timezone="Europe/Moscow",
     )
     with pytest.raises(NotFound):
         await SuggestRuleFromDecode(ports).execute(

@@ -128,6 +128,30 @@ def test_valkey_url(valkey_url: str) -> str:
     return urlunparse(parsed._replace(path=f"/{_TEST_VALKEY_DB}"))
 
 
+async def require_admin_superuser(admin_url: str) -> None:
+    """Fail fast unless the admin connection role is a PostgreSQL superuser.
+
+    Integration tests create/drop databases and roles the same way compose does;
+    a non-superuser admin connection cannot satisfy that requirement.
+    """
+    admin = create_async_engine(admin_url, isolation_level="AUTOCOMMIT")
+    try:
+        async with admin.connect() as conn:
+            row = await conn.execute(
+                text("SELECT rolsuper FROM pg_roles WHERE rolname = CURRENT_USER")
+            )
+            is_super = row.scalar()
+            if is_super is not True:
+                msg = (
+                    "integration tests require the admin database role to be a PostgreSQL "
+                    "superuser (as in compose POSTGRES_USER); "
+                    "CURRENT_USER is not a superuser"
+                )
+                raise RuntimeError(msg)
+    finally:
+        await admin.dispose()
+
+
 async def ensure_test_database_exists(settings: Settings) -> str:
     """Create ``<database>_test`` if missing; return its URL."""
     base = settings.database_url.get_secret_value()
@@ -135,6 +159,7 @@ async def ensure_test_database_exists(settings: Settings) -> str:
     name = database_name_from_url(url)
     require_test_database_url(url)
     admin_url = replace_database_name(base, "postgres")
+    await require_admin_superuser(admin_url)
     admin = create_async_engine(admin_url, isolation_level="AUTOCOMMIT")
     try:
         async with admin.connect() as conn:

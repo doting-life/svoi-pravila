@@ -171,12 +171,12 @@ services:
       - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
     networks:
-      # Internal network with Postgres only (no egress to other compose services).
+      # Shared with Postgres only. Does not grant lateral access to api/valkey
+      # (egress to the public Internet is not blocked by this network).
       - observability
-      # Default bridge is required for Docker to activate published host ports when
-      # the service also uses an internal network; Grafana still reaches Postgres
-      # only via observability (hostname postgres).
-      - default
+      # Dedicated non-internal network so Docker publishes the host port; Grafana
+      # is the only service attached (no lateral access to app services).
+      - grafana_edge
     depends_on:
       postgres:
         condition: service_healthy
@@ -204,6 +204,7 @@ services:
 networks:
   observability:
     internal: true
+  grafana_edge:
 
 volumes:
   postgres_data:

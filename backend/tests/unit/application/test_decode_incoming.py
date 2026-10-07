@@ -5,13 +5,15 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import date, timedelta
 
 import pytest
 
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.errors import (
     AccessNotGranted,
+    CacheErrorKind,
+    CacheUnavailable,
     GenerationRefusedByProvider,
     GenerationUnavailable,
     IncomingTextTooLong,
@@ -20,8 +22,9 @@ from svoi_pravila.application.errors import (
     InvalidOutputReason,
     NotFound,
     ScenarioBusy,
-    ScenarioQuotaExceeded,
+    ServiceBudgetExhausted,
     UnavailableKind,
+    UserQuotaExhausted,
 )
 from svoi_pravila.application.ports.generation import (
     AnalysisChunk,
@@ -34,6 +37,7 @@ from svoi_pravila.application.ports.generation import (
     TokenUsage,
     Variant,
 )
+from svoi_pravila.application.ports.llm_budget import BudgetExhausted, BudgetOk
 from svoi_pravila.application.use_cases.accept_invite import AcceptInvite, AcceptInviteCommand
 from svoi_pravila.application.use_cases.create_contact import CreateContact, CreateContactCommand
 from svoi_pravila.application.use_cases.create_invite import CreateInvite, CreateInviteCommand
@@ -54,6 +58,7 @@ from svoi_pravila.application.use_cases.set_active_contact import (
 )
 from svoi_pravila.domain.enums import (
     Firmness,
+    LimitKind,
     RelationshipKind,
     RuleCategory,
     UsageOutcome,
@@ -63,19 +68,24 @@ from svoi_pravila.domain.enums import (
 from svoi_pravila.domain.ids import TelegramUserId
 from svoi_pravila.domain.rules import RuleRevision
 from svoi_pravila.domain.text import ContactLabel, RuleText
+from svoi_pravila.domain.usage import UsageEvent
 from tests.fakes.concurrency import FakeConcurrencyGuard
 from tests.fakes.generation import FakeTextGenerator
-from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
+from tests.fakes.quota_budget import FakeLlmBudget, FakeQuotaGate
+from tests.fakes.rate_limit import FakePseudonymizer
 from tests.fakes.usage_sink import FailingUsageEventSink, RecordingUsageEventSink
 from tests.unit.application.conftest import AppWorld
 from tests.unit.domain.test_crisis_screen import THREAT_AND_HYPERBOLE_NEGATIVES
+
+_ANALYTICS_TZ = "Europe/Moscow"
 
 
 @dataclass(frozen=True, slots=True)
 class _DecodeFakes:
     generator: FakeTextGenerator | None = None
     guard: FakeConcurrencyGuard | None = None
-    quota: FakeRateLimiter | None = None
+    quota_gate: FakeQuotaGate | None = None
+    llm_budget: FakeLlmBudget | None = None
     sink: RecordingUsageEventSink | FailingUsageEventSink | None = None
     deadline_seconds: float = 45.0
 
@@ -93,7 +103,8 @@ def _ports(
             catalog=world.catalog,
             generator=chosen.generator or FakeTextGenerator(stream_chunks=("Hi", " there")),
             guard=concurrency,
-            quota=chosen.quota or FakeRateLimiter(limit=20),
+            quota_gate=chosen.quota_gate or FakeQuotaGate(limit=20),
+            llm_budget=chosen.llm_budget or FakeLlmBudget(),
             sink=recording,
             clock=world.clock,
             monotonic=world.clock,
@@ -101,6 +112,7 @@ def _ports(
             pseudonymizer=FakePseudonymizer(),
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=chosen.deadline_seconds,
+            analytics_timezone=_ANALYTICS_TZ,
         )
     )
     return use_case, recording, concurrency
@@ -184,11 +196,15 @@ async def test_decode_busy_and_quota(world: AppWorld) -> None:
     assert sink.events == []
 
     await world.ensure_granted_user(101)
-    quota_uc, quota_sink, quota_guard = _ports(world, _DecodeFakes(quota=FakeRateLimiter(limit=0)))
-    with pytest.raises(ScenarioQuotaExceeded):
+    quota_uc, quota_sink, quota_guard = _ports(
+        world, _DecodeFakes(quota_gate=FakeQuotaGate(limit=0))
+    )
+    with pytest.raises(UserQuotaExhausted):
         await _drain(quota_uc, 101, "hello")
     assert isinstance(quota_sink, RecordingUsageEventSink)
-    assert quota_sink.events == []
+    assert len(quota_sink.events) == 1
+    assert quota_sink.events[0].outcome is UsageOutcome.LIMITED
+    assert quota_sink.events[0].limit_kind is LimitKind.USER_QUOTA
     assert quota_guard.release_calls
 
 
@@ -502,12 +518,148 @@ class _RaisingGen:
 @pytest.mark.unit
 async def test_decode_releases_lock_on_cancellation(world: AppWorld) -> None:
     await world.ensure_granted_user(105)
-    use_case, sink, guard = _ports(world, _DecodeFakes(generator=_CancelStream()))
+    quota_gate = FakeQuotaGate(limit=20)
+    use_case, sink, guard = _ports(
+        world, _DecodeFakes(generator=_CancelStream(), quota_gate=quota_gate)
+    )
     with pytest.raises(asyncio.CancelledError):
         await _drain(use_case, 105, "incoming")
     assert guard.release_calls
+    assert len(quota_gate.refund_calls) == 1
     assert isinstance(sink, RecordingUsageEventSink)
     assert sink.events == []
+
+
+@pytest.mark.unit
+async def test_decode_refund_matrix(world: AppWorld) -> None:
+    await world.ensure_granted_user(110)
+
+    unavailable = FakeTextGenerator(
+        stream_error=GenerationUnavailable(
+            UnavailableKind.TIMEOUT,
+            usage=TokenUsage(input=1),
+            attempts=1,
+            model="m",
+            prompt_version="p",
+        )
+    )
+    quota_unavail = FakeQuotaGate(limit=20)
+    un_uc, _, _ = _ports(world, _DecodeFakes(generator=unavailable, quota_gate=quota_unavail))
+    with pytest.raises(GenerationUnavailable):
+        await _drain(un_uc, 110, "please decode")
+    assert len(quota_unavail.refund_calls) == 1
+
+    refused = FakeTextGenerator(
+        stream_error=GenerationRefusedByProvider(
+            usage=TokenUsage(input=2),
+            attempts=2,
+            model="m",
+            prompt_version="p",
+        )
+    )
+    quota_refused = FakeQuotaGate(limit=20)
+    refused_uc, _, _ = _ports(world, _DecodeFakes(generator=refused, quota_gate=quota_refused))
+    with pytest.raises(GenerationRefusedByProvider):
+        await _drain(refused_uc, 110, "please decode")
+    assert quota_refused.refund_calls == []
+
+    invalid = FakeTextGenerator(
+        stream_error=InvalidGenerationOutput(
+            (InvalidOutputReason.JSON_DECODE,),
+            usage=TokenUsage(output=3),
+            attempts=3,
+            model="m",
+            prompt_version="p",
+        )
+    )
+    quota_invalid = FakeQuotaGate(limit=20)
+    invalid_uc, _, _ = _ports(world, _DecodeFakes(generator=invalid, quota_gate=quota_invalid))
+    with pytest.raises(InvalidGenerationOutput):
+        await _drain(invalid_uc, 110, "please decode")
+    assert quota_invalid.refund_calls == []
+
+
+@pytest.mark.unit
+async def test_decode_persist_before_budget_add(world: AppWorld) -> None:
+    await world.ensure_granted_user(111)
+    order: list[str] = []
+
+    class _OrderSink(RecordingUsageEventSink):
+        async def record(self, event: UsageEvent) -> None:
+            order.append("persist")
+            self.events.append(event)
+
+    class _OrderBudget(FakeLlmBudget):
+        async def add(self, day: date, billable_tokens: int) -> None:
+            order.append("add")
+            await super().add(day, billable_tokens)
+
+    use_case, _sink, _ = _ports(world, _DecodeFakes(sink=_OrderSink(), llm_budget=_OrderBudget()))
+    await _drain(use_case, 111, "incoming")
+    assert order == ["persist", "add"]
+
+
+@pytest.mark.unit
+async def test_decode_service_budget_exhausted(world: AppWorld) -> None:
+    await world.ensure_granted_user(112)
+    generator = FakeTextGenerator()
+    use_case, sink, _ = _ports(
+        world,
+        _DecodeFakes(generator=generator, llm_budget=FakeLlmBudget(exhausted=True)),
+    )
+    with pytest.raises(ServiceBudgetExhausted):
+        await _drain(use_case, 112, "please decode this")
+    assert generator.decode_stream_calls == []
+    assert isinstance(sink, RecordingUsageEventSink)
+    assert len(sink.events) == 1
+    assert sink.events[0].outcome is UsageOutcome.LIMITED
+    assert sink.events[0].limit_kind is LimitKind.GLOBAL_BUDGET
+
+
+@pytest.mark.unit
+async def test_decode_valkey_fail_closed_and_cancel_before_reserve(world: AppWorld) -> None:
+    await world.ensure_granted_user(113)
+    unavailable = CacheUnavailable(CacheErrorKind.NETWORK)
+    check_uc, _, _ = _ports(
+        world,
+        _DecodeFakes(llm_budget=FakeLlmBudget(check_unavailable=unavailable)),
+    )
+    with pytest.raises(GenerationUnavailable) as check_info:
+        await _drain(check_uc, 113, "please decode this")
+    assert check_info.value.kind is UnavailableKind.NETWORK
+
+    reserve_uc, _, _ = _ports(
+        world,
+        _DecodeFakes(quota_gate=FakeQuotaGate(cache_unavailable=unavailable)),
+    )
+    with pytest.raises(GenerationUnavailable) as reserve_info:
+        await _drain(reserve_uc, 113, "please decode this")
+    assert reserve_info.value.kind is UnavailableKind.NETWORK
+
+    add_uc, _, _ = _ports(
+        world,
+        _DecodeFakes(llm_budget=FakeLlmBudget(add_unavailable=unavailable)),
+    )
+    with pytest.raises(GenerationUnavailable) as add_info:
+        await _drain(add_uc, 113, "please decode this")
+    assert add_info.value.kind is UnavailableKind.NETWORK
+
+    class _CancelBudget(FakeLlmBudget):
+        async def check(self, day: date) -> BudgetOk | BudgetExhausted:
+            raise asyncio.CancelledError
+
+    cancel_gate = FakeQuotaGate(limit=20)
+    cancel_uc, _, _ = _ports(
+        world,
+        _DecodeFakes(
+            llm_budget=_CancelBudget(),
+            quota_gate=cancel_gate,
+        ),
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await _drain(cancel_uc, 113, "please decode this")
+    assert cancel_gate.refund_calls == []
+    assert cancel_gate.reserve_count() == 0
 
 
 @pytest.mark.unit
@@ -520,9 +672,16 @@ async def test_decode_crisis_screen_skips_quota_lock_and_generator(world: AppWor
             return None
 
     generator = FakeTextGenerator()
-    quota = FakeRateLimiter(limit=0)
+    quota_gate = FakeQuotaGate(limit=0)
+    llm_budget = FakeLlmBudget(exhausted=True)
     use_case, sink, guard = _ports(
-        world, _DecodeFakes(generator=generator, guard=AlwaysBusy(), quota=quota)
+        world,
+        _DecodeFakes(
+            generator=generator,
+            guard=AlwaysBusy(),
+            quota_gate=quota_gate,
+            llm_budget=llm_budget,
+        ),
     )
     events = await _drain(use_case, 108, "он сказал, что не хочет жить")
     assert len(events) == 1
@@ -531,7 +690,8 @@ async def test_decode_crisis_screen_skips_quota_lock_and_generator(world: AppWor
     assert events[0].result.variants == ()
     assert events[0].applied_rules == ()
     assert generator.decode_stream_calls == []
-    assert quota.check_count() == 0
+    assert quota_gate.reserve_count() == 0
+    assert llm_budget.check_count() == 0
     assert guard.acquire_calls == []
     assert isinstance(sink, RecordingUsageEventSink)
     event = sink.events[0]

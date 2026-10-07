@@ -18,42 +18,20 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from svoi_pravila.adapters.cache.client import close_client, create_client
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
-from svoi_pravila.adapters.channels.telegram.bot_username import BotUsernameCache
 from svoi_pravila.adapters.channels.telegram.init_data import AiogramInitDataVerifier
 from svoi_pravila.adapters.consents import PackageConsentCatalog
 from svoi_pravila.adapters.persistence.uow import SqlAlchemyUnitOfWorkFactory
 from svoi_pravila.api.app import AppLifecycleHooks, create_app
-from svoi_pravila.api.miniapp import MiniappDeps, MiniappRouterBindings, build_miniapp_router
+from svoi_pravila.api.miniapp import MiniappDeps, build_miniapp_router
 from svoi_pravila.api.miniapp.errors import MiniappErrorCode
 from svoi_pravila.application.use_cases.accept_age_confirmation import (
     AcceptAgeConfirmation,
     AcceptAgeConfirmationCommand,
 )
-from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
-from svoi_pravila.application.use_cases.approve_rule import ApproveRule
-from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
-from svoi_pravila.application.use_cases.create_contact import CreateContact
-from svoi_pravila.application.use_cases.create_invite import CreateInvite
-from svoi_pravila.application.use_cases.delete_my_account import (
-    DeleteMyAccount,
-    DeleteMyAccountPorts,
-)
-from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggestion
-from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent, GrantConsentCommand
-from svoi_pravila.application.use_cases.leave_pair import LeavePair
-from svoi_pravila.application.use_cases.list_contacts import ListContacts
-from svoi_pravila.application.use_cases.list_rules import ListRules
-from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
-from svoi_pravila.application.use_cases.propose_rule import ProposeRule
-from svoi_pravila.application.use_cases.reject_pending_rule import RejectPendingRule
-from svoi_pravila.application.use_cases.rename_contact import RenameContact
-from svoi_pravila.application.use_cases.request_my_data_export import RequestMyDataExport
-from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
-from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from svoi_pravila.config import Environment, Settings
 from svoi_pravila.crypto import HmacPseudonymizer
 from svoi_pravila.domain.enums import ConsentKind, RuleCategory
@@ -62,13 +40,14 @@ from svoi_pravila.domain.rule_suggestion import RuleSuggestion
 from svoi_pravila.domain.text import RuleText
 from tests.factories import make_settings
 from tests.fakes.clock import FakeClock
-from tests.fakes.export_delivery import FakeExportDelivery
+from tests.fakes.export_download import FakeExportDownloadStore
 from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
 from tests.fakes.pair_notifier import FakePairNotifier
 from tests.fakes.tokens import FakeTokenGenerator
 from tests.integration.test_user_rights_delete import _scan_has_uuid
 from tests.support.init_data import InitDataOptions, build_webapp_init_data
+from tests.support.miniapp_bindings import build_test_miniapp_bindings
 from tests.support.miniapp_decode import build_miniapp_decode_bundle
 
 _TOKEN = "14:INTEGRATION-MINIAPP"
@@ -115,6 +94,8 @@ class _MiniappWorld:
     clock: FakeClock
     ids: FakeIdGenerator
     catalog: PackageConsentCatalog
+    tokens: FakeTokenGenerator
+    notifier: FakePairNotifier
 
 
 async def _grant_user(world: _MiniappWorld, telegram_id: int) -> None:
@@ -133,7 +114,6 @@ def _build_app(world: _MiniappWorld) -> Any:
     valkey = world.valkey
     settings = world.settings
     clock = world.clock
-    ids = world.ids
     catalog = world.catalog
     auth = MiniappDeps(
         init_data_verifier=AiogramInitDataVerifier(SecretStr(_TOKEN), clock, max_age_seconds=3600),
@@ -147,41 +127,27 @@ def _build_app(world: _MiniappWorld) -> Any:
     pepper = HmacPseudonymizer(settings.pseudonym_pepper_bytes())
     reuse = make_inline_reuse(clock)
     decode_bundle = build_miniapp_decode_bundle(world)
-    bindings = MiniappRouterBindings(
+    from svoi_pravila.application.use_cases.delete_my_account import (
+        DeleteMyAccount,
+        DeleteMyAccountPorts,
+    )
+
+    bindings = build_test_miniapp_bindings(
         auth=auth,
-        list_contacts=ListContacts(uow_factory, catalog),
-        create_contact=CreateContact(uow_factory, catalog, ids, clock),
-        rename_contact=RenameContact(uow_factory, catalog),
-        set_active_contact=SetActiveContact(uow_factory, catalog),
-        create_invite=CreateInvite(uow_factory, catalog, ids, FakeTokenGenerator(), clock),
-        leave_pair=LeavePair(uow_factory, ids, clock, FakePairNotifier()),
-        list_rules=ListRules(uow_factory, catalog),
-        propose_rule=ProposeRule(uow_factory, catalog, ids, clock, FakePairNotifier()),
-        archive_rule=ArchiveRule(uow_factory, catalog, clock),
-        approve_rule=ApproveRule(uow_factory, catalog, clock, FakePairNotifier()),
-        reject_pending_rule=RejectPendingRule(uow_factory, catalog, clock, FakePairNotifier()),
-        list_suggestions=ListSuggestions(uow_factory, catalog),
-        accept_suggestion=AcceptSuggestion(uow_factory, catalog, ids, clock),
-        dismiss_suggestion=DismissSuggestion(uow_factory, catalog, clock),
-        request_my_data_export=RequestMyDataExport(
-            ExportMyData(uow_factory, clock),
-            FakeExportDelivery(),
-        ),
-        revoke_all_consents=RevokeAllConsents(uow_factory, clock, reuse),
-        delete_my_account=DeleteMyAccount(
-            DeleteMyAccountPorts(uow_factory, ids, pepper, clock, reuse, FakePairNotifier())
-        ),
+        world=world,
+        decode_bundle=decode_bundle,
+        reuse=reuse,
+        export_store=FakeExportDownloadStore(),
         export_rate_limiter=ValkeyRateLimiter(
             valkey, limit=3, window_seconds=3600, key_prefix="miniapp:export"
         ),
         display_timezone=settings.display_timezone,
-        decode_incoming=decode_bundle.decode_incoming,
-        suggest_rule_from_decode=decode_bundle.suggest_rule_from_decode,
-        prepared_results=decode_bundle.prepared_results,
-        rule_sources=decode_bundle.rule_sources,
-        pseudonymizer=decode_bundle.pseudonymizer,
-        bot_username=BotUsernameCache(username="test_bot"),
-        enable_test_routes=True,
+        miniapp_url="https://miniapp.test",
+        overrides={
+            "delete_my_account": DeleteMyAccount(
+                DeleteMyAccountPorts(uow_factory, world.ids, pepper, clock, reuse, world.notifier)
+            ),
+        },
     )
     return create_app(
         CheckReadiness(probes=(), timeout_seconds=1.0),
@@ -205,6 +171,8 @@ async def test_miniapp_api_happy_path_idor_privacy(
         clock=FakeClock(start=_NOW),
         ids=FakeIdGenerator(),
         catalog=PackageConsentCatalog(),
+        tokens=FakeTokenGenerator(),
+        notifier=FakePairNotifier(),
     )
     await _grant_user(world, _TG_A)
     await _grant_user(world, _TG_B)
@@ -340,6 +308,8 @@ async def test_miniapp_delete_shreds_user_and_keys(
         clock=FakeClock(start=_NOW),
         ids=FakeIdGenerator(),
         catalog=PackageConsentCatalog(),
+        tokens=FakeTokenGenerator(),
+        notifier=FakePairNotifier(),
     )
     await _grant_user(world, _TG_A)
     app = _build_app(world)
@@ -404,6 +374,8 @@ async def test_miniapp_pair_invite_shared_approve_leave(
         clock=FakeClock(start=_NOW),
         ids=FakeIdGenerator(),
         catalog=PackageConsentCatalog(),
+        tokens=FakeTokenGenerator(),
+        notifier=FakePairNotifier(),
     )
     await _grant_user(world, _TG_A)
     await _grant_user(world, _TG_B)

@@ -11,7 +11,7 @@ class RuleSources(Protocol):
     """Seal and single-use redeem of decode rule-source payloads."""
 
     async def store(self, user_pseudonym: str, payload: RuleSourcePayload) -> str:
-        """Encrypt ``payload`` and return a token for ``sn:{token}`` callback data."""
+        """Encrypt ``payload`` and return an opaque redeem token for the mini-app."""
 
     async def redeem_once(self, user_pseudonym: str, token: str) -> RuleSourcePayload:
         """Atomically delete and decrypt; miss/reuse/wrong user → RuleSourceUnavailable."""

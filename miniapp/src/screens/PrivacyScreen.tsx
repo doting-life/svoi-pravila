@@ -33,19 +33,11 @@ export function PrivacyScreen({ telegram, onRevoked, onDeleteRequested }: Privac
         setExportBusy(true);
         setExportMessage(null);
         setExportError(null);
-        const result = await actions.exportData();
+        const result = await actions.exportData(telegram);
         setExportBusy(false);
         if (result.error !== undefined) {
             telegram.hapticNotification("error");
-            if (result.error.code === "bot_chat_unavailable") {
-                setExportError(ru.privacyExportUnavailable);
-                return;
-            }
-            if (result.error.code === "rate_limited" || result.error.status === 429) {
-                setExportError(ru.rateLimited);
-                return;
-            }
-            setExportError(result.error.message || ru.errorGeneric);
+            setExportError(result.error);
             return;
         }
         telegram.hapticNotification("success");
@@ -84,65 +76,73 @@ export function PrivacyScreen({ telegram, onRevoked, onDeleteRequested }: Privac
                 </h2>
             </header>
 
-            <section className="block" aria-labelledby="export-title">
-                <h3 id="export-title" className="block-title">
-                    {ru.privacyExportAction}
-                </h3>
-                <p className="status-message">{catalog.export.description}</p>
-                <button
-                    type="button"
-                    className="btn btn-primary"
-                    disabled={exportBusy}
-                    onClick={() => {
-                        void exportData();
-                    }}
-                >
-                    {exportBusy ? ru.loading : ru.privacyExportAction}
-                </button>
-                {exportMessage !== null ? (
-                    <p className="status-message" role="status">
-                        {exportMessage}
-                    </p>
-                ) : null}
-                {exportError !== null ? (
-                    <p className="status-message" role="alert">
-                        {exportError}
-                    </p>
-                ) : null}
-            </section>
+            <p className="status-message">{catalog.export.description}</p>
 
-            <section className="block" aria-labelledby="revoke-title">
-                <h3 id="revoke-title" className="block-title">
-                    {ru.privacyRevokeAction}
-                </h3>
-                <p className="status-message">{catalog.revoke.description}</p>
-                <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={revokeBusy}
-                    onClick={() => {
-                        void revoke();
-                    }}
-                >
-                    {revokeBusy ? ru.loading : ru.privacyRevokeAction}
-                </button>
-            </section>
+            <ul className="list">
+                <li className="list-item">
+                    <div className="list-item-body">
+                        <p className="list-item-title">{ru.privacyExportAction}</p>
+                    </div>
+                    <div className="list-item-actions">
+                        <button
+                            type="button"
+                            className="btn btn-primary"
+                            disabled={exportBusy}
+                            onClick={() => {
+                                void exportData();
+                            }}
+                        >
+                            {exportBusy ? ru.loading : ru.privacyExportAction}
+                        </button>
+                    </div>
+                </li>
+                <li className="list-item">
+                    <div className="list-item-body">
+                        <p className="list-item-title">{ru.privacyRevokeAction}</p>
+                        <p className="status-message">{catalog.revoke.description}</p>
+                    </div>
+                    <div className="list-item-actions">
+                        <button
+                            type="button"
+                            className="btn btn-secondary"
+                            disabled={revokeBusy}
+                            onClick={() => {
+                                void revoke();
+                            }}
+                        >
+                            {revokeBusy ? ru.loading : ru.privacyRevokeAction}
+                        </button>
+                    </div>
+                </li>
+                <li className="list-item">
+                    <div className="list-item-body">
+                        <p className="list-item-title">{ru.privacyDeleteAction}</p>
+                        <p className="status-message">{catalog.delete.description}</p>
+                    </div>
+                    <div className="list-item-actions">
+                        <button
+                            type="button"
+                            className="btn btn-danger"
+                            onClick={() => {
+                                void beginDelete();
+                            }}
+                        >
+                            {ru.privacyDeleteAction}
+                        </button>
+                    </div>
+                </li>
+            </ul>
 
-            <section className="block" aria-labelledby="delete-title">
-                <h3 id="delete-title" className="block-title">
-                    {ru.privacyDeleteAction}
-                </h3>
-                <p className="status-message">{catalog.delete.description}</p>
-                <button
-                    type="button"
-                    className="btn btn-danger"
-                    onClick={() => {
-                        void beginDelete();
-                    }}
-                >
-                    {ru.privacyDeleteAction}
-                </button>
-            </section>
+            {exportMessage !== null ? (
+                <p className="status-message" role="status">
+                    {exportMessage}
+                </p>
+            ) : null}
+            {exportError !== null ? (
+                <p className="status-message" role="alert">
+                    {exportError}
+                </p>
+            ) : null}
         </section>
     );
 }

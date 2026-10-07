@@ -16,13 +16,7 @@ from svoi_pravila.adapters.cache.sealed_token import (
     seal_aad,
 )
 from svoi_pravila.application.errors import RuleSourceUnavailable
-from svoi_pravila.application.rule_source import (
-    RULE_SOURCE_CALLBACK_MAX_BYTES,
-    RULE_SOURCE_CALLBACK_PREFIX,
-    RULE_SOURCE_ID_LEN,
-    RuleSourcePayload,
-    rule_source_callback_data,
-)
+from svoi_pravila.application.rule_source import RULE_SOURCE_ID_LEN, RuleSourcePayload
 from svoi_pravila.domain.ids import ContactId
 
 
@@ -55,16 +49,14 @@ def _store() -> tuple[ValkeyRuleSources, _MemoryRedis]:
 
 
 @pytest.mark.unit
-async def test_rule_source_callback_fits_64_bytes() -> None:
+async def test_rule_source_token_is_opaque() -> None:
     store, _memory = _store()
     token = await store.store(
         "a" * 64,
         RuleSourcePayload(contact_id=ContactId(UUID(int=1)), incoming_text="привет"),
     )
-    callback = rule_source_callback_data(token)
-    assert callback.startswith(RULE_SOURCE_CALLBACK_PREFIX)
-    assert len(callback.encode("utf-8")) <= RULE_SOURCE_CALLBACK_MAX_BYTES
-    assert len(callback.encode("utf-8")) == 57
+    assert ":" not in token
+    assert len(token) > 0
 
 
 @pytest.mark.unit

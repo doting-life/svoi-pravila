@@ -10,6 +10,7 @@ from fastapi import Depends, Header, Response
 
 from svoi_pravila.api.miniapp.errors import MiniappErrorCode
 from svoi_pravila.api.miniapp.http import MiniappHttpError
+from svoi_pravila.application.errors import NotFound
 from svoi_pravila.application.ports.init_data import (
     InitDataExpired,
     InitDataInvalid,
@@ -31,6 +32,7 @@ from svoi_pravila.domain.user import User
 
 logger = structlog.get_logger(__name__)
 _AUTH_PREFIX = "tma "
+_INVITE_START_PREFIX = "inv_"
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +41,7 @@ class MiniappAuthContext:
 
     telegram_user_id: TelegramUserId
     user: User | None
+    start_param: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -94,6 +97,7 @@ class MiniappAuthenticator:
             return MiniappAuthContext(
                 telegram_user_id=verified.telegram_user_id,
                 user=user_result.user,
+                start_param=verified.start_param,
             )
 
         async def require_actor(
@@ -112,6 +116,16 @@ class MiniappAuthenticator:
 
         self.authenticate = authenticate
         self.require_actor = require_actor
+
+
+def invite_raw_token_from_start_param(start_param: str | None) -> str:
+    """Extract the raw invite token from ``start_param``; missing/forged → NotFound."""
+    if start_param is None or not start_param.startswith(_INVITE_START_PREFIX):
+        raise NotFound()
+    raw = start_param.removeprefix(_INVITE_START_PREFIX)
+    if not raw:
+        raise NotFound()
+    return raw
 
 
 def parse_path_uuid(raw: str) -> UUID:

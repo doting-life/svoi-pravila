@@ -13,7 +13,7 @@ from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 from tests.fakes.clock import FakeClock
 from tests.fakes.consent_catalog import FakeConsentCatalog
-from tests.fakes.export_delivery import FakeExportDelivery
+from tests.fakes.export_download import FakeExportDownloadStore
 from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
 from tests.fakes.pair_notifier import FakePairNotifier
@@ -21,43 +21,22 @@ from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
 from tests.fakes.tokens import FakeTokenGenerator
 from tests.fakes.uow import InMemoryUnitOfWorkFactory
 from tests.support.init_data import InitDataOptions, build_webapp_init_data
+from tests.support.miniapp_bindings import build_test_miniapp_bindings
 from tests.support.miniapp_decode import build_miniapp_decode_bundle
 from tests.unit.application.conftest import AppWorld
 
-from svoi_pravila.adapters.channels.telegram.bot_username import BotUsernameCache
 from svoi_pravila.adapters.channels.telegram.init_data import AiogramInitDataVerifier
 from svoi_pravila.api.app import AppLifecycleHooks, create_app
-from svoi_pravila.api.miniapp import MiniappDeps, MiniappRouterBindings, build_miniapp_router
+from svoi_pravila.api.miniapp import MiniappDeps, build_miniapp_router
 from svoi_pravila.api.miniapp.body_limit import MAX_BODY_BYTES
 from svoi_pravila.api.miniapp.errors import MiniappErrorCode, error_body
 from svoi_pravila.api.miniapp.http import map_access_error, register_miniapp_exception_handlers
 from svoi_pravila.application.errors import AccessNotGranted
-from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
-from svoi_pravila.application.use_cases.approve_rule import ApproveRule
-from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.confirm_age import ConfirmAge, ConfirmAgeCommand
-from svoi_pravila.application.use_cases.create_contact import CreateContact
-from svoi_pravila.application.use_cases.create_invite import CreateInvite
-from svoi_pravila.application.use_cases.delete_my_account import (
-    DeleteMyAccount,
-    DeleteMyAccountPorts,
-)
-from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggestion
 from svoi_pravila.application.use_cases.ensure_user import EnsureUser, EnsureUserCommand
-from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
-from svoi_pravila.application.use_cases.leave_pair import LeavePair
-from svoi_pravila.application.use_cases.list_contacts import ListContacts
-from svoi_pravila.application.use_cases.list_rules import ListRules
-from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
-from svoi_pravila.application.use_cases.propose_rule import ProposeRule
-from svoi_pravila.application.use_cases.reject_pending_rule import RejectPendingRule
-from svoi_pravila.application.use_cases.rename_contact import RenameContact
-from svoi_pravila.application.use_cases.request_my_data_export import RequestMyDataExport
-from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
-from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from svoi_pravila.config import Environment
 from svoi_pravila.domain.access import AccessStatus
 from svoi_pravila.domain.contact import MAX_CONTACTS_PER_USER
@@ -73,13 +52,21 @@ _TG_A = 10_014
 _TG_B = 20_014
 
 
-def _auth_header(telegram_id: int, *, auth_date: datetime | None = None) -> dict[str, str]:
+def _auth_header(
+    telegram_id: int,
+    *,
+    auth_date: datetime | None = None,
+    start_param: str | None = None,
+) -> dict[str, str]:
     when = auth_date if auth_date is not None else _NOW
+    extra: dict[str, str] = {"query_id": "unit-qid"}
+    if start_param is not None:
+        extra["start_param"] = start_param
     raw = build_webapp_init_data(
         _TOKEN,
         user_id=telegram_id,
         auth_date=int(when.timestamp()),
-        options=InitDataOptions(extra={"query_id": "unit-qid"}),
+        options=InitDataOptions(extra=extra),
     )
     return {"Authorization": f"tma {raw}"}
 
@@ -89,7 +76,8 @@ def _build_app(
     *,
     rate_limit: int = 120,
     export_limit: int = 3,
-    delivery: FakeExportDelivery | None = None,
+    export_store: FakeExportDownloadStore | None = None,
+    miniapp_url: str | None = "https://miniapp.test",
 ) -> Any:
     auth = MiniappDeps(
         init_data_verifier=AiogramInitDataVerifier(
@@ -101,56 +89,15 @@ def _build_app(
         get_onboarding_step=GetOnboardingStep(world.uow_factory, world.catalog),
     )
     reuse = make_inline_reuse(world.clock)
-    export_delivery = delivery if delivery is not None else FakeExportDelivery()
     decode_bundle = build_miniapp_decode_bundle(world)
-    bindings = MiniappRouterBindings(
+    bindings = build_test_miniapp_bindings(
         auth=auth,
-        list_contacts=ListContacts(world.uow_factory, world.catalog),
-        create_contact=CreateContact(world.uow_factory, world.catalog, world.ids, world.clock),
-        rename_contact=RenameContact(world.uow_factory, world.catalog),
-        set_active_contact=SetActiveContact(world.uow_factory, world.catalog),
-        create_invite=CreateInvite(
-            world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
-        ),
-        leave_pair=LeavePair(world.uow_factory, world.ids, world.clock, world.notifier),
-        list_rules=ListRules(world.uow_factory, world.catalog),
-        propose_rule=ProposeRule(
-            world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
-        ),
-        archive_rule=ArchiveRule(world.uow_factory, world.catalog, world.clock),
-        approve_rule=ApproveRule(world.uow_factory, world.catalog, world.clock, world.notifier),
-        reject_pending_rule=RejectPendingRule(
-            world.uow_factory, world.catalog, world.clock, world.notifier
-        ),
-        list_suggestions=ListSuggestions(world.uow_factory, world.catalog),
-        accept_suggestion=AcceptSuggestion(
-            world.uow_factory, world.catalog, world.ids, world.clock
-        ),
-        dismiss_suggestion=DismissSuggestion(world.uow_factory, world.catalog, world.clock),
-        request_my_data_export=RequestMyDataExport(
-            ExportMyData(world.uow_factory, world.clock),
-            export_delivery,
-        ),
-        revoke_all_consents=RevokeAllConsents(world.uow_factory, world.clock, reuse),
-        delete_my_account=DeleteMyAccount(
-            DeleteMyAccountPorts(
-                world.uow_factory,
-                world.ids,
-                FakePseudonymizer(),
-                world.clock,
-                reuse,
-                world.notifier,
-            )
-        ),
+        world=world,
+        decode_bundle=decode_bundle,
+        reuse=reuse,
+        export_store=export_store,
         export_rate_limiter=FakeRateLimiter(limit=export_limit),
-        display_timezone="Europe/Moscow",
-        decode_incoming=decode_bundle.decode_incoming,
-        suggest_rule_from_decode=decode_bundle.suggest_rule_from_decode,
-        prepared_results=decode_bundle.prepared_results,
-        rule_sources=decode_bundle.rule_sources,
-        pseudonymizer=decode_bundle.pseudonymizer,
-        bot_username=BotUsernameCache(username="test_bot"),
-        enable_test_routes=True,
+        miniapp_url=miniapp_url,
     )
     return create_app(
         CheckReadiness(probes=(), timeout_seconds=1.0),
@@ -650,6 +597,113 @@ async def test_non_miniapp_validation_keeps_detail() -> None:
 
 
 @pytest.mark.unit
+async def test_invite_resolve_accept_via_start_param(mini_world: AppWorld) -> None:
+    await mini_world.ensure_granted_user(_TG_A)
+    await mini_world.ensure_granted_user(_TG_B)
+    app = _build_app(mini_world)
+    headers_a = _auth_header(_TG_A)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            "/api/v1/contacts",
+            headers=headers_a,
+            json={"label": "Partner", "relationship": "friend"},
+        )
+        contact_id = created.json()["id"]
+        invite = await client.post(f"/api/v1/contacts/{contact_id}/invite", headers=headers_a)
+        assert invite.status_code == 201
+        link = invite.json()["link"]
+        assert link.startswith("https://t.me/test_bot?startapp=inv_")
+        raw_token = link.rsplit("inv_", 1)[1]
+
+        missing = await client.post("/api/v1/invites/resolve", headers=_auth_header(_TG_B))
+        assert missing.status_code == 404
+        forged = await client.post(
+            "/api/v1/invites/resolve",
+            headers=_auth_header(_TG_B, start_param="forged_token"),
+        )
+        assert forged.status_code == 404
+        wrong_prefix = await client.post(
+            "/api/v1/invites/resolve",
+            headers=_auth_header(_TG_B, start_param="x_not_inv"),
+        )
+        assert wrong_prefix.status_code == 404
+
+        resolved = await client.post(
+            "/api/v1/invites/resolve",
+            headers=_auth_header(_TG_B, start_param=f"inv_{raw_token}"),
+        )
+        assert resolved.status_code == 200
+        assert "expires_at" in resolved.json()
+
+        own = await client.post(
+            "/api/v1/invites/resolve",
+            headers=_auth_header(_TG_A, start_param=f"inv_{raw_token}"),
+        )
+        assert own.status_code == 409
+        assert own.json()["code"] == MiniappErrorCode.INVITE_OWN
+
+        accepted = await client.post(
+            "/api/v1/invites/accept",
+            headers=_auth_header(_TG_B, start_param=f"inv_{raw_token}"),
+            json={"label": "Inviter", "relationship": "friend"},
+        )
+        assert accepted.status_code == 204
+        assert mini_world.notifier.invite_accepted_calls
+
+        contacts_b = await client.get("/api/v1/contacts", headers=_auth_header(_TG_B))
+        assert contacts_b.json()["contacts"][0]["paired"] is True
+
+        reuse = await client.post(
+            "/api/v1/invites/resolve",
+            headers=_auth_header(_TG_B, start_param=f"inv_{raw_token}"),
+        )
+        assert reuse.status_code == 409
+        assert reuse.json()["code"] == MiniappErrorCode.INVITE_INVALID
+
+        empty_prefix = await client.post(
+            "/api/v1/invites/resolve",
+            headers=_auth_header(_TG_B, start_param="inv_"),
+        )
+        assert empty_prefix.status_code == 404
+
+
+@pytest.mark.unit
+async def test_invite_resolve_requires_existing_user_and_expiry(mini_world: AppWorld) -> None:
+    await mini_world.ensure_granted_user(_TG_A)
+    app = _build_app(mini_world)
+    headers_a = _auth_header(_TG_A)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            "/api/v1/contacts",
+            headers=headers_a,
+            json={"label": "Partner", "relationship": "friend"},
+        )
+        contact_id = created.json()["id"]
+        invite = await client.post(f"/api/v1/contacts/{contact_id}/invite", headers=headers_a)
+        raw_token = invite.json()["link"].rsplit("inv_", 1)[1]
+
+        before_user = await client.post(
+            "/api/v1/invites/resolve",
+            headers=_auth_header(_TG_B, start_param=f"inv_{raw_token}"),
+        )
+        assert before_user.status_code == 403
+        assert before_user.json()["code"] == MiniappErrorCode.ONBOARDING_REQUIRED
+
+        await mini_world.ensure_granted_user(_TG_B)
+        mini_world.clock.advance(timedelta(days=40))
+        expired = await client.post(
+            "/api/v1/invites/resolve",
+            headers=_auth_header(
+                _TG_B,
+                auth_date=mini_world.clock.now(),
+                start_param=f"inv_{raw_token}",
+            ),
+        )
+        assert expired.status_code == 409
+        assert expired.json()["code"] == MiniappErrorCode.INVITE_EXPIRED
+
+
+@pytest.mark.unit
 async def test_pair_invite_shared_rule_approve_reject_leave(mini_world: AppWorld) -> None:
     from svoi_pravila.application.use_cases.accept_invite import AcceptInvite, AcceptInviteCommand
     from svoi_pravila.application.use_cases.resolve_invite import (
@@ -694,7 +748,7 @@ async def test_pair_invite_shared_rule_approve_reject_leave(mini_world: AppWorld
         )
         assert invite.status_code == 201
         link = invite.json()["link"]
-        assert link.startswith("https://t.me/test_bot?start=inv_")
+        assert link.startswith("https://t.me/test_bot?startapp=inv_")
         assert "expires_at" in invite.json()
 
         again = await client.post(

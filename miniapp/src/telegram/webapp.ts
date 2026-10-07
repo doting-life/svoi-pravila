@@ -14,6 +14,7 @@ export type InlineQueryChatType = "users" | "bots" | "groups" | "channels";
 
 export type TelegramAdapter = {
     readonly initData: string;
+    readonly startParam: string | null;
     readonly colorScheme: ColorScheme;
     readonly themeCssVariables: ThemeCssVariables;
     readonly isInsideTelegram: boolean;
@@ -23,6 +24,7 @@ export type TelegramAdapter = {
     close: () => void;
     showConfirm: (message: string) => Promise<boolean>;
     openTelegramLink: (url: string) => void;
+    downloadFile: (url: string, fileName: string) => Promise<boolean>;
     copyText: (text: string) => Promise<boolean>;
     hapticNotification: (type: HapticNotificationType) => void;
     switchInlineQuery: (query: string, chooseChatTypes: readonly InlineQueryChatType[]) => void;
@@ -101,9 +103,12 @@ export function createTelegramAdapter(): TelegramAdapter {
     const webApp = readWebApp();
     const initData = webApp?.initData ?? "";
     const isInsideTelegram = initData.length > 0;
+    const rawStart = webApp?.initDataUnsafe?.start_param;
+    const startParam = typeof rawStart === "string" && rawStart.length > 0 ? rawStart : null;
 
     return {
         initData,
+        startParam,
         get colorScheme() {
             return readColorScheme(readWebApp());
         },
@@ -148,6 +153,17 @@ export function createTelegramAdapter(): TelegramAdapter {
             }
             window.open(url, "_blank", "noopener,noreferrer");
         },
+        downloadFile: (url: string, fileName: string) =>
+            new Promise<boolean>((resolve) => {
+                const current = readWebApp();
+                if (current === undefined || typeof current.downloadFile !== "function") {
+                    resolve(false);
+                    return;
+                }
+                current.downloadFile({ url, file_name: fileName }, (accepted) => {
+                    resolve(accepted);
+                });
+            }),
         copyText: async (text: string) => {
             try {
                 await navigator.clipboard.writeText(text);

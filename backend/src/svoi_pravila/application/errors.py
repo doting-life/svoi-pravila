@@ -217,10 +217,6 @@ class PreparedResultUnavailable(ApplicationError):
     """Prepared-result token is missing, expired, tampered, or bound to another user."""
 
 
-class BotChatUnavailable(ApplicationError):
-    """The user has blocked the bot or never started a private chat."""
-
-
 class RuleSourceUnavailable(ApplicationError):
     """Rule-source token is missing, expired, reused, tampered, or bound to another user."""
 

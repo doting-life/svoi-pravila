@@ -10,7 +10,6 @@ from svoi_pravila.application.rule_source import (
     RuleSourcePayload,
     decode_rule_source_payload,
     encode_rule_source_payload,
-    rule_source_callback_data,
 )
 from svoi_pravila.domain.ids import ContactId
 
@@ -31,10 +30,3 @@ def test_rule_source_decode_rejects_defects() -> None:
         decode_rule_source_payload(b"\ntext")
     with pytest.raises(ValueError):
         decode_rule_source_payload(b"not-a-uuid\ntext")
-
-
-@pytest.mark.unit
-def test_rule_source_callback_rejects_oversized_token() -> None:
-    assert rule_source_callback_data("short") == "sn:short"
-    with pytest.raises(ValueError, match="64 bytes"):
-        rule_source_callback_data("x" * 62)

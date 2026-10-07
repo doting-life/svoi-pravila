@@ -5,7 +5,7 @@ from __future__ import annotations
 import structlog
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import ErrorEvent, Message
+from aiogram.types import ErrorEvent
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 
@@ -42,9 +42,10 @@ async def telegram_error_handler(event: ErrorEvent, bot: Bot, tg_deps: TelegramD
 
 def _chat_id(event: ErrorEvent) -> int | None:
     update = event.update
-    if update.message is not None:
+    if (
+        update.message is not None
+        and update.message.chat is not None
+        and update.message.chat.type == "private"
+    ):
         return update.message.chat.id
-    callback = update.callback_query
-    if callback is not None and isinstance(callback.message, Message):
-        return callback.message.chat.id
     return None

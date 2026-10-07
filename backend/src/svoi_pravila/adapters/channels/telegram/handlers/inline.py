@@ -16,13 +16,12 @@ from aiogram.types import (
     InlineQueryResultsButton,
     InlineQueryResultUnion,
     InputTextMessageContent,
+    WebAppInfo,
 )
 
 from svoi_pravila.adapters.channels.telegram.dates import format_display_date
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
-from svoi_pravila.adapters.channels.telegram.keyboards import suggestion_decision_keyboard
 from svoi_pravila.adapters.channels.telegram.localization import firmness_label
-from svoi_pravila.adapters.channels.telegram.presenters import render_suggestion_dm
 from svoi_pravila.application.errors import (
     AccessNotGranted,
     GenerationRefusedByProvider,
@@ -42,16 +41,13 @@ from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
 from svoi_pravila.application.ports.generation import AppliedRuleView, SafetyVerdict, Variant
 from svoi_pravila.application.ports.monotonic import MonotonicClock
 from svoi_pravila.application.prepared_ref import is_prepared_ref
-from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramIdQuery
 from svoi_pravila.application.use_cases.inline_compose import (
     InlineComposeCommand,
     InlineComposeResult,
 )
-from svoi_pravila.application.use_cases.list_contacts import ListContactsCommand
-from svoi_pravila.application.use_cases.list_suggestions import ListSuggestionsCommand
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoiceCommand
 from svoi_pravila.domain.enums import UsageScenario
-from svoi_pravila.domain.ids import RuleSuggestionId, TelegramUserId
+from svoi_pravila.domain.ids import TelegramUserId
 from svoi_pravila.limits import load_limits_catalog
 from svoi_pravila.limits.catalog import format_reset_hhmm
 
@@ -107,6 +103,7 @@ def build_inline_router() -> Router:
         tg_deps: TelegramDeps,
         bot: Bot,
     ) -> None:
+        _ = bot
         user_id = chosen.from_user.id
         result_id = chosen.result_id
         query = chosen.query
@@ -121,52 +118,8 @@ def build_inline_router() -> Router:
         except InvalidInlineResultRef:
             return
         logger.info("tone_signal", outcome=recorded.tone_outcome.value)
-        if recorded.suggestion_id is not None:
-            await _send_tone_suggestion_dm(bot, tg_deps, user_id, recorded.suggestion_id)
 
     return router
-
-
-async def _send_tone_suggestion_dm(
-    bot: Bot,
-    tg_deps: TelegramDeps,
-    telegram_user_id: int,
-    suggestion_id: RuleSuggestionId,
-) -> None:
-    """One-time DM for a new tone suggestion; Telegram API failures are C0-logged only."""
-    try:
-        lookup = await tg_deps.get_user_by_telegram_id.execute(
-            GetUserByTelegramIdQuery(TelegramUserId(telegram_user_id))
-        )
-        user = lookup.user
-        if user is None or user.active_contact_id is None:
-            return
-        pending = await tg_deps.list_suggestions.execute(
-            ListSuggestionsCommand(user.id, user.active_contact_id)
-        )
-        suggestion = next((s for s in pending.suggestions if s.id == suggestion_id), None)
-        if suggestion is None or suggestion.firmness is None:
-            return
-        contacts = await tg_deps.list_contacts.execute(ListContactsCommand(user.id))
-        contact = next((c for c in contacts.contacts if c.id == suggestion.contact_id), None)
-        if contact is None:
-            return
-        text = render_suggestion_dm(
-            tg_deps.strings,
-            firmness=suggestion.firmness,
-            contact_label=contact.label.value,
-            rule_text=suggestion.text.value,
-        )
-        await bot.send_message(
-            telegram_user_id,
-            text,
-            reply_markup=suggestion_decision_keyboard(tg_deps.strings, suggestion.id),
-        )
-    except (TelegramAPIError, NotFound, AccessNotGranted) as exc:
-        logger.info(
-            "tone_suggestion_dm_failed",
-            error_type=type(exc).__name__,
-        )
 
 
 async def _answer_composed(query: InlineQuery, bot: Bot, tg_deps: TelegramDeps) -> None:
@@ -269,7 +222,7 @@ async def _answer_compose_result(
             bot,
             tg_deps,
             onboard=False,
-            deep_link=(tg_deps.strings.inline_button_need_support, "support"),
+            button_text=tg_deps.strings.inline_button_need_support,
         )
         outcome = (
             InlineAnsweredOutcome.TELEGRAM_API
@@ -282,7 +235,7 @@ async def _answer_compose_result(
             bot,
             tg_deps,
             onboard=False,
-            deep_link=(tg_deps.strings.inline_button_why_no_variants, "why"),
+            button_text=tg_deps.strings.inline_button_why_no_variants,
         )
         outcome = (
             InlineAnsweredOutcome.TELEGRAM_API if not telegram_ok else InlineAnsweredOutcome.EMPTY
@@ -469,21 +422,31 @@ async def _answer_empty(
     tg_deps: TelegramDeps,
     *,
     onboard: bool,
-    deep_link: tuple[str, str] | None = None,
+    button_text: str | None = None,
 ) -> bool:
-    if deep_link is None:
-        if onboard:
-            deep_link = (tg_deps.strings.inline_button_finish_setup, "start")
-        else:
-            deep_link = (tg_deps.strings.inline_button_how_to, "help")
-    button_text, start_parameter = deep_link
+    if button_text is None:
+        button_text = (
+            tg_deps.strings.inline_button_finish_setup
+            if onboard
+            else tg_deps.strings.inline_button_how_to
+        )
+    button = _web_app_results_button(tg_deps, button_text)
     return await _send_inline_answer(
         bot,
         inline_query_id=query.id,
         results=[],
         cache_time=tg_deps.inline_cache_seconds,
-        button=InlineQueryResultsButton(text=button_text, start_parameter=start_parameter),
+        button=button,
     )
+
+
+def _web_app_results_button(
+    tg_deps: TelegramDeps,
+    text: str,
+) -> InlineQueryResultsButton | None:
+    if tg_deps.miniapp_url is None:
+        return None
+    return InlineQueryResultsButton(text=text, web_app=WebAppInfo(url=tg_deps.miniapp_url))
 
 
 async def _send_inline_answer(

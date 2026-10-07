@@ -11,19 +11,21 @@ from typing import Any
 
 import pytest
 from aiogram import Bot
+from aiogram.methods import SendMessage
 from aiogram.types import (
-    CallbackQuery,
     Chat,
     ChosenInlineResult,
     InlineQuery,
     Message,
-    MessageOriginUser,
+    MessageEntity,
     Update,
     User,
 )
 from tests.factories import make_settings
+from tests.fakes.clock import FakeClock
 from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.generation import FakeTextGenerator
+from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.prepared import FakePreparedResults
 from tests.fakes.telegram_deps import TelegramTestDeps, make_telegram_deps
 from tests.fakes.telegram_session import FakeTelegramSession
@@ -33,25 +35,23 @@ from tests.fakes.usage_sink import RecordingUsageEventSink
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
 from svoi_pravila.application.inline_result_ref import encode_inline_result_ref
-from svoi_pravila.application.ports.generation import (
-    DecodeResult,
-    GenerationMeta,
-    SafetyVerdict,
-    TokenUsage,
-    Variant,
-)
 from svoi_pravila.application.ports.prepared_results import PreparedVariant
+from svoi_pravila.application.use_cases.accept_age_confirmation import (
+    AcceptAgeConfirmation,
+    AcceptAgeConfirmationCommand,
+)
+from svoi_pravila.application.use_cases.grant_consent import GrantConsent, GrantConsentCommand
 from svoi_pravila.config import Environment, TelegramUpdatesMode
 from svoi_pravila.domain.enums import ConsentKind, Firmness, UsageScenario
+from svoi_pravila.domain.ids import TelegramUserId
 
 _SENTINEL_TEXT = "SENTINEL_TEXT_PRIVACY_0006"
 _SENTINEL_FIRST = "SENTINEL_FIRST_PRIVACY_0006"
 _SENTINEL_LAST = "SENTINEL_LAST_PRIVACY_0006"
 _SENTINEL_USER = "sentinel_user_privacy_0006"
 _SENTINEL_ID = 9876543210123
-_SENTINEL_ANALYSIS = "SENTINEL_ANALYSIS_PRIVACY_0006"
-_SENTINEL_HYP = "SENTINEL_HYPOTHESIS_PRIVACY_0006"
 _SENTINEL_VARIANT = "SENTINEL_VARIANT_PRIVACY_0006"
+_SENTINEL_CRISIS = "SENTINEL_CRISIS_PRIVACY_0008"
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
@@ -62,9 +62,8 @@ def _assert_no_markers(blob: str) -> None:
         _SENTINEL_LAST,
         _SENTINEL_USER,
         str(_SENTINEL_ID),
-        _SENTINEL_ANALYSIS,
-        _SENTINEL_HYP,
         _SENTINEL_VARIANT,
+        _SENTINEL_CRISIS,
     ):
         assert marker not in blob
 
@@ -75,36 +74,31 @@ async def _await_inline(deps: TelegramDeps) -> None:
         await asyncio.gather(*pending, return_exceptions=True)
 
 
+async def _grant(
+    uow: InMemoryUnitOfWorkFactory,
+    catalog: FakeConsentCatalog,
+    telegram_id: int,
+) -> None:
+    ids = FakeIdGenerator()
+    clock = FakeClock()
+    accepted = await AcceptAgeConfirmation(uow, ids, clock).execute(
+        AcceptAgeConfirmationCommand(TelegramUserId(telegram_id))
+    )
+    for kind in ConsentKind:
+        version = catalog.current_requirement().for_kind(kind).version
+        await GrantConsent(uow, catalog, ids, clock).execute(
+            GrantConsentCommand(accepted.user.id, kind, version)
+        )
+
+
 @pytest.mark.unit
-async def test_privacy_canary_no_sentinel_in_logs(
+async def test_welcome_privacy_canary_no_sentinel_in_logs(
     capture_log_events: Callable[[], list[dict[str, Any]]],
 ) -> None:
     for name in ("aiogram", "aiogram.event", "aiogram.dispatcher", "aiogram.middlewares"):
         logging.getLogger(name).setLevel(logging.DEBUG)
 
-    uow = InMemoryUnitOfWorkFactory()
-    catalog = FakeConsentCatalog()
-    sink = RecordingUsageEventSink()
-    generator = FakeTextGenerator(
-        stream_chunks=(_SENTINEL_ANALYSIS,),
-        decode_result=DecodeResult(
-            hypotheses=(_SENTINEL_HYP,),
-            underlying_request=_SENTINEL_TEXT,
-            variants=(Variant(text=_SENTINEL_VARIANT, firmness=Firmness.GENTLE),),
-            applied_rule_indexes=(),
-            safety=SafetyVerdict.OK,
-            meta=GenerationMeta(
-                model="fake",
-                prompt_version="decode@v1",
-                latency_ms=1,
-                attempts=1,
-                usage=TokenUsage(),
-            ),
-        ),
-    )
-    deps = make_telegram_deps(
-        TelegramTestDeps(uow=uow, catalog=catalog, generator=generator, sink=sink)
-    )
+    deps = make_telegram_deps()
     session = FakeTelegramSession()
     settings = make_settings(
         environment=Environment.LOCAL,
@@ -129,87 +123,22 @@ async def test_privacy_canary_no_sentinel_in_logs(
                 date=_NOW,
                 chat=Chat(id=_SENTINEL_ID, type="private"),
                 from_user=origin,
-                text="/start",
-            ),
-        ),
-    )
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=56,
-            callback_query=CallbackQuery(
-                id="age",
-                from_user=origin,
-                chat_instance="x",
-                data="age:y",
-                message=Message(
-                    message_id=1,
-                    date=_NOW,
-                    chat=Chat(id=_SENTINEL_ID, type="private"),
-                    from_user=origin,
-                    text="age",
-                ),
-            ),
-        ),
-    )
-    pd = catalog.current_requirement().for_kind(ConsentKind.PERSONAL_DATA).version
-    sc = catalog.current_requirement().for_kind(ConsentKind.SPECIAL_CATEGORY).version
-    for update_id, data in (
-        (57, f"cg:personal_data:{pd}:y"),
-        (58, f"cg:special_category:{sc}:y"),
-    ):
-        await lifecycle.dispatcher.feed_update(
-            bot,
-            Update(
-                update_id=update_id,
-                callback_query=CallbackQuery(
-                    id=str(update_id),
-                    from_user=origin,
-                    chat_instance="x",
-                    data=data,
-                    message=Message(
-                        message_id=1,
-                        date=_NOW,
-                        chat=Chat(id=_SENTINEL_ID, type="private"),
-                        from_user=origin,
-                        text="c",
-                    ),
-                ),
-            ),
-        )
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=59,
-            message=Message(
-                message_id=2,
-                date=_NOW,
-                chat=Chat(id=_SENTINEL_ID, type="private"),
-                from_user=origin,
                 text=_SENTINEL_TEXT,
-                forward_origin=MessageOriginUser(date=_NOW, sender_user=origin),
+                caption=_SENTINEL_TEXT,
+                entities=[MessageEntity(type="bold", offset=0, length=5)],
             ),
         ),
     )
-
+    sends = [req for req in session.requests if isinstance(req, SendMessage)]
+    assert len(sends) == 1
+    assert sends[0].text == deps.strings.dm_welcome
     events = capture_log_events()
     blob = json.dumps(events) + "\n".join(str(event) for event in events)
     _assert_no_markers(blob)
-    assert len(sink.events) == 1
-    recorded = sink.events[0]
-    assert recorded.user_pseudonym != str(_SENTINEL_ID)
-    assert recorded.scenario.value == "decode"
-    assert recorded.surface.value == "dm"
-    assert _SENTINEL_TEXT not in (recorded.model or "")
-    assert _SENTINEL_TEXT not in (recorded.prompt_version or "")
-    assert generator.decode_stream_calls[0].incoming == _SENTINEL_TEXT
-
-
-_SENTINEL_CRISIS = "SENTINEL_CRISIS_PRIVACY_0008"
 
 
 @pytest.mark.unit
-async def test_privacy_canary_crisis_screen_hit(
+async def test_privacy_canary_crisis_screen_hit_inline(
     capture_log_events: Callable[[], list[dict[str, Any]]],
 ) -> None:
     uow = InMemoryUnitOfWorkFactory()
@@ -227,79 +156,26 @@ async def test_privacy_canary_crisis_screen_hit(
     )
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(settings, deps, bot=bot)
-    origin = User(id=41, is_bot=False, first_name="A")
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=1,
-            message=Message(
-                message_id=1,
-                date=_NOW,
-                chat=Chat(id=41, type="private"),
-                from_user=origin,
-                text="/start",
-            ),
-        ),
-    )
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=2,
-            callback_query=CallbackQuery(
-                id="age",
-                from_user=origin,
-                chat_instance="x",
-                data="age:y",
-                message=Message(
-                    message_id=1,
-                    date=_NOW,
-                    chat=Chat(id=41, type="private"),
-                    from_user=origin,
-                    text="age",
-                ),
-            ),
-        ),
-    )
-    pd = catalog.current_requirement().for_kind(ConsentKind.PERSONAL_DATA).version
-    sc = catalog.current_requirement().for_kind(ConsentKind.SPECIAL_CATEGORY).version
-    for update_id, data in ((3, f"cg:personal_data:{pd}:y"), (4, f"cg:special_category:{sc}:y")):
-        await lifecycle.dispatcher.feed_update(
-            bot,
-            Update(
-                update_id=update_id,
-                callback_query=CallbackQuery(
-                    id=str(update_id),
-                    from_user=origin,
-                    chat_instance="x",
-                    data=data,
-                    message=Message(
-                        message_id=1,
-                        date=_NOW,
-                        chat=Chat(id=41, type="private"),
-                        from_user=origin,
-                        text="c",
-                    ),
-                ),
-            ),
-        )
+    await _grant(uow, catalog, 41)
     crisis_text = f"{_SENTINEL_CRISIS} не хочу жить"
     await lifecycle.dispatcher.feed_update(
         bot,
         Update(
             update_id=5,
-            message=Message(
-                message_id=2,
-                date=_NOW,
-                chat=Chat(id=41, type="private"),
-                from_user=origin,
-                text=crisis_text,
+            inline_query=InlineQuery(
+                id="crisis",
+                from_user=User(id=41, is_bot=False, first_name="A"),
+                query=crisis_text,
+                offset="",
             ),
         ),
     )
+    await _await_inline(deps)
     blob = json.dumps(capture_log_events())
     assert _SENTINEL_CRISIS not in blob
-    assert generator.decode_stream_calls == []
+    assert generator.soften_calls == []
     assert sink.events[0].outcome.value == "screened"
+    assert sink.events[0].surface.value == "inline"
 
 
 @pytest.mark.unit
@@ -337,63 +213,7 @@ async def test_inline_and_choice_privacy_canary(
         last_name=_SENTINEL_LAST,
         username=_SENTINEL_USER,
     )
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=70,
-            message=Message(
-                message_id=1,
-                date=_NOW,
-                chat=Chat(id=_SENTINEL_ID, type="private"),
-                from_user=origin,
-                text="/start",
-            ),
-        ),
-    )
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=71,
-            callback_query=CallbackQuery(
-                id="age",
-                from_user=origin,
-                chat_instance="x",
-                data="age:y",
-                message=Message(
-                    message_id=1,
-                    date=_NOW,
-                    chat=Chat(id=_SENTINEL_ID, type="private"),
-                    from_user=origin,
-                    text="age",
-                ),
-            ),
-        ),
-    )
-    pd = catalog.current_requirement().for_kind(ConsentKind.PERSONAL_DATA).version
-    sc = catalog.current_requirement().for_kind(ConsentKind.SPECIAL_CATEGORY).version
-    for update_id, data in (
-        (72, f"cg:personal_data:{pd}:y"),
-        (73, f"cg:special_category:{sc}:y"),
-    ):
-        await lifecycle.dispatcher.feed_update(
-            bot,
-            Update(
-                update_id=update_id,
-                callback_query=CallbackQuery(
-                    id=str(update_id),
-                    from_user=origin,
-                    chat_instance="x",
-                    data=data,
-                    message=Message(
-                        message_id=1,
-                        date=_NOW,
-                        chat=Chat(id=_SENTINEL_ID, type="private"),
-                        from_user=origin,
-                        text="c",
-                    ),
-                ),
-            ),
-        )
+    await _grant(uow, catalog, _SENTINEL_ID)
     await lifecycle.dispatcher.feed_update(
         bot,
         Update(
@@ -440,5 +260,6 @@ async def test_inline_and_choice_privacy_canary(
     _assert_no_markers(blob)
     for event in sink.events:
         assert event.user_pseudonym != str(_SENTINEL_ID)
+        assert event.surface.value == "inline"
         assert _SENTINEL_TEXT not in (event.model or "")
         assert _SENTINEL_TEXT not in (event.prompt_version or "")

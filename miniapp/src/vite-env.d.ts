@@ -31,8 +31,18 @@ interface TelegramHapticFeedback {
 
 type TelegramInlineQueryChatType = "users" | "bots" | "groups" | "channels";
 
+interface TelegramWebAppInitDataUnsafe {
+    readonly start_param?: string;
+}
+
+interface TelegramDownloadFileParams {
+    readonly url: string;
+    readonly file_name: string;
+}
+
 interface TelegramWebApp {
     readonly initData: string;
+    readonly initDataUnsafe?: TelegramWebAppInitDataUnsafe;
     readonly colorScheme: "light" | "dark";
     readonly themeParams: TelegramThemeParams;
     readonly BackButton?: TelegramBackButton;
@@ -42,6 +52,10 @@ interface TelegramWebApp {
     close: () => void;
     showConfirm?: (message: string, callback?: (confirmed: boolean) => void) => void;
     openTelegramLink?: (url: string) => void;
+    downloadFile?: (
+        params: TelegramDownloadFileParams,
+        callback?: (accepted: boolean) => void,
+    ) => void;
     switchInlineQuery?: (query: string, chooseChatTypes?: TelegramInlineQueryChatType[]) => void;
     onEvent?: (eventType: string, callback: () => void) => void;
     offEvent?: (eventType: string, callback: () => void) => void;

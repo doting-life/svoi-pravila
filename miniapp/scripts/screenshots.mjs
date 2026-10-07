@@ -109,7 +109,7 @@ const suggestion = {
 const privacyTexts = {
     export: {
         description:
-            "Выгрузка содержит контакты, согласия, правила, предложения правил и историю выбора тона. Файл придёт в чат с ботом и не хранится на сервере.",
+            "Выгрузка содержит контакты, согласия, правила, предложения правил и историю выбора тона. Файл скачивается один раз по короткой ссылке и не хранится на сервере.",
         sections: {
             согласия: "согласия",
             контакты: "контакты",
@@ -169,6 +169,7 @@ async function installTelegram(page, scheme) {
             value: {
                 WebApp: {
                     initData: "query_id=shot",
+                    initDataUnsafe: {},
                     colorScheme,
                     themeParams: theme,
                     BackButton: {
@@ -181,6 +182,9 @@ async function installTelegram(page, scheme) {
                     ready() {},
                     expand() {},
                     close() {},
+                    downloadFile(_opts, cb) {
+                        cb?.(true);
+                    },
                     showConfirm(_m, cb) {
                         cb?.(false);
                     },
@@ -192,11 +196,21 @@ async function installTelegram(page, scheme) {
     }, scheme);
 }
 
+async function installTelegramWithStartParam(page, scheme, startParam) {
+    await installTelegram(page, scheme);
+    await page.addInitScript((param) => {
+        const webApp = window.Telegram?.WebApp;
+        if (webApp) {
+            webApp.initDataUnsafe = { start_param: param };
+        }
+    }, startParam);
+}
+
 async function mockApi(page, mode) {
     await page.route("**/api/v1/**", async (route) => {
         const url = new URL(route.request().url());
         const path = url.pathname;
-        if (mode === "gate-incomplete" && path === "/api/v1/me") {
+        if (mode === "onboarding-age" && path === "/api/v1/me") {
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
@@ -204,19 +218,43 @@ async function mockApi(page, mode) {
                     ...meDone,
                     onboarding_step: "age",
                     account_exists: false,
+                    active_contact_id: null,
                 }),
             });
             return;
         }
-        if (mode === "gate-consent" && path === "/api/v1/me") {
+        if (mode === "onboarding-consent" && path === "/api/v1/me") {
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
                 body: JSON.stringify({
                     ...meDone,
                     onboarding_step: "consent",
+                    consent_kind: "personal_data",
+                    consent_version: "1",
                     account_exists: true,
+                    active_contact_id: null,
                 }),
+            });
+            return;
+        }
+        if (path.startsWith("/api/v1/consents/") && path.endsWith("/document")) {
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    kind: "personal_data",
+                    version: "1",
+                    text: "Текст согласия на обработку персональных данных (синтетический).",
+                }),
+            });
+            return;
+        }
+        if (path === "/api/v1/invites/resolve" && route.request().method() === "POST") {
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ expires_at: "2026-10-14T12:00:00.000Z" }),
             });
             return;
         }
@@ -275,7 +313,7 @@ async function mockApi(page, mode) {
                 status: 201,
                 contentType: "application/json",
                 body: JSON.stringify({
-                    link: "https://t.me/test_bot?start=inv_demo",
+                    link: "https://t.me/test_bot?startapp=inv_demo",
                     expires_at: "2026-10-08T12:00:00.000Z",
                 }),
             });
@@ -283,9 +321,12 @@ async function mockApi(page, mode) {
         }
         if (path === "/api/v1/me/export") {
             await route.fulfill({
-                status: 202,
+                status: 200,
                 contentType: "application/json",
-                body: JSON.stringify({ delivered_to: "bot_chat" }),
+                body: JSON.stringify({
+                    download_url: "https://miniapp.test/api/v1/downloads/tok",
+                    expires_at: "2026-10-07T12:00:00.000Z",
+                }),
             });
             return;
         }
@@ -338,23 +379,33 @@ async function shot(page, name) {
 }
 
 async function captureScheme(browser, baseUrl, scheme) {
-    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-    await installTelegram(page, scheme);
-    await mockApi(page, "gate-incomplete");
-    await page.goto(baseUrl, { waitUntil: "networkidle" });
-    await page.waitForSelector("text=Завершите настройку");
-    await shot(page, `${scheme}-gate-incomplete`);
-    await page.close();
+    const age = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await installTelegram(age, scheme);
+    await mockApi(age, "onboarding-age");
+    await age.goto(baseUrl, { waitUntil: "networkidle" });
+    await age.waitForSelector("text=Подтверждение возраста");
+    await age.waitForSelector("text=Мне есть 18");
+    await shot(age, `${scheme}-onboarding-age`);
+    await age.close();
 
     const consent = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await installTelegram(consent, scheme);
-    await mockApi(consent, "gate-consent");
+    await mockApi(consent, "onboarding-consent");
     await consent.goto(baseUrl, { waitUntil: "networkidle" });
-    await consent.waitForSelector("text=Нужно подтвердить согласия");
-    await consent.waitForSelector("text=Выгрузить данные");
-    await consent.waitForSelector("text=Удалить аккаунт");
-    await shot(consent, `${scheme}-gate-consent`);
+    await consent.waitForSelector("text=Согласия");
+    await consent.waitForSelector("text=Что мы храним");
+    await consent.waitForSelector("text=via @бот");
+    await shot(consent, `${scheme}-onboarding-consent`);
     await consent.close();
+
+    const invite = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await installTelegramWithStartParam(invite, scheme, "inv_demo");
+    await mockApi(invite, "app");
+    await invite.goto(baseUrl, { waitUntil: "networkidle" });
+    await invite.waitForSelector("text=Приглашение в общий свод");
+    await invite.waitForSelector("text=Принять приглашение");
+    await shot(invite, `${scheme}-invite`);
+    await invite.close();
 
     const unauthorized = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await installTelegram(unauthorized, scheme);
@@ -385,7 +436,7 @@ async function captureScheme(browser, baseUrl, scheme) {
     await unpairedInvite.getByRole("button", { name: /Аня/ }).click();
     await unpairedInvite.waitForSelector("text=Пригласить в общий свод");
     await unpairedInvite.getByRole("button", { name: "Пригласить в общий свод" }).click();
-    await unpairedInvite.waitForSelector("text=https://t.me/test_bot?start=inv_demo");
+    await unpairedInvite.waitForSelector("text=https://t.me/test_bot?startapp=inv_demo");
     await shot(unpairedInvite, `${scheme}-contact-invite`);
     await unpairedInvite.close();
 
@@ -409,6 +460,8 @@ async function captureScheme(browser, baseUrl, scheme) {
     await privacy.waitForSelector("text=Аня");
     await privacy.getByRole("button", { name: "Приватность" }).click();
     await privacy.waitForSelector("text=Выгрузить данные");
+    await privacy.waitForSelector("text=Отозвать согласия");
+    await privacy.waitForSelector("text=Удалить аккаунт");
     await shot(privacy, `${scheme}-privacy`);
     await privacy.evaluate(() => {
         window.Telegram.WebApp.showConfirm = (_m, cb) => {

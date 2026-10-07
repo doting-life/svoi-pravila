@@ -29,10 +29,28 @@ class ConfirmTrueRequest(BaseModel):
     confirm: Literal[True]
 
 
-class ExportDeliveryResponse(BaseModel):
-    """POST /me/export — delivery acknowledgement (never the export payload)."""
+class GrantConsentRequest(BaseModel):
+    """POST /me/consents — grant one catalog consent version."""
 
-    delivered_to: Literal["bot_chat"]
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["personal_data", "special_category"]
+    text_version: str = Field(min_length=1, max_length=64)
+
+
+class ConsentDocumentResponse(BaseModel):
+    """GET /consents/{kind}/document — current catalog text (C0)."""
+
+    kind: Literal["personal_data", "special_category"]
+    version: str = Field(min_length=1)
+    text: str = Field(min_length=1)
+
+
+class ExportDownloadResponse(BaseModel):
+    """POST /me/export — one-time download URL (never the export payload)."""
+
+    download_url: str = Field(min_length=1)
+    expires_at: datetime
 
 
 class PrivacyExportTextsResponse(BaseModel):
@@ -121,6 +139,21 @@ class InviteResponse(BaseModel):
 
     link: str = Field(min_length=1)
     expires_at: datetime
+
+
+class InviteResolveResponse(BaseModel):
+    """POST /invites/resolve — invite screen data (no C2)."""
+
+    expires_at: datetime
+
+
+class AcceptInviteRequest(BaseModel):
+    """POST /invites/accept — label and relationship for the inviter."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=32)
+    relationship: Literal["partner", "family", "friend", "work", "other"]
 
 
 class SuggestionItem(BaseModel):

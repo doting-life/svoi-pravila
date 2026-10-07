@@ -155,11 +155,20 @@ class _SlowGenerator:
     started: asyncio.Event
     gate: asyncio.Event
     completed: bool = False
+    max_billable_value: int = 1000
 
     def __init__(self) -> None:
         self.started = asyncio.Event()
         self.gate = asyncio.Event()
         self.completed = False
+        self.max_billable_value = 1000
+
+    def max_billable(
+        self,
+        request: SoftenRequest | HelpSayRequest | DecodeRequest | SuggestRuleRequest,
+    ) -> int:
+        _ = request
+        return self.max_billable_value
 
     async def decode_stream(self, request: DecodeRequest) -> AsyncIterator[DecodeEvent]:
         _ = request
@@ -554,7 +563,6 @@ async def test_decode_empty_stream_returns_empty_sse(world: AppWorld) -> None:
 async def test_decode_client_cancel_releases_without_completion(world: AppWorld) -> None:
     """Cancelling the SSE consumer must not leave DecodeIncoming hung on the lock."""
     await world.ensure_granted_user(_TG)
-    from svoi_pravila.domain.cancelled_billable import estimate_cancelled_billable
 
     slow = _SlowGenerator()
     sink = RecordingUsageEventSink()
@@ -576,7 +584,6 @@ async def test_decode_client_cancel_releases_without_completion(world: AppWorld)
             pseudonymizer=FakePseudonymizer(),
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
-            max_output_tokens=1000,
             analytics_timezone="Europe/Moscow",
         )
     )
@@ -610,7 +617,7 @@ async def test_decode_client_cancel_releases_without_completion(world: AppWorld)
         await task
     assert slow.completed is False
     assert quota_gate.refund_calls == []
-    assert budget.spent == estimate_cancelled_billable(len(text), 1000)
+    assert budget.spent == 1000
 
 
 @pytest.mark.unit
@@ -875,6 +882,13 @@ async def test_decode_unknown_stream_error_propagates(world: AppWorld) -> None:
     class _BoomGenerator:
         fail: bool = True
 
+        def max_billable(
+            self,
+            request: SoftenRequest | HelpSayRequest | DecodeRequest | SuggestRuleRequest,
+        ) -> int:
+            _ = request
+            return 1000
+
         async def decode_stream(self, request: DecodeRequest) -> AsyncIterator[DecodeEvent]:
             _ = request
             if self.fail:
@@ -906,7 +920,6 @@ async def test_decode_unknown_stream_error_propagates(world: AppWorld) -> None:
             pseudonymizer=FakePseudonymizer(),
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
-            max_output_tokens=1000,
             analytics_timezone="Europe/Moscow",
         )
     )

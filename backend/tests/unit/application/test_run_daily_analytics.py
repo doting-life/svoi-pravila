@@ -35,6 +35,7 @@ def _job() -> tuple[RunDailyAnalytics, FakeAnalyticsStore]:
             ids=FakeIdGenerator(),
             clock=FakeClock(NOW),
             timezone="Europe/Moscow",
+            llm_budget_tokens=100_000,
         )
     )
     return use_case, store

@@ -97,6 +97,7 @@ from svoi_pravila.domain.enums import ConsentKind, Firmness
 from svoi_pravila.domain.ids import TelegramUserId
 from svoi_pravila.domain.rules import ContactScope
 from tests.factories import make_settings
+from tests.fakes.clock import FakeClock
 from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
 from tests.fakes.pair_notifier import FakePairNotifier
@@ -220,8 +221,10 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
         config=ValkeyLlmBudgetConfig(
             budget=settings.llm_daily_token_budget,
             timezone=settings.analytics_timezone,
+            hourly_spike_share=settings.llm_hourly_spike_share,
         ),
         sums=UowBillableTokenSum(uow_factory, timezone=settings.analytics_timezone),
+        clock=FakeClock(),
     )
     decode = DecodeIncoming(
         DecodeIncomingPorts(
@@ -254,7 +257,6 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             pseudonymizer=pepper,
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
-            max_output_tokens=1000,
             analytics_timezone=settings.analytics_timezone,
         )
     )
@@ -275,7 +277,6 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             reuse=reuse,
             min_chars=8,
             deadline_seconds=8.0,
-            max_output_tokens=1000,
             intent_prefixes=help_say_intent_prefixes(strings),
             analytics_timezone=settings.analytics_timezone,
         )
@@ -295,7 +296,6 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             pseudonymizer=pepper,
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
-            max_output_tokens=1000,
             analytics_timezone=settings.analytics_timezone,
         )
     )
@@ -541,8 +541,10 @@ def _contact_privacy_lifecycle(
         config=ValkeyLlmBudgetConfig(
             budget=settings.llm_daily_token_budget,
             timezone=settings.analytics_timezone,
+            hourly_spike_share=settings.llm_hourly_spike_share,
         ),
         sums=UowBillableTokenSum(uow_factory, timezone=settings.analytics_timezone),
+        clock=FakeClock(),
     )
     generator = FakeTextGenerator()
     decode = DecodeIncoming(
@@ -560,7 +562,6 @@ def _contact_privacy_lifecycle(
             pseudonymizer=pepper,
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
-            max_output_tokens=1000,
             analytics_timezone=settings.analytics_timezone,
         )
     )
@@ -581,7 +582,6 @@ def _contact_privacy_lifecycle(
             reuse=reuse,
             min_chars=8,
             deadline_seconds=8.0,
-            max_output_tokens=1000,
             intent_prefixes=help_say_intent_prefixes(strings),
             analytics_timezone=settings.analytics_timezone,
         )
@@ -601,7 +601,6 @@ def _contact_privacy_lifecycle(
             pseudonymizer=pepper,
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
-            max_output_tokens=1000,
             analytics_timezone=settings.analytics_timezone,
         )
     )

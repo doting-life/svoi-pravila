@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from svoi_pravila.domain.enums import (
+    LimitKind,
     UsageEventKind,
     UsageOutcome,
     UsageScenario,
@@ -64,6 +65,9 @@ class DailyTotals:
     new_users: int
     generations: int
     generation_errors: int
+    users_limited: int
+    billable_tokens: int
+    llm_budget_tokens: int
     computed_at: datetime
 
 
@@ -82,6 +86,8 @@ class ScenarioTotals:
     invalid_output: int
     unavailable: int
     chosen: int
+    limited_user_quota: int
+    limited_global_budget: int
     latency_p50_ms: float | None
     latency_p95_ms: float | None
     ttfc_p50_ms: float | None
@@ -115,6 +121,7 @@ def aggregate(
     tz_name: str,
     day: date,
     computed_at: datetime,
+    llm_budget_tokens: int,
 ) -> DayAggregate:
     """Reference daily aggregates for ``day`` in ``tz_name``."""
     day_events = tuple(event for event in events if event_day(event.occurred_at, tz_name) == day)
@@ -127,6 +134,13 @@ def aggregate(
         event for event in day_events if event.event_kind is UsageEventKind.GENERATION
     )
     generation_errors = sum(1 for event in generations if event.outcome in _ERROR_OUTCOMES)
+    users_limited = len(
+        {
+            event.user_pseudonym
+            for event in generations
+            if event.outcome is UsageOutcome.LIMITED and event.limit_kind is LimitKind.USER_QUOTA
+        }
+    )
     daily = DailyTotals(
         day=day,
         active_users=len(appealers),
@@ -134,6 +148,9 @@ def aggregate(
         new_users=new_users,
         generations=len(generations),
         generation_errors=generation_errors,
+        users_limited=users_limited,
+        billable_tokens=sum(event.billable_tokens for event in generations),
+        llm_budget_tokens=llm_budget_tokens,
         computed_at=computed_at,
     )
     return DayAggregate(daily=daily, scenarios=_scenario_rows(day_events, day))
@@ -241,6 +258,16 @@ def _slice_totals(
         ),
         unavailable=sum(1 for event in generations if event.outcome is UsageOutcome.UNAVAILABLE),
         chosen=sum(1 for event in slice_events if event.event_kind is UsageEventKind.RESULT_CHOSEN),
+        limited_user_quota=sum(
+            1
+            for event in generations
+            if event.outcome is UsageOutcome.LIMITED and event.limit_kind is LimitKind.USER_QUOTA
+        ),
+        limited_global_budget=sum(
+            1
+            for event in generations
+            if event.outcome is UsageOutcome.LIMITED and event.limit_kind is LimitKind.GLOBAL_BUDGET
+        ),
         latency_p50_ms=percentile_cont(latencies, 0.5),
         latency_p95_ms=percentile_cont(latencies, 0.95),
         ttfc_p50_ms=percentile_cont(ttfcs, 0.5),

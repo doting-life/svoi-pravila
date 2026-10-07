@@ -61,6 +61,7 @@ async def _cmd_run(_args: argparse.Namespace, settings: Settings) -> int:
                 ids=Uuid7IdGenerator(),
                 clock=clock,
                 timezone=settings.analytics_timezone,
+                llm_budget_tokens=settings.llm_daily_token_budget,
             )
         ).execute(clock.now())
     finally:
@@ -102,7 +103,9 @@ async def _cmd_backfill(args: argparse.Namespace, settings: Settings) -> int:
             await store.ensure_timezone(settings.analytics_timezone)
             day = from_day
             while day <= to_day:
-                rows = await store.compute_day(day, settings.analytics_timezone, now)
+                rows = await store.compute_day(
+                    day, settings.analytics_timezone, now, settings.llm_daily_token_budget
+                )
                 await store.record_run(
                     JobRun(
                         id=ids.new_id(),

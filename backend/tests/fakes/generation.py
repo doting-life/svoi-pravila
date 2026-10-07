@@ -17,6 +17,7 @@ from svoi_pravila.application.ports.generation import (
     DecodeRequest,
     DecodeResult,
     GenerationMeta,
+    GenerationRequest,
     HelpSayRequest,
     HelpSayResult,
     SafetyVerdict,
@@ -81,6 +82,13 @@ class FakeTextGenerator:
         self.help_say_calls: list[HelpSayRequest] = []
         self.decode_stream_calls: list[DecodeRequest] = []
         self.suggest_rule_calls: list[SuggestRuleRequest] = []
+        self.max_billable_value: int = 1_000
+        self.max_billable_calls: list[GenerationRequest] = []
+
+    def max_billable(self, request: GenerationRequest) -> int:
+        """Deterministic worst-case charge for cancel tests."""
+        self.max_billable_calls.append(request)
+        return self.max_billable_value
 
     @property
     def call_count(self) -> int:

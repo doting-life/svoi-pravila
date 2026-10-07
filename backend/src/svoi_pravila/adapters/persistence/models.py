@@ -558,6 +558,9 @@ class AnalyticsDailyRow(Base):
     new_users: Mapped[int] = mapped_column(Integer, nullable=False)
     generations: Mapped[int] = mapped_column(Integer, nullable=False)
     generation_errors: Mapped[int] = mapped_column(Integer, nullable=False)
+    users_limited: Mapped[int] = mapped_column(Integer, nullable=False)
+    billable_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    llm_budget_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
@@ -566,6 +569,9 @@ class AnalyticsDailyRow(Base):
         CheckConstraint("new_users >= 0", name="new_users_nonneg"),
         CheckConstraint("generations >= 0", name="generations_nonneg"),
         CheckConstraint("generation_errors >= 0", name="generation_errors_nonneg"),
+        CheckConstraint("users_limited >= 0", name="users_limited_nonneg"),
+        CheckConstraint("billable_tokens >= 0", name="billable_tokens_nonneg"),
+        CheckConstraint("llm_budget_tokens >= 0", name="llm_budget_tokens_nonneg"),
     )
 
 
@@ -585,6 +591,8 @@ class AnalyticsDailyScenarioRow(Base):
     invalid_output: Mapped[int] = mapped_column(Integer, nullable=False)
     unavailable: Mapped[int] = mapped_column(Integer, nullable=False)
     chosen: Mapped[int] = mapped_column(Integer, nullable=False)
+    limited_user_quota: Mapped[int] = mapped_column(Integer, nullable=False)
+    limited_global_budget: Mapped[int] = mapped_column(Integer, nullable=False)
     latency_p50_ms: Mapped[float | None] = mapped_column(Double, nullable=True)
     latency_p95_ms: Mapped[float | None] = mapped_column(Double, nullable=True)
     ttfc_p50_ms: Mapped[float | None] = mapped_column(Double, nullable=True)
@@ -604,6 +612,8 @@ class AnalyticsDailyScenarioRow(Base):
         CheckConstraint("invalid_output >= 0", name="invalid_output_nonneg"),
         CheckConstraint("unavailable >= 0", name="unavailable_nonneg"),
         CheckConstraint("chosen >= 0", name="chosen_nonneg"),
+        CheckConstraint("limited_user_quota >= 0", name="limited_user_quota_nonneg"),
+        CheckConstraint("limited_global_budget >= 0", name="limited_global_budget_nonneg"),
         CheckConstraint("input_tokens >= 0", name="input_tokens_nonneg"),
         CheckConstraint("output_tokens >= 0", name="output_tokens_nonneg"),
         CheckConstraint("billable_tokens >= 0", name="billable_tokens_nonneg"),

@@ -357,6 +357,7 @@ def test_rate_limit_and_lifecycle_defaults() -> None:
     assert settings.quota_inline_per_day == 300
     assert settings.quota_decode_per_day == 40
     assert settings.llm_daily_token_budget == 20_000
+    assert settings.llm_hourly_spike_share == 0.25
     assert settings.inline_deadline_seconds == 8.0
     assert settings.inline_debounce_ms == 600
     assert settings.inline_cache_seconds == 30
@@ -371,6 +372,15 @@ def test_load_settings_requires_llm_daily_token_budget(monkeypatch: pytest.Monke
     monkeypatch.delenv("SP_LLM_DAILY_TOKEN_BUDGET", raising=False)
     with pytest.raises(LlmDailyTokenBudgetMissingError):
         load_settings()
+
+
+@pytest.mark.unit
+def test_llm_hourly_spike_share_bounds() -> None:
+    assert make_settings(llm_hourly_spike_share=1.0).llm_hourly_spike_share == 1.0
+    with pytest.raises(ValidationError):
+        make_settings(llm_hourly_spike_share=0.0)
+    with pytest.raises(ValidationError):
+        make_settings(llm_hourly_spike_share=1.01)
 
 
 @pytest.mark.unit

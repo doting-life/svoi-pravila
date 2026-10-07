@@ -248,6 +248,7 @@ forbidden_modules = [
     "asyncpg",
     "redis",
     "structlog",
+    "logging",
     "alembic",
     "gigachat",
     "httpx",

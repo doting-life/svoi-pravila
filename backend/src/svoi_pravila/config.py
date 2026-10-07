@@ -268,6 +268,7 @@ class Settings(BaseSettings):
     quota_inline_per_day: int = Field(default=300, ge=1)
     quota_decode_per_day: int = Field(default=40, ge=1)
     llm_daily_token_budget: int = Field(gt=0)
+    llm_hourly_spike_share: float = Field(default=0.25, gt=0, le=1)
     inline_deadline_seconds: float = Field(default=8.0, gt=0, le=30)
     inline_debounce_ms: int = Field(default=600, ge=0, le=5_000)
     inline_cache_seconds: int = Field(default=30, ge=0, le=300)

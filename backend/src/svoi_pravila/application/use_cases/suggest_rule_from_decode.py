@@ -113,7 +113,6 @@ class SuggestRuleFromDecodePorts:
     pseudonymizer: Pseudonymizer
     crisis_screen: CrisisScreen
     deadline_seconds: float
-    max_output_tokens: int
     analytics_timezone: str
 
 
@@ -223,17 +222,16 @@ class SuggestRuleFromDecode:
         day: date,
     ) -> SuggestRuleFromDecodeResult:
         started = self._ports.monotonic.monotonic()
+        request = SuggestRuleRequest(
+            incoming=prepared.payload.incoming_text,
+            rules=prepared.rules,
+            relationship=prepared.relationship,
+            deadline_seconds=self._ports.deadline_seconds,
+        )
         provider_started = False
         try:
             provider_started = True
-            generated = await self._ports.generator.suggest_rule(
-                SuggestRuleRequest(
-                    incoming=prepared.payload.incoming_text,
-                    rules=prepared.rules,
-                    relationship=prepared.relationship,
-                    deadline_seconds=self._ports.deadline_seconds,
-                )
-            )
+            generated = await self._ports.generator.suggest_rule(request)
         except GenerationUnavailable as exc:
             await self._persist_error(
                 user_key=user_key, surface=surface, started=started, error=exc
@@ -259,8 +257,7 @@ class SuggestRuleFromDecode:
                     quota_gate=None,
                     llm_budget=self._ports.llm_budget,
                     day=day,
-                    input_chars=len(prepared.payload.incoming_text),
-                    max_output_tokens=self._ports.max_output_tokens,
+                    billable_tokens=self._ports.generator.max_billable(request),
                 )
             )
             raise

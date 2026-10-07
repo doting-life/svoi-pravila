@@ -129,9 +129,20 @@ class SqlAlchemyAnalyticsStore:
         if found is None:
             raise AnalyticsJobFailed(AnalyticsErrorKind.UNKNOWN_TIMEZONE)
 
-    async def compute_day(self, day: date, tz_name: str, computed_at: datetime) -> int:
+    async def compute_day(
+        self,
+        day: date,
+        tz_name: str,
+        computed_at: datetime,
+        llm_budget_tokens: int,
+    ) -> int:
         """Idempotent upsert of daily totals and scenario slices in one transaction."""
-        params = {"day": day, "tz": tz_name, "computed_at": computed_at}
+        params = {
+            "day": day,
+            "tz": tz_name,
+            "computed_at": computed_at,
+            "llm_budget_tokens": llm_budget_tokens,
+        }
         scenario_count = await self._run_write(
             (
                 (_DAILY_UPSERT, params),
@@ -261,6 +272,9 @@ class SqlAlchemyAnalyticsStore:
             new_users=raw.new_users,
             generations=raw.generations,
             generation_errors=raw.generation_errors,
+            users_limited=raw.users_limited,
+            billable_tokens=int(raw.billable_tokens),
+            llm_budget_tokens=int(raw.llm_budget_tokens),
             computed_at=raw.computed_at,
         )
         scenario_rows = await self._all(
@@ -280,6 +294,8 @@ class SqlAlchemyAnalyticsStore:
                 invalid_output=item.invalid_output,
                 unavailable=item.unavailable,
                 chosen=item.chosen,
+                limited_user_quota=item.limited_user_quota,
+                limited_global_budget=item.limited_global_budget,
                 latency_p50_ms=_float_or_none(item.latency_p50_ms),
                 latency_p95_ms=_float_or_none(item.latency_p95_ms),
                 ttfc_p50_ms=_float_or_none(item.ttfc_p50_ms),
@@ -425,7 +441,8 @@ WITH bounds AS (
         timezone(:tz, CAST(:day AS timestamp without time zone) + interval '1 day') AS end_ts
 )
 INSERT INTO analytics_daily (
-    day, active_users, appeals, new_users, generations, generation_errors, computed_at
+    day, active_users, appeals, new_users, generations, generation_errors,
+    users_limited, billable_tokens, llm_budget_tokens, computed_at
 )
 SELECT
     :day,
@@ -463,6 +480,21 @@ SELECT
           AND e.event_kind = 'generation'
           AND e.outcome IN ('unavailable', 'invalid_output')
     ),
+    (
+        SELECT COUNT(DISTINCT user_pseudonym)
+        FROM usage_events e, bounds b
+        WHERE e.occurred_at >= b.start_ts AND e.occurred_at < b.end_ts
+          AND e.event_kind = 'generation'
+          AND e.outcome = 'limited'
+          AND e.limit_kind = 'user_quota'
+    ),
+    (
+        SELECT COALESCE(SUM(e.billable_tokens), 0)
+        FROM usage_events e, bounds b
+        WHERE e.occurred_at >= b.start_ts AND e.occurred_at < b.end_ts
+          AND e.event_kind = 'generation'
+    ),
+    :llm_budget_tokens,
     :computed_at
 FROM bounds
 ON CONFLICT (day) DO UPDATE SET
@@ -471,6 +503,9 @@ ON CONFLICT (day) DO UPDATE SET
     new_users = EXCLUDED.new_users,
     generations = EXCLUDED.generations,
     generation_errors = EXCLUDED.generation_errors,
+    users_limited = EXCLUDED.users_limited,
+    billable_tokens = EXCLUDED.billable_tokens,
+    llm_budget_tokens = EXCLUDED.llm_budget_tokens,
     computed_at = EXCLUDED.computed_at
 """.replace("__APPEAL__", _APPEAL).replace("__NEW_USER__", _NEW_USER)
 
@@ -484,6 +519,7 @@ inserted AS (
     INSERT INTO analytics_daily_scenario (
         day, scenario, surface, appeals, users,
         ok, refused, screened, invalid_output, unavailable, chosen,
+        limited_user_quota, limited_global_budget,
         latency_p50_ms, latency_p95_ms, ttfc_p50_ms, ttfc_p95_ms,
         input_tokens, output_tokens, billable_tokens
     )
@@ -503,6 +539,16 @@ inserted AS (
             WHERE e.event_kind = 'generation' AND e.outcome = 'unavailable'
         ),
         COUNT(*) FILTER (WHERE e.event_kind = 'result_chosen'),
+        COUNT(*) FILTER (
+            WHERE e.event_kind = 'generation'
+              AND e.outcome = 'limited'
+              AND e.limit_kind = 'user_quota'
+        ),
+        COUNT(*) FILTER (
+            WHERE e.event_kind = 'generation'
+              AND e.outcome = 'limited'
+              AND e.limit_kind = 'global_budget'
+        ),
         percentile_cont(0.5) WITHIN GROUP (ORDER BY e.latency_ms)
             FILTER (WHERE e.event_kind = 'generation' AND e.outcome = 'ok'),
         percentile_cont(0.95) WITHIN GROUP (ORDER BY e.latency_ms)

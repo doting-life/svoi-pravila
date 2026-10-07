@@ -46,7 +46,8 @@ Ask one concrete question per blocker and describe the options you see.
 
 ## Local CI parity — push only proven-clean code
 - CI is a mirror, never a discovery tool. `make ci` runs locally everything the GitHub workflow runs (backend and mini-app gates, secrets scan, image builds and scans, stack smoke, ownership guard) with the same pinned toolchain.
-- Before any push: `make ci` green on the exact commit being pushed. Run it after the final rebase. Paste the summary in the report.
+- While working, run only `make quick` (format, lint, types and the tests of the touched modules). Do not run `make ci` by hand. The pre-push hook runs the full `make ci` once, on the exact pushed commit; paste its summary in the report.
+- Read the CI output in its quiet form only: the stage summary, plus the tail of the failing stage. Open the full logs in `.ci-logs/` only when the tail does not explain the failure.
 - One push per review round. Never push to "see what CI says" and never push fix-up commits to turn CI green.
 - Commit only formatted, linted code (the repository's git hooks run the fast checks on commit and `make ci` on push; install them with `make hooks`).
 - `make ci` is hermetic:

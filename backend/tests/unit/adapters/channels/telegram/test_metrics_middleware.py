@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-from aiogram.types import Message, Update, User
+from aiogram.types import Chat, Message, Update, User
 from prometheus_client import REGISTRY
 
 from svoi_pravila.adapters.channels.telegram.middlewares.metrics import (
@@ -31,9 +32,10 @@ async def test_telegram_metrics_middleware_ok_and_error() -> None:
         update_id=1,
         message=Message(
             message_id=1,
-            date=1,
-            chat={"id": 1, "type": "private"},
+            date=datetime(2026, 3, 1, tzinfo=UTC),
+            chat=Chat(id=1, type="private"),
             from_user=User(id=1, is_bot=False, first_name="t"),
+            text="x",
         ),
     )
 

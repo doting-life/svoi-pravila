@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, MutableMapping
+from typing import Any
+
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -11,6 +14,10 @@ from svoi_pravila.api.app import create_app
 from svoi_pravila.api.metrics_middleware import HttpMetricsMiddleware
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.config import Environment
+
+Scope = MutableMapping[str, Any]
+Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
+Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
 
 
 def _sample(metric_name: str, labels: dict[str, str]) -> float:
@@ -74,3 +81,50 @@ async def test_main_api_does_not_serve_metrics() -> None:
         assert response.status_code == 404
         health = await client.get("/healthz")
         assert health.status_code == 200
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_http_metrics_middleware_passes_non_http_scopes() -> None:
+    seen: list[str] = []
+
+    async def inner(scope: Scope, receive: Receive, send: Send) -> None:
+        del receive, send
+        seen.append(str(scope["type"]))
+
+    async def receive() -> MutableMapping[str, Any]:
+        return {"type": "lifespan.startup"}
+
+    async def send(_message: MutableMapping[str, Any]) -> None:
+        return None
+
+    middleware = HttpMetricsMiddleware(inner)
+    await middleware({"type": "lifespan"}, receive, send)
+    assert seen == ["lifespan"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_http_metrics_middleware_defaults_to_5xx_without_response_start() -> None:
+    async def inner(scope: Scope, receive: Receive, send: Send) -> None:
+        del scope, receive, send
+
+    async def receive() -> MutableMapping[str, Any]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(_message: MutableMapping[str, Any]) -> None:
+        return None
+
+    before = _sample(
+        "sp_http_request_duration_seconds_count",
+        {"route": "unmatched", "method": "GET", "status_class": "5xx"},
+    )
+    middleware = HttpMetricsMiddleware(inner)
+    await middleware({"type": "http", "method": "GET"}, receive, send)
+    assert (
+        _sample(
+            "sp_http_request_duration_seconds_count",
+            {"route": "unmatched", "method": "GET", "status_class": "5xx"},
+        )
+        == before + 1.0
+    )

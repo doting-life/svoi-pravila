@@ -132,6 +132,8 @@ def _grafana_pins() -> None:
     base = pins.get("GRAFANA_BASE_IMAGE", "")
     plugin_sha = pins.get("GRAFANA_PG_PLUGIN_SHA256", "")
     plugin_url = pins.get("GRAFANA_PG_PLUGIN_URL", "")
+    prom_sha = pins.get("GRAFANA_PROM_PLUGIN_SHA256", "")
+    prom_url = pins.get("GRAFANA_PROM_PLUGIN_URL", "")
     if "@sha256:" not in base:
         FAILURES.append(f"GRAFANA_BASE_IMAGE: expected digest pin, found {base!r}")
     if re.fullmatch(r"[0-9a-f]{64}", plugin_sha) is None:
@@ -140,6 +142,12 @@ def _grafana_pins() -> None:
         )
     if not plugin_url.startswith("https://"):
         FAILURES.append(f"GRAFANA_PG_PLUGIN_URL: expected https URL, found {plugin_url!r}")
+    if re.fullmatch(r"[0-9a-f]{64}", prom_sha) is None:
+        FAILURES.append(
+            f"GRAFANA_PROM_PLUGIN_SHA256: expected 64-hex digest, found {prom_sha!r}"
+        )
+    if not prom_url.startswith("https://"):
+        FAILURES.append(f"GRAFANA_PROM_PLUGIN_URL: expected https URL, found {prom_url!r}")
     dockerfile = (ROOT / "ops" / "grafana" / "Dockerfile").read_text()
     if base.split("@", 1)[0] not in dockerfile and base not in dockerfile:
         # FROM line carries tag@digest; require digest fragment present.
@@ -150,6 +158,10 @@ def _grafana_pins() -> None:
         FAILURES.append("ops/grafana/Dockerfile: GRAFANA_PG_PLUGIN_SHA256 missing")
     if pins.get("GRAFANA_PG_PLUGIN_URL", "") not in dockerfile:
         FAILURES.append("ops/grafana/Dockerfile: GRAFANA_PG_PLUGIN_URL missing")
+    if prom_sha not in dockerfile:
+        FAILURES.append("ops/grafana/Dockerfile: GRAFANA_PROM_PLUGIN_SHA256 missing")
+    if pins.get("GRAFANA_PROM_PLUGIN_URL", "") not in dockerfile:
+        FAILURES.append("ops/grafana/Dockerfile: GRAFANA_PROM_PLUGIN_URL missing")
 
 
 def _dockerfile_tags() -> None:

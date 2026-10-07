@@ -24,6 +24,12 @@ make ci
 
 `make infra-up` starts only PostgreSQL and Valkey (for gates and tests). Use the Local stack section below to run the application itself.
 
+## Checks
+
+While working, run `make quick` (ruff, mypy, unit pytest; mini-app `tsc` plus eslint/prettier/vitest on files changed vs `origin/master`). Aim for under a minute on a warm cache.
+
+Before each review push, the pre-push hook runs full hermetic `make ci` once on the exact commit. Console lines look like `ci: <job> <stage> PASS|FAIL <s>`. Full stage output is under `.ci-logs/<job>-<stage>.log` (gitignored, cleared at the start of each `make ci`). On `FAIL`, the console also prints the last 40 lines of that log and its path.
+
 ## Fresh environment check
 
 Never delete, move, or overwrite an existing repo-root `.env` (it holds credentials that cannot be restored from the repository). To run gates against a generated file:
@@ -116,7 +122,8 @@ The integration suite connects to Postgres as the compose admin role (`POSTGRES_
 | `install` | Sync backend deps with uv and set `core.hooksPath` to `.githooks` |
 | `hooks` | Point this clone at `.githooks` (repo-local git config only) |
 | `toolchain-check` | Compare local Python, uv, Node, pnpm, Docker, and image digests with pins |
-| `ci` | Hermetic local mirror of GitHub CI (`make ci JOB=<name>` for one job). Never touches `.env`. |
+| `ci` | Hermetic local mirror of GitHub CI (`make ci JOB=<name>` for one job). Never touches `.env`. Quiet console; full logs in `.ci-logs/`. |
+| `quick` | Fast local checks while working (ruff, mypy, unit pytest; mini-app tsc + changed-file eslint/prettier/vitest) |
 | `build` | Build app images (`svoi-pravila-api:local`) |
 | `up` | Build and start the full stack (profile `app`); wait until API/mini-app are healthy |
 | `down` | Stop the full stack; keep volumes |

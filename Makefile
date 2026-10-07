@@ -2,7 +2,7 @@
 	audit secrets migrations-check image image-scan openapi miniapp-install miniapp-api-check \
 	miniapp-check miniapp-tunnel miniapp-tunnel-down observability-up observability-down \
 	dev-env infra-up infra-down build up down logs ps bench-llm eval-llm analytics check \
-	toolchain-check stack-smoke ownership-guard hooks ci
+	toolchain-check stack-smoke ownership-guard hooks ci quick
 
 BACKEND := backend
 MINIAPP := miniapp
@@ -114,6 +114,9 @@ hooks:
 
 ci:
 	./scripts/ci.sh
+
+quick:
+	./scripts/quick.sh
 
 openapi:
 	cd $(BACKEND) && uv run python scripts/export_openapi.py --out ../$(MINIAPP)/src/api/openapi.json

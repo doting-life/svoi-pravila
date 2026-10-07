@@ -25,6 +25,10 @@ export CI_TMPDIR
 ENV_FILE="${CI_TMPDIR}/env"
 export ENV_FILE
 
+CI_LOG_DIR="$ROOT/.ci-logs"
+rm -rf "$CI_LOG_DIR"
+mkdir -p "$CI_LOG_DIR"
+
 if [[ "$(cd "$(dirname "$ENV_FILE")" && pwd)/$(basename "$ENV_FILE")" == "$REPO_ENV" ]]; then
   echo "make ci must not use the repository .env" >&2
   exit 1
@@ -39,19 +43,24 @@ cleanup() {
 trap cleanup EXIT
 
 run_stage() {
-  local name="$1"
-  shift
+  local job="$1"
+  local stage="$2"
+  shift 2
+  local log="${CI_LOG_DIR}/${job}-${stage}.log"
   local start end rc
   start="$(date +%s)"
   set +e
-  ( set -euo pipefail; "$@" )
+  ( set -euo pipefail; "$@" ) >"$log" 2>&1
   rc=$?
   set -e
   end="$(date +%s)"
   if [[ "$rc" -eq 0 ]]; then
-    echo "ci: ${name} PASS $((end - start))s"
+    echo "ci: ${job} ${stage} PASS $((end - start))s"
   else
-    echo "ci: ${name} FAIL $((end - start))s"
+    echo "ci: ${job} ${stage} FAIL $((end - start))s"
+    echo "---- last 40 lines of ${log} ----"
+    tail -n 40 "$log" || true
+    echo "---- log: ${log} ----"
     exit "$rc"
   fi
 }
@@ -75,12 +84,18 @@ compose_infra() {
   docker compose -p "$COMPOSE_PROJECT_NAME" --env-file "$ENV_FILE" up -d --wait postgres valkey
 }
 
-job_workflow() {
-  docker run --rm -v "$ROOT:/repo:ro" --workdir /repo "$ACTIONLINT_IMAGE" -color
+uv_sync() {
   (
     cd "$ROOT/backend"
-    uv run --locked python ../scripts/ci_parity_check.py
+    uv sync --locked
   )
+}
+
+job_workflow() {
+  run_stage workflow actionlint \
+    docker run --rm -v "$ROOT:/repo:ro" --workdir /repo "$ACTIONLINT_IMAGE" -color
+  run_stage workflow parity \
+    bash -c 'cd "$1/backend" && uv run --locked python ../scripts/ci_parity_check.py' _ "$ROOT"
 }
 
 job_toolchain() {
@@ -88,44 +103,46 @@ job_toolchain() {
 }
 
 job_backend() {
-  job_toolchain
-  (
-    cd "$ROOT/backend"
-    uv sync --locked
-  )
-  materialize
-  compose_infra
-  make -C "$ROOT" lint fmt-check typecheck imports migrations-check test audit ENV_FILE="$ENV_FILE"
+  run_stage backend toolchain job_toolchain
+  run_stage backend sync uv_sync
+  run_stage backend materialize materialize
+  run_stage backend compose compose_infra
+  run_stage backend lint make -C "$ROOT" lint ENV_FILE="$ENV_FILE"
+  run_stage backend fmt-check make -C "$ROOT" fmt-check ENV_FILE="$ENV_FILE"
+  run_stage backend typecheck make -C "$ROOT" typecheck ENV_FILE="$ENV_FILE"
+  run_stage backend imports make -C "$ROOT" imports ENV_FILE="$ENV_FILE"
+  run_stage backend migrations-check make -C "$ROOT" migrations-check ENV_FILE="$ENV_FILE"
+  run_stage backend test make -C "$ROOT" test ENV_FILE="$ENV_FILE"
+  run_stage backend audit make -C "$ROOT" audit ENV_FILE="$ENV_FILE"
 }
 
 job_miniapp() {
-  job_toolchain
-  (
-    cd "$ROOT/backend"
-    uv sync --locked
-  )
-  make -C "$ROOT" miniapp-install miniapp-check
+  run_stage miniapp toolchain job_toolchain
+  run_stage miniapp sync uv_sync
+  run_stage miniapp install make -C "$ROOT" miniapp-install
+  run_stage miniapp check make -C "$ROOT" miniapp-check
 }
 
 job_secrets() {
-  job_toolchain
-  make -C "$ROOT" secrets
+  run_stage secrets toolchain job_toolchain
+  run_stage secrets scan make -C "$ROOT" secrets
 }
 
 job_image() {
-  job_toolchain
-  make -C "$ROOT" image image-scan
+  run_stage image toolchain job_toolchain
+  run_stage image build make -C "$ROOT" image
+  run_stage image scan make -C "$ROOT" image-scan
 }
 
 job_stack_smoke() {
-  job_toolchain
-  materialize stack-smoke
-  make -C "$ROOT" stack-smoke ENV_FILE="$ENV_FILE"
+  run_stage stack-smoke toolchain job_toolchain
+  run_stage stack-smoke materialize materialize stack-smoke
+  run_stage stack-smoke smoke make -C "$ROOT" stack-smoke ENV_FILE="$ENV_FILE"
 }
 
 job_ownership_guard() {
-  job_toolchain
-  make -C "$ROOT" ownership-guard BASE="$BASE"
+  run_stage ownership-guard toolchain job_toolchain
+  run_stage ownership-guard check make -C "$ROOT" ownership-guard BASE="$BASE"
 }
 
 run_job() {
@@ -135,11 +152,11 @@ run_job() {
     echo "unknown JOB=${name}" >&2
     exit 1
   fi
-  run_stage "$name" "$fn"
+  "$fn"
 }
 
-materialize
-run_stage workflow job_workflow
+run_stage setup materialize materialize
+job_workflow
 
 if [[ -n "${JOB:-}" ]]; then
   run_job "$JOB"

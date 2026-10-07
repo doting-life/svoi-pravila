@@ -4,7 +4,9 @@
 
 ## Текущее
 - Дата: 2026-10-06 · Спринт 0 (Фундамент)
-- Активная задача: **0020.1 — эксплуатационные метрики (Prometheus) и дашборд «Эксплуатация»** · ветка `task/0020-1-metrics` · GigaChat 0 токенов; старт после мержа 0018.2
+- Активная задача: **0025.1 — закрытая личка бота, всё в мини-приложении (ADR-0010)** · ветка `task/0025-1-miniapp-only` · GigaChat 0 токенов; старт после мержа 0018.2
+- Решение владельца 07.10: всё — через мини-приложение, личка бота закрыта, inline остаётся; облик «тёплый и спокойный», сначала макет на согласование (ADR-0010)
+- Отложено: 0020.1 (метрики) — после блока 0025
 - Вопрос владельцу (07.10): бета требует публичного бота. Предложение CTO: 0020 → 0022 → 0023 (VPS, staging-бот) → бета → 0019 по данным беты → 0021
 - В `master`: 0018.1 (`90ed300`, squash #24)
 - В `master`: 0017.2 (`4caf8f8`, squash #23)
@@ -180,7 +182,8 @@
 - `structlog` убран из запрещённых импортов слоя приложения — ослаблен архитектурный контракт (повод дала формулировка CTO «use structlog»);
 - число попыток (2) задано в двух местах: `should_retry_invalid` и `_ATTEMPT_FACTOR` |
 | 0018.2-a | Restore the application boundary; single source for attempts | `task/0018-2-limits-analytics` | проверен 07.10 | **ACCEPT**. CI зелёный с первого push. Гейты CTO: 1202 теста, контракты импортов 9/9. `structlog` и `logging` запрещены в слое приложения. Сбой учёта логирует адаптер. `MAX_ATTEMPTS` — единственный источник числа попыток |
-| 0020.1 | Operational metrics (Prometheus), ops dashboard | `task/0020-1-metrics` | выдан | — |
+| 0020.1 | Operational metrics (Prometheus), ops dashboard | `task/0020-1-metrics` | отложен 07.10 | приоритет владельца — блок 0025 |
+| 0025.1 | Closed bot DM; onboarding, export, invites in the mini-app (ADR-0010) | `task/0025-1-miniapp-only` | выдан | — |
 | 0006.1-b | Image gate: Debian security updates, base digest pin, Dependabot | `task/0006-telegram-channel` | проверен 04.10 | **ACCEPT** (Trivy: 21 CVE → 0) |
 
 ## Решения

@@ -5,13 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-import structlog
-
 from svoi_pravila.application.errors import CacheUnavailable
 from svoi_pravila.application.ports.llm_budget import LlmBudget
 from svoi_pravila.application.ports.quota_gate import QuotaGate, QuotaReservation
-
-logger = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,14 +28,12 @@ async def charge_cancelled_budget(
     day: date,
     billable_tokens: int,
 ) -> None:
-    """Add a precomputed worst-case charge; swallow cache errors after logging."""
+    """Add a precomputed worst-case charge; ignore cache errors after adapter log."""
     try:
         await llm_budget.add(day, billable_tokens)
-    except CacheUnavailable as exc:
-        logger.warning(
-            "llm_budget_charge_on_cancel_failed",
-            error_kind=exc.kind.value,
-        )
+    except CacheUnavailable:
+        # Adapter already logged; CancelledError must propagate.
+        return
 
 
 async def handle_generation_cancelled(args: CancelledGeneration) -> None:

@@ -247,6 +247,8 @@ forbidden_modules = [
     "sqlalchemy",
     "asyncpg",
     "redis",
+    "structlog",
+    "logging",
     "alembic",
     "gigachat",
     "httpx",

@@ -102,6 +102,13 @@ class ValkeyLlmBudget:
         if billable_tokens < 0:
             msg = "billable_tokens must be non-negative"
             raise ValueError(msg)
+        try:
+            await self._add_or_rebuild(day, billable_tokens)
+        except CacheUnavailable as exc:
+            _logger.warning("llm_budget_add_failed", error_kind=exc.kind.value)
+            raise
+
+    async def _add_or_rebuild(self, day: date, billable_tokens: int) -> None:
         if billable_tokens == 0:
             await self._ensure_key(day)
             return

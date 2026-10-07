@@ -84,7 +84,7 @@ async def test_handle_generation_cancelled_before_provider_without_reservation()
 
 
 @pytest.mark.unit
-async def test_charge_cancelled_budget_logs_cache_unavailable() -> None:
+async def test_charge_cancelled_budget_swallows_cache_unavailable() -> None:
     budget = FakeLlmBudget(add_unavailable=CacheUnavailable(CacheErrorKind.SERVER))
     await charge_cancelled_budget(budget, day=_DAY, billable_tokens=10)
     assert budget.add_calls == []

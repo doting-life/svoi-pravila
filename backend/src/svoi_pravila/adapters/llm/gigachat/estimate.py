@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+from svoi_pravila.adapters.llm.gigachat.attempt_policy import MAX_ATTEMPTS
 from svoi_pravila.adapters.llm.gigachat.prepared import (
     prepare_decode,
     prepare_decode_analysis,
@@ -26,9 +27,6 @@ from svoi_pravila.application.ports.generation import (
     SuggestRuleRequest,
 )
 
-# One invalid-output retry is allowed (attempt 0 may retry once).
-_ATTEMPT_FACTOR = 2
-
 
 def chars_to_tokens(text: str) -> int:
     """Heuristic: ceil(characters / 3), matching GigaChat average density docs."""
@@ -49,13 +47,13 @@ def max_billable_for_request(
     if isinstance(request, SoftenRequest):
         prepared = prepare_soften(request)
         one = estimate_prepared_tokens(prepared.system, prepared.user, output_cap=MAX_TOKENS_SOFTEN)
-        return _ATTEMPT_FACTOR * one
+        return MAX_ATTEMPTS * one
     if isinstance(request, HelpSayRequest):
         prepared = prepare_help_say(request)
         one = estimate_prepared_tokens(
             prepared.system, prepared.user, output_cap=MAX_TOKENS_HELP_SAY
         )
-        return _ATTEMPT_FACTOR * one
+        return MAX_ATTEMPTS * one
     if isinstance(request, DecodeRequest):
         analysis = prepare_decode_analysis(request)
         phase_a = estimate_prepared_tokens(
@@ -65,7 +63,7 @@ def max_billable_for_request(
         phase_b = estimate_prepared_tokens(
             structured.system, structured.user, output_cap=MAX_TOKENS_DECODE
         )
-        return _ATTEMPT_FACTOR * phase_a + _ATTEMPT_FACTOR * phase_b
+        return MAX_ATTEMPTS * phase_a + MAX_ATTEMPTS * phase_b
     prepared = prepare_suggest_rule(request)
     one = estimate_prepared_tokens(prepared.system, prepared.user, output_cap=MAX_TOKENS_SUGGEST)
-    return _ATTEMPT_FACTOR * one
+    return MAX_ATTEMPTS * one

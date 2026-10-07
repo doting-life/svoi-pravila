@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -361,3 +362,28 @@ async def test_llm_budget_read_after_set_requires_key() -> None:
     with pytest.raises(CacheUnavailable) as missing:
         await budget.check(_DAY)
     assert missing.value.kind is CacheErrorKind.SERVER
+
+
+@pytest.mark.unit
+async def test_llm_budget_add_logs_and_raises_on_valkey_failure(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    class _BoomClient(_BudgetClient):
+        def register_script(self, lua: str) -> Any:
+            del lua
+
+            async def _add(*, keys: list[str], args: list[Any]) -> list[int]:
+                del keys, args
+                raise RedisConnectionError("down")
+
+            return _add
+
+    client = _BoomClient()
+    client.data[_KEY] = "0"
+    budget = _make_budget(client, _CountingSum())
+    with pytest.raises(CacheUnavailable) as caught:
+        await budget.add(_DAY, 10)
+    assert caught.value.kind is CacheErrorKind.NETWORK
+    failures = [e for e in capture_log_events() if e.get("event") == "llm_budget_add_failed"]
+    assert len(failures) == 1
+    assert failures[0]["error_kind"] == CacheErrorKind.NETWORK.value

@@ -15,21 +15,21 @@ from svoi_pravila.observability.metrics import labels
 
 @pytest.mark.unit
 def test_scenario_surface_outcome_limit_kind_cover_enums() -> None:
-    for member in UsageScenario:
-        assert labels.scenario_label(member) == member.value
-        assert labels.scenario_label(member.value) == member.value
+    for scenario in UsageScenario:
+        assert labels.scenario_label(scenario) == scenario.value
+        assert labels.scenario_label(scenario.value) == scenario.value
     assert labels.scenario_label("free-text") == labels.OTHER
 
-    for member in UsageSurface:
-        assert labels.surface_label(member) == member.value
+    for surface in UsageSurface:
+        assert labels.surface_label(surface) == surface.value
     assert labels.surface_label("chat") == labels.OTHER
 
-    for member in UsageOutcome:
-        assert labels.outcome_label(member) == member.value
+    for outcome in UsageOutcome:
+        assert labels.outcome_label(outcome) == outcome.value
     assert labels.outcome_label("weird") == labels.OTHER
 
-    for member in LimitKind:
-        assert labels.limit_kind_label(member, outcome=UsageOutcome.LIMITED) == member.value
+    for kind in LimitKind:
+        assert labels.limit_kind_label(kind, outcome=UsageOutcome.LIMITED) == kind.value
     assert labels.limit_kind_label(LimitKind.USER_QUOTA, outcome=UsageOutcome.OK) == labels.NONE
     assert labels.limit_kind_label(None, outcome=UsageOutcome.LIMITED) == labels.NONE
     assert labels.limit_kind_label("bogus", outcome=UsageOutcome.LIMITED) == labels.OTHER
@@ -52,14 +52,14 @@ def test_model_and_prompt_version_allowlists() -> None:
 
 @pytest.mark.unit
 def test_cache_analytics_telegram_http_labels() -> None:
-    for member in CacheErrorKind:
-        assert labels.cache_error_kind_label(member) == member.value
+    for kind in CacheErrorKind:
+        assert labels.cache_error_kind_label(kind) == kind.value
     assert labels.cache_error_kind_label("x") == labels.OTHER
 
-    for member in AnalyticsJobName:
-        assert labels.analytics_job_label(member) == member.value
-    for member in AnalyticsJobStatus:
-        assert labels.analytics_status_label(member) == member.value
+    for job in AnalyticsJobName:
+        assert labels.analytics_job_label(job) == job.value
+    for status in AnalyticsJobStatus:
+        assert labels.analytics_status_label(status) == status.value
 
     assert labels.update_type_label("message") == "message"
     assert labels.update_type_label("not-a-type") == labels.OTHER

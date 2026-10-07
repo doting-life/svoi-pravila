@@ -97,3 +97,24 @@ def test_max_billable_suggest_known_prompt() -> None:
         prepared.system, prepared.user, output_cap=MAX_TOKENS_SUGGEST
     )
     assert max_billable_for_request(request) == expected
+
+
+@pytest.mark.unit
+def test_adapter_max_billable_delegates_to_estimate() -> None:
+    from typing import Any, cast
+
+    from svoi_pravila.adapters.llm.gigachat.adapter import GigaChatTextGenerator
+    from tests.factories import make_settings
+
+    class _Client:
+        async def acheck_connectivity(self) -> None:
+            return None
+
+    generator = GigaChatTextGenerator(cast(Any, _Client()), make_settings())
+    request = SoftenRequest(
+        draft="пожалуйста говори спокойнее",
+        rules=(),
+        relationship=RelationshipKind.PARTNER,
+        deadline_seconds=5.0,
+    )
+    assert generator.max_billable(request) == max_billable_for_request(request)

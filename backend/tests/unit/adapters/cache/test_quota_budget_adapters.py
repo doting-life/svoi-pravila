@@ -158,6 +158,24 @@ async def test_quota_gate_remaining_without_mutation() -> None:
     assert await gate.remaining(_PSEUDO, QuotaClass.DECODE, _DAY) == 4
 
 
+@pytest.mark.unit
+async def test_quota_gate_remaining_corrupt_counter() -> None:
+    class _CorruptClient(_ScriptClient):
+        async def get(self, key: str) -> str | None:
+            del key
+            return "not-an-int"
+
+    gate = ValkeyQuotaGate(
+        cast(Redis, _CorruptClient()),
+        inline_limit=10,
+        decode_limit=5,
+        timezone=_TZ,
+    )
+    with pytest.raises(CacheUnavailable) as caught:
+        await gate.remaining(_PSEUDO, QuotaClass.DECODE, _DAY)
+    assert caught.value.kind is CacheErrorKind.SERVER
+
+
 class _BudgetClient:
     """In-memory Redis for ValkeyLlmBudget paths."""
 

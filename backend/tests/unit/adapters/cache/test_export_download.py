@@ -59,6 +59,27 @@ async def test_export_download_issue_collision() -> None:
 
 
 @pytest.mark.unit
+async def test_export_download_issue_unexpected_set_truthy() -> None:
+    """Non-bool SET replies are treated as success (redis-py quirk path)."""
+
+    class _OddSet(_MemoryRedis):
+        async def set(
+            self,
+            key: str,
+            value: str,
+            *,
+            nx: bool = False,
+            ex: int | None = None,
+        ) -> bool | None:
+            del key, value, nx, ex
+            return cast(bool | None, "OK")
+
+    store = ValkeyExportDownloadStore(cast(Redis, _OddSet()))
+    grant = await store.issue(UserId(UUID(int=5)), expires_at=_EXPIRES)
+    assert grant.raw_token
+
+
+@pytest.mark.unit
 async def test_export_download_consume_invalid_uuid() -> None:
     redis = _MemoryRedis()
     store = ValkeyExportDownloadStore(cast(Redis, redis))

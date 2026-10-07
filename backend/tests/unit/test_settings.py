@@ -67,7 +67,10 @@ def test_settings_analytics_defaults() -> None:
 
 
 @pytest.mark.unit
-def test_settings_metrics_defaults() -> None:
+def test_settings_metrics_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SP_METRICS_ENABLED", raising=False)
+    monkeypatch.delenv("SP_METRICS_HOST", raising=False)
+    monkeypatch.delenv("SP_METRICS_PORT", raising=False)
     values = make_settings().model_dump()
     del values["metrics_enabled"]
     del values["metrics_host"]

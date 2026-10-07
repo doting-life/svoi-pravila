@@ -102,7 +102,7 @@ class ValkeyQuotaGate:
         limit = self._limits[quota_class]
         key = self._counter_key(pseudonym, quota_class, day)
 
-        async def _get() -> object:
+        async def _get() -> bytes | str | None:
             return await self._client.get(key)
 
         raw = await map_redis(_get)

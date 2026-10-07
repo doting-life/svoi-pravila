@@ -45,12 +45,17 @@ class ValkeyExportDownloadStore:
         key = self._key(self._hash(raw_token))
 
         async def _set() -> bool | None:
-            return await self._client.set(
+            result = await self._client.set(
                 key,
                 str(user_id),
                 nx=True,
                 ex=self._ttl_seconds,
             )
+            if result is True:
+                return True
+            if result is False or result is None:
+                return None
+            return True
 
         created = await map_redis(_set)
         if created is not True:
@@ -61,7 +66,7 @@ class ValkeyExportDownloadStore:
         """GETDEL the grant; return the bound user id or None on a clean miss."""
         key = self._key(self._hash(raw_token))
 
-        async def _getdel() -> object:
+        async def _getdel() -> bytes | str | None:
             return await self._client.getdel(key)
 
         raw = await map_redis(_getdel)

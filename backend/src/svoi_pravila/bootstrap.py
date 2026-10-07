@@ -542,7 +542,7 @@ def create_application(settings: Settings) -> FastAPI:
             pseudonymizer=pseudonymizer,
             monotonic=monotonic,
             inline_cache_seconds=settings.inline_cache_seconds,
-            miniapp_url=settings.miniapp_url,
+            miniapp_url=_required_miniapp_url(settings),
         )
         lifecycle = build_telegram_lifecycle(
             settings,

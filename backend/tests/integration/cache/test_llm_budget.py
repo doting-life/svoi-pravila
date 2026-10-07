@@ -86,7 +86,9 @@ async def test_llm_budget_add_after_missing_key_does_not_double_count(
     await valkey_db15.delete(key)
 
     await budget.add(_DAY, event_tokens)
-    assert int(await valkey_db15.get(key)) == event_tokens
+    rebuilt = await valkey_db15.get(key)
+    assert rebuilt is not None
+    assert int(rebuilt) == event_tokens
     assert sums.calls == 1
 
 
@@ -107,7 +109,9 @@ async def test_llm_budget_rebuild_overcount_bound_by_inflight_adds(
         await budget.add(_DAY, per_add)
 
     await asyncio.gather(*[_add_one() for _ in range(inflight)])
-    spent = int(await valkey_db15.get(key))
+    raw = await valkey_db15.get(key)
+    assert raw is not None
+    spent = int(raw)
     # Exact once each via INCR when a peer's SET already won, or rebuild-only:
     # over-count relative to base is at most inflight * per_add.
     assert spent >= base

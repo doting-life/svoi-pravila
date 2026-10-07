@@ -238,6 +238,8 @@ class Settings(BaseSettings):
     log_level: LogLevel = LogLevel.INFO
     http_host: str = "127.0.0.1"
     http_port: int = Field(default=8000, ge=1, le=65535)
+    metrics_enabled: bool = True
+    metrics_port: int = Field(default=9100, ge=1, le=65535)
     database_url: SecretStr
     valkey_url: SecretStr
     readiness_timeout_seconds: float = Field(default=2.0, gt=0, le=5)

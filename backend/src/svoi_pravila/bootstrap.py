@@ -45,6 +45,7 @@ from svoi_pravila.adapters.llm.gigachat.client import close_gigachat_client, cre
 from svoi_pravila.adapters.persistence.analytics_store import SqlAlchemyAnalyticsStore
 from svoi_pravila.adapters.persistence.billable_token_sum import UowBillableTokenSum
 from svoi_pravila.adapters.persistence.engine import create_engine, dispose_engine
+from svoi_pravila.adapters.persistence.metrics_usage_sink import MetricsUsageEventSink
 from svoi_pravila.adapters.persistence.probe import DatabaseProbe
 from svoi_pravila.adapters.persistence.uow import SqlAlchemyUnitOfWorkFactory
 from svoi_pravila.adapters.persistence.usage_sink import UnitOfWorkUsageEventSink
@@ -55,6 +56,7 @@ from svoi_pravila.adapters.system.analytics_scheduler import (
 from svoi_pravila.adapters.system.clock import SystemClock
 from svoi_pravila.adapters.system.ids import Uuid7IdGenerator
 from svoi_pravila.adapters.system.inline_result_reuse import InProcessInlineResultReuse
+from svoi_pravila.adapters.system.metrics_analytics_store import MetricsAnalyticsStore
 from svoi_pravila.adapters.system.monotonic import SystemMonotonicClock
 from svoi_pravila.adapters.system.tokens import SecretsInviteTokenGenerator
 from svoi_pravila.adapters.system.tone_suggestion_catalog import StaticToneSuggestionCatalog
@@ -127,6 +129,7 @@ from svoi_pravila.config import (
 )
 from svoi_pravila.crypto import HmacPseudonymizer
 from svoi_pravila.observability import configure_logging
+from svoi_pravila.observability.metrics import EventLoopLagMonitor, start_metrics_server
 
 _HEALTHCHECK_TIMEOUT_SECONDS = 2.0
 _HTTP_OK = 200
@@ -368,7 +371,7 @@ def create_application(settings: Settings) -> FastAPI:
     catalog = PackageConsentCatalog()
     tone_catalog = StaticToneSuggestionCatalog()
     generator = GigaChatTextGenerator(gigachat, settings)
-    sink = UnitOfWorkUsageEventSink(uow_factory)
+    sink = MetricsUsageEventSink(UnitOfWorkUsageEventSink(uow_factory))
     pseudonymizer = HmacPseudonymizer(settings.pseudonym_pepper_bytes())
     crisis_screen = CrisisScreen.load_ru_v2()
     inline_reuse = InProcessInlineResultReuse(
@@ -566,7 +569,11 @@ def create_application(settings: Settings) -> FastAPI:
             io=_AppIoClients(gigachat=gigachat, valkey=valkey, engine=engine),
             routers=tuple(routers),
             extra_shutdown=_miniapp_bot_shutdown(lifecycle, shared_bot),
-            analytics_scheduler=_analytics_scheduler(settings, engine, ids, clock),
+            background=_BackgroundServices(
+                analytics_scheduler=_analytics_scheduler(settings, engine, ids, clock),
+                metrics_enabled=settings.metrics_enabled,
+                metrics_port=settings.metrics_port,
+            ),
         ),
         display_timezone=settings.display_timezone,
     )
@@ -581,13 +588,22 @@ class _AppIoClients:
     engine: AsyncEngine
 
 
+@dataclass(frozen=True, slots=True)
+class _BackgroundServices:
+    """In-process background tasks started with the ASGI lifespan."""
+
+    analytics_scheduler: AnalyticsScheduler | None
+    metrics_enabled: bool
+    metrics_port: int
+
+
 def _analytics_scheduler(
     settings: Settings,
     engine: AsyncEngine,
     ids: Uuid7IdGenerator,
     clock: SystemClock,
 ) -> AnalyticsScheduler:
-    store = SqlAlchemyAnalyticsStore(engine)
+    store = MetricsAnalyticsStore(SqlAlchemyAnalyticsStore(engine))
     return AnalyticsScheduler(
         RunDailyAnalytics(
             RunDailyAnalyticsPorts(
@@ -627,19 +643,31 @@ def _app_lifecycle_hooks(
     io: _AppIoClients,
     routers: tuple[APIRouter, ...],
     extra_shutdown: DisposeHook | None = None,
-    analytics_scheduler: AnalyticsScheduler | None = None,
+    background: _BackgroundServices | None = None,
 ) -> AppLifecycleHooks:
     """Build FastAPI lifespan hooks for optional Telegram lifecycle and I/O clients."""
+    services = background or _BackgroundServices(
+        analytics_scheduler=None,
+        metrics_enabled=False,
+        metrics_port=9100,
+    )
+    lag_monitor = EventLoopLagMonitor() if services.metrics_enabled else None
 
     async def on_startup() -> None:
+        if services.metrics_enabled:
+            start_metrics_server(port=services.metrics_port)
+            if lag_monitor is not None:
+                await lag_monitor.start()
         if lifecycle is not None:
             await lifecycle.start()
-        if analytics_scheduler is not None:
-            await analytics_scheduler.start()
+        if services.analytics_scheduler is not None:
+            await services.analytics_scheduler.start()
 
     async def on_shutdown() -> None:
-        if analytics_scheduler is not None:
-            await analytics_scheduler.shutdown()
+        if lag_monitor is not None:
+            await lag_monitor.shutdown()
+        if services.analytics_scheduler is not None:
+            await services.analytics_scheduler.shutdown()
         if lifecycle is not None:
             await lifecycle.shutdown()
         if extra_shutdown is not None:

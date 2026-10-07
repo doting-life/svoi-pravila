@@ -17,6 +17,7 @@ from svoi_pravila.application.ports.billable_token_sum import BillableTokenSum
 from svoi_pravila.application.ports.clock import Clock
 from svoi_pravila.application.ports.llm_budget import BudgetExhausted, BudgetOk
 from svoi_pravila.domain.product_day import expire_at_utc, resets_at_utc
+from svoi_pravila.observability.metrics import families
 
 _logger = structlog.get_logger(__name__)
 
@@ -87,6 +88,7 @@ class ValkeyLlmBudget:
     async def check(self, day: date) -> BudgetOk | BudgetExhausted:
         """Rebuild if missing; exhausted when spent >= budget."""
         spent = await self._ensure_key(day)
+        self._publish_budget_gauges(spent)
         resets = resets_at_utc(day, self._timezone).replace(microsecond=0)
         if spent >= self._budget:
             return BudgetExhausted(resets_at=resets)
@@ -108,9 +110,14 @@ class ValkeyLlmBudget:
             _logger.warning("llm_budget_add_failed", error_kind=exc.kind.value)
             raise
 
+    def _publish_budget_gauges(self, spent: int) -> None:
+        families.LLM_BUDGET_TOKENS.set(self._budget)
+        families.LLM_BUDGET_SPENT.set(spent)
+
     async def _add_or_rebuild(self, day: date, billable_tokens: int) -> None:
         if billable_tokens == 0:
-            await self._ensure_key(day)
+            spent = await self._ensure_key(day)
+            self._publish_budget_gauges(spent)
             return
         key = self._key(day)
         _, hour, hour_expire = _local_hour_parts(self._clock.now(), self._timezone)
@@ -126,18 +133,17 @@ class ValkeyLlmBudget:
             return added, crossed, hour_tokens
 
         added, crossed, hour_tokens = await map_redis(_try_add)
-        if added == 1:
-            if crossed == 1:
-                _logger.warning(
-                    "llm_spend_spike",
-                    day=day.isoformat(),
-                    hour=hour,
-                    hour_tokens=hour_tokens,
-                    threshold_tokens=threshold,
-                    budget_tokens=self._budget,
-                )
-            return
-        await self._ensure_key(day)
+        if added == 1 and crossed == 1:
+            _logger.warning(
+                "llm_spend_spike",
+                day=day.isoformat(),
+                hour=hour,
+                hour_tokens=hour_tokens,
+                threshold_tokens=threshold,
+                budget_tokens=self._budget,
+            )
+        spent = await self._ensure_key(day)
+        self._publish_budget_gauges(spent)
 
     async def _ensure_key(self, day: date) -> int:
         key = self._key(day)

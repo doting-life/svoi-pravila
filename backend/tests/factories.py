@@ -41,6 +41,7 @@ def make_settings(**overrides: object) -> Settings:
         "pseudonym_pepper": _TEST_PEPPER,
         "miniapp_url": None,
         "analytics_jobs_enabled": False,
+        "metrics_enabled": False,
         "llm_daily_token_budget": 20_000,
     }
     values.update(overrides)

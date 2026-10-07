@@ -80,8 +80,13 @@ services:
       SP_HTTP_HOST: "0.0.0.0"
       SP_FORWARDED_ALLOW_IPS: "127.0.0.1"
       SP_GIGACHAT_CA_BUNDLE_FILE: /app/certs/russian_trusted_root_ca.pem
+      SP_METRICS_ENABLED: "true"
+      SP_METRICS_PORT: "9100"
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
+    networks:
+      - default
+      - metrics
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -141,6 +146,31 @@ services:
       - no-new-privileges:true
     stop_grace_period: 20s
 
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:v3.13.4@sha256:87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e
+    restart: unless-stopped
+    user: "65534:65534"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.listen-address=0.0.0.0:9090
+    volumes:
+      - ./ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - metrics
+      - observability
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 20s
+
   grafana:
     profiles: ["observability"]
     build:
@@ -171,8 +201,8 @@ services:
       - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
     networks:
-      # Shared with Postgres only. Does not grant lateral access to api/valkey
-      # (egress to the public Internet is not blocked by this network).
+      # Shared with Postgres and Prometheus. Does not grant lateral access to
+      # api/valkey (egress to the public Internet is not blocked by this network).
       - observability
       # Dedicated non-internal network so Docker publishes the host port; Grafana
       # is the only service attached (no lateral access to app services).
@@ -182,6 +212,8 @@ services:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
+      prometheus:
+        condition: service_started
     healthcheck:
       test:
         [
@@ -204,9 +236,12 @@ services:
 networks:
   observability:
     internal: true
+  metrics:
+    internal: true
   grafana_edge:
 
 volumes:
   postgres_data:
   valkey_data:
   grafana_data:
+  prometheus_data:

@@ -18,3 +18,6 @@ scan svoi-pravila:ci
 scan svoi-pravila-miniapp:ci
 # Built Grafana image (plugin baked in); not the upstream base alone.
 scan svoi-pravila-grafana:ci
+# Upstream Prometheus (digest-pinned in compose / image-pins.env).
+docker pull "$PROMETHEUS_IMAGE"
+scan "$PROMETHEUS_IMAGE"

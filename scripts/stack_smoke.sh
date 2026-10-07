@@ -173,8 +173,62 @@ with urllib.request.urlopen(dash_req, timeout=10) as resp:
     dash = json.loads(resp.read().decode())
 assert dash["dashboard"]["uid"] == "svoi-analytics", dash
 print("grafana_dashboard_ok")
+
+deadline = time.monotonic() + 90
+metrics_health = None
+while time.monotonic() < deadline:
+    try:
+        ds_req = urllib.request.Request(
+            f"{base}/api/datasources/uid/svoi-metrics/health",
+            headers=auth,
+        )
+        with urllib.request.urlopen(ds_req, timeout=30) as resp:
+            metrics_health = json.loads(resp.read().decode())
+        if metrics_health.get("status") == "OK":
+            break
+    except urllib.error.HTTPError as exc:
+        if exc.code not in {404, 502, 503}:
+            raise
+        time.sleep(2)
+        continue
+    time.sleep(2)
+else:
+    raise AssertionError(f"metrics datasource health not OK: {metrics_health!r}")
+print("grafana_metrics_datasource_ok")
+
+ops_req = urllib.request.Request(
+    f"{base}/api/dashboards/uid/svoi-ops",
+    headers=auth,
+)
+with urllib.request.urlopen(ops_req, timeout=10) as resp:
+    ops = json.loads(resp.read().decode())
+assert ops["dashboard"]["uid"] == "svoi-ops", ops
+print("grafana_ops_dashboard_ok")
 PY
 )
+
+# C3 — Prometheus scrapes api:9100; host and Grafana cannot reach the metrics port.
+project="${COMPOSE_PROJECT_NAME:-svoi-pravila-ci}"
+compose=(docker compose -p "$project" --env-file "$ENV_FILE")
+prom_deadline=$((SECONDS + 90))
+prom_up=""
+while (( SECONDS < prom_deadline )); do
+  prom_up="$("${compose[@]}" exec -T prometheus wget -qO- \
+    'http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D%22api%22%7D' 2>/dev/null || true)"
+  if printf '%s' "$prom_up" | grep -q '"value":\[.*,"1"\]'; then
+    break
+  fi
+  sleep 2
+done
+printf '%s\n' "$prom_up" | grep -q '"value":\[.*,"1"\]'
+echo "prometheus_api_up_ok"
+
+if curl -sS -m 2 "http://127.0.0.1:9100/metrics" >/dev/null 2>&1; then
+  echo "metrics port unexpectedly reachable on host" >&2
+  exit 1
+fi
+echo "host_metrics_port_closed_ok"
+
 
 # C2 — Grafana must not receive app secrets (names only; never print values).
 forbidden_env="$(
@@ -203,16 +257,18 @@ fi
 echo "grafana_env_names_ok"
 
 # B2 — From inside Grafana: Postgres reachable; api and valkey isolated.
-project="${COMPOSE_PROJECT_NAME:-svoi-pravila-ci}"
-compose=(docker compose -p "$project" --env-file "$ENV_FILE")
 obs_net="$(docker network ls --format '{{.Name}}' | grep -E "^${project}_observability$" | head -n1)"
 edge_net="$(docker network ls --format '{{.Name}}' | grep -E "^${project}_grafana_edge$" | head -n1)"
+metrics_net="$(docker network ls --format '{{.Name}}' | grep -E "^${project}_metrics$" | head -n1)"
 test -n "$obs_net"
 test -n "$edge_net"
+test -n "$metrics_net"
 internal="$(docker network inspect "$obs_net" --format '{{.Internal}}')"
 test "$internal" = "true"
 edge_internal="$(docker network inspect "$edge_net" --format '{{.Internal}}')"
 test "$edge_internal" = "false"
+metrics_internal="$(docker network inspect "$metrics_net" --format '{{.Internal}}')"
+test "$metrics_internal" = "true"
 
 "${compose[@]}" exec -T grafana sh -c '
 set -eu
@@ -234,7 +290,9 @@ probe_fail() {
   return 1
 }
 probe_ok postgres 5432
+probe_ok prometheus 9090
 probe_fail api 8000
+probe_fail api 9100
 probe_fail valkey 6379
 '
 echo "grafana_isolation_ok"

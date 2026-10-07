@@ -1,0 +1,10 @@
+# Scrape the API process metrics port on the internal metrics network.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: api
+    static_configs:
+      - targets:
+          - api:9100

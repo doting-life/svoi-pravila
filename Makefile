@@ -139,12 +139,12 @@ miniapp-tunnel-down:
 	$(COMPOSE) --profile app --profile tunnel rm -f tunnel
 
 observability-up: build
-	$(COMPOSE) --profile observability up -d --wait migrate grafana
+	$(COMPOSE) --profile observability up -d --wait migrate prometheus grafana
 	@echo "Grafana: http://127.0.0.1:$$(docker compose $(COMPOSE_ENV) port grafana 3000 | sed 's/.*://') (loopback only; SSH tunnel on VPS)"
 
 observability-down:
-	$(COMPOSE) --profile observability stop grafana
-	$(COMPOSE) --profile observability rm -f grafana
+	$(COMPOSE) --profile observability stop grafana prometheus
+	$(COMPOSE) --profile observability rm -f grafana prometheus
 
 migrations-check:
 	$(UV) alembic upgrade head

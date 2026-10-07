@@ -112,7 +112,6 @@ def _ports(
             pseudonymizer=FakePseudonymizer(),
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=chosen.deadline_seconds,
-            max_output_tokens=1000,
             analytics_timezone=_ANALYTICS_TZ,
         )
     )
@@ -519,7 +518,6 @@ class _RaisingGen:
 @pytest.mark.unit
 async def test_decode_releases_lock_on_cancellation(world: AppWorld) -> None:
     await world.ensure_granted_user(105)
-    from svoi_pravila.domain.cancelled_billable import estimate_cancelled_billable
 
     quota_gate = FakeQuotaGate(limit=20)
     budget = FakeLlmBudget()
@@ -532,7 +530,7 @@ async def test_decode_releases_lock_on_cancellation(world: AppWorld) -> None:
         await _drain(use_case, 105, text)
     assert guard.release_calls
     assert quota_gate.refund_calls == []
-    assert budget.spent == estimate_cancelled_billable(len(text), 1000)
+    assert budget.spent == 1000
     assert isinstance(sink, RecordingUsageEventSink)
     assert sink.events == []
 
@@ -676,7 +674,6 @@ async def test_decode_cancel_mid_stream_keeps_reservation_and_charges_estimate(
     world: AppWorld,
 ) -> None:
     await world.ensure_granted_user(114)
-    from svoi_pravila.domain.cancelled_billable import estimate_cancelled_billable
 
     class _ChunkThenCancel(FakeTextGenerator):
         def decode_stream(self, request: DecodeRequest) -> AsyncIterator[DecodeEvent]:
@@ -699,7 +696,7 @@ async def test_decode_cancel_mid_stream_keeps_reservation_and_charges_estimate(
         await _drain(use_case, 114, text)
     assert quota_gate.refund_calls == []
     assert quota_gate.reserve_count() == 1
-    assert budget.spent == estimate_cancelled_billable(len(text), 1000)
+    assert budget.spent == 1000
     assert isinstance(sink, RecordingUsageEventSink)
     assert sink.events == []
 

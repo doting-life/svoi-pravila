@@ -148,14 +148,21 @@ class _BudgetClient:
     def register_script(self, lua: str) -> Any:
         del lua
 
-        async def _add(*, keys: list[str], args: list[Any]) -> int:
-            key = keys[0]
-            if key not in self.data:
-                return 0
-            current = self.data[key]
+        async def _add(*, keys: list[str], args: list[Any]) -> list[int]:
+            day_key, hour_key = keys
+            if day_key not in self.data:
+                return [0, 0, 0]
+            delta = int(args[0])
+            threshold = int(args[2])
+            current = self.data[day_key]
             as_str = current.decode() if isinstance(current, bytes) else current
-            self.data[key] = str(int(as_str) + int(args[0]))
-            return 1
+            self.data[day_key] = str(int(as_str) + delta)
+            prev_raw = self.data.get(hour_key)
+            prev = int(prev_raw.decode() if isinstance(prev_raw, bytes) else prev_raw or 0)
+            hour_tokens = prev + delta
+            self.data[hour_key] = str(hour_tokens)
+            crossed = 1 if prev < threshold <= hour_tokens else 0
+            return [1, crossed, hour_tokens]
 
         return _add
 
@@ -201,10 +208,13 @@ def _make_budget(
     *,
     budget: int = 10,
 ) -> ValkeyLlmBudget:
+    from tests.fakes.clock import FakeClock
+
     return ValkeyLlmBudget(
         cast(Redis, client),
         config=ValkeyLlmBudgetConfig(budget=budget, timezone=_TZ),
         sums=sums,
+        clock=FakeClock(),
     )
 
 

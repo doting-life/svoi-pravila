@@ -40,8 +40,14 @@ class FakeAnalyticsStore:
         if not self.timezone_ok:
             raise AnalyticsJobFailed(AnalyticsErrorKind.UNKNOWN_TIMEZONE)
 
-    async def compute_day(self, day: date, tz_name: str, computed_at: datetime) -> int:
-        _ = tz_name, computed_at
+    async def compute_day(
+        self,
+        day: date,
+        tz_name: str,
+        computed_at: datetime,
+        llm_budget_tokens: int,
+    ) -> int:
+        _ = tz_name, computed_at, llm_budget_tokens
         if self.fail_compute is not None:
             raise AnalyticsJobFailed(self.fail_compute)
         self.compute_days.append(day)

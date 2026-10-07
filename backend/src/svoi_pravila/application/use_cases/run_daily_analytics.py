@@ -31,6 +31,7 @@ class RunDailyAnalyticsPorts:
     ids: IdGenerator
     clock: Clock
     timezone: str
+    llm_budget_tokens: int
 
 
 class RunDailyAnalytics:
@@ -41,6 +42,7 @@ class RunDailyAnalytics:
         self._ids = ports.ids
         self._clock = ports.clock
         self._timezone = ports.timezone
+        self._llm_budget_tokens = ports.llm_budget_tokens
 
     async def execute(self, now: datetime) -> None:
         """Run catch-up through yesterday, recompute recent cohorts, then purge."""
@@ -87,7 +89,7 @@ class RunDailyAnalytics:
 
     async def _compute_one_day(self, day: date, now: datetime, *, capped: bool) -> None:
         async def _work() -> int:
-            return await self._store.compute_day(day, self._timezone, now)
+            return await self._store.compute_day(day, self._timezone, now, self._llm_budget_tokens)
 
         await self._step(
             job=AnalyticsJobName.DAILY_AGGREGATES,

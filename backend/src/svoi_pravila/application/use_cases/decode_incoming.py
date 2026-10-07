@@ -103,7 +103,6 @@ class DecodeIncomingPorts:
     pseudonymizer: Pseudonymizer
     crisis_screen: CrisisScreen
     deadline_seconds: float
-    max_output_tokens: int
     analytics_timezone: str
 
 
@@ -248,8 +247,14 @@ class DecodeIncoming:
                     quota_gate=self._ports.quota_gate,
                     llm_budget=self._ports.llm_budget,
                     day=day,
-                    input_chars=len(text),
-                    max_output_tokens=self._ports.max_output_tokens,
+                    billable_tokens=self._ports.generator.max_billable(
+                        DecodeRequest(
+                            incoming=text,
+                            rules=rules,
+                            relationship=relationship,
+                            deadline_seconds=self._ports.deadline_seconds,
+                        )
+                    ),
                 )
             )
             raise

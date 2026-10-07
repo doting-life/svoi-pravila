@@ -197,9 +197,10 @@ async def _insert_daily_aggregate(engine: AsyncEngine) -> None:
             text(
                 "INSERT INTO analytics_daily ("
                 "day, active_users, appeals, new_users, generations, "
-                "generation_errors, computed_at"
+                "generation_errors, users_limited, billable_tokens, "
+                "llm_budget_tokens, computed_at"
                 ") VALUES ("
-                "DATE '2026-01-01', 1, 1, 1, 1, 0, :now"
+                "DATE '2026-01-01', 1, 1, 1, 1, 0, 0, 0, 0, :now"
                 ")"
             ),
             {"now": NOW},

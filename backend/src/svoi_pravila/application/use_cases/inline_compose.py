@@ -114,7 +114,6 @@ class InlineComposePorts:
     reuse: InlineResultReuse
     min_chars: int
     deadline_seconds: float
-    max_output_tokens: int
     intent_prefixes: tuple[tuple[str, HelpSayIntent], ...]
     analytics_timezone: str
 
@@ -268,8 +267,9 @@ class InlineCompose:
                     quota_gate=self._ports.quota_gate,
                     llm_budget=self._ports.llm_budget,
                     day=day,
-                    input_chars=len(material.draft),
-                    max_output_tokens=self._ports.max_output_tokens,
+                    billable_tokens=self._ports.generator.max_billable(
+                        self._generation_request(material)
+                    ),
                 )
             )
             raise
@@ -283,27 +283,31 @@ class InlineCompose:
             applied_rules=applied_rule_views(material.rules, generated.applied_rule_indexes),
         )
 
-    async def _call_generator(
+    def _generation_request(
         self, material: InlineReuseKeyMaterial
-    ) -> SoftenResult | HelpSayResult:
+    ) -> SoftenRequest | HelpSayRequest:
         if material.intent is not None:
-            return await self._ports.generator.help_say(
-                HelpSayRequest(
-                    intent=material.intent,
-                    details=material.draft,
-                    rules=material.rules,
-                    relationship=material.relationship,
-                    deadline_seconds=self._ports.deadline_seconds,
-                )
-            )
-        return await self._ports.generator.soften(
-            SoftenRequest(
-                draft=material.draft,
+            return HelpSayRequest(
+                intent=material.intent,
+                details=material.draft,
                 rules=material.rules,
                 relationship=material.relationship,
                 deadline_seconds=self._ports.deadline_seconds,
             )
+        return SoftenRequest(
+            draft=material.draft,
+            rules=material.rules,
+            relationship=material.relationship,
+            deadline_seconds=self._ports.deadline_seconds,
         )
+
+    async def _call_generator(
+        self, material: InlineReuseKeyMaterial
+    ) -> SoftenResult | HelpSayResult:
+        request = self._generation_request(material)
+        if isinstance(request, HelpSayRequest):
+            return await self._ports.generator.help_say(request)
+        return await self._ports.generator.soften(request)
 
     async def _budget_add(self, day: date, billable_tokens: int) -> None:
         try:

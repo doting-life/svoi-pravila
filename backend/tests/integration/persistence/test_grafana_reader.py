@@ -22,6 +22,12 @@ _DEFAULT_ROLE = "grafana_reader"
 _SELECT_DAILY = "SELECT COUNT(*) FROM analytics_daily"
 _SELECT_SCENARIO = "SELECT COUNT(*) FROM analytics_daily_scenario"
 _SELECT_COHORTS = "SELECT COUNT(*) FROM analytics_cohorts"
+_SELECT_NEW_DAILY_COLS = (
+    "SELECT users_limited, billable_tokens, llm_budget_tokens FROM analytics_daily LIMIT 1"
+)
+_SELECT_NEW_SCENARIO_COLS = (
+    "SELECT limited_user_quota, limited_global_budget FROM analytics_daily_scenario LIMIT 1"
+)
 _SELECT_USAGE = "SELECT COUNT(*) FROM usage_events"
 _SELECT_JOB_RUNS = "SELECT COUNT(*) FROM job_runs"
 _SELECT_USERS = "SELECT COUNT(*) FROM users"
@@ -29,15 +35,16 @@ _SELECT_USERS = "SELECT COUNT(*) FROM users"
 _DML_STATEMENTS = (
     "INSERT INTO analytics_daily "
     "(day, active_users, appeals, new_users, generations, "
-    "generation_errors, computed_at) "
-    "VALUES (CURRENT_DATE, 0, 0, 0, 0, 0, NOW())",
+    "generation_errors, users_limited, billable_tokens, llm_budget_tokens, computed_at) "
+    "VALUES (CURRENT_DATE, 0, 0, 0, 0, 0, 0, 0, 0, NOW())",
     "UPDATE analytics_daily SET appeals = 1 WHERE FALSE",
     "DELETE FROM analytics_daily WHERE FALSE",
     "INSERT INTO analytics_daily_scenario "
     "(day, scenario, surface, appeals, users, ok, refused, screened, "
-    "invalid_output, unavailable, chosen, latency_p50_ms, latency_p95_ms, "
+    "invalid_output, unavailable, chosen, limited_user_quota, "
+    "limited_global_budget, latency_p50_ms, latency_p95_ms, "
     "ttfc_p50_ms, ttfc_p95_ms, input_tokens, output_tokens, billable_tokens) "
-    "VALUES (CURRENT_DATE, 'decode', 'dm', 0, 0, 0, 0, 0, 0, 0, 0, "
+    "VALUES (CURRENT_DATE, 'decode', 'dm', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "
     "NULL, NULL, NULL, NULL, 0, 0, 0)",
     "UPDATE analytics_daily_scenario SET appeals = 1 WHERE FALSE",
     "DELETE FROM analytics_daily_scenario WHERE FALSE",
@@ -133,6 +140,8 @@ async def test_grafana_reader_select_aggregates_allowed(
             for sql in (_SELECT_DAILY, _SELECT_SCENARIO, _SELECT_COHORTS):
                 result = await conn.execute(text(sql))
                 assert result.scalar() is not None
+            for sql in (_SELECT_NEW_DAILY_COLS, _SELECT_NEW_SCENARIO_COLS):
+                await conn.execute(text(sql))
     finally:
         await reader.dispose()
 

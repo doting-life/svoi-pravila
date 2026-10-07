@@ -226,6 +226,9 @@ class DecodeCompleted:
 DecodeEvent = AnalysisChunk | DecodeCompleted
 
 
+GenerationRequest = SoftenRequest | HelpSayRequest | DecodeRequest | SuggestRuleRequest
+
+
 class TextGenerator(Protocol):
     """Port for scenario-level generation."""
 
@@ -240,3 +243,6 @@ class TextGenerator(Protocol):
 
     async def suggest_rule(self, request: SuggestRuleRequest) -> SuggestRuleResult:
         """Propose a rule candidate from an incoming message, or none."""
+
+    def max_billable(self, request: GenerationRequest) -> int:
+        """Worst-case billable tokens for ``request`` (input + output caps x attempts)."""

@@ -13,7 +13,6 @@ from svoi_pravila.application.use_cases._cancelled_budget import (
     charge_cancelled_budget,
     handle_generation_cancelled,
 )
-from svoi_pravila.domain.cancelled_billable import estimate_cancelled_billable
 from svoi_pravila.domain.enums import QuotaClass
 from tests.fakes.quota_budget import FakeLlmBudget, FakeQuotaGate
 
@@ -43,8 +42,7 @@ async def test_handle_generation_cancelled_before_provider_refunds() -> None:
             quota_gate=gate,
             llm_budget=budget,
             day=_DAY,
-            input_chars=20,
-            max_output_tokens=100,
+            billable_tokens=999,
         )
     )
     assert len(gate.refund_calls) == 1
@@ -62,12 +60,11 @@ async def test_handle_generation_cancelled_after_provider_charges() -> None:
             quota_gate=gate,
             llm_budget=budget,
             day=_DAY,
-            input_chars=20,
-            max_output_tokens=100,
+            billable_tokens=420,
         )
     )
     assert gate.refund_calls == []
-    assert budget.spent == estimate_cancelled_billable(20, 100)
+    assert budget.spent == 420
 
 
 @pytest.mark.unit
@@ -80,8 +77,7 @@ async def test_handle_generation_cancelled_before_provider_without_reservation()
             quota_gate=None,
             llm_budget=budget,
             day=_DAY,
-            input_chars=20,
-            max_output_tokens=100,
+            billable_tokens=10,
         )
     )
     assert budget.add_calls == []
@@ -90,12 +86,7 @@ async def test_handle_generation_cancelled_before_provider_without_reservation()
 @pytest.mark.unit
 async def test_charge_cancelled_budget_logs_cache_unavailable() -> None:
     budget = FakeLlmBudget(add_unavailable=CacheUnavailable(CacheErrorKind.SERVER))
-    await charge_cancelled_budget(
-        budget,
-        day=_DAY,
-        input_chars=4,
-        max_output_tokens=10,
-    )
+    await charge_cancelled_budget(budget, day=_DAY, billable_tokens=10)
     assert budget.add_calls == []
 
 
@@ -109,7 +100,6 @@ async def test_handle_generation_cancelled_requires_gate_for_refund() -> None:
                 quota_gate=None,
                 llm_budget=FakeLlmBudget(),
                 day=_DAY,
-                input_chars=1,
-                max_output_tokens=1,
+                billable_tokens=1,
             )
         )

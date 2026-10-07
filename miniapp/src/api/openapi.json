@@ -427,6 +427,11 @@
             ],
             "title": "Active Contact Id"
           },
+          "bot_username": {
+            "minLength": 1,
+            "title": "Bot Username",
+            "type": "string"
+          },
           "consent_kind": {
             "anyOf": [
               {
@@ -452,6 +457,11 @@
               }
             ],
             "title": "Consent Version"
+          },
+          "decode_remaining": {
+            "minimum": 0.0,
+            "title": "Decode Remaining",
+            "type": "integer"
           },
           "display_timezone": {
             "minLength": 1,
@@ -483,7 +493,9 @@
           "account_exists",
           "max_contacts",
           "max_open_rules",
-          "display_timezone"
+          "display_timezone",
+          "bot_username",
+          "decode_remaining"
         ],
         "title": "MeResponse",
         "type": "object"

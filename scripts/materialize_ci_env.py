@@ -23,6 +23,7 @@ STACK_SMOKE_OVERRIDES = (
     ("SP_ENVIRONMENT", "test"),
     ("SP_TELEGRAM_UPDATES_MODE", "disabled"),
     ("SP_TELEGRAM_BOT_TOKEN", "1:CI-STACK-SMOKE-PLACEHOLDER"),
+    ("SP_MINIAPP_URL", "https://miniapp.ci.test"),
     ("SP_GIGACHAT_CREDENTIALS", "ci-placeholder"),
     ("SP_GIGACHAT_SCOPE", "PERS"),
 )

@@ -54,6 +54,8 @@ const meDone = {
     max_contacts: 20,
     max_open_rules: 50,
     display_timezone: "Europe/Moscow",
+    bot_username: "svoi_test_bot",
+    decode_remaining: 5,
 };
 
 const contact = {
@@ -178,7 +180,14 @@ async function installTelegram(page, scheme) {
                         onClick() {},
                         offClick() {},
                     },
-                    HapticFeedback: { notificationOccurred() {} },
+                    HapticFeedback: {
+                        notificationOccurred() {},
+                        impactOccurred() {},
+                        selectionChanged() {},
+                    },
+                    setHeaderColor() {},
+                    setBackgroundColor() {},
+                    setBottomBarColor() {},
                     ready() {},
                     expand() {},
                     close() {},
@@ -282,8 +291,17 @@ async function mockApi(page, mode) {
             });
             return;
         }
+        if (mode === "empty" && path === "/api/v1/me") {
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ ...meDone, active_contact_id: null }),
+            });
+            return;
+        }
         if (path === "/api/v1/contacts") {
-            const contacts = mode === "paired" ? [contact, pairedContact] : [contact];
+            const contacts =
+                mode === "empty" ? [] : mode === "paired" ? [contact, pairedContact] : [contact];
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
@@ -347,6 +365,17 @@ async function mockApi(page, mode) {
                 });
                 return;
             }
+            if (mode === "decode-limit") {
+                await route.fulfill({
+                    status: 429,
+                    contentType: "application/json",
+                    body: JSON.stringify({
+                        code: "quota_exhausted",
+                        message: "Новые разборы появятся завтра в 00:00 по вашему времени.",
+                    }),
+                });
+                return;
+            }
             if (mode === "decode-crisis") {
                 await route.fulfill({
                     status: 200,
@@ -383,8 +412,7 @@ async function captureScheme(browser, baseUrl, scheme) {
     await installTelegram(age, scheme);
     await mockApi(age, "onboarding-age");
     await age.goto(baseUrl, { waitUntil: "networkidle" });
-    await age.waitForSelector("text=Подтверждение возраста");
-    await age.waitForSelector("text=Мне есть 18");
+    await age.waitForSelector("text=Мне исполнилось 18 лет");
     await shot(age, `${scheme}-onboarding-age`);
     await age.close();
 
@@ -392,9 +420,8 @@ async function captureScheme(browser, baseUrl, scheme) {
     await installTelegram(consent, scheme);
     await mockApi(consent, "onboarding-consent");
     await consent.goto(baseUrl, { waitUntil: "networkidle" });
-    await consent.waitForSelector("text=Согласия");
-    await consent.waitForSelector("text=Что мы храним");
-    await consent.waitForSelector("text=via @бот");
+    await consent.waitForSelector("text=Что мы храним — и что нет");
+    await consent.waitForSelector("text=via @svoi_test_bot");
     await shot(consent, `${scheme}-onboarding-consent`);
     await consent.close();
 
@@ -402,7 +429,7 @@ async function captureScheme(browser, baseUrl, scheme) {
     await installTelegramWithStartParam(invite, scheme, "inv_demo");
     await mockApi(invite, "app");
     await invite.goto(baseUrl, { waitUntil: "networkidle" });
-    await invite.waitForSelector("text=Приглашение в общий свод");
+    await invite.waitForSelector("text=Вас приглашают вести общий свод правил");
     await invite.waitForSelector("text=Принять приглашение");
     await shot(invite, `${scheme}-invite`);
     await invite.close();
@@ -415,60 +442,72 @@ async function captureScheme(browser, baseUrl, scheme) {
     await shot(unauthorized, `${scheme}-gate-unauthorized`);
     await unauthorized.close();
 
-    const app = await browser.newPage({ viewport: { width: 390, height: 844 } });
-    await installTelegram(app, scheme);
-    await mockApi(app, "app");
-    await app.goto(baseUrl, { waitUntil: "networkidle" });
-    await app.waitForSelector("text=Аня");
-    await shot(app, `${scheme}-contacts`);
-    await app.getByRole("button", { name: /Аня/ }).click();
-    await app.waitForSelector("text=не повышать голос");
-    await shot(app, `${scheme}-contact-detail`);
-    await app.getByRole("button", { name: "Добавить правило" }).click();
-    await app.waitForSelector("text=Новое правило");
-    await shot(app, `${scheme}-add-rule`);
-    await app.close();
+    const home = await openApp(browser, baseUrl, scheme, "paired");
+    await home.waitForSelector("text=С кем сегодня важный разговор?");
+    await home.waitForSelector("text=@svoi_test_bot");
+    await home.waitForSelector("text=извиняться спокойно");
+    await shot(home, `${scheme}-home`);
+    await home.getByRole("button", { name: "Сменить" }).click();
+    await home.waitForSelector("text=С кем разговор");
+    await shot(home, `${scheme}-home-picker`);
+    await home.close();
 
-    const unpairedInvite = await browser.newPage({ viewport: { width: 390, height: 844 } });
-    await installTelegram(unpairedInvite, scheme);
-    await mockApi(unpairedInvite, "app");
-    await unpairedInvite.goto(baseUrl, { waitUntil: "networkidle" });
-    await unpairedInvite.getByRole("button", { name: /Аня/ }).click();
+    const emptyHome = await openApp(browser, baseUrl, scheme, "empty");
+    await emptyHome.waitForSelector("text=Пока никого нет рядом");
+    await shot(emptyHome, `${scheme}-home-empty`);
+    await emptyHome.getByRole("button", { name: "Люди", exact: true }).click();
+    await emptyHome.waitForSelector("text=Добавить контакт");
+    await shot(emptyHome, `${scheme}-people-empty`);
+    await emptyHome.close();
+
+    const people = await openApp(browser, baseUrl, scheme, "paired");
+    await people.waitForSelector("text=С кем сегодня важный разговор?");
+    await people.getByRole("button", { name: "Люди", exact: true }).click();
+    await people.waitForSelector("text=Боря");
+    await shot(people, `${scheme}-people`);
+    await people.getByRole("button", { name: /Аня/ }).first().click();
+    await people.waitForSelector("text=не повышать голос");
+    await shot(people, `${scheme}-contact-detail`);
+    await people.getByRole("button", { name: "Добавить правило" }).click();
+    await people.waitForSelector("text=Новое правило");
+    await shot(people, `${scheme}-add-rule`);
+    await people.close();
+
+    const unpairedInvite = await openApp(browser, baseUrl, scheme, "app");
+    await unpairedInvite.getByRole("button", { name: "Люди", exact: true }).click();
+    await unpairedInvite.getByRole("button", { name: /Аня/ }).first().click();
     await unpairedInvite.waitForSelector("text=Пригласить в общий свод");
     await unpairedInvite.getByRole("button", { name: "Пригласить в общий свод" }).click();
     await unpairedInvite.waitForSelector("text=https://t.me/test_bot?startapp=inv_demo");
     await shot(unpairedInvite, `${scheme}-contact-invite`);
     await unpairedInvite.close();
 
-    const paired = await browser.newPage({ viewport: { width: 390, height: 844 } });
-    await installTelegram(paired, scheme);
-    await mockApi(paired, "paired");
-    await paired.goto(baseUrl, { waitUntil: "networkidle" });
-    await paired.getByRole("button", { name: /Боря/ }).click();
-    await paired.waitForSelector("text=Общий свод");
-    await paired.waitForSelector("text=Личные правила");
+    const paired = await openApp(browser, baseUrl, scheme, "paired");
+    await paired.getByRole("button", { name: "Люди", exact: true }).click();
+    await paired.getByRole("button", { name: /Боря/ }).first().click();
     await paired.waitForSelector("text=Общие правила");
+    await paired.waitForSelector("text=Личные правила");
     await paired.waitForSelector("text=Подтвердить");
     await paired.waitForSelector("text=Выйти из общего свода");
     await shot(paired, `${scheme}-contact-paired`);
     await paired.close();
 
-    const privacy = await browser.newPage({ viewport: { width: 390, height: 844 } });
-    await installTelegram(privacy, scheme);
-    await mockApi(privacy, "app");
-    await privacy.goto(baseUrl, { waitUntil: "networkidle" });
-    await privacy.waitForSelector("text=Аня");
-    await privacy.getByRole("button", { name: "Приватность" }).click();
-    await privacy.waitForSelector("text=Выгрузить данные");
+    const privacy = await openApp(browser, baseUrl, scheme, "app");
+    await privacy.getByRole("button", { name: "Приватность", exact: true }).click();
+    await privacy.waitForSelector("text=Скачать мои данные");
     await privacy.waitForSelector("text=Отозвать согласия");
     await privacy.waitForSelector("text=Удалить аккаунт");
     await shot(privacy, `${scheme}-privacy`);
+    await privacy.getByRole("button", { name: "Тексты согласий" }).click();
+    await privacy.waitForSelector("text=Текст согласия на обработку персональных данных");
+    await shot(privacy, `${scheme}-privacy-consents`);
+    await privacy.getByRole("button", { name: "Закрыть" }).click();
     await privacy.evaluate(() => {
         window.Telegram.WebApp.showConfirm = (_m, cb) => {
             cb?.(true);
         };
     });
-    await privacy.getByRole("button", { name: "Удалить аккаунт" }).click();
+    await privacy.getByRole("button", { name: "Удалить…" }).click();
     await privacy.waitForSelector("text=Удалить навсегда");
     await shot(privacy, `${scheme}-delete-confirm`);
     await privacy.getByRole("button", { name: "Удалить навсегда" }).click();
@@ -476,26 +515,38 @@ async function captureScheme(browser, baseUrl, scheme) {
     await shot(privacy, `${scheme}-deleted`);
     await privacy.close();
 
-    for (const [mode, name, waitText, fillAndSubmit] of [
-        ["decode-streaming", "decode-streaming", "Собеседник звучит раздражённо", true],
-        ["decode-completed", "decode-completed", "Давай спокойно разберём", true],
-        ["decode-crisis", "decode-crisis", "Телефон доверия", true],
+    for (const [mode, name, waitText] of [
+        ["decode-streaming", "decode-streaming", "Собеседник звучит раздражённо"],
+        ["decode-completed", "decode-completed", "Давай спокойно разберём"],
+        ["decode-crisis", "decode-crisis", "Телефон доверия"],
+        ["decode-limit", "decode-limit", "Новые разборы появятся завтра"],
     ]) {
-        const decode = await browser.newPage({ viewport: { width: 390, height: 844 } });
-        await installTelegram(decode, scheme);
-        await mockApi(decode, mode);
-        await decode.goto(baseUrl, { waitUntil: "networkidle" });
-        await decode.waitForSelector("text=Аня");
-        await decode.getByRole("button", { name: "Расшифровать" }).click();
-        await decode.waitForSelector("text=Вставьте сообщение");
-        if (fillAndSubmit) {
-            await decode.locator("textarea").fill("синтетическое входящее сообщение для скриншота");
-            await decode.getByRole("button", { name: "Расшифровать" }).click();
+        const decode = await openApp(browser, baseUrl, scheme, mode);
+        await decode.waitForSelector("text=С кем сегодня важный разговор?");
+        await decode.getByRole("button", { name: "Вставить и разобрать" }).click();
+        await decode.waitForSelector("text=Вставить из буфера");
+        if (mode === "decode-streaming") {
+            await shot(decode, `${scheme}-decode-input`);
         }
+        await decode.locator("textarea").fill("синтетическое входящее сообщение для скриншота");
+        await decode.getByRole("button", { name: "Разобрать", exact: true }).click();
         await decode.waitForSelector(`text=${waitText}`);
         await shot(decode, `${scheme}-${name}`);
+        if (mode === "decode-limit") {
+            await decode.getByRole("button", { name: "помощь доступна всегда" }).click();
+            await decode.waitForSelector("text=Похоже, вам сейчас очень тяжело");
+            await shot(decode, `${scheme}-crisis`);
+        }
         await decode.close();
     }
+}
+
+async function openApp(browser, baseUrl, scheme, mode) {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    await installTelegram(page, scheme);
+    await mockApi(page, mode);
+    await page.goto(baseUrl, { waitUntil: "networkidle" });
+    return page;
 }
 
 async function main() {

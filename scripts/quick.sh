@@ -49,7 +49,7 @@ miniapp_tsc() {
 miniapp_eslint() {
   (
     cd "$MINIAPP"
-    pnpm exec eslint --max-warnings=0 "$@"
+    pnpm exec eslint --max-warnings=0 --no-warn-ignored "$@"
   )
 }
 

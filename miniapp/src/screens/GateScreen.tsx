@@ -1,3 +1,6 @@
+import { Button } from "../components/Button";
+import { EmptyState } from "../components/EmptyState";
+import { LogoBubbles } from "../components/icons";
 import { ru } from "../localization/ru";
 import type { TelegramAdapter } from "../telegram/webapp";
 
@@ -8,19 +11,21 @@ export type GateScreenProps = {
 
 export function GateScreen({ telegram }: GateScreenProps) {
     return (
-        <section className="gate" aria-labelledby="gate-title">
-            <h2 id="gate-title" className="screen-title">
-                {ru.gateUnauthorized}
-            </h2>
-            <button
-                type="button"
-                className="btn btn-primary"
-                onClick={() => {
-                    telegram.close();
-                }}
-            >
-                {ru.close}
-            </button>
+        <section className="screen screen--centered" aria-labelledby="gate-title">
+            <EmptyState
+                illustration={<LogoBubbles />}
+                title={ru.gateUnauthorized}
+                titleId="gate-title"
+                action={
+                    <Button
+                        onClick={() => {
+                            telegram.close();
+                        }}
+                    >
+                        {ru.close}
+                    </Button>
+                }
+            />
         </section>
     );
 }

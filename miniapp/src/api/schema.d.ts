@@ -689,10 +689,14 @@ export interface components {
             account_exists: boolean;
             /** Active Contact Id */
             active_contact_id?: string | null;
+            /** Bot Username */
+            bot_username: string;
             /** Consent Kind */
             consent_kind?: ("personal_data" | "special_category") | null;
             /** Consent Version */
             consent_version?: string | null;
+            /** Decode Remaining */
+            decode_remaining: number;
             /** Display Timezone */
             display_timezone: string;
             /** Max Contacts */

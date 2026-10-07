@@ -1,10 +1,16 @@
 import { ru } from "../localization/ru";
+import { Button } from "./Button";
+import { EmptyState } from "./EmptyState";
+import { Skeleton } from "./Skeleton";
 
 export function LoadingView() {
     return (
-        <p className="status-message" role="status">
-            {ru.loading}
-        </p>
+        <div className="loading-view" role="status">
+            <span className="visually-hidden">{ru.loading}</span>
+            <Skeleton shape="line" short />
+            <Skeleton shape="block" />
+            <Skeleton shape="block" />
+        </div>
     );
 }
 
@@ -16,11 +22,11 @@ export type ErrorViewProps = {
 export function ErrorView({ message, onRetry }: ErrorViewProps) {
     return (
         <div className="status-block" role="alert">
-            <p className="status-message">{message ?? ru.errorGeneric}</p>
+            <p className="status-block__text">{message ?? ru.errorGeneric}</p>
             {onRetry !== undefined ? (
-                <button type="button" className="btn btn-secondary" onClick={onRetry}>
+                <Button variant="outline" onClick={onRetry}>
                     {ru.retry}
-                </button>
+                </Button>
             ) : null}
         </div>
     );
@@ -31,5 +37,5 @@ export type EmptyViewProps = {
 };
 
 export function EmptyView({ message }: EmptyViewProps) {
-    return <p className="status-message">{message}</p>;
+    return <EmptyState message={message} />;
 }

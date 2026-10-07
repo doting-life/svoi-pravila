@@ -36,6 +36,7 @@ from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllCons
 from svoi_pravila.application.use_cases.serve_export_download import ServeExportDownload
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from tests.fakes.export_download import FakeExportDownloadStore
+from tests.fakes.quota_budget import FakeQuotaGate
 from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
 from tests.support.miniapp_decode import MiniappDecodeBundle
 
@@ -110,12 +111,15 @@ def build_test_miniapp_bindings(
         ),
         "export_rate_limiter": limiter,
         "display_timezone": display_timezone,
+        "analytics_timezone": display_timezone,
         "miniapp_url": miniapp_url,
         "decode_incoming": decode_bundle.decode_incoming,
         "suggest_rule_from_decode": decode_bundle.suggest_rule_from_decode,
         "prepared_results": decode_bundle.prepared_results,
         "rule_sources": decode_bundle.rule_sources,
         "pseudonymizer": decode_bundle.pseudonymizer,
+        "quota_gate": FakeQuotaGate(limit=40),
+        "clock": world.clock,
         "bot_username": BotUsernameCache(username=bot_username),
         "enable_test_routes": enable_test_routes,
     }

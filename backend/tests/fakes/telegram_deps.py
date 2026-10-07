@@ -55,7 +55,7 @@ class TelegramTestDeps:
     debounce_seconds: float = 0.0
     inline_cache_seconds: int = 30
     bot_username: str | None = "test_bot"
-    miniapp_url: str | None = "https://miniapp.example"
+    miniapp_url: str = "https://miniapp.example"
     welcome: WelcomeThrottle | None = None
 
 

@@ -19,6 +19,8 @@ class MeResponse(BaseModel):
     max_contacts: int = Field(ge=1)
     max_open_rules: int = Field(ge=1)
     display_timezone: str = Field(min_length=1)
+    bot_username: str = Field(min_length=1)
+    decode_remaining: int = Field(ge=0)
 
 
 class ConfirmTrueRequest(BaseModel):

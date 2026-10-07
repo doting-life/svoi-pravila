@@ -93,30 +93,13 @@ async def test_polling_startup_calls() -> None:
     kinds = [type(req) for req in session.requests]
     assert kinds.count(DeleteMyCommands) == 4
     assert DeleteWebhook in kinds
-    assert SetChatMenuButton not in kinds
-    assert session.closed is True
-
-
-@pytest.mark.unit
-async def test_polling_startup_sets_menu_button_when_miniapp_url_configured() -> None:
-    deps, _uow, _catalog = _world()
-    session = FakeTelegramSession()
-    settings = make_settings(
-        environment=Environment.LOCAL,
-        telegram_updates_mode=TelegramUpdatesMode.POLLING,
-        telegram_bot_token="1:TEST",
-        miniapp_url="https://example.trycloudflare.com",
-    )
-    bot = Bot(token="1:TEST", session=session)
-    lifecycle = build_telegram_lifecycle(settings, deps, bot=bot)
-    await lifecycle.start()
-    await lifecycle.shutdown()
     menu_calls = [req for req in session.requests if isinstance(req, SetChatMenuButton)]
     assert len(menu_calls) == 1
     button = menu_calls[0].menu_button
     assert isinstance(button, MenuButtonWebApp)
     assert button.text == "Мои правила"
-    assert button.web_app.url == "https://example.trycloudflare.com"
+    assert button.web_app.url == settings.miniapp_url
+    assert session.closed is True
     assert [type(req) for req in session.requests].count(DeleteMyCommands) == 4
 
 

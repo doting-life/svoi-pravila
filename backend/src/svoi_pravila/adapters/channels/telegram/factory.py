@@ -65,6 +65,9 @@ def build_telegram_lifecycle(
         webhook_url = f"{base}/telegram/webhook/{path_secret}"
         webhook_secret = settings.telegram_webhook_secret_token.get_secret_value()
 
+    if settings.miniapp_url is None:
+        msg = "miniapp_url is required for Telegram lifecycle"
+        raise RuntimeError(msg)
     return TelegramLifecycle(
         bot=bot_instance,
         dispatcher=dispatcher,

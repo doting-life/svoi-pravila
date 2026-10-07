@@ -1,0 +1,51 @@
+:root,
+:root[data-color-scheme="light"] {
+    color-scheme: light;
+    --bg: #f5f0e8;
+    --surface: #fffdf9;
+    --sunken: #e9e1d5;
+    --line: #e7dfd3;
+    --ink: #2a2622;
+    --ink-2: #5e574f;
+    --ink-3: #6a6259;
+    --accent: #2f6b5b;
+    --accent-hover: #24574a;
+    --accent-soft: #e3eee8;
+    --on-accent: #fffdf9;
+    --warm: #8a4a22;
+    --warm-soft: #f6e3d3;
+    --danger: #a3402f;
+    --danger-soft: #f6e1dc;
+}
+
+:root[data-color-scheme="dark"] {
+    color-scheme: dark;
+    --bg: #1b1916;
+    --surface: #24211d;
+    --sunken: #2e2a25;
+    --line: #3a342d;
+    --ink: #f1ece4;
+    --ink-2: #cfc6ba;
+    --ink-3: #b3a99c;
+    --accent: #8cc7b2;
+    --accent-hover: #a3d4c2;
+    --accent-soft: #24382f;
+    --on-accent: #10231c;
+    --warm: #e8b08a;
+    --warm-soft: #3a2a1f;
+    --danger: #e58c7b;
+    --danger-soft: #3a221d;
+}
+
+:root {
+    --font-body: "Golos Text", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-display: "Literata", Georgia, "Times New Roman", serif;
+    --radius-sm: 12px;
+    --radius-md: 14px;
+    --radius-lg: 16px;
+    --radius-xl: 20px;
+    --radius-2xl: 24px;
+    --motion-fast: 150ms;
+    --motion-base: 200ms;
+    --tap: 44px;
+}

@@ -95,6 +95,17 @@ def test_settings_accepts_https_miniapp_url_origin() -> None:
 
 
 @pytest.mark.unit
+def test_settings_requires_miniapp_url_when_telegram_enabled() -> None:
+    with pytest.raises(ValidationError, match="miniapp_url"):
+        make_settings(
+            environment=Environment.LOCAL,
+            telegram_updates_mode=TelegramUpdatesMode.POLLING,
+            telegram_bot_token="1:TOKEN",
+            miniapp_url=None,
+        )
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     "value",
     [

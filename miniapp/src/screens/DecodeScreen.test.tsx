@@ -1,8 +1,9 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiProvider } from "../api/ApiContext";
 import { createApiClient } from "../api/client";
+import { decodeRemainingLabel } from "../localization/plural";
 import { ru } from "../localization/ru";
 import { fakeAdapter, jsonResponse, mockFetch } from "../test/fakeTelegram";
 import { DecodeScreen } from "./DecodeScreen";
@@ -21,22 +22,60 @@ function requestUrl(input: RequestInfo | URL): string {
     return input.url;
 }
 
-function renderDecode(fetchImpl: typeof fetch) {
+const anya = {
+    id: "c1",
+    label: "Аня",
+    relationship: "partner",
+    pair_id: null,
+    paired: false,
+    created_at: "2026-10-01T12:00:00.000Z",
+};
+
+function renderDecode(
+    fetchImpl: typeof fetch,
+    options: {
+        readonly decodeRemaining?: number | null;
+        readonly activeContactId?: string | null;
+        readonly contacts?: readonly (typeof anya)[];
+    } = {},
+) {
     const telegram = fakeAdapter();
-    const client = createApiClient({ initData: telegram.initData, fetch: fetchImpl });
-    const onEditSuggestion = vi.fn();
+    const contacts = options.contacts ?? [anya];
+    const withContacts: typeof fetch = (input, init) => {
+        const url = requestUrl(input);
+        if (url.endsWith("/api/v1/contacts")) {
+            return Promise.resolve(jsonResponse({ contacts }));
+        }
+        if (url.endsWith("/activate")) {
+            return Promise.resolve(jsonResponse(null, 204));
+        }
+        return fetchImpl(input, init);
+    };
+    const client = createApiClient({ initData: telegram.initData, fetch: withContacts });
+    const handlers = {
+        onEditSuggestion: vi.fn(),
+        onLimit: vi.fn(),
+        onCrisis: vi.fn(),
+        onDecodeUsed: vi.fn(),
+        onActivated: vi.fn(),
+    };
     render(
         <ApiProvider initData={telegram.initData} client={client}>
             <DecodeScreen
                 telegram={telegram}
                 displayTimezone="Europe/Moscow"
-                activeContactId="c1"
+                activeContactId={
+                    options.activeContactId === undefined ? "c1" : options.activeContactId
+                }
+                decodeRemaining={
+                    options.decodeRemaining === undefined ? 5 : options.decodeRemaining
+                }
                 fetchImpl={fetchImpl}
-                onEditSuggestion={onEditSuggestion}
+                {...handlers}
             />
         </ApiProvider>,
     );
-    return { telegram, onEditSuggestion };
+    return { telegram, ...handlers };
 }
 
 function sseResponse(body: string): Response {
@@ -126,7 +165,7 @@ describe("DecodeScreen", () => {
         ]);
     });
 
-    it("shows crisis resources and keeps text on error", async () => {
+    it("hands crisis resources to the crisis screen", async () => {
         const crisis =
             'event: crisis\ndata: {"lead":"SERVER_CRISIS_LEAD","resources":["линия помощи"]}\n\n';
         const fetchImpl = vi.fn((input: RequestInfo | URL) => {
@@ -136,12 +175,13 @@ describe("DecodeScreen", () => {
             }
             return Promise.resolve(jsonResponse({}));
         }) as typeof fetch;
-        renderDecode(fetchImpl);
+        const { onCrisis, onDecodeUsed } = renderDecode(fetchImpl);
         fireEvent.change(screen.getByRole("textbox"), { target: { value: "кризисный текст" } });
         fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
-        expect(await screen.findByText("SERVER_CRISIS_LEAD")).toBeInTheDocument();
-        expect(screen.getByText("линия помощи")).toBeInTheDocument();
-        expect(screen.getByRole("textbox")).toHaveValue("кризисный текст");
+        await waitFor(() => {
+            expect(onCrisis).toHaveBeenCalledWith("SERVER_CRISIS_LEAD", ["линия помощи"]);
+        });
+        expect(onDecodeUsed).not.toHaveBeenCalled();
     });
 
     it("aborts in-flight decode on unmount", async () => {
@@ -164,7 +204,12 @@ describe("DecodeScreen", () => {
                     displayTimezone="Europe/Moscow"
                     activeContactId="c1"
                     fetchImpl={fetchImpl}
+                    decodeRemaining={5}
+                    onDecodeUsed={() => undefined}
+                    onActivated={() => undefined}
                     onEditSuggestion={() => undefined}
+                    onLimit={() => undefined}
+                    onCrisis={() => undefined}
                 />
             </ApiProvider>,
         );
@@ -232,7 +277,11 @@ describe("DecodeScreen", () => {
         fireEvent.click(screen.getByRole("button", { name: ru.decodeMakeRule }));
         expect(await screen.findByText("предложенное")).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: ru.decodeSuggestionEdit }));
-        expect(onEditSuggestion).toHaveBeenCalledWith("other", "предложенное");
+        expect(onEditSuggestion).toHaveBeenCalledWith(
+            expect.objectContaining({ id: "c1" }),
+            "other",
+            "предложенное",
+        );
     });
 
     it("maps pre-stream HTTP errors and empty text", async () => {
@@ -251,7 +300,7 @@ describe("DecodeScreen", () => {
         expect(await screen.findByText(ru.decodeErrorShort)).toBeInTheDocument();
     });
 
-    it("renders server message for quota and service budget HTTP errors", async () => {
+    it("opens the limit screen for quota and service budget HTTP errors", async () => {
         const quotaMessage = "Дневной лимит исчерпан. Снова будет доступно в 00:00.";
         const fetchQuota = vi.fn(() =>
             Promise.resolve(
@@ -265,10 +314,12 @@ describe("DecodeScreen", () => {
                 ),
             ),
         ) as typeof fetch;
-        renderDecode(fetchQuota);
+        const quota = renderDecode(fetchQuota);
         fireEvent.change(screen.getByRole("textbox"), { target: { value: "текст" } });
         fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
-        expect(await screen.findByText(quotaMessage)).toBeInTheDocument();
+        await waitFor(() => {
+            expect(quota.onLimit).toHaveBeenCalledWith("quota", quotaMessage);
+        });
 
         cleanup();
         const budgetMessage =
@@ -285,10 +336,12 @@ describe("DecodeScreen", () => {
                 ),
             ),
         ) as typeof fetch;
-        renderDecode(fetchBudget);
+        const budget = renderDecode(fetchBudget);
         fireEvent.change(screen.getByRole("textbox"), { target: { value: "текст" } });
         fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
-        expect(await screen.findByText(budgetMessage)).toBeInTheDocument();
+        await waitFor(() => {
+            expect(budget.onLimit).toHaveBeenCalledWith("budget", budgetMessage);
+        });
     });
 
     it("dismisses a decode suggestion", async () => {
@@ -352,7 +405,7 @@ describe("DecodeScreen", () => {
         expect(telegram.hapticNotification).toHaveBeenCalledWith("success");
     });
 
-    it("shows server message when suggest-from-decode hits quota or budget", async () => {
+    it("opens the limit screen when suggest-from-decode hits quota or budget", async () => {
         const sse = completedSse({ insertQuery: null });
         const quotaMessage = "Дневной лимит исчерпан. Снова будет доступно в 00:00.";
         let suggestCalls = 0;
@@ -389,17 +442,20 @@ describe("DecodeScreen", () => {
             }
             return Promise.resolve(jsonResponse({ code: "not_found", message: "missing" }, 404));
         }) as typeof fetch;
-        renderDecode(fetchImpl);
+        const { onLimit } = renderDecode(fetchImpl);
         fireEvent.change(screen.getByRole("textbox"), { target: { value: "текст" } });
         fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
         fireEvent.click(await screen.findByRole("button", { name: ru.decodeMakeRule }));
-        expect(await screen.findByText(quotaMessage)).toBeInTheDocument();
+        await waitFor(() => {
+            expect(onLimit).toHaveBeenCalledWith("quota", quotaMessage);
+        });
         fireEvent.click(screen.getByRole("button", { name: ru.decodeMakeRule }));
-        expect(
-            await screen.findByText(
+        await waitFor(() => {
+            expect(onLimit).toHaveBeenCalledWith(
+                "budget",
                 "Сервис временно недоступен из‑за лимита нагрузки. Попробуйте после 00:00.",
-            ),
-        ).toBeInTheDocument();
+            );
+        });
     });
 
     it("maps suggest non-ok outcomes and accept/dismiss failures", async () => {
@@ -508,6 +564,120 @@ describe("DecodeScreen", () => {
         await waitFor(() => {
             expect(telegram.hapticNotification).toHaveBeenCalledWith("error");
         });
+    });
+
+    it("opens the limit screen for limit codes delivered over the stream", async () => {
+        const fetchImpl = vi.fn(() =>
+            Promise.resolve(
+                sseResponse('event: error\ndata: {"code":"service_budget_exhausted"}\n\n'),
+            ),
+        ) as typeof fetch;
+        const { onLimit } = renderDecode(fetchImpl);
+        fireEvent.change(screen.getByRole("textbox"), { target: { value: "текст" } });
+        fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
+        await waitFor(() => {
+            expect(onLimit).toHaveBeenCalledWith("budget", null);
+        });
+    });
+
+    it("hands a crisis outcome of make-rule to the crisis screen", async () => {
+        const fetchImpl = vi.fn((input: RequestInfo | URL) => {
+            const url = requestUrl(input);
+            if (url.includes("/api/v1/decode") && !url.includes("from-decode")) {
+                return Promise.resolve(sseResponse(completedSse({ insertQuery: null })));
+            }
+            if (url.includes("/suggestions/from-decode")) {
+                return Promise.resolve(
+                    jsonResponse({
+                        outcome: "crisis",
+                        suggestion: null,
+                        lead: null,
+                        resources: null,
+                    }),
+                );
+            }
+            return Promise.resolve(jsonResponse({ code: "not_found", message: "missing" }, 404));
+        }) as typeof fetch;
+        const { onCrisis } = renderDecode(fetchImpl);
+        fireEvent.change(screen.getByRole("textbox"), { target: { value: "текст" } });
+        fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.decodeMakeRule }));
+        await waitFor(() => {
+            expect(onCrisis).toHaveBeenCalledWith(null, []);
+        });
+    });
+
+    it("counts a completed decode and offers to start over", async () => {
+        const fetchImpl = vi.fn(() =>
+            Promise.resolve(sseResponse(completedSse({ insertQuery: null, appliedRules: true }))),
+        ) as typeof fetch;
+        const { onDecodeUsed } = renderDecode(fetchImpl);
+        fireEvent.change(screen.getByRole("textbox"), { target: { value: "входящее" } });
+        fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
+        expect(await screen.findByText("вариант")).toBeInTheDocument();
+        expect(screen.getByText("входящее")).toBeInTheDocument();
+        expect(screen.getByText(/Учтено правило от/)).toBeInTheDocument();
+        expect(onDecodeUsed).toHaveBeenCalledTimes(1);
+        fireEvent.click(screen.getByRole("button", { name: ru.decodeAgain }));
+        expect(screen.getByRole("textbox")).toHaveValue("");
+    });
+
+    it("shows the remaining decodes with the right plural form", () => {
+        const fetchImpl = vi.fn(() => Promise.resolve(jsonResponse({}, 404))) as typeof fetch;
+        renderDecode(fetchImpl, { decodeRemaining: 2 });
+        expect(screen.getByText(decodeRemainingLabel(2))).toBeInTheDocument();
+        cleanup();
+        renderDecode(fetchImpl, { decodeRemaining: null });
+        expect(screen.queryByText(/Сегодня остал/)).not.toBeInTheDocument();
+    });
+
+    it("pastes from the clipboard and reports a denied clipboard", async () => {
+        const fetchImpl = vi.fn(() => Promise.resolve(jsonResponse({}, 404))) as typeof fetch;
+        Object.defineProperty(navigator, "clipboard", {
+            configurable: true,
+            value: { readText: vi.fn(() => Promise.resolve("вставленный текст")) },
+        });
+        renderDecode(fetchImpl);
+        fireEvent.click(screen.getByRole("button", { name: ru.decodePaste }));
+        await waitFor(() => {
+            expect(screen.getByRole("textbox")).toHaveValue("вставленный текст");
+        });
+
+        Object.defineProperty(navigator, "clipboard", {
+            configurable: true,
+            value: { readText: vi.fn(() => Promise.reject(new Error("denied"))) },
+        });
+        fireEvent.click(screen.getByRole("button", { name: ru.decodePaste }));
+        expect(await screen.findByText(ru.decodePasteFailed)).toBeInTheDocument();
+    });
+
+    it("switches the contact the message is from", async () => {
+        const boris = { ...anya, id: "c2", label: "Боря", relationship: "friend" };
+        const fetchImpl = vi.fn(() => Promise.resolve(jsonResponse({}, 404))) as typeof fetch;
+        const { onActivated } = renderDecode(fetchImpl, { contacts: [anya, boris] });
+        fireEvent.click(
+            await screen.findByRole("button", { name: ru.decodeFrom.replace("{name}", "Аня") }),
+        );
+        const dialog = screen.getByRole("dialog");
+        fireEvent.click(within(dialog).getByRole("button", { name: /Аня/ }));
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        expect(onActivated).not.toHaveBeenCalled();
+
+        fireEvent.click(
+            screen.getByRole("button", { name: ru.decodeFrom.replace("{name}", "Аня") }),
+        );
+        fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /Боря/ }));
+        await waitFor(() => {
+            expect(onActivated).toHaveBeenCalledWith("c2");
+        });
+    });
+
+    it("blocks submitting without a chosen contact", () => {
+        const fetchImpl = vi.fn(() => Promise.resolve(jsonResponse({}, 404))) as typeof fetch;
+        renderDecode(fetchImpl, { activeContactId: null });
+        expect(screen.getByRole("button", { name: ru.decodeSubmit })).toBeDisabled();
+        expect(screen.getByRole("button", { name: ru.decodeFromNone })).toBeInTheDocument();
+        expect(screen.getByText(ru.decodePrivacy)).toBeInTheDocument();
     });
 
     it("haptics error when accept or dismiss fails", async () => {

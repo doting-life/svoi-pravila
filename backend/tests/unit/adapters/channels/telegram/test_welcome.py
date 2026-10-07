@@ -90,15 +90,6 @@ async def test_welcome_skips_without_from_user_or_private_chat() -> None:
 
 
 @pytest.mark.unit
-async def test_welcome_skips_when_miniapp_url_missing() -> None:
-    deps = make_telegram_deps(TelegramTestDeps(miniapp_url=None))
-    session = FakeTelegramSession()
-    bot = Bot(token="1:TEST", session=session)
-    await private_welcome(_private_message(), deps, bot)
-    assert session.requests == []
-
-
-@pytest.mark.unit
 def test_build_welcome_router_registers_message_handler() -> None:
     router = build_welcome_router()
     assert router.message.handlers

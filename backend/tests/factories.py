@@ -39,7 +39,7 @@ def make_settings(**overrides: object) -> Settings:
         "telegram_webhook_path_secret": None,
         "telegram_webhook_secret_token": None,
         "pseudonym_pepper": _TEST_PEPPER,
-        "miniapp_url": None,
+        "miniapp_url": "https://miniapp.test",
         "analytics_jobs_enabled": False,
         "metrics_enabled": False,
         "llm_daily_token_budget": 20_000,

@@ -1,9 +1,15 @@
 import { useState } from "react";
 
+import { Button } from "../components/Button";
+import { Card } from "../components/Card";
+import { DocumentIcon, DownloadIcon, MinusCircleIcon } from "../components/icons";
+import { ListGroup, ListRow } from "../components/ListRow";
+import { ScreenHeader } from "../components/ScreenHeader";
 import { ErrorView, LoadingView } from "../components/StatusViews";
 import { usePrivacyActions } from "../hooks/usePrivacyActions";
 import { usePrivacyTexts } from "../hooks/usePrivacyTexts";
 import { ru } from "../localization/ru";
+import { ConsentDocsSheet } from "../sheets/ConsentDocsSheet";
 import type { TelegramAdapter } from "../telegram/webapp";
 
 export type PrivacyScreenProps = {
@@ -19,6 +25,7 @@ export function PrivacyScreen({ telegram, onRevoked, onDeleteRequested }: Privac
     const [exportMessage, setExportMessage] = useState<string | null>(null);
     const [exportError, setExportError] = useState<string | null>(null);
     const [revokeBusy, setRevokeBusy] = useState(false);
+    const [docsOpen, setDocsOpen] = useState(false);
 
     if (texts.status === "loading") {
         return <LoadingView />;
@@ -70,78 +77,71 @@ export function PrivacyScreen({ telegram, onRevoked, onDeleteRequested }: Privac
 
     return (
         <section className="screen" aria-labelledby="privacy-title">
-            <header className="screen-header">
-                <h2 id="privacy-title" className="screen-title">
-                    {ru.privacyTitle}
-                </h2>
-            </header>
+            <ScreenHeader title={ru.privacyTitle} titleId="privacy-title" lead={ru.privacyLead} />
 
-            <p className="status-message">{catalog.export.description}</p>
-
-            <ul className="list">
-                <li className="list-item">
-                    <div className="list-item-body">
-                        <p className="list-item-title">{ru.privacyExportAction}</p>
-                    </div>
-                    <div className="list-item-actions">
-                        <button
-                            type="button"
-                            className="btn btn-primary"
-                            disabled={exportBusy}
-                            onClick={() => {
-                                void exportData();
-                            }}
-                        >
-                            {exportBusy ? ru.loading : ru.privacyExportAction}
-                        </button>
-                    </div>
-                </li>
-                <li className="list-item">
-                    <div className="list-item-body">
-                        <p className="list-item-title">{ru.privacyRevokeAction}</p>
-                        <p className="status-message">{catalog.revoke.description}</p>
-                    </div>
-                    <div className="list-item-actions">
-                        <button
-                            type="button"
-                            className="btn btn-secondary"
-                            disabled={revokeBusy}
-                            onClick={() => {
-                                void revoke();
-                            }}
-                        >
-                            {revokeBusy ? ru.loading : ru.privacyRevokeAction}
-                        </button>
-                    </div>
-                </li>
-                <li className="list-item">
-                    <div className="list-item-body">
-                        <p className="list-item-title">{ru.privacyDeleteAction}</p>
-                        <p className="status-message">{catalog.delete.description}</p>
-                    </div>
-                    <div className="list-item-actions">
-                        <button
-                            type="button"
-                            className="btn btn-danger"
-                            onClick={() => {
-                                void beginDelete();
-                            }}
-                        >
-                            {ru.privacyDeleteAction}
-                        </button>
-                    </div>
-                </li>
-            </ul>
+            <ListGroup>
+                <ListRow
+                    icon={<DownloadIcon size={20} />}
+                    title={ru.privacyExportAction}
+                    subtitle={catalog.export.description}
+                    disabled={exportBusy}
+                    onClick={() => {
+                        void exportData();
+                    }}
+                />
+                <ListRow
+                    icon={<DocumentIcon size={20} />}
+                    title={ru.privacyConsentsAction}
+                    subtitle={ru.privacyConsentsHint}
+                    onClick={() => {
+                        setDocsOpen(true);
+                    }}
+                />
+                <ListRow
+                    icon={<MinusCircleIcon size={20} />}
+                    title={ru.privacyRevokeAction}
+                    subtitle={catalog.revoke.description}
+                    disabled={revokeBusy}
+                    onClick={() => {
+                        void revoke();
+                    }}
+                />
+            </ListGroup>
 
             {exportMessage !== null ? (
-                <p className="status-message" role="status">
+                <p className="form-status" role="status">
                     {exportMessage}
                 </p>
             ) : null}
             {exportError !== null ? (
-                <p className="status-message" role="alert">
+                <p className="form-error" role="alert">
                     {exportError}
                 </p>
+            ) : null}
+
+            <Card tone="danger" aria-labelledby="privacy-delete-title">
+                <h2 id="privacy-delete-title" className="hint-title">
+                    {ru.privacyDeleteAction}
+                </h2>
+                <p className="hint-text">{catalog.delete.description}</p>
+                <Button
+                    variant="danger"
+                    onClick={() => {
+                        void beginDelete();
+                    }}
+                >
+                    {ru.privacyDeleteButton}
+                </Button>
+            </Card>
+
+            {docsOpen ? (
+                <ConsentDocsSheet
+                    title={ru.privacyConsentsAction}
+                    kinds={["personal_data", "special_category"]}
+                    onClose={() => {
+                        setDocsOpen(false);
+                    }}
+                />
             ) : null}
         </section>
     );

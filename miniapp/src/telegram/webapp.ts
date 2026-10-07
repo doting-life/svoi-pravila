@@ -1,8 +1,8 @@
 export type ColorScheme = "light" | "dark";
 
-export type ThemeCssVariables = Readonly<Record<`--tg-${string}`, string>>;
-
 export type HapticNotificationType = "error" | "success" | "warning";
+
+export type HapticImpactStyle = "light" | "medium" | "heavy" | "rigid" | "soft";
 
 export type TelegramBackButtonControls = {
     show: () => void;
@@ -16,7 +16,6 @@ export type TelegramAdapter = {
     readonly initData: string;
     readonly startParam: string | null;
     readonly colorScheme: ColorScheme;
-    readonly themeCssVariables: ThemeCssVariables;
     readonly isInsideTelegram: boolean;
     readonly BackButton: TelegramBackButtonControls;
     ready: () => void;
@@ -27,36 +26,10 @@ export type TelegramAdapter = {
     downloadFile: (url: string, fileName: string) => Promise<boolean>;
     copyText: (text: string) => Promise<boolean>;
     hapticNotification: (type: HapticNotificationType) => void;
+    applyChromeColor: (color: string) => void;
     switchInlineQuery: (query: string, chooseChatTypes: readonly InlineQueryChatType[]) => void;
     onColorSchemeChanged: (callback: (scheme: ColorScheme) => void) => () => void;
 };
-
-const THEME_PARAM_TO_CSS: ReadonlyArray<readonly [keyof TelegramThemeParams, `--tg-${string}`]> = [
-    ["bg_color", "--tg-bg-color"],
-    ["text_color", "--tg-text-color"],
-    ["hint_color", "--tg-hint-color"],
-    ["link_color", "--tg-link-color"],
-    ["button_color", "--tg-button-color"],
-    ["button_text_color", "--tg-button-text-color"],
-    ["secondary_bg_color", "--tg-secondary-bg-color"],
-    ["header_bg_color", "--tg-header-bg-color"],
-    ["accent_text_color", "--tg-accent-text-color"],
-    ["section_bg_color", "--tg-section-bg-color"],
-    ["section_header_text_color", "--tg-section-header-text-color"],
-    ["subtitle_text_color", "--tg-subtitle-text-color"],
-    ["destructive_text_color", "--tg-destructive-text-color"],
-];
-
-function mapThemeParams(themeParams: TelegramThemeParams): ThemeCssVariables {
-    const vars: Record<`--tg-${string}`, string> = {};
-    for (const [key, cssVar] of THEME_PARAM_TO_CSS) {
-        const value = themeParams[key];
-        if (typeof value === "string" && value.length > 0) {
-            vars[cssVar] = value;
-        }
-    }
-    return vars;
-}
 
 function readWebApp(): TelegramWebApp | undefined {
     return window.Telegram?.WebApp;
@@ -111,9 +84,6 @@ export function createTelegramAdapter(): TelegramAdapter {
         startParam,
         get colorScheme() {
             return readColorScheme(readWebApp());
-        },
-        get themeCssVariables() {
-            return mapThemeParams(readWebApp()?.themeParams ?? {});
         },
         isInsideTelegram,
         BackButton: createBackButtonControls(webApp),
@@ -175,6 +145,12 @@ export function createTelegramAdapter(): TelegramAdapter {
         hapticNotification: (type: HapticNotificationType) => {
             readWebApp()?.HapticFeedback?.notificationOccurred(type);
         },
+        applyChromeColor: (color: string) => {
+            const current = readWebApp();
+            current?.setHeaderColor?.(color);
+            current?.setBackgroundColor?.(color);
+            current?.setBottomBarColor?.(color);
+        },
         switchInlineQuery: (query: string, chooseChatTypes: readonly InlineQueryChatType[]) => {
             const current = readWebApp();
             if (current === undefined || typeof current.switchInlineQuery !== "function") {
@@ -205,13 +181,16 @@ export function resetTelegramAdapterGuardsForTests(): void {
     expandCalled = false;
 }
 
-export function applyThemeCssVariables(
-    target: HTMLElement,
-    variables: ThemeCssVariables,
-    colorScheme: ColorScheme,
-): void {
+export function applyColorScheme(target: HTMLElement, colorScheme: ColorScheme): void {
     target.dataset.colorScheme = colorScheme;
-    for (const [name, value] of Object.entries(variables)) {
-        target.style.setProperty(name, value);
-    }
+}
+
+/** Light tap feedback for taps on primary controls; no-op outside Telegram. */
+export function hapticImpact(style: HapticImpactStyle): void {
+    readWebApp()?.HapticFeedback?.impactOccurred?.(style);
+}
+
+/** Selection-change feedback for tabs, chips and segmented controls; no-op outside Telegram. */
+export function hapticSelection(): void {
+    readWebApp()?.HapticFeedback?.selectionChanged?.();
 }

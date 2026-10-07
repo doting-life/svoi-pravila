@@ -154,12 +154,6 @@ async def test_telegram_pair_notifier_happy_paths_and_guards(
     await notifier.partner_left(UserId(UUID(int=995)), contact.id)
     assert len(session.requests) == before
 
-    no_url = TelegramPairNotifier(bot, uow, strings, miniapp_url=None)
-    await no_url.partner_left(inviter_id, contact.id)
-    bare = [req for req in session.requests if isinstance(req, SendMessage)][-1]
-    assert bare.text == strings.pair_partner_left
-    assert bare.reply_markup is None
-
 
 @pytest.mark.unit
 async def test_telegram_pair_notifier_swallows_telegram_api_errors(

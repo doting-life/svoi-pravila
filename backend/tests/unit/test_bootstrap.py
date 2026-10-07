@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from aiogram import Bot
-from aiogram.methods import DeleteWebhook, SetMyCommands, SetWebhook
+from aiogram.methods import DeleteMyCommands, DeleteWebhook, SetWebhook
 from httpx import ASGITransport, AsyncClient
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
@@ -241,7 +241,7 @@ async def test_create_application_polling_lifespan(
     app = create_application(settings)
     async with app.router.lifespan_context(app):
         kinds = {type(req) for req in session.requests}
-        assert SetMyCommands in kinds
+        assert DeleteMyCommands in kinds
         assert DeleteWebhook in kinds
     assert session.closed is True
 
@@ -265,7 +265,7 @@ async def test_create_application_webhook_lifespan(
     app = create_application(settings)
     async with app.router.lifespan_context(app):
         kinds = {type(req) for req in session.requests}
-        assert SetMyCommands in kinds
+        assert DeleteMyCommands in kinds
         assert SetWebhook in kinds
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:

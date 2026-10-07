@@ -8,32 +8,40 @@ from pathlib import Path
 import pytest
 
 from svoi_pravila.adapters.channels.telegram.localization import (
+    firmness_label,
+    help_say_intent_prefixes,
     load_ru_strings,
     render_crisis_message,
+    render_refuse_manipulation,
 )
+from svoi_pravila.domain.enums import Firmness
 
 
 @pytest.mark.unit
 def test_load_ru_strings_succeeds() -> None:
     strings = load_ru_strings()
-    assert strings.age_button_yes
-    assert strings.help_body
-    assert "/contacts" in strings.help_body
-    assert "/rules" in strings.help_body
-    assert "/cancel" in strings.help_body
-    assert "/contacts" in strings.done_commands
-    assert "/rules" in strings.done_commands
-    assert strings.decode_copy
-    assert strings.decode_insert
+    assert strings.dm_welcome
+    assert strings.dm_open_app
+    assert strings.help_inline
     assert strings.inline_prefix_decline
     assert strings.inline_button_need_support
+    assert strings.inline_button_finish_setup
+    assert strings.pair_invite_accepted
+    assert strings.rate_limited
+    assert strings.error_generic
+    assert render_refuse_manipulation(strings) == strings.decode_refuse_manipulation
     assert "112" in render_crisis_message()
+    for _prefix, _intent in help_say_intent_prefixes(strings):
+        assert _prefix
+    assert firmness_label(strings, Firmness.GENTLE) == strings.inline_firmness_gentle
+    assert firmness_label(strings, Firmness.BALANCED) == strings.inline_firmness_balanced
+    assert firmness_label(strings, Firmness.FIRM) == strings.inline_firmness_firm
 
 
 @pytest.mark.unit
 def test_load_ru_strings_missing_key_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     broken = tmp_path / "ru.json"
-    broken.write_text(json.dumps({"commands.start": "x"}), encoding="utf-8")
+    broken.write_text(json.dumps({"dm.welcome": "x"}), encoding="utf-8")
 
     class _Files:
         def joinpath(self, name: str) -> Path:

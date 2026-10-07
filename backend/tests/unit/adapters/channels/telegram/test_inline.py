@@ -1,4 +1,4 @@
-"""Inline query, prepared tokens, chosen_inline_result, and help deep-link."""
+"""Inline query, prepared tokens, and chosen_inline_result."""
 
 from __future__ import annotations
 
@@ -12,17 +12,12 @@ from unittest.mock import AsyncMock
 import pytest
 from aiogram import Bot
 from aiogram.exceptions import TelegramBadRequest
-from aiogram.methods import AnswerInlineQuery, SendMessage
+from aiogram.methods import AnswerInlineQuery
 from aiogram.types import (
-    CallbackQuery,
-    Chat,
     ChosenInlineResult,
-    InlineKeyboardMarkup,
     InlineQuery,
     InlineQueryResultArticle,
     InputTextMessageContent,
-    Message,
-    SwitchInlineQueryChosenChat,
     Update,
     User,
 )
@@ -30,6 +25,8 @@ from tests.factories import make_settings
 from tests.fakes.clock import FakeClock
 from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.generation import FakeTextGenerator
+from tests.fakes.ids import FakeIdGenerator
+from tests.fakes.pair_notifier import FakePairNotifier
 from tests.fakes.prepared import FakePreparedResults
 from tests.fakes.sleeper import GateSleeper
 from tests.fakes.telegram_deps import TelegramTestDeps, make_telegram_deps
@@ -39,13 +36,7 @@ from tests.fakes.usage_sink import RecordingUsageEventSink
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
-from svoi_pravila.adapters.channels.telegram.lifecycle import ALLOWED_UPDATES, TelegramLifecycle
-from svoi_pravila.adapters.channels.telegram.localization import (
-    help_say_intent_prefixes,
-    render_crisis_message,
-    render_help,
-    render_refuse_manipulation,
-)
+from svoi_pravila.adapters.channels.telegram.lifecycle import ALLOWED_UPDATES
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
     GenerationUnavailable,
@@ -69,13 +60,29 @@ from svoi_pravila.application.ports.generation import (
 )
 from svoi_pravila.application.ports.prepared_results import PreparedVariant
 from svoi_pravila.application.prepared_ref import PREPARED_REF_PREFIX, is_prepared_ref
+from svoi_pravila.application.use_cases.accept_age_confirmation import (
+    AcceptAgeConfirmation,
+    AcceptAgeConfirmationCommand,
+)
+from svoi_pravila.application.use_cases.create_contact import CreateContact, CreateContactCommand
+from svoi_pravila.application.use_cases.grant_consent import GrantConsent, GrantConsentCommand
 from svoi_pravila.application.use_cases.inline_compose import (
     InlineCompose,
     InlineComposeCommand,
     InlineComposeResult,
 )
+from svoi_pravila.application.use_cases.propose_rule import ProposeRule, ProposeRuleCommand
 from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
-from svoi_pravila.domain.enums import ConsentKind, Firmness, UsageEventKind, UsageScenario
+from svoi_pravila.domain.enums import (
+    ConsentKind,
+    Firmness,
+    RelationshipKind,
+    RuleCategory,
+    UsageEventKind,
+    UsageScenario,
+)
+from svoi_pravila.domain.ids import TelegramUserId
+from svoi_pravila.domain.text import ContactLabel, RuleText
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -85,38 +92,6 @@ def _settings() -> Settings:
         environment=Environment.LOCAL,
         telegram_updates_mode=TelegramUpdatesMode.POLLING,
         telegram_bot_token="1:TEST",
-    )
-
-
-def _text_update(update_id: int, user_id: int, text: str) -> Update:
-    return Update(
-        update_id=update_id,
-        message=Message(
-            message_id=update_id,
-            date=_NOW,
-            chat=Chat(id=user_id, type="private"),
-            from_user=User(id=user_id, is_bot=False, first_name="A"),
-            text=text,
-        ),
-    )
-
-
-def _callback(update_id: int, user_id: int, data: str) -> Update:
-    return Update(
-        update_id=update_id,
-        callback_query=CallbackQuery(
-            id=str(update_id),
-            from_user=User(id=user_id, is_bot=False, first_name="A"),
-            chat_instance="x",
-            data=data,
-            message=Message(
-                message_id=1,
-                date=_NOW,
-                chat=Chat(id=user_id, type="private"),
-                from_user=User(id=user_id, is_bot=False, first_name="A"),
-                text="p",
-            ),
-        ),
     )
 
 
@@ -143,17 +118,33 @@ def _chosen(update_id: int, user_id: int, result_id: str, query: str) -> Update:
     )
 
 
-async def _onboard(
-    bot: Bot, lifecycle: TelegramLifecycle, user_id: int, catalog: FakeConsentCatalog
+async def _grant(
+    uow: InMemoryUnitOfWorkFactory,
+    catalog: FakeConsentCatalog,
+    telegram_id: int,
+    *,
+    ids: FakeIdGenerator | None = None,
+    clock: FakeClock | None = None,
 ) -> None:
-    start = 2000 + user_id
-    dispatcher = lifecycle.dispatcher
-    await dispatcher.feed_update(bot, _text_update(start, user_id, "/start"))
-    await dispatcher.feed_update(bot, _callback(start + 1, user_id, "age:y"))
-    pd = catalog.current_requirement().for_kind(ConsentKind.PERSONAL_DATA).version
-    sc = catalog.current_requirement().for_kind(ConsentKind.SPECIAL_CATEGORY).version
-    await dispatcher.feed_update(bot, _callback(start + 2, user_id, f"cg:personal_data:{pd}:y"))
-    await dispatcher.feed_update(bot, _callback(start + 3, user_id, f"cg:special_category:{sc}:y"))
+    id_gen = ids or FakeIdGenerator()
+    clk = clock or FakeClock()
+    accepted = await AcceptAgeConfirmation(uow, id_gen, clk).execute(
+        AcceptAgeConfirmationCommand(TelegramUserId(telegram_id))
+    )
+    for kind in ConsentKind:
+        version = catalog.current_requirement().for_kind(kind).version
+        await GrantConsent(uow, catalog, id_gen, clk).execute(
+            GrantConsentCommand(accepted.user.id, kind, version)
+        )
+
+
+def _assert_web_app_button(button: object, *, text: str, miniapp_url: str) -> None:
+    assert button is not None
+    assert button.text == text
+    web_app = button.web_app
+    assert web_app is not None
+    assert web_app.url == miniapp_url
+    assert getattr(button, "start_parameter", None) in (None, "")
 
 
 async def _await_inline(deps: TelegramDeps) -> None:
@@ -171,24 +162,10 @@ def _query_too_old() -> TelegramBadRequest:
 
 @pytest.mark.unit
 def test_allowed_updates_include_inline() -> None:
+    assert "message" in ALLOWED_UPDATES
     assert "inline_query" in ALLOWED_UPDATES
     assert "chosen_inline_result" in ALLOWED_UPDATES
-
-
-@pytest.mark.unit
-async def test_help_and_start_help_include_prefixes() -> None:
-    catalog = FakeConsentCatalog()
-    deps = make_telegram_deps(TelegramTestDeps(catalog=catalog))
-    session = FakeTelegramSession()
-    bot = Bot(token="1:TEST", session=session)
-    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await lifecycle.dispatcher.feed_update(bot, _text_update(1, 11, "/help"))
-    await lifecycle.dispatcher.feed_update(bot, _text_update(2, 11, "/start help"))
-    bodies = [req.text for req in session.requests if isinstance(req, SendMessage)]
-    expected = render_help(deps.strings)
-    assert expected in bodies
-    for prefix, _intent in help_say_intent_prefixes(deps.strings):
-        assert prefix in expected
+    assert "my_chat_member" in ALLOWED_UPDATES
 
 
 @pytest.mark.unit
@@ -204,9 +181,25 @@ async def test_inline_not_onboarded_gets_setup_button() -> None:
     assert answers[0].results == []
     assert answers[0].is_personal is True
     assert answers[0].cache_time == 30
-    assert answers[0].button is not None
-    assert answers[0].button.text == deps.strings.inline_button_finish_setup
-    assert answers[0].button.start_parameter == "start"
+    _assert_web_app_button(
+        answers[0].button,
+        text=deps.strings.inline_button_finish_setup,
+        miniapp_url=deps.miniapp_url or "",
+    )
+
+
+@pytest.mark.unit
+async def test_inline_empty_without_miniapp_url_has_no_button() -> None:
+    deps = make_telegram_deps(TelegramTestDeps(miniapp_url=None))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await lifecycle.dispatcher.feed_update(bot, _inline(2, 12, "long enough draft"))
+    await _await_inline(deps)
+    answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
+    assert len(answers) == 1
+    assert answers[0].results == []
+    assert answers[0].button is None
 
 
 @pytest.mark.unit
@@ -217,13 +210,16 @@ async def test_inline_too_short_help_button() -> None:
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 13, catalog)
+    await _grant(uow, catalog, 13)
     await lifecycle.dispatcher.feed_update(bot, _inline(10, 13, "hi"))
     await _await_inline(deps)
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
     assert answers[-1].results == []
-    assert answers[-1].button is not None
-    assert answers[-1].button.start_parameter == "help"
+    _assert_web_app_button(
+        answers[-1].button,
+        text=deps.strings.inline_button_how_to,
+        miniapp_url=deps.miniapp_url or "",
+    )
 
 
 @pytest.mark.unit
@@ -237,7 +233,7 @@ async def test_inline_compose_articles_and_choice() -> None:
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 14, catalog)
+    await _grant(uow, catalog, 14)
     await lifecycle.dispatcher.feed_update(bot, _inline(20, 14, "please leave quietly"))
     await _await_inline(deps)
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
@@ -276,7 +272,7 @@ async def test_prepared_token_answers_without_generation() -> None:
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 15, catalog)
+    await _grant(uow, catalog, 15)
     token = await prepared.store(
         deps.pseudonymizer.pseudonymize("prepared", "15"),
         PreparedVariant(firmness=Firmness.BALANCED, text="insert-me"),
@@ -317,7 +313,7 @@ async def test_inline_debounce_cancels_before_provider(
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 16, catalog)
+    await _grant(uow, catalog, 16)
     await lifecycle.dispatcher.feed_update(bot, _inline(40, 16, "first draft here"))
     await sleeper.entered.wait()
     sleeper.entered.clear()
@@ -350,7 +346,7 @@ async def test_inline_in_flight_generation_not_cancelled() -> None:
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 17, catalog)
+    await _grant(uow, catalog, 17)
     await lifecycle.dispatcher.feed_update(bot, _inline(50, 17, "first long draft"))
     await generator.soften_started.wait()
     assert [call.draft for call in generator.soften_calls] == ["first long draft"]
@@ -367,37 +363,6 @@ async def test_inline_in_flight_generation_not_cancelled() -> None:
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
     assert len(answers) == 1
     assert answers[0].inline_query_id == "51"
-
-
-@pytest.mark.unit
-async def test_decode_variant_has_insert_chat_button() -> None:
-    catalog = FakeConsentCatalog()
-    uow = InMemoryUnitOfWorkFactory()
-    prepared = FakePreparedResults()
-    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, prepared=prepared))
-    session = FakeTelegramSession()
-    bot = Bot(token="1:TEST", session=session)
-    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 18, catalog)
-    await lifecycle.dispatcher.feed_update(bot, _text_update(60, 18, "incoming text here"))
-    sends = [req for req in session.requests if isinstance(req, SendMessage) and req.reply_markup]
-    switch = None
-    for send in sends:
-        markup = send.reply_markup
-        if markup is None:
-            continue
-        if isinstance(markup, InlineKeyboardMarkup):
-            for row in markup.inline_keyboard:
-                for button in row:
-                    if button.switch_inline_query_chosen_chat is not None:
-                        switch = button.switch_inline_query_chosen_chat
-    assert isinstance(switch, SwitchInlineQueryChosenChat)
-    assert switch.allow_user_chats is True
-    assert switch.allow_bot_chats is False
-    assert switch.allow_group_chats is True
-    assert switch.allow_channel_chats is True
-    assert switch.query is not None
-    assert prepared.store_calls >= 1
 
 
 @pytest.mark.unit
@@ -422,7 +387,7 @@ async def test_help_say_inline_articles() -> None:
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 19, catalog)
+    await _grant(uow, catalog, 19)
     await lifecycle.dispatcher.feed_update(bot, _inline(70, 19, "извинись: I was late to dinner"))
     await _await_inline(deps)
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
@@ -453,7 +418,7 @@ async def test_inline_empty_variants_help_button() -> None:
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 22, catalog)
+    await _grant(uow, catalog, 22)
     await lifecycle.dispatcher.feed_update(bot, _inline(90, 22, "long enough draft"))
     await _await_inline(deps)
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
@@ -494,7 +459,7 @@ async def test_newer_query_waits_for_in_flight_then_runs() -> None:
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 24, catalog)
+    await _grant(uow, catalog, 24)
     await lifecycle.dispatcher.feed_update(bot, _inline(100, 24, "alpha draft waiting"))
     await generator.soften_started.wait()
     await lifecycle.dispatcher.feed_update(bot, _inline(101, 24, "beta draft waiting"))
@@ -528,7 +493,7 @@ async def test_third_query_supersedes_waiter_only_latest_runs() -> None:
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 25, catalog)
+    await _grant(uow, catalog, 25)
     await lifecycle.dispatcher.feed_update(bot, _inline(110, 25, "first of three drafts"))
     await generator.soften_started.wait()
     await lifecycle.dispatcher.feed_update(bot, _inline(111, 25, "middle of three drafts"))
@@ -573,8 +538,11 @@ async def test_not_onboarded_in_flight_answers_only_current_query() -> None:
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
     assert [item.inline_query_id for item in answers] == ["121"]
     assert answers[0].results == []
-    assert answers[0].button is not None
-    assert answers[0].button.start_parameter == "start"
+    _assert_web_app_button(
+        answers[0].button,
+        text=deps.strings.inline_button_finish_setup,
+        miniapp_url=deps.miniapp_url or "",
+    )
 
 
 @pytest.mark.unit
@@ -599,7 +567,7 @@ async def test_in_flight_error_does_not_answer_stale_query() -> None:
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 32, catalog)
+    await _grant(uow, catalog, 32)
     await lifecycle.dispatcher.feed_update(bot, _inline(150, 32, "hi"))
     await started.wait()
     await lifecycle.dispatcher.feed_update(bot, _inline(151, 32, "ok draft here"))
@@ -630,7 +598,7 @@ async def _assert_prepared_ref_empty(
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, user_id, catalog)
+    await _grant(uow, catalog, user_id)
     assert is_prepared_ref(query)
     await lifecycle.dispatcher.feed_update(bot, _inline(update_id, user_id, query))
     await lifecycle.shutdown()
@@ -638,8 +606,11 @@ async def _assert_prepared_ref_empty(
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
     assert len(answers) == 1
     assert answers[0].results == []
-    assert answers[0].button is not None
-    assert answers[0].button.start_parameter == "help"
+    _assert_web_app_button(
+        answers[0].button,
+        text=deps.strings.inline_button_how_to,
+        miniapp_url=deps.miniapp_url or "",
+    )
     assert answers[0].is_personal is True
 
 
@@ -712,7 +683,7 @@ async def test_inline_quota_and_long_preview() -> None:
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 31, catalog)
+    await _grant(uow, catalog, 31)
     await lifecycle.dispatcher.feed_update(bot, _inline(140, 31, "long enough draft"))
     await _await_inline(deps)
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
@@ -793,7 +764,7 @@ async def test_in_flight_failure_does_not_drop_latest_query(
     previous = loop.get_exception_handler()
     loop.set_exception_handler(_handler)
     try:
-        await _onboard(bot, lifecycle, 33, catalog)
+        await _grant(uow, catalog, 33)
         await lifecycle.dispatcher.feed_update(bot, _inline(160, 33, "first failing draft"))
         await generator.soften_started.wait()
         await lifecycle.dispatcher.feed_update(bot, _inline(161, 33, "second surviving draft"))
@@ -822,7 +793,7 @@ async def test_composed_answer_telegram_rejection_keeps_usage(
     bot = Bot(token="1:TEST", session=session)
     object.__setattr__(bot, "answer_inline_query", AsyncMock(side_effect=_query_too_old()))
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 34, catalog)
+    await _grant(uow, catalog, 34)
     await lifecycle.dispatcher.feed_update(bot, _inline(170, 34, "long enough draft"))
     await _await_inline(deps)
     generations = [event for event in sink.events if event.event_kind is UsageEventKind.GENERATION]
@@ -842,7 +813,7 @@ async def test_prepared_answer_telegram_rejection_keeps_ref(
     bot = Bot(token="1:TEST", session=session)
     object.__setattr__(bot, "answer_inline_query", AsyncMock(side_effect=_query_too_old()))
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 35, catalog)
+    await _grant(uow, catalog, 35)
     token = await prepared.store(
         deps.pseudonymizer.pseudonymize("prepared", "35"),
         PreparedVariant(firmness=Firmness.GENTLE, text="keep-me"),
@@ -867,21 +838,6 @@ async def test_empty_answer_telegram_rejection_is_logged(
 
 
 @pytest.mark.unit
-async def test_start_support_and_why_deep_links() -> None:
-    catalog = FakeConsentCatalog()
-    deps = make_telegram_deps(TelegramTestDeps(catalog=catalog))
-    session = FakeTelegramSession()
-    bot = Bot(token="1:TEST", session=session)
-    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await lifecycle.dispatcher.feed_update(bot, _text_update(1, 40, "/start support"))
-    await lifecycle.dispatcher.feed_update(bot, _text_update(2, 40, "/start why"))
-    bodies = [req.text for req in session.requests if isinstance(req, SendMessage)]
-    assert render_crisis_message() in bodies
-    assert render_refuse_manipulation(deps.strings) in bodies
-    assert "112" in render_crisis_message()
-
-
-@pytest.mark.unit
 async def test_inline_crisis_and_refuse_buttons() -> None:
     catalog = FakeConsentCatalog()
     uow = InMemoryUnitOfWorkFactory()
@@ -889,14 +845,16 @@ async def test_inline_crisis_and_refuse_buttons() -> None:
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 41, catalog)
+    await _grant(uow, catalog, 41)
     await lifecycle.dispatcher.feed_update(bot, _inline(10, 41, "я не хочу жить сегодня"))
     await _await_inline(deps)
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
     assert answers[-1].results == []
-    assert answers[-1].button is not None
-    assert answers[-1].button.text == deps.strings.inline_button_need_support
-    assert answers[-1].button.start_parameter == "support"
+    _assert_web_app_button(
+        answers[-1].button,
+        text=deps.strings.inline_button_need_support,
+        miniapp_url=deps.miniapp_url or "",
+    )
 
     refuse_gen = FakeTextGenerator(
         soften_result=SoftenResult(
@@ -924,9 +882,11 @@ async def test_inline_crisis_and_refuse_buttons() -> None:
     await _await_inline(refuse_deps)
     refuse_answers = [req for req in refuse_session.requests if isinstance(req, AnswerInlineQuery)]
     assert refuse_answers[-1].results == []
-    assert refuse_answers[-1].button is not None
-    assert refuse_answers[-1].button.text == refuse_deps.strings.inline_button_why_no_variants
-    assert refuse_answers[-1].button.start_parameter == "why"
+    _assert_web_app_button(
+        refuse_answers[-1].button,
+        text=refuse_deps.strings.inline_button_why_no_variants,
+        miniapp_url=refuse_deps.miniapp_url or "",
+    )
 
 
 @pytest.mark.unit
@@ -934,6 +894,7 @@ async def test_inline_description_prefixes_applied_rule_date() -> None:
     uow = InMemoryUnitOfWorkFactory()
     catalog = FakeConsentCatalog()
     clock = FakeClock(start=datetime(2026, 10, 3, 12, tzinfo=UTC))
+    ids = FakeIdGenerator()
     generator = FakeTextGenerator(
         soften_result=SoftenResult(
             variants=(Variant(text="variant body", firmness=Firmness.GENTLE),),
@@ -949,90 +910,30 @@ async def test_inline_description_prefixes_applied_rule_date() -> None:
         )
     )
     deps = make_telegram_deps(
-        TelegramTestDeps(uow=uow, catalog=catalog, clock=clock, generator=generator)
+        TelegramTestDeps(uow=uow, catalog=catalog, clock=clock, ids=ids, generator=generator)
     )
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 42, catalog)
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=1,
-            callback_query=CallbackQuery(
-                id="1",
-                from_user=User(id=42, is_bot=False, first_name="A"),
-                chat_instance="x",
-                data="ct:n",
-                message=Message(
-                    message_id=1,
-                    date=_NOW,
-                    chat=Chat(id=42, type="private"),
-                    from_user=User(id=42, is_bot=False, first_name="A"),
-                    text="p",
-                ),
-            ),
-        ),
+    await _grant(uow, catalog, 42, ids=ids, clock=clock)
+    user = None
+    async with uow() as unit:
+        user = await unit.users.get_by_telegram_id(TelegramUserId(42))
+    assert user is not None
+    contact = (
+        await CreateContact(uow, catalog, ids, clock).execute(
+            CreateContactCommand(user.id, ContactLabel("Sam"), RelationshipKind.FRIEND)
+        )
+    ).contact
+    await ProposeRule(uow, catalog, ids, clock, FakePairNotifier()).execute(
+        ProposeRuleCommand(
+            user.id,
+            contact.id,
+            RuleCategory.OTHER,
+            RuleText("не повышать голос"),
+            shared=False,
+        )
     )
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=2,
-            callback_query=CallbackQuery(
-                id="2",
-                from_user=User(id=42, is_bot=False, first_name="A"),
-                chat_instance="x",
-                data="ct:rel:friend",
-                message=Message(
-                    message_id=1,
-                    date=_NOW,
-                    chat=Chat(id=42, type="private"),
-                    from_user=User(id=42, is_bot=False, first_name="A"),
-                    text="p",
-                ),
-            ),
-        ),
-    )
-    await lifecycle.dispatcher.feed_update(bot, _text_update(3, 42, "Sam"))
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=4,
-            callback_query=CallbackQuery(
-                id="4",
-                from_user=User(id=42, is_bot=False, first_name="A"),
-                chat_instance="x",
-                data="ru:n",
-                message=Message(
-                    message_id=1,
-                    date=_NOW,
-                    chat=Chat(id=42, type="private"),
-                    from_user=User(id=42, is_bot=False, first_name="A"),
-                    text="p",
-                ),
-            ),
-        ),
-    )
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=5,
-            callback_query=CallbackQuery(
-                id="5",
-                from_user=User(id=42, is_bot=False, first_name="A"),
-                chat_instance="x",
-                data="ru:cat:other",
-                message=Message(
-                    message_id=1,
-                    date=_NOW,
-                    chat=Chat(id=42, type="private"),
-                    from_user=User(id=42, is_bot=False, first_name="A"),
-                    text="p",
-                ),
-            ),
-        ),
-    )
-    await lifecycle.dispatcher.feed_update(bot, _text_update(6, 42, "не повышать голос"))
     clock.advance(timedelta(days=1))
     await lifecycle.dispatcher.feed_update(bot, _inline(7, 42, "long enough draft"))
     await _await_inline(deps)
@@ -1055,7 +956,7 @@ async def test_inline_answered_log_on_ok(
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 60, catalog)
+    await _grant(uow, catalog, 60)
     await lifecycle.dispatcher.feed_update(bot, _inline(100, 60, "long enough draft"))
     await _await_inline(deps)
     answered = [e for e in capture_log_events() if e.get("event") == "inline_answered"]
@@ -1090,7 +991,7 @@ async def test_inline_answered_absent_when_stale(
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 61, catalog)
+    await _grant(uow, catalog, 61)
     await lifecycle.dispatcher.feed_update(bot, _inline(200, 61, "first long draft"))
     await generator.soften_started.wait()
     await lifecycle.dispatcher.feed_update(bot, _inline(201, 61, "second long draft"))
@@ -1193,7 +1094,7 @@ async def test_inline_answered_maps_compose_failed_outcomes(
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 62, catalog)
+    await _grant(uow, catalog, 62)
     await lifecycle.dispatcher.feed_update(bot, _inline(210, 62, "long enough draft"))
     await _await_inline(deps)
     answered = [e for e in capture_log_events() if e.get("event") == "inline_answered"]
@@ -1222,7 +1123,7 @@ async def test_inline_answered_maps_bare_user_quota_exhausted(
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _onboard(bot, lifecycle, 63, catalog)
+    await _grant(uow, catalog, 63)
     await lifecycle.dispatcher.feed_update(bot, _inline(220, 63, "long enough draft"))
     await _await_inline(deps)
     answered = [e for e in capture_log_events() if e.get("event") == "inline_answered"]

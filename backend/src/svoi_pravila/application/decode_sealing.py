@@ -48,7 +48,7 @@ async def seal_decode_outcome(
 ) -> DecodeSealedTokens:
     """Store prepared variants and seal the rule-source payload for an OK decode.
 
-    Returns raw tokens (no Telegram ``sn:`` prefix). Non-OK safety yields null tokens.
+    Returns opaque redeem tokens for the mini-app. Non-OK safety yields null tokens.
     """
     insert_queries = await _store_insert_tokens(ports, request)
     rule_source_token = await _store_rule_source_token(ports, request)

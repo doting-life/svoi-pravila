@@ -11,7 +11,14 @@ from typing import Any
 import structlog
 from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramAPIError
-from aiogram.types import BotCommand, MenuButtonWebApp, WebAppInfo
+from aiogram.types import (
+    BotCommandScopeAllChatAdministrators,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllPrivateChats,
+    BotCommandScopeDefault,
+    MenuButtonWebApp,
+    WebAppInfo,
+)
 
 from svoi_pravila.adapters.channels.telegram.bot_username import BotUsernameCache
 from svoi_pravila.adapters.channels.telegram.inline_scheduler import InlineQueryCoordinator
@@ -22,7 +29,7 @@ logger = structlog.get_logger(__name__)
 
 _MENU_BUTTON_TEXT = "Мои правила"
 
-ALLOWED_UPDATES = ("message", "callback_query", "inline_query", "chosen_inline_result")
+ALLOWED_UPDATES = ("message", "inline_query", "chosen_inline_result", "my_chat_member")
 
 ExtraTasks = Callable[[], set[asyncio.Task[Any]]]
 
@@ -87,22 +94,11 @@ class TelegramLifecycle:
         return self._dispatcher
 
     async def start(self) -> None:
-        """Install commands, cache getMe username, and start polling or set the webhook."""
+        """Clear commands, cache getMe username, and start polling or set the webhook."""
         me = await self._bot.get_me()
         if me.username:
             self._bot_username.username = me.username
-        await self._bot.set_my_commands(
-            [
-                BotCommand(command="start", description=self._strings.commands_start),
-                BotCommand(command="help", description=self._strings.commands_help),
-                BotCommand(command="contacts", description=self._strings.commands_contacts),
-                BotCommand(command="rules", description=self._strings.commands_rules),
-                BotCommand(command="cancel", description=self._strings.commands_cancel),
-                BotCommand(command="export", description=self._strings.commands_export),
-                BotCommand(command="revoke", description=self._strings.commands_revoke),
-                BotCommand(command="delete", description=self._strings.commands_delete),
-            ]
-        )
+        await self._clear_commands()
         await self._install_menu_button()
         if self._mode is TelegramUpdatesMode.POLLING:
             await self._bot.delete_webhook(drop_pending_updates=False)
@@ -125,6 +121,24 @@ class TelegramLifecycle:
                 secret_token=self._webhook_secret_token,
                 allowed_updates=list(ALLOWED_UPDATES),
             )
+
+    async def _clear_commands(self) -> None:
+        """Idempotently remove bot commands for default and common scopes."""
+        scopes = (
+            BotCommandScopeDefault(),
+            BotCommandScopeAllPrivateChats(),
+            BotCommandScopeAllGroupChats(),
+            BotCommandScopeAllChatAdministrators(),
+        )
+        for scope in scopes:
+            try:
+                await self._bot.delete_my_commands(scope=scope)
+            except TelegramAPIError as exc:
+                logger.warning(
+                    "telegram_delete_my_commands_failed",
+                    scope=type(scope).__name__,
+                    error_type=type(exc).__name__,
+                )
 
     async def _install_menu_button(self) -> None:
         """Set the chat menu Web App button when SP_MINIAPP_URL is configured."""

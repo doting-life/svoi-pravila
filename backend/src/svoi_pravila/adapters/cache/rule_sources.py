@@ -40,7 +40,7 @@ class ValkeyRuleSources:
         )
 
     async def store(self, user_pseudonym: str, payload: RuleSourcePayload) -> str:
-        """Encrypt ``payload`` and return a compact token (fits ``sn:`` ≤ 64 bytes)."""
+        """Encrypt ``payload`` and return a compact opaque redeem token."""
         return await self._store.store(user_pseudonym, encode_rule_source_payload(payload))
 
     async def redeem_once(self, user_pseudonym: str, token: str) -> RuleSourcePayload:

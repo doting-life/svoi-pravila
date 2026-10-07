@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit, urlunsplit
 from uuid import UUID
 
@@ -14,16 +14,16 @@ from redis.asyncio import Redis
 from svoi_pravila.adapters.cache.client import close_client, create_client
 from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
 from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
-from svoi_pravila.adapters.cache.dialog_state import ValkeyDialogState
+from svoi_pravila.adapters.cache.export_download import ValkeyExportDownloadStore
 from svoi_pravila.adapters.cache.prepared_results import ValkeyPreparedResults
 from svoi_pravila.adapters.cache.rate_limiter import ValkeyRateLimiter
+from svoi_pravila.adapters.cache.welcome_throttle import ValkeyWelcomeThrottle
 from svoi_pravila.application.errors import PreparedResultUnavailable
-from svoi_pravila.application.ports.dialog_state import DialogRecord
 from svoi_pravila.application.ports.prepared_results import PreparedVariant
 from svoi_pravila.application.prepared_ref import PREPARED_REF_LENGTH
 from svoi_pravila.config import Settings
-from svoi_pravila.domain.enums import Firmness, RelationshipKind, RuleCategory
-from svoi_pravila.domain.ids import ContactId
+from svoi_pravila.domain.enums import Firmness
+from svoi_pravila.domain.ids import UserId
 from tests.factories import make_settings
 
 
@@ -134,45 +134,27 @@ async def test_prepared_token_length_and_ttl_key_has_no_telegram_id(valkey_db15:
 
 
 @pytest.mark.integration
-async def test_dialog_state_round_trip_and_ttl(valkey_db15: Redis) -> None:
-    store = ValkeyDialogState(valkey_db15, ttl_seconds=600)
-    record = DialogRecord(step="awaiting_label", relationship=RelationshipKind.OTHER)
-    await store.set("pseudo-dialog", record)
-    keys = [key async for key in valkey_db15.scan_iter(match="tg:dialog:*")]
-    assert keys == ["tg:dialog:pseudo-dialog"]
-    assert await store.get("pseudo-dialog") == record
-    value = await valkey_db15.get(keys[0])
-    assert value is not None
-    payload = json.loads(value)
-    assert "label" not in payload
-    assert set(payload) <= {
-        "step",
-        "contact_id",
-        "relationship",
-        "category",
-        "shared",
-        "invite_id",
-    }
-    rule_record = DialogRecord(
-        step="awaiting_rule_text",
-        contact_id=ContactId(UUID(int=4)),
-        category=RuleCategory.OTHER,
-    )
-    await store.set("pseudo-rule", rule_record)
-    rule_value = await valkey_db15.get("tg:dialog:pseudo-rule")
-    assert rule_value is not None
-    rule_payload = json.loads(rule_value)
-    assert set(rule_payload) <= {
-        "step",
-        "contact_id",
-        "relationship",
-        "category",
-        "shared",
-        "invite_id",
-    }
-    assert "text" not in rule_payload
-    await store.clear("pseudo-rule")
+async def test_welcome_throttle_claim_once_and_ttl(valkey_db15: Redis) -> None:
+    throttle = ValkeyWelcomeThrottle(valkey_db15, ttl_seconds=2)
+    assert await throttle.claim("pseudo-welcome") is True
+    assert await throttle.claim("pseudo-welcome") is False
+    keys = [key async for key in valkey_db15.scan_iter(match="tg:welcome:*")]
+    assert keys == ["tg:welcome:pseudo-welcome"]
     ttl = await valkey_db15.ttl(keys[0])
-    assert 1 <= ttl <= 600
-    await store.clear("pseudo-dialog")
-    assert await store.get("pseudo-dialog") is None
+    assert 1 <= ttl <= 2
+    await asyncio.sleep(2.1)
+    assert await throttle.claim("pseudo-welcome") is True
+
+
+@pytest.mark.integration
+async def test_export_download_issue_consume_round_trip(valkey_db15: Redis) -> None:
+    store = ValkeyExportDownloadStore(valkey_db15, ttl_seconds=60)
+    user_id = UserId(UUID(int=42))
+    expires_at = datetime(2026, 1, 1, tzinfo=UTC) + timedelta(seconds=60)
+    grant = await store.issue(user_id, expires_at=expires_at)
+    keys = [key async for key in valkey_db15.scan_iter(match="export:dl:*")]
+    assert len(keys) == 1
+    assert grant.raw_token not in keys[0]
+    assert await store.consume(grant.raw_token) == user_id
+    assert await store.consume(grant.raw_token) is None
+    assert await store.consume("unknown-token") is None

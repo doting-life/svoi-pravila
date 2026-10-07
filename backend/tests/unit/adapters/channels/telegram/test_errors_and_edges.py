@@ -11,16 +11,17 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
-from aiogram import Bot, Dispatcher
+from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
-from aiogram.methods import EditMessageReplyMarkup, SendMessage
+from aiogram.methods import SendMessage
 from aiogram.types import (
     CallbackQuery,
     Chat,
+    ChatMemberMember,
+    ChatMemberUpdated,
     ErrorEvent,
     InlineQuery,
     Message,
-    MessageEntity,
     Update,
     User,
 )
@@ -32,26 +33,17 @@ from tests.fakes.telegram_session import FakeTelegramSession
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.errors import telegram_error_handler
 from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
-from svoi_pravila.adapters.channels.telegram.handlers import helpers as handler_helpers
-from svoi_pravila.adapters.channels.telegram.handlers import onboarding as onboarding_handlers
-from svoi_pravila.adapters.channels.telegram.keyboards import consent_keyboard
 from svoi_pravila.adapters.channels.telegram.lifecycle import (
     TelegramLifecycle,
     TelegramRuntimeConfig,
 )
-from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings, render_help
+from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
 from svoi_pravila.adapters.channels.telegram.middlewares.dedup import DedupMiddleware
 from svoi_pravila.adapters.channels.telegram.middlewares.private_chat import (
     PrivateChatMiddleware,
 )
 from svoi_pravila.adapters.channels.telegram.middlewares.rate_limit import RateLimitMiddleware
-from svoi_pravila.adapters.channels.telegram.presenters import render_step
-from svoi_pravila.application.use_cases.get_onboarding_step import (
-    OnboardingStep,
-    OnboardingStepKind,
-)
 from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
-from svoi_pravila.domain.enums import ConsentKind
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -84,7 +76,7 @@ async def test_error_handler_logs_and_replies() -> None:
 
 
 @pytest.mark.unit
-async def test_error_handler_callback_chat() -> None:
+async def test_error_handler_skips_non_private_message_chat() -> None:
     deps = _deps()
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
@@ -94,7 +86,7 @@ async def test_error_handler_callback_chat() -> None:
             id="1",
             from_user=User(id=5, is_bot=False, first_name="A"),
             chat_instance="x",
-            data="age:y",
+            data="ignored",
             message=Message(
                 message_id=1,
                 date=_NOW,
@@ -106,6 +98,7 @@ async def test_error_handler_callback_chat() -> None:
     )
     event = ErrorEvent(update=update, exception=ValueError("x"))
     assert await telegram_error_handler(event, bot, deps) is True
+    assert not any(isinstance(req, SendMessage) for req in session.requests)
 
 
 @pytest.mark.unit
@@ -116,39 +109,12 @@ def test_factory_rejects_disabled_and_missing_token() -> None:
             make_settings(telegram_updates_mode=TelegramUpdatesMode.DISABLED),
             deps,
         )
-    # Bypass Settings validators to hit the factory's defensive token check.
     settings = Settings.model_construct(
         telegram_updates_mode=TelegramUpdatesMode.POLLING,
         telegram_bot_token=None,
     )
     with pytest.raises(RuntimeError):
         build_telegram_lifecycle(settings, deps)
-
-
-@pytest.mark.unit
-def test_consent_keyboard_rejects_oversized_callback() -> None:
-    strings = load_ru_strings()
-    with pytest.raises(ValueError, match="64 bytes"):
-        consent_keyboard(
-            strings,
-            kind=ConsentKind.PERSONAL_DATA,
-            version="v" * 80,
-        )
-
-
-@pytest.mark.unit
-def test_render_step_requires_document_for_consent() -> None:
-    strings = load_ru_strings()
-    with pytest.raises(ValueError, match="consent document"):
-        render_step(
-            strings,
-            OnboardingStep(
-                kind=OnboardingStepKind.CONSENT,
-                consent_kind=ConsentKind.PERSONAL_DATA,
-                consent_version="1",
-            ),
-            None,
-        )
 
 
 @pytest.mark.unit
@@ -166,55 +132,6 @@ def test_localization_rejects_non_object(tmp_path: Path, monkeypatch: pytest.Mon
     )
     with pytest.raises(TypeError):
         load_ru_strings()
-
-
-@pytest.mark.unit
-async def test_consent_decline_and_help_commands() -> None:
-    deps = _deps()
-    session = FakeTelegramSession()
-    settings = make_settings(
-        environment=Environment.LOCAL,
-        telegram_updates_mode=TelegramUpdatesMode.POLLING,
-        telegram_bot_token="1:TEST",
-    )
-    bot = Bot(token="1:TEST", session=session)
-    lifecycle = build_telegram_lifecycle(settings, deps, bot=bot)
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=1,
-            message=Message(
-                message_id=1,
-                date=_NOW,
-                chat=Chat(id=40, type="private"),
-                from_user=User(id=40, is_bot=False, first_name="A"),
-                text="/help",
-                entities=[MessageEntity(type="bot_command", offset=0, length=5)],
-            ),
-        ),
-    )
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=2,
-            callback_query=CallbackQuery(
-                id="2",
-                from_user=User(id=40, is_bot=False, first_name="A"),
-                chat_instance="x",
-                data="cg:personal_data:1:n",
-                message=Message(
-                    message_id=1,
-                    date=_NOW,
-                    chat=Chat(id=40, type="private"),
-                    from_user=User(id=40, is_bot=False, first_name="A"),
-                    text="c",
-                ),
-            ),
-        ),
-    )
-    texts = [str(getattr(req, "text", "")) for req in session.requests]
-    assert render_help(deps.strings) in texts
-    assert deps.strings.consent_declined in texts
 
 
 @pytest.mark.unit
@@ -330,7 +247,7 @@ async def test_middlewares_edge_updates() -> None:
     bot = Bot(token="1:TEST", session=FakeTelegramSession())
     data: dict[str, Any] = {"tg_deps": deps, "bot": bot}
 
-    empty = Update(
+    inline = Update(
         update_id=99,
         inline_query=InlineQuery(
             id="iq",
@@ -339,19 +256,37 @@ async def test_middlewares_edge_updates() -> None:
             offset="",
         ),
     )
-    assert await PrivateChatMiddleware()(handler, empty, data) == "ok"
-    assert await RateLimitMiddleware()(handler, empty, data) == "ok"
+    assert await PrivateChatMiddleware()(handler, inline, data) == "ok"
+    assert await RateLimitMiddleware()(handler, inline, data) == "ok"
 
-    no_from = Update(
+    private_message = Update(
         update_id=100,
         message=Message(
             message_id=1,
             date=_NOW,
             chat=Chat(id=1, type="private"),
+            from_user=User(id=1, is_bot=False, first_name="A"),
             text="hi",
         ),
     )
-    assert await RateLimitMiddleware()(handler, no_from, data) is None
+    assert await RateLimitMiddleware()(handler, private_message, data) == "ok"
+
+    membership = Update(
+        update_id=102,
+        my_chat_member=ChatMemberUpdated(
+            chat=Chat(id=-100, type="group", title="g"),
+            from_user=User(id=1, is_bot=False, first_name="A"),
+            date=_NOW,
+            old_chat_member=ChatMemberMember(
+                user=User(id=1, is_bot=True, first_name="bot"),
+            ),
+            new_chat_member=ChatMemberMember(
+                user=User(id=1, is_bot=True, first_name="bot"),
+            ),
+        ),
+    )
+    assert await PrivateChatMiddleware()(handler, membership, data) == "ok"
+    assert await RateLimitMiddleware()(handler, membership, data) == "ok"
 
     callback_no_message = Update(
         update_id=101,
@@ -366,288 +301,4 @@ async def test_middlewares_edge_updates() -> None:
     limited_deps = replace(deps, rate_limiter=FakeRateLimiter(limit=0))
     data["tg_deps"] = limited_deps
     assert await RateLimitMiddleware()(handler, callback_no_message, data) is None
-
-
-@pytest.mark.unit
-def test_parse_consent_callback_edges() -> None:
-    assert onboarding_handlers._parse_consent_callback("bad") is None
-    assert onboarding_handlers._parse_consent_callback("cg:nope:1:y") is None
-    assert onboarding_handlers._parse_consent_callback("cg:personal_data:1:x") is None
-    assert onboarding_handlers._parse_consent_callback("cg:personal_data:1:n") == (
-        ConsentKind.PERSONAL_DATA,
-        "1",
-        False,
-    )
-
-
-@pytest.mark.unit
-async def test_onboarding_handler_edges() -> None:
-    deps = _deps()
-    session = FakeTelegramSession()
-    settings = make_settings(
-        environment=Environment.LOCAL,
-        telegram_updates_mode=TelegramUpdatesMode.POLLING,
-        telegram_bot_token="1:TEST",
-    )
-    bot = Bot(token="1:TEST", session=session)
-    lifecycle = build_telegram_lifecycle(settings, deps, bot=bot)
-
-    # Bare dispatcher (no outer middleware) to hit handler early-returns.
-    bare = Dispatcher()
-    bare["tg_deps"] = deps
-    bare.include_router(onboarding_handlers.build_router())
-    await bare.feed_update(
-        bot,
-        Update(
-            update_id=50,
-            message=Message(
-                message_id=1,
-                date=_NOW,
-                chat=Chat(id=50, type="private"),
-                text="/start",
-                entities=[MessageEntity(type="bot_command", offset=0, length=6)],
-            ),
-        ),
-    )
-    await bare.feed_update(
-        bot,
-        Update(
-            update_id=49,
-            message=Message(
-                message_id=1,
-                date=_NOW,
-                chat=Chat(id=49, type="private"),
-                text="hi",
-            ),
-        ),
-    )
-    await bare.feed_update(
-        bot,
-        Update(
-            update_id=59,
-            callback_query=CallbackQuery(
-                id="59",
-                from_user=User(id=59, is_bot=False, first_name="A"),
-                chat_instance="x",
-                data="age:n",
-            ),
-        ),
-    )
-    await bare.feed_update(
-        bot,
-        Update(
-            update_id=70,
-            callback_query=CallbackQuery(
-                id="70",
-                from_user=User(id=70, is_bot=False, first_name="A"),
-                chat_instance="x",
-                data="cg:personal_data:1:n",
-            ),
-        ),
-    )
-    consent_handler = next(
-        handler.callback
-        for handler in onboarding_handlers.build_router().callback_query.handlers
-        if getattr(handler.callback, "__name__", "") == "consent_callback"
-    )
-    null_data = CallbackQuery(
-        id="71",
-        from_user=User(id=71, is_bot=False, first_name="A"),
-        chat_instance="x",
-        data="cg:personal_data:1:y",
-    )
-    object.__setattr__(null_data, "data", None)
-    object.__setattr__(null_data, "answer", AsyncMock())
-    await consent_handler(null_data, deps, bot)
-
-    # plain text while still on AGE re-renders the age step
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=51,
-            message=Message(
-                message_id=2,
-                date=_NOW,
-                chat=Chat(id=51, type="private"),
-                from_user=User(id=51, is_bot=False, first_name="A"),
-                text="hello",
-            ),
-        ),
-    )
-    assert any(isinstance(req, SendMessage) for req in session.requests)
-
-    # unknown callback while onboarding re-renders
-    before = len(session.requests)
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=52,
-            callback_query=CallbackQuery(
-                id="52",
-                from_user=User(id=51, is_bot=False, first_name="A"),
-                chat_instance="x",
-                data="unknown:x",
-                message=Message(
-                    message_id=1,
-                    date=_NOW,
-                    chat=Chat(id=51, type="private"),
-                    from_user=User(id=51, is_bot=False, first_name="A"),
-                    text="p",
-                ),
-            ),
-        ),
-    )
-    assert len(session.requests) > before
-
-    # consent grant without prior age confirmation re-renders current step
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=53,
-            callback_query=CallbackQuery(
-                id="53",
-                from_user=User(id=52, is_bot=False, first_name="A"),
-                chat_instance="x",
-                data="cg:personal_data:1:y",
-                message=Message(
-                    message_id=1,
-                    date=_NOW,
-                    chat=Chat(id=52, type="private"),
-                    from_user=User(id=52, is_bot=False, first_name="A"),
-                    text="p",
-                ),
-            ),
-        ),
-    )
-
-    # invalid consent callback shape is answered and ignored
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=54,
-            callback_query=CallbackQuery(
-                id="54",
-                from_user=User(id=52, is_bot=False, first_name="A"),
-                chat_instance="x",
-                data="cg:personal_data:1:maybe",
-                message=Message(
-                    message_id=1,
-                    date=_NOW,
-                    chat=Chat(id=52, type="private"),
-                    from_user=User(id=52, is_bot=False, first_name="A"),
-                    text="p",
-                ),
-            ),
-        ),
-    )
-
-    # age decline / consent decline without message chat
-    callback_no_msg = CallbackQuery(
-        id="55",
-        from_user=User(id=55, is_bot=False, first_name="A"),
-        chat_instance="x",
-        data="age:n",
-    )
-    assert handler_helpers.callback_chat_id(callback_no_msg) is None
-    await handler_helpers.send_current_step(bot, callback_no_msg, deps, 55)
-    await handler_helpers.clear_callback_keyboard(bot, callback_no_msg)
-
-    callback_with_msg = CallbackQuery(
-        id="56",
-        from_user=User(id=56, is_bot=False, first_name="A"),
-        chat_instance="x",
-        data="age:y",
-        message=Message(
-            message_id=1,
-            date=_NOW,
-            chat=Chat(id=56, type="private"),
-            from_user=User(id=56, is_bot=False, first_name="A"),
-            text="p",
-        ),
-    )
-    failing_edit = AsyncMock(
-        side_effect=TelegramAPIError(
-            method=EditMessageReplyMarkup(chat_id=56, message_id=1),
-            message="too old",
-        )
-    )
-    object.__setattr__(bot, "edit_message_reply_markup", failing_edit)
-    await handler_helpers.clear_callback_keyboard(bot, callback_with_msg)
-
-    # Restore edit for subsequent feed_update calls.
-    delattr(bot, "edit_message_reply_markup")
-
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=58,
-            message=Message(
-                message_id=3,
-                date=_NOW,
-                chat=Chat(id=58, type="private"),
-                from_user=User(id=58, is_bot=False, first_name="A"),
-                text="/help",
-                entities=[MessageEntity(type="bot_command", offset=0, length=5)],
-            ),
-        ),
-    )
-    assert render_help(deps.strings) in [str(getattr(req, "text", "")) for req in session.requests]
-
-    # Finish onboarding, then unknown callback while DONE is a no-op beyond answer.
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=60,
-            message=Message(
-                message_id=1,
-                date=_NOW,
-                chat=Chat(id=60, type="private"),
-                from_user=User(id=60, is_bot=False, first_name="A"),
-                text="/start",
-                entities=[MessageEntity(type="bot_command", offset=0, length=6)],
-            ),
-        ),
-    )
-    await lifecycle.dispatcher.feed_update(
-        bot,
-        Update(
-            update_id=61,
-            callback_query=CallbackQuery(
-                id="61",
-                from_user=User(id=60, is_bot=False, first_name="A"),
-                chat_instance="x",
-                data="age:y",
-                message=Message(
-                    message_id=1,
-                    date=_NOW,
-                    chat=Chat(id=60, type="private"),
-                    from_user=User(id=60, is_bot=False, first_name="A"),
-                    text="p",
-                ),
-            ),
-        ),
-    )
-    for update_id, data in (
-        (62, "cg:personal_data:1:y"),
-        (63, "cg:special_category:1:y"),
-        (64, "unknown:done"),
-    ):
-        await lifecycle.dispatcher.feed_update(
-            bot,
-            Update(
-                update_id=update_id,
-                callback_query=CallbackQuery(
-                    id=str(update_id),
-                    from_user=User(id=60, is_bot=False, first_name="A"),
-                    chat_instance="x",
-                    data=data,
-                    message=Message(
-                        message_id=1,
-                        date=_NOW,
-                        chat=Chat(id=60, type="private"),
-                        from_user=User(id=60, is_bot=False, first_name="A"),
-                        text="p",
-                    ),
-                ),
-            ),
-        )
+    assert await RateLimitMiddleware()(handler, inline, data) is None

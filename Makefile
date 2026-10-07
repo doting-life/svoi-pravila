@@ -69,9 +69,8 @@ test:
 	$(UV) coverage report --include='*/svoi_pravila/adapters/cache/errors.py' --fail-under=100
 	$(UV) coverage report --include='*/svoi_pravila/adapters/system/inline_result_reuse.py' --fail-under=100
 	$(UV) coverage report --include='*/handlers/inline.py' --fail-under=100
-	$(UV) coverage report --include='*/handlers/contacts.py' --fail-under=95
-	$(UV) coverage report --include='*/handlers/onboarding.py' --fail-under=95
-	$(UV) coverage report --include='*/handlers/rules.py' --fail-under=95
+	$(UV) coverage report --include='*/handlers/welcome.py' --fail-under=100
+	$(UV) coverage report --include='*/handlers/membership.py' --fail-under=100
 	$(UV) coverage report --include='*/svoi_pravila/evals/*' --fail-under=95
 	$(UV) coverage report --include='*/svoi_pravila/adapters/persistence/analytics_store.py' --fail-under=95
 	$(UV) coverage report --include='*/svoi_pravila/adapters/system/analytics_scheduler.py' --fail-under=100

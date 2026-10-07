@@ -275,7 +275,6 @@ class Settings(BaseSettings):
     inline_reuse_max_entries: int = Field(default=10_000, ge=1, le=1_000_000)
     prepared_result_ttl_seconds: int = Field(default=600, ge=1, le=600)
     rule_source_ttl_seconds: int = Field(default=600, ge=60, le=600)
-    dialog_ttl_seconds: int = Field(default=600, ge=1, le=86_400)
     display_timezone: str = Field(default="Europe/Moscow")
     analytics_timezone: str = Field(default="Europe/Moscow")
     analytics_run_at: time = Field(default=time(3, 30))

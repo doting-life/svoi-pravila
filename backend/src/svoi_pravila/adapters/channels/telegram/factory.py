@@ -6,19 +6,15 @@ from aiogram import Bot, Dispatcher
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.errors import telegram_error_handler
-from svoi_pravila.adapters.channels.telegram.handlers.contacts import build_contacts_router
-from svoi_pravila.adapters.channels.telegram.handlers.decode import build_decode_router
 from svoi_pravila.adapters.channels.telegram.handlers.inline import build_inline_router
-from svoi_pravila.adapters.channels.telegram.handlers.onboarding import build_router
-from svoi_pravila.adapters.channels.telegram.handlers.rights import build_rights_router
-from svoi_pravila.adapters.channels.telegram.handlers.rules import build_rules_router
+from svoi_pravila.adapters.channels.telegram.handlers.membership import build_membership_router
+from svoi_pravila.adapters.channels.telegram.handlers.welcome import build_welcome_router
 from svoi_pravila.adapters.channels.telegram.lifecycle import (
     ExtraTasks,
     TelegramLifecycle,
     TelegramRuntimeConfig,
 )
 from svoi_pravila.adapters.channels.telegram.middlewares.dedup import DedupMiddleware
-from svoi_pravila.adapters.channels.telegram.middlewares.dialog_clear import DialogClearMiddleware
 from svoi_pravila.adapters.channels.telegram.middlewares.private_chat import (
     PrivateChatMiddleware,
 )
@@ -47,12 +43,8 @@ def build_telegram_lifecycle(
     dispatcher.update.outer_middleware(PrivateChatMiddleware())
     dispatcher.update.outer_middleware(DedupMiddleware())
     dispatcher.update.outer_middleware(RateLimitMiddleware())
-    dispatcher.update.outer_middleware(DialogClearMiddleware())
-    dispatcher.include_router(build_rights_router())
-    dispatcher.include_router(build_router())
-    dispatcher.include_router(build_contacts_router())
-    dispatcher.include_router(build_rules_router())
-    dispatcher.include_router(build_decode_router())
+    dispatcher.include_router(build_membership_router())
+    dispatcher.include_router(build_welcome_router())
     dispatcher.include_router(build_inline_router())
     dispatcher.errors.register(telegram_error_handler)
 

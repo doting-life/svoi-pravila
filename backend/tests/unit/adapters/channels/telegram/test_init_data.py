@@ -35,7 +35,8 @@ def test_verify_valid_init_data() -> None:
     result = _verifier(clock).verify(raw)
     assert result.telegram_user_id.value == 42
     assert result.auth_date == _NOW
-    assert set(result.__dataclass_fields__) == {"telegram_user_id", "auth_date"}
+    assert set(result.__dataclass_fields__) == {"telegram_user_id", "auth_date", "start_param"}
+    assert result.start_param is None
 
 
 @pytest.mark.unit
@@ -131,7 +132,11 @@ def test_verify_missing_user_invalid() -> None:
 @pytest.mark.unit
 def test_verify_naive_auth_date_normalized(monkeypatch: pytest.MonkeyPatch) -> None:
     clock = FakeClock(start=_NOW)
-    parsed = SimpleNamespace(user=SimpleNamespace(id=99), auth_date=datetime(2026, 6, 1, 12, 0, 0))
+    parsed = SimpleNamespace(
+        user=SimpleNamespace(id=99),
+        auth_date=datetime(2026, 6, 1, 12, 0, 0),
+        start_param=None,
+    )
     monkeypatch.setattr(
         "svoi_pravila.adapters.channels.telegram.init_data.safe_parse_webapp_init_data",
         lambda _token, _raw: parsed,
@@ -148,6 +153,7 @@ def test_verify_aware_non_utc_auth_date(monkeypatch: pytest.MonkeyPatch) -> None
     parsed = SimpleNamespace(
         user=SimpleNamespace(id=11),
         auth_date=_NOW.astimezone(ZoneInfo("Europe/Moscow")),
+        start_param="inv_abc",
     )
     monkeypatch.setattr(
         "svoi_pravila.adapters.channels.telegram.init_data.safe_parse_webapp_init_data",
@@ -155,3 +161,18 @@ def test_verify_aware_non_utc_auth_date(monkeypatch: pytest.MonkeyPatch) -> None
     )
     result = _verifier(clock).verify("unused")
     assert result.auth_date == _NOW
+    assert result.start_param == "inv_abc"
+
+
+@pytest.mark.unit
+def test_verify_start_param_passed_through() -> None:
+    clock = FakeClock(start=_NOW)
+    auth_ts = int(_NOW.timestamp())
+    raw = build_webapp_init_data(
+        _TOKEN,
+        user_id=42,
+        auth_date=auth_ts,
+        options=InitDataOptions(extra={"start_param": "inv_token123"}),
+    )
+    result = _verifier(clock).verify(raw)
+    assert result.start_param == "inv_token123"

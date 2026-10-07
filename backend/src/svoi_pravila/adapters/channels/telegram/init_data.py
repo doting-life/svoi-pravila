@@ -53,7 +53,10 @@ class AiogramInitDataVerifier:
             raise InitDataInvalid()
         if now - auth_date > self._max_age:
             raise InitDataExpired()
+        raw_start = getattr(parsed, "start_param", None)
+        start_param = raw_start if isinstance(raw_start, str) and raw_start else None
         return VerifiedInitData(
             telegram_user_id=TelegramUserId(parsed.user.id),
             auth_date=auth_date,
+            start_param=start_param,
         )

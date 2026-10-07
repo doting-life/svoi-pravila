@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import ipaddress
 import re
 from datetime import time
 from enum import StrEnum
@@ -239,6 +240,7 @@ class Settings(BaseSettings):
     http_host: str = "127.0.0.1"
     http_port: int = Field(default=8000, ge=1, le=65535)
     metrics_enabled: bool = True
+    metrics_host: str = "127.0.0.1"
     metrics_port: int = Field(default=9100, ge=1, le=65535)
     database_url: SecretStr
     valkey_url: SecretStr
@@ -284,6 +286,17 @@ class Settings(BaseSettings):
     miniapp_url: str | None = None
     miniapp_initdata_max_age_seconds: int = Field(default=3600, ge=60, le=86_400)
     miniapp_requests_per_minute: int = Field(default=120, ge=1, le=600)
+
+    @field_validator("metrics_host")
+    @classmethod
+    def metrics_host_must_be_ip_literal(cls, value: str) -> str:
+        """Accept only IP address literals (IPv4 or IPv6), not hostnames."""
+        try:
+            ipaddress.ip_address(value)
+        except ValueError as exc:
+            msg = "metrics_host must be an IP address literal"
+            raise ValueError(msg) from exc
+        return value
 
     @field_validator("display_timezone")
     @classmethod

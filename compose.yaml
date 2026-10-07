@@ -81,6 +81,7 @@ services:
       SP_FORWARDED_ALLOW_IPS: "127.0.0.1"
       SP_GIGACHAT_CA_BUNDLE_FILE: /app/certs/russian_trusted_root_ca.pem
       SP_METRICS_ENABLED: "true"
+      SP_METRICS_HOST: "0.0.0.0"
       SP_METRICS_PORT: "9100"
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"

@@ -70,10 +70,19 @@ def test_settings_analytics_defaults() -> None:
 def test_settings_metrics_defaults() -> None:
     values = make_settings().model_dump()
     del values["metrics_enabled"]
+    del values["metrics_host"]
     del values["metrics_port"]
     settings = Settings.model_validate(values)
     assert settings.metrics_enabled is True
+    assert settings.metrics_host == "127.0.0.1"
     assert settings.metrics_port == 9100
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", ["localhost", "metrics", "not-an-ip", ""])
+def test_settings_rejects_non_ip_metrics_host(value: str) -> None:
+    with pytest.raises(ValidationError, match="metrics_host"):
+        make_settings(metrics_host=value)
 
 
 @pytest.mark.unit

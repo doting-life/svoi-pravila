@@ -572,6 +572,7 @@ def create_application(settings: Settings) -> FastAPI:
             background=_BackgroundServices(
                 analytics_scheduler=_analytics_scheduler(settings, engine, ids, clock),
                 metrics_enabled=settings.metrics_enabled,
+                metrics_host=settings.metrics_host,
                 metrics_port=settings.metrics_port,
             ),
         ),
@@ -594,6 +595,7 @@ class _BackgroundServices:
 
     analytics_scheduler: AnalyticsScheduler | None
     metrics_enabled: bool
+    metrics_host: str
     metrics_port: int
 
 
@@ -649,13 +651,14 @@ def _app_lifecycle_hooks(
     services = background or _BackgroundServices(
         analytics_scheduler=None,
         metrics_enabled=False,
+        metrics_host="127.0.0.1",
         metrics_port=9100,
     )
     lag_monitor = EventLoopLagMonitor() if services.metrics_enabled else None
 
     async def on_startup() -> None:
         if services.metrics_enabled:
-            start_metrics_server(port=services.metrics_port)
+            start_metrics_server(host=services.metrics_host, port=services.metrics_port)
             if lag_monitor is not None:
                 await lag_monitor.start()
         if lifecycle is not None:

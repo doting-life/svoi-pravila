@@ -500,7 +500,6 @@
           "not_found",
           "contact_limit",
           "open_rule_limit",
-          "bot_chat_unavailable",
           "service_unavailable",
           "contact_already_linked",
           "contact_not_paired",

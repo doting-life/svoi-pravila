@@ -653,6 +653,55 @@ async def test_invite_resolve_accept_via_start_param(mini_world: AppWorld) -> No
         contacts_b = await client.get("/api/v1/contacts", headers=_auth_header(_TG_B))
         assert contacts_b.json()["contacts"][0]["paired"] is True
 
+        reuse = await client.post(
+            "/api/v1/invites/resolve",
+            headers=_auth_header(_TG_B, start_param=f"inv_{raw_token}"),
+        )
+        assert reuse.status_code == 409
+        assert reuse.json()["code"] == MiniappErrorCode.INVITE_INVALID
+
+        empty_prefix = await client.post(
+            "/api/v1/invites/resolve",
+            headers=_auth_header(_TG_B, start_param="inv_"),
+        )
+        assert empty_prefix.status_code == 404
+
+
+@pytest.mark.unit
+async def test_invite_resolve_requires_existing_user_and_expiry(mini_world: AppWorld) -> None:
+    await mini_world.ensure_granted_user(_TG_A)
+    app = _build_app(mini_world)
+    headers_a = _auth_header(_TG_A)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        created = await client.post(
+            "/api/v1/contacts",
+            headers=headers_a,
+            json={"label": "Partner", "relationship": "friend"},
+        )
+        contact_id = created.json()["id"]
+        invite = await client.post(f"/api/v1/contacts/{contact_id}/invite", headers=headers_a)
+        raw_token = invite.json()["link"].rsplit("inv_", 1)[1]
+
+        before_user = await client.post(
+            "/api/v1/invites/resolve",
+            headers=_auth_header(_TG_B, start_param=f"inv_{raw_token}"),
+        )
+        assert before_user.status_code == 403
+        assert before_user.json()["code"] == MiniappErrorCode.ONBOARDING_REQUIRED
+
+        await mini_world.ensure_granted_user(_TG_B)
+        mini_world.clock.advance(timedelta(days=40))
+        expired = await client.post(
+            "/api/v1/invites/resolve",
+            headers=_auth_header(
+                _TG_B,
+                auth_date=mini_world.clock.now(),
+                start_param=f"inv_{raw_token}",
+            ),
+        )
+        assert expired.status_code == 409
+        assert expired.json()["code"] == MiniappErrorCode.INVITE_EXPIRED
+
 
 @pytest.mark.unit
 async def test_pair_invite_shared_rule_approve_reject_leave(mini_world: AppWorld) -> None:

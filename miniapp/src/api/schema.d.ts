@@ -710,7 +710,7 @@ export interface components {
          * @description Stable C0 error codes returned to the mini-app client.
          * @enum {string}
          */
-        MiniappErrorCode: "unauthorized" | "init_data_invalid" | "init_data_expired" | "rate_limited" | "onboarding_required" | "consent_required" | "not_found" | "contact_limit" | "open_rule_limit" | "bot_chat_unavailable" | "service_unavailable" | "contact_already_linked" | "contact_not_paired" | "invalid_transition" | "validation_error" | "body_too_large" | "text_too_short" | "text_too_long" | "quota_exceeded" | "quota_exhausted" | "service_budget_exhausted" | "generation_unavailable" | "invalid_output" | "busy" | "invite_invalid" | "invite_expired" | "invite_own" | "consent_stale";
+        MiniappErrorCode: "unauthorized" | "init_data_invalid" | "init_data_expired" | "rate_limited" | "onboarding_required" | "consent_required" | "not_found" | "contact_limit" | "open_rule_limit" | "service_unavailable" | "contact_already_linked" | "contact_not_paired" | "invalid_transition" | "validation_error" | "body_too_large" | "text_too_short" | "text_too_long" | "quota_exceeded" | "quota_exhausted" | "service_budget_exhausted" | "generation_unavailable" | "invalid_output" | "busy" | "invite_invalid" | "invite_expired" | "invite_own" | "consent_stale";
         /**
          * PrivacyActionTextsResponse
          * @description Revoke or delete blurb and confirm copy (C0).

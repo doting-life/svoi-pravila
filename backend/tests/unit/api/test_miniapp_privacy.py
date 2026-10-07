@@ -325,3 +325,21 @@ async def test_onboarding_age_and_consents_via_api(mini_world: AppWorld) -> None
 
         contacts = await client.get("/api/v1/contacts", headers=headers)
         assert contacts.status_code == 200
+
+
+@pytest.mark.unit
+async def test_onboarding_consent_document_and_grant_without_user(mini_world: AppWorld) -> None:
+    app = _build_app(mini_world)
+    headers = _auth_header(_TG)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        unknown_kind = await client.get("/api/v1/consents/not_a_kind/document", headers=headers)
+        assert unknown_kind.status_code == 404
+        assert unknown_kind.json()["code"] == MiniappErrorCode.NOT_FOUND
+
+        grant_before_age = await client.post(
+            "/api/v1/me/consents",
+            headers=headers,
+            json={"kind": "personal_data", "text_version": "v1"},
+        )
+        assert grant_before_age.status_code == 403
+        assert grant_before_age.json()["code"] == MiniappErrorCode.ONBOARDING_REQUIRED

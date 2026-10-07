@@ -765,6 +765,29 @@ async def test_seal_helper_skips_empty_variant_text() -> None:
 
 
 @pytest.mark.unit
+async def test_seal_helper_non_ok_safety_yields_null_tokens() -> None:
+    result = DecodeResult(
+        safety=SafetyVerdict.CRISIS,
+        hypotheses=(),
+        underlying_request="",
+        variants=(Variant(text="ignored", firmness=Firmness.GENTLE),),
+        applied_rule_indexes=(),
+        meta=_meta(),
+    )
+    sealed = await seal_decode_outcome(
+        DecodeSealPorts(FakePreparedResults(), FakeRuleSources(), FakePseudonymizer()),
+        DecodeSealRequest(
+            telegram_user_id=_TG,
+            incoming_text="incoming",
+            completed=DecodeCompleted(analysis="a", result=result),
+            active_contact_id=ContactId(uuid4()),
+        ),
+    )
+    assert sealed.insert_queries == (None,)
+    assert sealed.rule_source_token is None
+
+
+@pytest.mark.unit
 def test_format_sse() -> None:
     assert format_sse("analysis", {"chunk": "x"}) == 'event: analysis\ndata: {"chunk":"x"}\n\n'
     assert format_sse("refused") == "event: refused\ndata: {}\n\n"

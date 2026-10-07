@@ -251,6 +251,46 @@ describe("DecodeScreen", () => {
         expect(await screen.findByText(ru.decodeErrorShort)).toBeInTheDocument();
     });
 
+    it("renders server message for quota and service budget HTTP errors", async () => {
+        const quotaMessage = "Дневной лимит исчерпан. Снова будет доступно в 00:00.";
+        const fetchQuota = vi.fn(() =>
+            Promise.resolve(
+                jsonResponse(
+                    {
+                        code: "quota_exhausted",
+                        message: quotaMessage,
+                        retry_at: "2026-03-16T21:00:00Z",
+                    },
+                    429,
+                ),
+            ),
+        ) as typeof fetch;
+        renderDecode(fetchQuota);
+        fireEvent.change(screen.getByRole("textbox"), { target: { value: "текст" } });
+        fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
+        expect(await screen.findByText(quotaMessage)).toBeInTheDocument();
+
+        cleanup();
+        const budgetMessage =
+            "Сервис временно недоступен из‑за лимита нагрузки. Попробуйте после 00:00.";
+        const fetchBudget = vi.fn(() =>
+            Promise.resolve(
+                jsonResponse(
+                    {
+                        code: "service_budget_exhausted",
+                        message: budgetMessage,
+                        retry_at: "2026-03-16T21:00:00Z",
+                    },
+                    503,
+                ),
+            ),
+        ) as typeof fetch;
+        renderDecode(fetchBudget);
+        fireEvent.change(screen.getByRole("textbox"), { target: { value: "текст" } });
+        fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
+        expect(await screen.findByText(budgetMessage)).toBeInTheDocument();
+    });
+
     it("dismisses a decode suggestion", async () => {
         const fetchImpl = vi.fn((input: RequestInfo | URL) => {
             const url = requestUrl(input);
@@ -310,6 +350,56 @@ describe("DecodeScreen", () => {
             expect(screen.queryByText("предложенное")).not.toBeInTheDocument();
         });
         expect(telegram.hapticNotification).toHaveBeenCalledWith("success");
+    });
+
+    it("shows server message when suggest-from-decode hits quota or budget", async () => {
+        const sse = completedSse({ insertQuery: null });
+        const quotaMessage = "Дневной лимит исчерпан. Снова будет доступно в 00:00.";
+        let suggestCalls = 0;
+        const fetchImpl = vi.fn((input: RequestInfo | URL) => {
+            const url = requestUrl(input);
+            if (url.includes("/api/v1/decode") && !url.includes("from-decode")) {
+                return Promise.resolve(sseResponse(sse));
+            }
+            if (url.includes("/suggestions/from-decode")) {
+                suggestCalls += 1;
+                if (suggestCalls === 1) {
+                    return Promise.resolve(
+                        jsonResponse(
+                            {
+                                code: "quota_exhausted",
+                                message: quotaMessage,
+                                retry_at: "2026-03-16T21:00:00Z",
+                            },
+                            429,
+                        ),
+                    );
+                }
+                return Promise.resolve(
+                    jsonResponse(
+                        {
+                            code: "service_budget_exhausted",
+                            message:
+                                "Сервис временно недоступен из‑за лимита нагрузки. Попробуйте после 00:00.",
+                            retry_at: "2026-03-16T21:00:00Z",
+                        },
+                        503,
+                    ),
+                );
+            }
+            return Promise.resolve(jsonResponse({ code: "not_found", message: "missing" }, 404));
+        }) as typeof fetch;
+        renderDecode(fetchImpl);
+        fireEvent.change(screen.getByRole("textbox"), { target: { value: "текст" } });
+        fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.decodeMakeRule }));
+        expect(await screen.findByText(quotaMessage)).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.decodeMakeRule }));
+        expect(
+            await screen.findByText(
+                "Сервис временно недоступен из‑за лимита нагрузки. Попробуйте после 00:00.",
+            ),
+        ).toBeInTheDocument();
     });
 
     it("maps suggest non-ok outcomes and accept/dismiss failures", async () => {

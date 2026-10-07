@@ -14,6 +14,7 @@ from svoi_pravila.adapters.channels.telegram.localization import (
 )
 from svoi_pravila.adapters.system.tone_suggestion_catalog import StaticToneSuggestionCatalog
 from svoi_pravila.application.crisis_screen import CrisisScreen
+from svoi_pravila.application.ports.welcome_throttle import WelcomeThrottle
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose, InlineComposePorts
 from svoi_pravila.application.use_cases.record_inline_choice import (
@@ -55,7 +56,7 @@ class TelegramTestDeps:
     inline_cache_seconds: int = 30
     bot_username: str | None = "test_bot"
     miniapp_url: str | None = "https://miniapp.example"
-    welcome: FakeWelcomeThrottle | None = None
+    welcome: WelcomeThrottle | None = None
 
 
 def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:

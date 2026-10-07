@@ -17,6 +17,7 @@ from aiogram.types import (
     ChosenInlineResult,
     InlineQuery,
     InlineQueryResultArticle,
+    InlineQueryResultsButton,
     InputTextMessageContent,
     Update,
     User,
@@ -138,13 +139,15 @@ async def _grant(
         )
 
 
-def _assert_web_app_button(button: object, *, text: str, miniapp_url: str) -> None:
+def _assert_web_app_button(
+    button: InlineQueryResultsButton | None, *, text: str, miniapp_url: str
+) -> None:
     assert button is not None
     assert button.text == text
     web_app = button.web_app
     assert web_app is not None
     assert web_app.url == miniapp_url
-    assert getattr(button, "start_parameter", None) in (None, "")
+    assert button.start_parameter is None
 
 
 async def _await_inline(deps: TelegramDeps) -> None:

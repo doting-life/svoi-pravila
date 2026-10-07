@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import pytest
 from aiogram import Bot
 from aiogram.methods import SendMessage
-from aiogram.types import Chat, Message, MessageEntity, User
+from aiogram.types import Chat, InlineKeyboardMarkup, Message, MessageEntity, User
 from tests.fakes.telegram_deps import TelegramTestDeps, make_telegram_deps
 from tests.fakes.telegram_session import FakeTelegramSession
 from tests.fakes.welcome_throttle import FakeWelcomeThrottle
@@ -58,8 +58,9 @@ async def test_welcome_replies_once_with_web_app() -> None:
     sends = [req for req in session.requests if isinstance(req, SendMessage)]
     assert len(sends) == 1
     assert sends[0].text == deps.strings.dm_welcome
-    assert sends[0].reply_markup is not None
-    button = sends[0].reply_markup.inline_keyboard[0][0]
+    markup = sends[0].reply_markup
+    assert isinstance(markup, InlineKeyboardMarkup)
+    button = markup.inline_keyboard[0][0]
     assert button.text == deps.strings.dm_open_app
     assert button.web_app is not None
     assert button.web_app.url == "https://app.example"

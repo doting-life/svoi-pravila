@@ -20,7 +20,7 @@ from tests.fakes.telegram_session import FakeTelegramSession
 from tests.fakes.tokens import FakeTokenGenerator
 from tests.fakes.uow import InMemoryUnitOfWorkFactory
 
-from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
+from svoi_pravila.adapters.channels.telegram.localization import TelegramStrings, load_ru_strings
 from svoi_pravila.adapters.channels.telegram.pair_notifier import TelegramPairNotifier
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.use_cases.accept_age_confirmation import (
@@ -75,7 +75,7 @@ async def _grant(
     return accepted.user.id
 
 
-def _assert_web_app(req: SendMessage, strings: object) -> None:
+def _assert_web_app(req: SendMessage, strings: TelegramStrings) -> None:
     markup = req.reply_markup
     assert isinstance(markup, InlineKeyboardMarkup)
     button = markup.inline_keyboard[0][0]

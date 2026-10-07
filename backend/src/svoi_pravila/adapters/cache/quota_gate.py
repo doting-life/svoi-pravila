@@ -9,6 +9,7 @@ from redis.asyncio import Redis
 
 from svoi_pravila.adapters.cache._lua import load_lua
 from svoi_pravila.adapters.cache._redis_map import map_redis
+from svoi_pravila.adapters.cache.errors import CacheErrorKind, CacheUnavailable
 from svoi_pravila.application.ports.quota_gate import (
     QuotaExhausted,
     QuotaReservation,
@@ -95,3 +96,21 @@ class ValkeyQuotaGate:
             return await self._refund(keys=[counter, marker], args=[])
 
         await map_redis(_call)
+
+    async def remaining(self, pseudonym: str, quota_class: QuotaClass, day: date) -> int:
+        """Read the counter without INCR; return slots left (never negative)."""
+        limit = self._limits[quota_class]
+        key = self._counter_key(pseudonym, quota_class, day)
+
+        async def _get() -> object:
+            return await self._client.get(key)
+
+        raw = await map_redis(_get)
+        if raw is None:
+            return limit
+        text = raw if isinstance(raw, str) else raw.decode()
+        try:
+            used = int(text)
+        except ValueError as exc:
+            raise CacheUnavailable(CacheErrorKind.SERVER) from exc
+        return max(0, limit - used)

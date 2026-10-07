@@ -80,12 +80,15 @@ def _openapi_bindings() -> MiniappRouterBindings:
         delete_my_account=cast(DeleteMyAccount, _stub()),
         export_rate_limiter=cast(RateLimiter, _stub()),
         display_timezone="Europe/Moscow",
+        analytics_timezone="Europe/Moscow",
         miniapp_url="https://miniapp.example",
         decode_incoming=cast(DecodeIncoming, _stub()),
         suggest_rule_from_decode=cast(SuggestRuleFromDecode, _stub()),
         prepared_results=cast(PreparedResults, _stub()),
         rule_sources=cast(RuleSources, _stub()),
         pseudonymizer=cast(Pseudonymizer, _stub()),
+        quota_gate=cast(Any, _stub()),
+        clock=cast(Any, _stub()),
         bot_username=cast(BotUsername, _stub()),
     )
 

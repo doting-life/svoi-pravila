@@ -48,3 +48,7 @@ class QuotaGate(Protocol):
     async def refund(self, reservation: QuotaReservation) -> None:
         """Return one slot; never below zero; idempotent per ``reservation_id``."""
         ...
+
+    async def remaining(self, pseudonym: str, quota_class: QuotaClass, day: date) -> int:
+        """Slots left today without mutating the counter (0 when exhausted)."""
+        ...

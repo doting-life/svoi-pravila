@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import structlog
 from aiogram import Bot, Router
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message, WebAppInfo
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.application.ports.welcome_throttle import WELCOME_THROTTLE_PURPOSE
-
-logger = structlog.get_logger(__name__)
 
 
 def build_welcome_router() -> Router:
@@ -31,16 +28,12 @@ async def private_welcome(message: Message, tg_deps: TelegramDeps, bot: Bot) -> 
     claimed = await tg_deps.welcome_throttle.claim(pseudonym)
     if not claimed:
         return
-    miniapp_url = tg_deps.miniapp_url
-    if miniapp_url is None:
-        logger.warning("telegram_welcome_skipped_no_miniapp_url")
-        return
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text=tg_deps.strings.dm_open_app,
-                    web_app=WebAppInfo(url=miniapp_url),
+                    web_app=WebAppInfo(url=tg_deps.miniapp_url),
                 )
             ]
         ]

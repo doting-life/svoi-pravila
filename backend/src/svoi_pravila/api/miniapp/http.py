@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from svoi_pravila.api.miniapp.errors import MiniappErrorCode, error_body, limit_error_body
 from svoi_pravila.application.errors import (
     AccessNotGranted,
+    CacheUnavailable,
     ContactAlreadyLinked,
     ContactLimitReached,
     NotFound,
@@ -104,6 +105,10 @@ def register_miniapp_exception_handlers(app: FastAPI, *, display_timezone: str) 
     @app.exception_handler(NotFound)
     async def _not_found(_request: Request, _exc: NotFound) -> JSONResponse:
         return _miniapp_json(MiniappErrorCode.NOT_FOUND, 404)
+
+    @app.exception_handler(CacheUnavailable)
+    async def _cache_unavailable(_request: Request, _exc: CacheUnavailable) -> JSONResponse:
+        return _miniapp_json(MiniappErrorCode.SERVICE_UNAVAILABLE, 503)
 
     @app.exception_handler(AccessNotGranted)
     async def _access_not_granted(_request: Request, exc: AccessNotGranted) -> JSONResponse:

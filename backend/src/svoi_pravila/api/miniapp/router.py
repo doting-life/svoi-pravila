@@ -46,8 +46,10 @@ from svoi_pravila.api.miniapp.schemas import (
 )
 from svoi_pravila.application.errors import NotFound
 from svoi_pravila.application.ports.bot_username import BotUsername
+from svoi_pravila.application.ports.clock import Clock
 from svoi_pravila.application.ports.prepared_results import PreparedResults
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
+from svoi_pravila.application.ports.quota_gate import QuotaGate
 from svoi_pravila.application.ports.rate_limiter import RateLimiter
 from svoi_pravila.application.ports.rule_sources import RuleSources
 from svoi_pravila.application.rule_view import RuleListItemView, project_rules_for_list
@@ -128,12 +130,14 @@ from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
 from svoi_pravila.domain.contact import MAX_CONTACTS_PER_USER, Contact
 from svoi_pravila.domain.enums import (
     ConsentKind,
+    QuotaClass,
     RelationshipKind,
     RuleCategory,
     RuleStatus,
     UsageSurface,
 )
 from svoi_pravila.domain.ids import ContactId, RuleId, RuleSuggestionId, UserId
+from svoi_pravila.domain.product_day import product_day
 from svoi_pravila.domain.rules import MAX_OPEN_RULES_PER_SCOPE, PairScope, Rule
 from svoi_pravila.domain.text import ContactLabel, RuleText
 from svoi_pravila.domain.user import User
@@ -196,12 +200,15 @@ class MiniappRouterBindings:
     delete_my_account: DeleteMyAccount
     export_rate_limiter: RateLimiter
     display_timezone: str
+    analytics_timezone: str
     miniapp_url: str | None
     decode_incoming: DecodeIncoming
     suggest_rule_from_decode: SuggestRuleFromDecode
     prepared_results: PreparedResults
     rule_sources: RuleSources
     pseudonymizer: Pseudonymizer
+    quota_gate: QuotaGate
+    clock: Clock
     bot_username: BotUsername
     enable_test_routes: bool = False
 
@@ -409,6 +416,43 @@ def _register_decode(
         return SuggestFromDecodeResponse.model_validate(payload)
 
 
+async def _build_me_response(
+    bindings: MiniappRouterBindings, auth: MiniappAuthContext
+) -> MeResponse:
+    """Assemble GET /me payload (onboarding, limits, bot username, decode remaining)."""
+    step_result = await bindings.auth.get_onboarding_step.execute(
+        GetOnboardingStepQuery(telegram_user_id=auth.telegram_user_id)
+    )
+    step = step_result.step
+    active = (
+        str(auth.user.active_contact_id)
+        if auth.user is not None and auth.user.active_contact_id is not None
+        else None
+    )
+    username = bindings.bot_username.username
+    if username is None or not username:
+        raise MiniappHttpError(MiniappErrorCode.SERVICE_UNAVAILABLE, 503)
+    day = product_day(bindings.clock.now(), bindings.analytics_timezone)
+    quota_pseudonym = bindings.pseudonymizer.pseudonymize(
+        "decode_quota", str(auth.telegram_user_id.value)
+    )
+    decode_remaining = await bindings.quota_gate.remaining(quota_pseudonym, QuotaClass.DECODE, day)
+    return MeResponse.model_validate(
+        {
+            "onboarding_step": step.kind.value,
+            "consent_kind": (step.consent_kind.value if step.consent_kind is not None else None),
+            "consent_version": step.consent_version,
+            "active_contact_id": active,
+            "account_exists": auth.user is not None,
+            "max_contacts": MAX_CONTACTS_PER_USER,
+            "max_open_rules": MAX_OPEN_RULES_PER_SCOPE,
+            "display_timezone": bindings.display_timezone,
+            "bot_username": username,
+            "decode_remaining": decode_remaining,
+        }
+    )
+
+
 def _register_me(
     router: APIRouter,
     bindings: MiniappRouterBindings,
@@ -428,29 +472,7 @@ def _register_me(
         auth: auth_dep,
     ) -> MeResponse:
         no_store(response)
-        step_result = await bindings.auth.get_onboarding_step.execute(
-            GetOnboardingStepQuery(telegram_user_id=auth.telegram_user_id)
-        )
-        step = step_result.step
-        active = (
-            str(auth.user.active_contact_id)
-            if auth.user is not None and auth.user.active_contact_id is not None
-            else None
-        )
-        return MeResponse.model_validate(
-            {
-                "onboarding_step": step.kind.value,
-                "consent_kind": (
-                    step.consent_kind.value if step.consent_kind is not None else None
-                ),
-                "consent_version": step.consent_version,
-                "active_contact_id": active,
-                "account_exists": auth.user is not None,
-                "max_contacts": MAX_CONTACTS_PER_USER,
-                "max_open_rules": MAX_OPEN_RULES_PER_SCOPE,
-                "display_timezone": bindings.display_timezone,
-            }
-        )
+        return await _build_me_response(bindings, auth)
 
     @router.post(
         "/me/age-confirmation",

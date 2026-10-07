@@ -39,4 +39,4 @@ class TelegramDeps:
     pseudonymizer: Pseudonymizer
     monotonic: MonotonicClock
     inline_cache_seconds: int
-    miniapp_url: str | None
+    miniapp_url: str

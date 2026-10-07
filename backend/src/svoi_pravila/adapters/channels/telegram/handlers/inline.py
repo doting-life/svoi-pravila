@@ -443,9 +443,7 @@ async def _answer_empty(
 def _web_app_results_button(
     tg_deps: TelegramDeps,
     text: str,
-) -> InlineQueryResultsButton | None:
-    if tg_deps.miniapp_url is None:
-        return None
+) -> InlineQueryResultsButton:
     return InlineQueryResultsButton(text=text, web_app=WebAppInfo(url=tg_deps.miniapp_url))
 
 

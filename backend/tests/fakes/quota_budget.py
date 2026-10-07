@@ -63,6 +63,13 @@ class FakeQuotaGate:
         if count > 0:
             self._counts[key] = count - 1
 
+    async def remaining(self, pseudonym: str, quota_class: QuotaClass, day: date) -> int:
+        if self._cache_unavailable is not None:
+            raise self._cache_unavailable
+        key = (pseudonym, quota_class, day)
+        used = self._counts.get(key, 0)
+        return max(0, self._limit - used)
+
     def reserve_count(self) -> int:
         """How many times ``reserve`` was called."""
         return len(self.reserve_calls)

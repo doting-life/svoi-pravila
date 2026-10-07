@@ -23,7 +23,7 @@ class TelegramPairNotifier:
         uow_factory: UnitOfWorkFactory,
         strings: TelegramStrings,
         *,
-        miniapp_url: str | None,
+        miniapp_url: str,
     ) -> None:
         self._bot = bot
         self._uow_factory = uow_factory
@@ -88,9 +88,7 @@ class TelegramPairNotifier:
                 return None
             return user.telegram_user_id.value
 
-    def _web_app_markup(self) -> InlineKeyboardMarkup | None:
-        if self._miniapp_url is None:
-            return None
+    def _web_app_markup(self) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             inline_keyboard=[
                 [

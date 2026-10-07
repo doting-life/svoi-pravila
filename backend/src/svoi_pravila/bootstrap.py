@@ -167,6 +167,15 @@ class _MiniappWire:
     pair_notifier: PairNotifier
     bot_username: BotUsernameCache
     invite_tokens: SecretsInviteTokenGenerator
+    quota_gate: ValkeyQuotaGate
+
+
+def _required_miniapp_url(settings: Settings) -> str:
+    """Return the configured mini-app origin or fail when the bot is mounted."""
+    if settings.miniapp_url is None:
+        msg = "miniapp_url is required when the bot token is configured"
+        raise RuntimeError(msg)
+    return settings.miniapp_url
 
 
 def _build_miniapp_mount(
@@ -269,12 +278,15 @@ def _build_miniapp_mount(
                 key_prefix="miniapp:export",
             ),
             display_timezone=settings.display_timezone,
+            analytics_timezone=settings.analytics_timezone,
             miniapp_url=settings.miniapp_url,
             decode_incoming=wire.decode.decode_incoming,
             suggest_rule_from_decode=wire.decode.suggest_rule_from_decode,
             prepared_results=wire.decode.prepared_results,
             rule_sources=wire.decode.rule_sources,
             pseudonymizer=ports.pseudonymizer,
+            quota_gate=wire.quota_gate,
+            clock=ports.clock,
             bot_username=wire.bot_username,
             enable_test_routes=settings.environment is Environment.TEST,
         )
@@ -451,7 +463,7 @@ def create_application(settings: Settings) -> FastAPI:
             shared_bot,
             uow_factory,
             load_ru_strings(),
-            miniapp_url=settings.miniapp_url,
+            miniapp_url=_required_miniapp_url(settings),
         )
         routers.append(
             _build_miniapp_mount(
@@ -464,6 +476,7 @@ def create_application(settings: Settings) -> FastAPI:
                     pair_notifier=pair_notifier,
                     bot_username=bot_username,
                     invite_tokens=invite_tokens,
+                    quota_gate=quota_gate,
                 ),
             )
         )

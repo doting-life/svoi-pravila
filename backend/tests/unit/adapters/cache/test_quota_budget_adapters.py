@@ -88,6 +88,11 @@ class _ScriptClient:
         self.counters: dict[str, int] = {}
         self.markers: dict[str, str] = {}
 
+    async def get(self, key: str) -> str | None:
+        if key not in self.counters:
+            return None
+        return str(self.counters[key])
+
     def register_script(self, lua: str) -> Any:
         if "EXPIREAT" in lua and "INCR" in lua:
             return self._reserve_script
@@ -136,6 +141,21 @@ async def test_quota_gate_reserve_refund_and_exhaust() -> None:
     await gate.refund(first.reservation)
     again = await gate.reserve(_PSEUDO, QuotaClass.DECODE, _DAY)
     assert isinstance(again, Reserved)
+
+
+@pytest.mark.unit
+async def test_quota_gate_remaining_without_mutation() -> None:
+    client = _ScriptClient()
+    gate = ValkeyQuotaGate(
+        cast(Redis, client),
+        inline_limit=10,
+        decode_limit=5,
+        timezone=_TZ,
+    )
+    assert await gate.remaining(_PSEUDO, QuotaClass.DECODE, _DAY) == 5
+    reserved = await gate.reserve(_PSEUDO, QuotaClass.DECODE, _DAY)
+    assert isinstance(reserved, Reserved)
+    assert await gate.remaining(_PSEUDO, QuotaClass.DECODE, _DAY) == 4
 
 
 class _BudgetClient:

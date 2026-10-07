@@ -93,6 +93,7 @@ def _settings() -> Settings:
         environment=Environment.LOCAL,
         telegram_updates_mode=TelegramUpdatesMode.POLLING,
         telegram_bot_token="1:TEST",
+        miniapp_url="https://miniapp.example",
     )
 
 
@@ -189,20 +190,6 @@ async def test_inline_not_onboarded_gets_setup_button() -> None:
         text=deps.strings.inline_button_finish_setup,
         miniapp_url=deps.miniapp_url or "",
     )
-
-
-@pytest.mark.unit
-async def test_inline_empty_without_miniapp_url_has_no_button() -> None:
-    deps = make_telegram_deps(TelegramTestDeps(miniapp_url=None))
-    session = FakeTelegramSession()
-    bot = Bot(token="1:TEST", session=session)
-    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await lifecycle.dispatcher.feed_update(bot, _inline(2, 12, "long enough draft"))
-    await _await_inline(deps)
-    answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
-    assert len(answers) == 1
-    assert answers[0].results == []
-    assert answers[0].button is None
 
 
 @pytest.mark.unit

@@ -470,6 +470,10 @@ class Settings(BaseSettings):
         elif webhook_present:
             msg = "webhook settings are only allowed when telegram_updates_mode=webhook"
             raise ValueError(msg)
+
+        if mode is not TelegramUpdatesMode.DISABLED and self.miniapp_url is None:
+            msg = "miniapp_url is required when telegram_updates_mode is enabled"
+            raise ValueError(msg)
         return self
 
     def _require_webhook_settings(self) -> None:

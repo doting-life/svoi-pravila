@@ -217,6 +217,7 @@ async def test_lifecycle_webhook_requires_url() -> None:
             shutdown_grace_seconds=0.01,
             inline_queries=deps.inline_queries,
             bot_username=deps.bot_username,
+            miniapp_url="https://miniapp.test",
         ),
     )
     with pytest.raises(RuntimeError, match="webhook url"):

@@ -45,7 +45,7 @@ class TelegramRuntimeConfig:
     shutdown_grace_seconds: float
     inline_queries: InlineQueryCoordinator
     bot_username: BotUsernameCache
-    miniapp_url: str | None = None
+    miniapp_url: str
     extra_tasks: ExtraTasks | None = None
 
 
@@ -141,9 +141,7 @@ class TelegramLifecycle:
                 )
 
     async def _install_menu_button(self) -> None:
-        """Set the chat menu Web App button when SP_MINIAPP_URL is configured."""
-        if self._miniapp_url is None:
-            return
+        """Set the chat menu Web App button to the mini-app URL."""
         try:
             await self._bot.set_chat_menu_button(
                 menu_button=MenuButtonWebApp(

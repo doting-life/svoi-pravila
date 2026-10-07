@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from types import TracebackType
 from typing import Any, cast
@@ -25,6 +26,8 @@ from svoi_pravila.application.errors import (
 from svoi_pravila.application.ports.generation import (
     GenerationMeta,
     SuggestRuleNothing,
+    SuggestRuleRequest,
+    SuggestRuleResult,
     TokenUsage,
 )
 from svoi_pravila.application.ports.unit_of_work import UnitOfWork
@@ -41,6 +44,7 @@ from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
     SuggestRuleFromDecodeOutcome,
     SuggestRuleFromDecodePorts,
 )
+from svoi_pravila.domain.cancelled_billable import estimate_cancelled_billable
 from svoi_pravila.domain.contact import Contact
 from svoi_pravila.domain.enums import (
     RelationshipKind,
@@ -97,6 +101,7 @@ def _ports(
         pseudonymizer=FakePseudonymizer(),
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
+        max_output_tokens=1000,
         analytics_timezone="Europe/Moscow",
     )
 
@@ -160,6 +165,30 @@ async def test_suggest_rule_none_unavailable_quota(world: AppWorld) -> None:
         await SuggestRuleFromDecode(ports_q).execute(
             SuggestRuleFromDecodeCommand(tg, token2, surface=UsageSurface.DM)
         )
+
+
+@pytest.mark.unit
+async def test_suggest_rule_cancel_after_provider_charges_estimate(world: AppWorld) -> None:
+    tg, contact = await _active_contact(world, 921)
+    sources = FakeRuleSources()
+    incoming = "cancel after suggest starts"
+    token = await sources.store(
+        FakePseudonymizer().pseudonymize(RULE_SOURCE_PURPOSE, str(tg.value)),
+        RuleSourcePayload(contact_id=contact.id, incoming_text=incoming),
+    )
+
+    class _CancelSuggest(FakeTextGenerator):
+        async def suggest_rule(self, request: SuggestRuleRequest) -> SuggestRuleResult:
+            self.suggest_rule_calls.append(request)
+            raise asyncio.CancelledError
+
+    budget = FakeLlmBudget()
+    ports = _ports(world, sources=sources, generator=_CancelSuggest(), llm_budget=budget)
+    with pytest.raises(asyncio.CancelledError):
+        await SuggestRuleFromDecode(ports).execute(
+            SuggestRuleFromDecodeCommand(tg, token, surface=UsageSurface.DM)
+        )
+    assert budget.spent == estimate_cancelled_billable(len(incoming), 1000)
 
 
 @pytest.mark.unit
@@ -328,6 +357,7 @@ async def test_suggest_rule_not_found_paths(world: AppWorld) -> None:
         pseudonymizer=FakePseudonymizer(),
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
+        max_output_tokens=1000,
         analytics_timezone="Europe/Moscow",
     )
     with pytest.raises(NotFound):
@@ -380,6 +410,7 @@ async def test_suggest_rule_generation_errors_and_sink_fail(world: AppWorld) -> 
             pseudonymizer=FakePseudonymizer(),
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
+            max_output_tokens=1000,
             analytics_timezone="Europe/Moscow",
         )
         with pytest.raises(type(error)):
@@ -410,6 +441,7 @@ async def test_suggest_rule_generation_errors_and_sink_fail(world: AppWorld) -> 
         pseudonymizer=FakePseudonymizer(),
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
+        max_output_tokens=1000,
         analytics_timezone="Europe/Moscow",
     )
     ok_despite_sink = await SuggestRuleFromDecode(ports_ok_fail).execute(
@@ -446,6 +478,7 @@ async def test_suggest_rule_generation_errors_and_sink_fail(world: AppWorld) -> 
         pseudonymizer=FakePseudonymizer(),
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
+        max_output_tokens=1000,
         analytics_timezone="Europe/Moscow",
     )
     with pytest.raises(GenerationUnavailable):
@@ -548,6 +581,7 @@ async def test_suggest_rule_conflict_on_add_returns_pending_exists(world: AppWor
         pseudonymizer=FakePseudonymizer(),
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
+        max_output_tokens=1000,
         analytics_timezone="Europe/Moscow",
     )
     result = await SuggestRuleFromDecode(ports).execute(
@@ -636,6 +670,7 @@ async def test_suggest_rule_conflict_without_pending_raises_not_found(world: App
         pseudonymizer=FakePseudonymizer(),
         crisis_screen=CrisisScreen.load_ru_v2(),
         deadline_seconds=45.0,
+        max_output_tokens=1000,
         analytics_timezone="Europe/Moscow",
     )
     with pytest.raises(NotFound):

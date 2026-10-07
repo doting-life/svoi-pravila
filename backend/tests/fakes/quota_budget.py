@@ -102,3 +102,8 @@ class FakeLlmBudget:
     def check_count(self) -> int:
         """How many times ``check`` was called."""
         return len(self.check_calls)
+
+    @property
+    def spent(self) -> int:
+        """Sum of tokens passed to ``add``."""
+        return sum(tokens for _day, tokens in self.add_calls)

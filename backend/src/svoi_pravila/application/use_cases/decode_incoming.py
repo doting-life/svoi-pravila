@@ -52,6 +52,7 @@ from svoi_pravila.application.ports.quota_gate import (
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.ports.usage_event_sink import UsageEventSink
 from svoi_pravila.application.use_cases._access import require_access
+from svoi_pravila.application.use_cases._cancelled_budget import charge_cancelled_budget
 from svoi_pravila.application.use_cases._generation_context import load_active_contact_rule_context
 from svoi_pravila.application.use_cases._limits import generation_unavailable_from_cache
 from svoi_pravila.domain.enums import (
@@ -99,6 +100,7 @@ class DecodeIncomingPorts:
     pseudonymizer: Pseudonymizer
     crisis_screen: CrisisScreen
     deadline_seconds: float
+    max_output_tokens: int
     analytics_timezone: str
 
 
@@ -195,6 +197,7 @@ class DecodeIncoming:
         reservation: QuotaReservation | None = None
         started = self._ports.monotonic.monotonic()
         first_chunk_at: list[float] = []
+        provider_started = [False]
         try:
             reservation = await self._reserve(user_key=user_key, surface=surface, day=day)
             started = self._ports.monotonic.monotonic()
@@ -207,7 +210,7 @@ class DecodeIncoming:
                 day=day,
                 started=started,
             )
-            async for event in self._stream_provider(stream, first_chunk_at):
+            async for event in self._stream_provider(stream, first_chunk_at, provider_started):
                 yield event
         except GenerationUnavailable as exc:
             if reservation is not None:
@@ -235,7 +238,14 @@ class DecodeIncoming:
             await self._budget_add(day, exc.usage.billable)
             raise
         except CancelledError:
-            if reservation is not None:
+            if provider_started[0]:
+                await charge_cancelled_budget(
+                    self._ports.llm_budget,
+                    day=day,
+                    input_chars=len(text),
+                    max_output_tokens=self._ports.max_output_tokens,
+                )
+            elif reservation is not None:
                 await self._ports.quota_gate.refund(reservation)
             raise
 
@@ -263,7 +273,10 @@ class DecodeIncoming:
         return decision.reservation
 
     async def _stream_provider(
-        self, args: _StreamArgs, first_chunk_at: list[float]
+        self,
+        args: _StreamArgs,
+        first_chunk_at: list[float],
+        provider_started: list[bool],
     ) -> AsyncGenerator[DecodeEvent]:
         request = DecodeRequest(
             incoming=args.text,
@@ -271,6 +284,7 @@ class DecodeIncoming:
             relationship=args.relationship,
             deadline_seconds=self._ports.deadline_seconds,
         )
+        provider_started[0] = True
         async for event in self._ports.generator.decode_stream(request):
             if isinstance(event, AnalysisChunk):
                 if not first_chunk_at:

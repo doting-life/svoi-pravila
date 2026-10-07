@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+from asyncio import CancelledError
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
@@ -38,6 +39,7 @@ from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.ports.usage_event_sink import UsageEventSink
 from svoi_pravila.application.rule_source import RuleSourcePayload
 from svoi_pravila.application.use_cases._access import require_access
+from svoi_pravila.application.use_cases._cancelled_budget import charge_cancelled_budget
 from svoi_pravila.application.use_cases._contact_access import load_owned_contact
 from svoi_pravila.application.use_cases._effective_rules import collect_effective_rules
 from svoi_pravila.application.use_cases._limits import generation_unavailable_from_cache
@@ -108,6 +110,7 @@ class SuggestRuleFromDecodePorts:
     pseudonymizer: Pseudonymizer
     crisis_screen: CrisisScreen
     deadline_seconds: float
+    max_output_tokens: int
     analytics_timezone: str
 
 
@@ -217,7 +220,9 @@ class SuggestRuleFromDecode:
         day: date,
     ) -> SuggestRuleFromDecodeResult:
         started = self._ports.monotonic.monotonic()
+        provider_started = False
         try:
+            provider_started = True
             generated = await self._ports.generator.suggest_rule(
                 SuggestRuleRequest(
                     incoming=prepared.payload.incoming_text,
@@ -242,6 +247,15 @@ class SuggestRuleFromDecode:
                 user_key=user_key, surface=surface, started=started, error=exc
             )
             await self._budget_add(day, exc.usage.billable)
+            raise
+        except CancelledError:
+            if provider_started:
+                await charge_cancelled_budget(
+                    self._ports.llm_budget,
+                    day=day,
+                    input_chars=len(prepared.payload.incoming_text),
+                    max_output_tokens=self._ports.max_output_tokens,
+                )
             raise
         await self._persist_ok(user_key=user_key, surface=surface, result=generated)
         await self._budget_add(day, generated.meta.usage.billable)

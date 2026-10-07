@@ -131,6 +131,7 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             pseudonymizer=pseudonymizer,
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=chosen.deadline_seconds,
+            max_output_tokens=1000,
             analytics_timezone="Europe/Moscow",
         )
     )
@@ -151,6 +152,7 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             reuse=reuse,
             min_chars=chosen.inline_min_chars,
             deadline_seconds=chosen.inline_deadline_seconds,
+            max_output_tokens=1000,
             intent_prefixes=help_say_intent_prefixes(strings),
             analytics_timezone="Europe/Moscow",
         )
@@ -170,6 +172,7 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             pseudonymizer=pseudonymizer,
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=chosen.deadline_seconds,
+            max_output_tokens=1000,
             analytics_timezone="Europe/Moscow",
         )
     )

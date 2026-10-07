@@ -181,10 +181,6 @@ class ScenarioBusy(ApplicationError):
     """A decode (or other scenario) is already in flight for this user."""
 
 
-class ScenarioQuotaExceeded(ApplicationError):
-    """The per-user scenario quota window is exhausted."""
-
-
 class UserQuotaExhausted(ApplicationError):
     """The per-user daily quota class is exhausted (ADR-0009)."""
 
@@ -255,7 +251,6 @@ class InvalidGenerationOutput(ApplicationError):
 InlineProduceError = (
     UserQuotaExhausted
     | ServiceBudgetExhausted
-    | ScenarioQuotaExceeded
     | GenerationUnavailable
     | GenerationRefusedByProvider
     | InvalidGenerationOutput

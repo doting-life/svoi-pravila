@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import secrets
-import time
 from datetime import date
 
 from redis.asyncio import Redis
@@ -20,10 +19,8 @@ from svoi_pravila.domain.product_day import expire_at_utc, resets_at_utc
 
 
 def _expire_unix(day: date, timezone: str) -> int:
-    """Unix expiry; clamp past targets so Valkey does not drop the key immediately."""
-    target = int(expire_at_utc(day, timezone).timestamp())
-    # Historical product days in tests still need a stable TTL for concurrent bursts.
-    return max(target, int(time.time()) + 3600)
+    """Unix seconds for EXPIREAT at the product-day boundary."""
+    return int(expire_at_utc(day, timezone).timestamp())
 
 
 class ValkeyQuotaGate:
@@ -68,7 +65,7 @@ class ValkeyQuotaGate:
         async def _call() -> list[int]:
             raw = await self._reserve(
                 keys=[counter, marker],
-                args=[limit, expire_unix, reservation_id],
+                args=[limit, expire_unix],
             )
             return [int(raw[0]), int(raw[1]), int(raw[2])]
 

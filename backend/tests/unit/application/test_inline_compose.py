@@ -39,6 +39,7 @@ from svoi_pravila.application.ports.generation import (
     Variant,
 )
 from svoi_pravila.application.ports.inline_result_reuse import InlineResultReuse
+from svoi_pravila.application.ports.llm_budget import BudgetExhausted, BudgetOk
 from svoi_pravila.application.use_cases.create_contact import CreateContact, CreateContactCommand
 from svoi_pravila.application.use_cases.delete_my_account import (
     DeleteMyAccount,
@@ -128,6 +129,7 @@ def _ports(
             reuse=reuse,
             min_chars=chosen.min_chars,
             deadline_seconds=8.0,
+            max_output_tokens=1000,
             intent_prefixes=_PREFIXES,
             analytics_timezone="Europe/Moscow",
         )
@@ -330,11 +332,36 @@ async def test_inline_compose_refund_matrix(world: AppWorld) -> None:
             self.soften_calls.append(request)
             raise asyncio.CancelledError
 
+    from svoi_pravila.domain.cancelled_billable import estimate_cancelled_billable
+
     quota_cancel = FakeQuotaGate(limit=30)
-    use_case, _sink, _ = _ports(world, _Fakes(generator=_CancelSoft(), quota_gate=quota_cancel))
+    budget_cancel = FakeLlmBudget()
+    query = "long enough"
+    use_case, _sink, _ = _ports(
+        world, _Fakes(generator=_CancelSoft(), quota_gate=quota_cancel, llm_budget=budget_cancel)
+    )
     with pytest.raises(asyncio.CancelledError):
-        await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
-    assert len(quota_cancel.refund_calls) == 1
+        await use_case.execute(InlineComposeCommand(TelegramUserId(100), query))
+    assert quota_cancel.refund_calls == []
+    assert budget_cancel.spent == estimate_cancelled_billable(len(query), 1000)
+
+
+@pytest.mark.unit
+async def test_inline_compose_cancel_before_provider_refunds(world: AppWorld) -> None:
+    await world.ensure_granted_user(101)
+
+    class _CancelOnCheck(FakeLlmBudget):
+        async def check(self, day: date) -> BudgetOk | BudgetExhausted:
+            raise asyncio.CancelledError
+
+    quota = FakeQuotaGate(limit=30)
+    budget = _CancelOnCheck()
+    use_case, _sink, _ = _ports(world, _Fakes(quota_gate=quota, llm_budget=budget))
+    with pytest.raises(asyncio.CancelledError):
+        await use_case.execute(InlineComposeCommand(TelegramUserId(101), "long enough"))
+    assert quota.refund_calls == []
+    assert quota.reserve_count() == 0
+    assert budget.add_calls == []
 
 
 @pytest.mark.unit
@@ -380,6 +407,7 @@ async def test_inline_compose_skips_blank_prefix_entries(world: AppWorld) -> Non
             reuse=make_inline_reuse(world.clock),
             min_chars=8,
             deadline_seconds=8.0,
+            max_output_tokens=1000,
             intent_prefixes=(("", HelpSayIntent.OTHER), *_PREFIXES),
             analytics_timezone="Europe/Moscow",
         )

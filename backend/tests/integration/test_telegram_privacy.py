@@ -222,7 +222,6 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             timezone=settings.analytics_timezone,
         ),
         sums=UowBillableTokenSum(uow_factory, timezone=settings.analytics_timezone),
-        guard=concurrency_guard,
     )
     decode = DecodeIncoming(
         DecodeIncomingPorts(
@@ -255,6 +254,7 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             pseudonymizer=pepper,
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
+            max_output_tokens=1000,
             analytics_timezone=settings.analytics_timezone,
         )
     )
@@ -275,6 +275,7 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             reuse=reuse,
             min_chars=8,
             deadline_seconds=8.0,
+            max_output_tokens=1000,
             intent_prefixes=help_say_intent_prefixes(strings),
             analytics_timezone=settings.analytics_timezone,
         )
@@ -294,6 +295,7 @@ async def test_privacy_canary_no_sentinel_in_postgres_or_valkey(
             pseudonymizer=pepper,
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
+            max_output_tokens=1000,
             analytics_timezone=settings.analytics_timezone,
         )
     )
@@ -541,7 +543,6 @@ def _contact_privacy_lifecycle(
             timezone=settings.analytics_timezone,
         ),
         sums=UowBillableTokenSum(uow_factory, timezone=settings.analytics_timezone),
-        guard=concurrency_guard,
     )
     generator = FakeTextGenerator()
     decode = DecodeIncoming(
@@ -559,6 +560,7 @@ def _contact_privacy_lifecycle(
             pseudonymizer=pepper,
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
+            max_output_tokens=1000,
             analytics_timezone=settings.analytics_timezone,
         )
     )
@@ -579,6 +581,7 @@ def _contact_privacy_lifecycle(
             reuse=reuse,
             min_chars=8,
             deadline_seconds=8.0,
+            max_output_tokens=1000,
             intent_prefixes=help_say_intent_prefixes(strings),
             analytics_timezone=settings.analytics_timezone,
         )
@@ -598,6 +601,7 @@ def _contact_privacy_lifecycle(
             pseudonymizer=pepper,
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
+            max_output_tokens=1000,
             analytics_timezone=settings.analytics_timezone,
         )
     )

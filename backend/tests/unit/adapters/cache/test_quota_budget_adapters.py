@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import pytest
@@ -14,16 +14,16 @@ from redis.exceptions import TimeoutError as RedisTimeoutError
 from svoi_pravila.adapters.cache import errors as cache_errors
 from svoi_pravila.adapters.cache._lua import load_lua
 from svoi_pravila.adapters.cache._redis_map import map_redis
-from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
 from svoi_pravila.adapters.cache.llm_budget import ValkeyLlmBudget, ValkeyLlmBudgetConfig
 from svoi_pravila.adapters.cache.quota_gate import ValkeyQuotaGate
 from svoi_pravila.application.errors import CacheErrorKind, CacheUnavailable
 from svoi_pravila.application.ports.llm_budget import BudgetExhausted, BudgetOk
 from svoi_pravila.application.ports.quota_gate import QuotaExhausted, Reserved
 from svoi_pravila.domain.enums import QuotaClass
+from svoi_pravila.domain.product_day import product_day
 
-_DAY = date(2026, 3, 15)
 _TZ = "Europe/Moscow"
+_DAY = product_day(datetime.now(UTC), _TZ)
 _PSEUDO = "ab" * 32
 _KEY = f"llm_budget:{_DAY.isoformat()}"
 
@@ -39,6 +39,9 @@ def test_load_lua_scripts() -> None:
     for name in ("quota_reserve.lua", "quota_refund.lua", "budget_add.lua"):
         body = load_lua(name)
         assert "redis.call" in body
+    reserve = load_lua("quota_reserve.lua")
+    assert "ARGV[3]" not in reserve
+    assert "n > limit" not in reserve
 
 
 @pytest.mark.unit
@@ -93,14 +96,12 @@ class _ScriptClient:
         counter, marker = keys
         limit = int(args[0])
         expire_at = int(args[1])
+        assert len(args) == 2
         current = self.counters.get(counter, 0)
         if current >= limit:
             return [0, current, expire_at]
         n = current + 1
         self.counters[counter] = n
-        if n > limit:
-            self.counters[counter] = n - 1
-            return [0, limit, expire_at]
         self.markers[marker] = "1"
         return [1, limit - n, expire_at]
 
@@ -141,8 +142,6 @@ class _BudgetClient:
 
     def __init__(self) -> None:
         self.data: dict[str, str | bytes] = {}
-        self.force_add_miss_after_rebuild = False
-        self._add_calls = 0
         self.get_misses = 0
         self.plant_on_second_get = False
 
@@ -150,10 +149,7 @@ class _BudgetClient:
         del lua
 
         async def _add(*, keys: list[str], args: list[Any]) -> int:
-            self._add_calls += 1
             key = keys[0]
-            if self.force_add_miss_after_rebuild and self._add_calls >= 2:
-                return 0
             if key not in self.data:
                 return 0
             current = self.data[key]
@@ -193,29 +189,15 @@ class _CountingSum:
         self.total = total
         self.calls = 0
 
-    async def sum_for_day(self, day: date) -> int:
+    async def sum_for_day(self, day: object) -> int:
         del day
         self.calls += 1
         return self.total
 
 
-class _Guard:
-    def __init__(self, *, lease: str | None = "lease") -> None:
-        self.lease = lease
-        self.release_calls: list[tuple[str, str]] = []
-
-    async def acquire(self, key: str, *, ttl_seconds: int) -> str | None:
-        del key, ttl_seconds
-        return self.lease
-
-    async def release(self, key: str, token: str) -> None:
-        self.release_calls.append((key, token))
-
-
 def _make_budget(
     client: _BudgetClient,
     sums: _CountingSum,
-    guard: _Guard,
     *,
     budget: int = 10,
 ) -> ValkeyLlmBudget:
@@ -223,21 +205,18 @@ def _make_budget(
         cast(Redis, client),
         config=ValkeyLlmBudgetConfig(budget=budget, timezone=_TZ),
         sums=sums,
-        guard=cast(ValkeyConcurrencyGuard, guard),
     )
 
 
 @pytest.mark.unit
-async def test_llm_budget_check_add_rebuild_and_errors() -> None:
+async def test_llm_budget_check_add_rebuild_no_double_count() -> None:
     client = _BudgetClient()
     sums = _CountingSum(total=5)
-    guard = _Guard()
-    budget = _make_budget(client, sums, guard)
+    budget = _make_budget(client, sums)
 
     assert await budget.check(_DAY) == BudgetOk()
     assert sums.calls == 1
     assert client.data[_KEY] == "5"
-    assert guard.release_calls == [("llm_budget:rebuild:2026-03-15", "lease")]
 
     await budget.add(_DAY, 0)
     assert sums.calls == 1
@@ -252,19 +231,15 @@ async def test_llm_budget_check_add_rebuild_and_errors() -> None:
     assert isinstance(exhausted, BudgetExhausted)
 
     del client.data[_KEY]
-    sums.total = 2
-    await budget.add(_DAY, 4)
-    assert client.data[_KEY] == "6"
-
-    client.force_add_miss_after_rebuild = True
-    client._add_calls = 0
-    del client.data[_KEY]
-    with pytest.raises(RuntimeError, match="missing after rebuild"):
-        await budget.add(_DAY, 1)
+    # DB sum already includes this event's tokens; rebuild must not INCR again.
+    sums.total = 42
+    await budget.add(_DAY, 7)
+    assert client.data[_KEY] == "42"
+    assert sums.calls == 2
 
 
 @pytest.mark.unit
-async def test_llm_budget_rebuild_raced_key_and_no_lock() -> None:
+async def test_llm_budget_rebuild_raced_key() -> None:
     class _RaceStrClient(_BudgetClient):
         async def get(self, key: str) -> str | bytes | None:
             if key not in self.data:
@@ -277,27 +252,15 @@ async def test_llm_budget_rebuild_raced_key_and_no_lock() -> None:
 
     client = _RaceStrClient()
     sums = _CountingSum(total=9)
-    guard = _Guard()
-    budget = _make_budget(client, sums, guard, budget=100)
+    budget = _make_budget(client, sums, budget=100)
     assert await budget.check(_DAY) == BudgetOk()
     assert client.data[_KEY] == "55"
     assert sums.calls == 0
 
     client_bytes = _BudgetClient()
     client_bytes.plant_on_second_get = True
-    assert (
-        await _make_budget(client_bytes, _CountingSum(), _Guard(), budget=100).check(_DAY)
-        == BudgetOk()
-    )
+    assert await _make_budget(client_bytes, _CountingSum(), budget=100).check(_DAY) == BudgetOk()
     assert int(client_bytes.data[_KEY]) == 55
-
-    client2 = _BudgetClient()
-    sums2 = _CountingSum(total=4)
-    guard2 = _Guard(lease=None)
-    budget2 = _make_budget(client2, sums2, guard2, budget=100)
-    assert await budget2.check(_DAY) == BudgetOk()
-    assert client2.data[_KEY] == "4"
-    assert guard2.release_calls == []
 
 
 @pytest.mark.unit
@@ -320,14 +283,13 @@ async def test_llm_budget_read_str_and_bytes_after_set() -> None:
 
     str_client = _BudgetClient()
     assert (
-        await _make_budget(str_client, _CountingSum(total=3), _Guard(), budget=100).check(_DAY)
-        == BudgetOk()
+        await _make_budget(str_client, _CountingSum(total=3), budget=100).check(_DAY) == BudgetOk()
     )
     assert str_client.data[_KEY] == "3"
 
     bytes_client = _BytesAfterSet()
     assert (
-        await _make_budget(bytes_client, _CountingSum(total=7), _Guard(), budget=100).check(_DAY)
+        await _make_budget(bytes_client, _CountingSum(total=7), budget=100).check(_DAY)
         == BudgetOk()
     )
     assert int(bytes_client.data[_KEY]) == 7
@@ -346,7 +308,7 @@ async def test_llm_budget_set_nx_lose_then_read() -> None:
             exat: int | None = None,
         ) -> bool:
             del ex, exat
-            if nx and key.startswith("llm_budget:20"):
+            if nx and key.startswith("llm_budget:"):
                 self.data[key] = "88"
                 return False
             if nx:
@@ -357,7 +319,7 @@ async def test_llm_budget_set_nx_lose_then_read() -> None:
 
     client = _NxLoseClient()
     sums = _CountingSum(total=1)
-    budget = _make_budget(client, sums, _Guard(), budget=100)
+    budget = _make_budget(client, sums, budget=100)
     assert await budget.check(_DAY) == BudgetOk()
     assert client.data[_KEY] == "88"
     assert sums.calls == 1
@@ -376,16 +338,16 @@ async def test_llm_budget_read_after_set_requires_key() -> None:
             exat: int | None = None,
         ) -> bool:
             del value, ex, exat
-            if nx and key.startswith("llm_budget:20"):
+            if nx and key.startswith("llm_budget:"):
                 return True
             return True
 
         async def get(self, key: str) -> str | bytes | None:
-            if key.startswith("llm_budget:rebuild:"):
-                return None
+            del key
             return None
 
     client = _VanishClient()
-    budget = _make_budget(client, _CountingSum(total=3), _Guard(), budget=100)
-    with pytest.raises(RuntimeError, match="missing after SET NX"):
+    budget = _make_budget(client, _CountingSum(total=3), budget=100)
+    with pytest.raises(CacheUnavailable) as missing:
         await budget.check(_DAY)
+    assert missing.value.kind is CacheErrorKind.SERVER

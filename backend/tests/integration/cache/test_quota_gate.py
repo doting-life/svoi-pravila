@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from datetime import UTC, datetime
 
 import pytest
 from redis.asyncio import Redis
@@ -11,10 +11,11 @@ from redis.asyncio import Redis
 from svoi_pravila.adapters.cache.quota_gate import ValkeyQuotaGate
 from svoi_pravila.application.ports.quota_gate import QuotaExhausted, Reserved
 from svoi_pravila.domain.enums import QuotaClass
+from svoi_pravila.domain.product_day import product_day
 
 _PSEUDO = "a" * 64
-_DAY = date(2026, 3, 15)
 _TZ = "Europe/Moscow"
+_DAY = product_day(datetime.now(UTC), _TZ)
 
 
 @pytest.mark.integration

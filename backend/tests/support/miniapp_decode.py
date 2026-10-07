@@ -96,6 +96,7 @@ def build_miniapp_decode_bundle(
             pseudonymizer=pseudo,
             crisis_screen=crisis,
             deadline_seconds=45.0,
+            max_output_tokens=1000,
             analytics_timezone=_ANALYTICS_TZ,
         )
     )
@@ -113,6 +114,7 @@ def build_miniapp_decode_bundle(
             pseudonymizer=pseudo,
             crisis_screen=crisis,
             deadline_seconds=45.0,
+            max_output_tokens=1000,
             analytics_timezone=_ANALYTICS_TZ,
         )
     )

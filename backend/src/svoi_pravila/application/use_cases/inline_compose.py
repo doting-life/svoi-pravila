@@ -54,6 +54,7 @@ from svoi_pravila.application.ports.quota_gate import QuotaExhausted, QuotaGate,
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.ports.usage_event_sink import UsageEventSink
 from svoi_pravila.application.use_cases._access import require_access
+from svoi_pravila.application.use_cases._cancelled_budget import charge_cancelled_budget
 from svoi_pravila.application.use_cases._generation_context import load_active_contact_rule_context
 from svoi_pravila.application.use_cases._limits import generation_unavailable_from_cache
 from svoi_pravila.domain.enums import (
@@ -110,6 +111,7 @@ class InlineComposePorts:
     reuse: InlineResultReuse
     min_chars: int
     deadline_seconds: float
+    max_output_tokens: int
     intent_prefixes: tuple[tuple[str, HelpSayIntent], ...]
     analytics_timezone: str
 
@@ -233,7 +235,9 @@ class InlineCompose:
     ) -> InlineReuseValue | InlineProduceError:
         reservation = reserved.reservation
         started = self._ports.monotonic.monotonic()
+        provider_started = False
         try:
+            provider_started = True
             generated = await self._call_generator(material)
         except GenerationUnavailable as exc:
             await self._ports.quota_gate.refund(reservation)
@@ -254,7 +258,15 @@ class InlineCompose:
             await self._budget_add(day, exc.usage.billable)
             return exc
         except CancelledError:
-            await self._ports.quota_gate.refund(reservation)
+            if provider_started:
+                await charge_cancelled_budget(
+                    self._ports.llm_budget,
+                    day=day,
+                    input_chars=len(material.draft),
+                    max_output_tokens=self._ports.max_output_tokens,
+                )
+            else:
+                await self._ports.quota_gate.refund(reservation)
             raise
         event = self._event_from_ok(material.user_key, started, material.scenario, generated)
         await self._persist(event)

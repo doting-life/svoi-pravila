@@ -554,16 +554,21 @@ async def test_decode_empty_stream_returns_empty_sse(world: AppWorld) -> None:
 async def test_decode_client_cancel_releases_without_completion(world: AppWorld) -> None:
     """Cancelling the SSE consumer must not leave DecodeIncoming hung on the lock."""
     await world.ensure_granted_user(_TG)
+    from svoi_pravila.domain.cancelled_billable import estimate_cancelled_billable
+
     slow = _SlowGenerator()
     sink = RecordingUsageEventSink()
+    quota_gate = FakeQuotaGate(limit=20)
+    budget = FakeLlmBudget()
+    text = "текст для отмены потока"
     decode = DecodeIncoming(
         DecodeIncomingPorts(
             uow_factory=world.uow_factory,
             catalog=world.catalog,
             generator=slow,
             guard=FakeConcurrencyGuard(),
-            quota_gate=FakeQuotaGate(limit=20),
-            llm_budget=FakeLlmBudget(),
+            quota_gate=quota_gate,
+            llm_budget=budget,
             sink=sink,
             clock=world.clock,
             monotonic=world.clock,
@@ -571,6 +576,7 @@ async def test_decode_client_cancel_releases_without_completion(world: AppWorld)
             pseudonymizer=FakePseudonymizer(),
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
+            max_output_tokens=1000,
             analytics_timezone="Europe/Moscow",
         )
     )
@@ -584,17 +590,27 @@ async def test_decode_client_cancel_releases_without_completion(world: AppWorld)
         rule_sources=FakeRuleSources(),
         pseudonymizer=FakePseudonymizer(),
     )
-    agen: AsyncGenerator[str] = iter_decode_sse(
-        ports,
-        actor=user,
-        telegram_user_id=TelegramUserId(_TG),
-        text="текст для отмены потока",
-    )
-    first = await agen.__anext__()
-    assert "analysis" in first
-    await agen.aclose()
-    await asyncio.sleep(0)
+
+    async def _consume() -> None:
+        agen: AsyncGenerator[str] = iter_decode_sse(
+            ports,
+            actor=user,
+            telegram_user_id=TelegramUserId(_TG),
+            text=text,
+        )
+        first = await agen.__anext__()
+        assert "analysis" in first
+        async for _frame in agen:
+            pass
+
+    task = asyncio.create_task(_consume())
+    await slow.started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
     assert slow.completed is False
+    assert quota_gate.refund_calls == []
+    assert budget.spent == estimate_cancelled_billable(len(text), 1000)
 
 
 @pytest.mark.unit
@@ -890,6 +906,7 @@ async def test_decode_unknown_stream_error_propagates(world: AppWorld) -> None:
             pseudonymizer=FakePseudonymizer(),
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
+            max_output_tokens=1000,
             analytics_timezone="Europe/Moscow",
         )
     )

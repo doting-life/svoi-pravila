@@ -163,7 +163,10 @@ class _SlowGenerator:
         self.completed = False
         self.max_billable_value = 1000
 
-    def max_billable(self, request: DecodeRequest) -> int:
+    def max_billable(
+        self,
+        request: SoftenRequest | HelpSayRequest | DecodeRequest | SuggestRuleRequest,
+    ) -> int:
         _ = request
         return self.max_billable_value
 
@@ -878,6 +881,13 @@ async def test_decode_unknown_stream_error_propagates(world: AppWorld) -> None:
 
     class _BoomGenerator:
         fail: bool = True
+
+        def max_billable(
+            self,
+            request: SoftenRequest | HelpSayRequest | DecodeRequest | SuggestRuleRequest,
+        ) -> int:
+            _ = request
+            return 1000
 
         async def decode_stream(self, request: DecodeRequest) -> AsyncIterator[DecodeEvent]:
             _ = request

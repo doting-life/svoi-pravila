@@ -4,7 +4,7 @@ import { Avatar } from "../components/Avatar";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
 import { Card } from "../components/Card";
-import { PlusIcon } from "../components/icons";
+import { ChevronRightIcon, PlusIcon } from "../components/icons";
 import { ScreenHeader } from "../components/ScreenHeader";
 import { EmptyView, ErrorView, LoadingView } from "../components/StatusViews";
 import type { Contact } from "../hooks/useContacts";
@@ -17,28 +17,14 @@ export type PeopleScreenProps = {
     readonly activeContactId: string | null | undefined;
     readonly telegram: TelegramAdapter;
     readonly onOpenContact: (contact: Contact) => void;
-    readonly onActivated: (contactId: string) => void;
 };
 
-type FormState = { readonly mode: "add" } | { readonly mode: "rename"; readonly target: Contact };
-
-export function PeopleScreen({
-    activeContactId,
-    telegram,
-    onOpenContact,
-    onActivated,
-}: PeopleScreenProps) {
+export function PeopleScreen({ activeContactId, telegram, onOpenContact }: PeopleScreenProps) {
     const contacts = useContacts();
-    const [form, setForm] = useState<FormState | null>(null);
+    const [adding, setAdding] = useState(false);
 
     const submit = async (input: ContactFormInput): Promise<{ error?: string }> => {
-        if (form === null) {
-            return {};
-        }
-        const result =
-            form.mode === "add"
-                ? await contacts.createContact(input)
-                : await contacts.renameContact(form.target.id, input.label);
+        const result = await contacts.createContact(input);
         if (result.error !== undefined) {
             telegram.hapticNotification("error");
             if (result.error.code === "contact_limit") {
@@ -47,18 +33,8 @@ export function PeopleScreen({
             return { error: result.error.message || ru.errorGeneric };
         }
         telegram.hapticNotification("success");
-        setForm(null);
+        setAdding(false);
         return {};
-    };
-
-    const activate = async (contactId: string) => {
-        const result = await contacts.activateContact(contactId);
-        if (result.error !== undefined) {
-            telegram.hapticNotification("error");
-            return;
-        }
-        telegram.hapticNotification("success");
-        onActivated(contactId);
     };
 
     return (
@@ -101,28 +77,8 @@ export function PeopleScreen({
                                         {contact.paired ? (
                                             <Badge tone="warm">{ru.contactPairedBadge}</Badge>
                                         ) : null}
+                                        <ChevronRightIcon size={20} className="person__chevron" />
                                     </button>
-                                    <div className="person__actions">
-                                        <Button
-                                            variant="ghost"
-                                            onClick={() => {
-                                                setForm({ mode: "rename", target: contact });
-                                            }}
-                                        >
-                                            {ru.contactsRename}
-                                        </Button>
-                                        {!isActive ? (
-                                            <Button
-                                                variant="ghost"
-                                                tone="accent"
-                                                onClick={() => {
-                                                    void activate(contact.id);
-                                                }}
-                                            >
-                                                {ru.contactsMakeActive}
-                                            </Button>
-                                        ) : null}
-                                    </div>
                                 </Card>
                             </li>
                         );
@@ -136,7 +92,7 @@ export function PeopleScreen({
                     size="lg"
                     block
                     onClick={() => {
-                        setForm({ mode: "add" });
+                        setAdding(true);
                     }}
                 >
                     <PlusIcon size={20} />
@@ -144,13 +100,12 @@ export function PeopleScreen({
                 </Button>
             </div>
 
-            {form !== null ? (
+            {adding ? (
                 <ContactFormSheet
-                    mode={form.mode}
-                    {...(form.mode === "rename" ? { initialLabel: form.target.label } : {})}
+                    mode="add"
                     onSubmit={submit}
                     onClose={() => {
-                        setForm(null);
+                        setAdding(false);
                     }}
                 />
             ) : null}

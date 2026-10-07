@@ -51,6 +51,7 @@ const meDone = {
     consent_version: null,
     active_contact_id: "c1",
     account_exists: true,
+    consents_revoked: false,
     max_contacts: 20,
     max_open_rules: 50,
     display_timezone: "Europe/Moscow",
@@ -403,12 +404,24 @@ async function mockApi(page, mode) {
     });
 }
 
+async function newSettledPage(browser) {
+    return browser.newPage({
+        viewport: { width: 390, height: 844 },
+        reducedMotion: "reduce",
+    });
+}
+
+async function waitFonts(page) {
+    await page.evaluate(() => document.fonts.ready);
+}
+
 async function shot(page, name) {
+    await waitFonts(page);
     await page.screenshot({ path: join(outDir, `${name}.png`), fullPage: true });
 }
 
 async function captureScheme(browser, baseUrl, scheme) {
-    const age = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    const age = await newSettledPage(browser);
     await installTelegram(age, scheme);
     await mockApi(age, "onboarding-age");
     await age.goto(baseUrl, { waitUntil: "networkidle" });
@@ -416,7 +429,7 @@ async function captureScheme(browser, baseUrl, scheme) {
     await shot(age, `${scheme}-onboarding-age`);
     await age.close();
 
-    const consent = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    const consent = await newSettledPage(browser);
     await installTelegram(consent, scheme);
     await mockApi(consent, "onboarding-consent");
     await consent.goto(baseUrl, { waitUntil: "networkidle" });
@@ -425,7 +438,7 @@ async function captureScheme(browser, baseUrl, scheme) {
     await shot(consent, `${scheme}-onboarding-consent`);
     await consent.close();
 
-    const invite = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    const invite = await newSettledPage(browser);
     await installTelegramWithStartParam(invite, scheme, "inv_demo");
     await mockApi(invite, "app");
     await invite.goto(baseUrl, { waitUntil: "networkidle" });
@@ -434,7 +447,7 @@ async function captureScheme(browser, baseUrl, scheme) {
     await shot(invite, `${scheme}-invite`);
     await invite.close();
 
-    const unauthorized = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    const unauthorized = await newSettledPage(browser);
     await installTelegram(unauthorized, scheme);
     await mockApi(unauthorized, "gate-unauthorized");
     await unauthorized.goto(baseUrl, { waitUntil: "networkidle" });
@@ -542,10 +555,11 @@ async function captureScheme(browser, baseUrl, scheme) {
 }
 
 async function openApp(browser, baseUrl, scheme, mode) {
-    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    const page = await newSettledPage(browser);
     await installTelegram(page, scheme);
     await mockApi(page, mode);
     await page.goto(baseUrl, { waitUntil: "networkidle" });
+    await waitFonts(page);
     return page;
 }
 

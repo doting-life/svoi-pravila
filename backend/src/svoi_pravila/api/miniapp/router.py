@@ -444,6 +444,7 @@ async def _build_me_response(
             "consent_version": step.consent_version,
             "active_contact_id": active,
             "account_exists": auth.user is not None,
+            "consents_revoked": step_result.consents_revoked,
             "max_contacts": MAX_CONTACTS_PER_USER,
             "max_open_rules": MAX_OPEN_RULES_PER_SCOPE,
             "display_timezone": bindings.display_timezone,

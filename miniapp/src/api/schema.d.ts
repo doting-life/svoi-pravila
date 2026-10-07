@@ -695,6 +695,8 @@ export interface components {
             consent_kind?: ("personal_data" | "special_category") | null;
             /** Consent Version */
             consent_version?: string | null;
+            /** Consents Revoked */
+            consents_revoked: boolean;
             /** Decode Remaining */
             decode_remaining: number;
             /** Display Timezone */

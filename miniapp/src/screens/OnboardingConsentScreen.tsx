@@ -18,7 +18,7 @@ const ALL_KINDS: readonly ConsentKind[] = ["personal_data", "special_category"];
 export type OnboardingConsentScreenProps = {
     readonly telegram: TelegramAdapter;
     readonly consentKind: ConsentKind | null;
-    readonly accountExists: boolean;
+    readonly consentsRevoked: boolean;
     readonly botUsername: string | null;
     readonly onAdvanced: () => void;
     readonly onAccountDeleted?: () => void;
@@ -27,7 +27,7 @@ export type OnboardingConsentScreenProps = {
 export function OnboardingConsentScreen({
     telegram,
     consentKind,
-    accountExists,
+    consentsRevoked,
     botUsername,
     onAdvanced,
     onAccountDeleted,
@@ -209,7 +209,7 @@ export function OnboardingConsentScreen({
                 </div>
             ) : null}
 
-            {accountExists ? (
+            {consentsRevoked ? (
                 <div className="row row--wrap">
                     <Button
                         variant="ghost"

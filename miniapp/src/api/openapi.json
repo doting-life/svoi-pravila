@@ -458,6 +458,10 @@
             ],
             "title": "Consent Version"
           },
+          "consents_revoked": {
+            "title": "Consents Revoked",
+            "type": "boolean"
+          },
           "decode_remaining": {
             "minimum": 0.0,
             "title": "Decode Remaining",
@@ -491,6 +495,7 @@
         "required": [
           "onboarding_step",
           "account_exists",
+          "consents_revoked",
           "max_contacts",
           "max_open_rules",
           "display_timezone",

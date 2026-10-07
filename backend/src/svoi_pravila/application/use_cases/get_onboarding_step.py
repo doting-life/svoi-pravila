@@ -40,6 +40,7 @@ class GetOnboardingStepResult:
     """Result of GetOnboardingStep."""
 
     step: OnboardingStep
+    consents_revoked: bool = False
 
 
 class GetOnboardingStep:
@@ -54,9 +55,18 @@ class GetOnboardingStep:
         requirement = self._catalog.current_requirement()
         async with self._uow_factory() as uow:
             user = await uow.users.get_by_telegram_id(query.telegram_user_id)
-            if user is None or user.age_confirmed_at is None:
-                return GetOnboardingStepResult(step=OnboardingStep(kind=OnboardingStepKind.AGE))
+            if user is None:
+                return GetOnboardingStepResult(
+                    step=OnboardingStep(kind=OnboardingStepKind.AGE),
+                    consents_revoked=False,
+                )
             consents = await uow.consents.list_for_user(user.id)
+            consents_revoked = any(consent.revoked_at is not None for consent in consents)
+            if user.age_confirmed_at is None:
+                return GetOnboardingStepResult(
+                    step=OnboardingStep(kind=OnboardingStepKind.AGE),
+                    consents_revoked=consents_revoked,
+                )
 
         for kind in (ConsentKind.PERSONAL_DATA, ConsentKind.SPECIAL_CATEGORY):
             text = requirement.for_kind(kind)
@@ -70,6 +80,10 @@ class GetOnboardingStep:
                         kind=OnboardingStepKind.CONSENT,
                         consent_kind=kind,
                         consent_version=text.version,
-                    )
+                    ),
+                    consents_revoked=consents_revoked,
                 )
-        return GetOnboardingStepResult(step=OnboardingStep(kind=OnboardingStepKind.DONE))
+        return GetOnboardingStepResult(
+            step=OnboardingStep(kind=OnboardingStepKind.DONE),
+            consents_revoked=consents_revoked,
+        )

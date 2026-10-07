@@ -178,6 +178,7 @@ async def test_revoke_then_me_consent_and_other_forbidden(mini_world: AppWorld) 
         assert me.status_code == 200
         assert me.json()["onboarding_step"] == "consent"
         assert me.json()["account_exists"] is True
+        assert me.json()["consents_revoked"] is True
         contacts = await client.get("/api/v1/contacts", headers=headers)
         assert contacts.status_code == 403
         assert contacts.json()["code"] == MiniappErrorCode.CONSENT_REQUIRED
@@ -203,6 +204,7 @@ async def test_export_after_age_without_consents(mini_world: AppWorld) -> None:
         assert me.status_code == 200
         assert me.json()["onboarding_step"] == "consent"
         assert me.json()["account_exists"] is True
+        assert me.json()["consents_revoked"] is False
         exported = await client.post("/api/v1/me/export", headers=headers)
     assert exported.status_code == 200
     assert "download_url" in exported.json()
@@ -288,6 +290,7 @@ async def test_onboarding_age_and_consents_via_api(mini_world: AppWorld) -> None
         me1 = await client.get("/api/v1/me", headers=headers)
         assert me1.json()["onboarding_step"] == "consent"
         assert me1.json()["account_exists"] is True
+        assert me1.json()["consents_revoked"] is False
         kind = me1.json()["consent_kind"]
         version = me1.json()["consent_version"]
         assert kind in {"personal_data", "special_category"}

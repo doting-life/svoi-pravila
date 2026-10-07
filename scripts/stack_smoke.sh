@@ -50,13 +50,19 @@ compose_port() {
 }
 
 cleanup() {
-  make -C "$ROOT" observability-down ENV_FILE="$ENV_FILE" || true
-  make -C "$ROOT" down ENV_FILE="$ENV_FILE" || true
+  project="${COMPOSE_PROJECT_NAME:-svoi-pravila-ci}"
+  docker compose -p "$project" --env-file "$ENV_FILE" \
+    --profile app --profile observability down -v >/dev/null 2>&1 || true
+  docker compose -p "$project" --env-file "$ENV_FILE" down -v >/dev/null 2>&1 || true
   if [[ "$OWN_TMP" -eq 1 ]]; then
     rm -rf "$CI_TMPDIR"
   fi
 }
 trap cleanup EXIT
+
+project="${COMPOSE_PROJECT_NAME:-svoi-pravila-ci}"
+docker compose -p "$project" --env-file "$ENV_FILE" \
+  --profile app --profile observability down -v >/dev/null 2>&1 || true
 
 make -C "$ROOT" up ENV_FILE="$ENV_FILE"
 make -C "$ROOT" observability-up ENV_FILE="$ENV_FILE"
@@ -151,7 +157,8 @@ while time.monotonic() < deadline:
     except urllib.error.HTTPError as exc:
         last_err = exc
         body = exc.read().decode() if exc.fp is not None else ""
-        if exc.code not in {404, 502, 503}:
+        # 401: admin password may not be applied yet on a fresh Grafana volume.
+        if exc.code not in {401, 404, 502, 503}:
             raise
         time.sleep(2)
         continue
@@ -187,7 +194,7 @@ while time.monotonic() < deadline:
         if metrics_health.get("status") == "OK":
             break
     except urllib.error.HTTPError as exc:
-        if exc.code not in {404, 502, 503}:
+        if exc.code not in {401, 404, 502, 503}:
             raise
         time.sleep(2)
         continue

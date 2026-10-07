@@ -278,6 +278,31 @@
         "title": "InviteResponse",
         "type": "object"
       },
+      "LimitErrorBody": {
+        "description": "Quota / service-budget exhaustion (ADR-0009) with retry metadata.",
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/MiniappErrorCode"
+          },
+          "message": {
+            "minLength": 1,
+            "title": "Message",
+            "type": "string"
+          },
+          "retry_at": {
+            "format": "date-time",
+            "title": "Retry At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "retry_at"
+        ],
+        "title": "LimitErrorBody",
+        "type": "object"
+      },
       "MeResponse": {
         "description": "Current user onboarding and limits (C0/C1).",
         "properties": {
@@ -378,6 +403,8 @@
           "text_too_short",
           "text_too_long",
           "quota_exceeded",
+          "quota_exhausted",
+          "service_budget_exhausted",
           "generation_unavailable",
           "invalid_output",
           "busy"
@@ -599,7 +626,6 @@
               "none",
               "unavailable",
               "crisis",
-              "quota_exceeded",
               "pending_exists"
             ],
             "title": "Outcome",
@@ -820,6 +846,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "List Contacts",
@@ -937,6 +973,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Create Contact",
@@ -1065,6 +1111,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Rename Contact",
@@ -1176,6 +1232,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Activate Contact",
@@ -1294,6 +1360,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Create Invite",
@@ -1415,6 +1491,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Leave Pair",
@@ -1533,6 +1619,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "List Rules",
@@ -1659,6 +1755,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Create Rule",
@@ -1777,6 +1883,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "List Suggestions",
@@ -1890,11 +2006,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
+                  "$ref": "#/components/schemas/LimitErrorBody"
                 }
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Decode Incoming",
@@ -2004,6 +2130,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Get Me",
@@ -2116,6 +2252,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Revoke All Consents",
@@ -2228,6 +2374,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Delete My Account",
@@ -2337,6 +2493,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Export My Data",
@@ -2446,6 +2612,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Get Privacy Texts",
@@ -2564,6 +2740,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Approve Rule",
@@ -2682,6 +2868,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Archive Rule",
@@ -2800,6 +2996,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Reject Pending Rule",
@@ -2914,11 +3120,21 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorBody"
+                  "$ref": "#/components/schemas/LimitErrorBody"
                 }
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Suggest From Decode",
@@ -3037,6 +3253,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Accept Suggestion",
@@ -3155,6 +3381,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "summary": "Dismiss Suggestion",

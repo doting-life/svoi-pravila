@@ -81,7 +81,7 @@ export const ru = {
     decodeErrorLong: "Слишком длинный текст.",
     decodeSuggestNone: "Подходящего правила не нашлось.",
     decodeSuggestUnavailable: "Предложение больше недоступно.",
-    decodeSuggestQuota: "Лимит предложений на час исчерпан.",
+    decodeSuggestQuota: "Сервис временно недоступен из‑за лимита нагрузки.",
     decodeSuggestPending: "Уже есть предложение из расшифровки.",
     firmness: {
         gentle: "мягко",

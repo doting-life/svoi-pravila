@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from svoi_pravila.api.miniapp.errors import MiniappErrorCode, error_body
+from svoi_pravila.api.miniapp.errors import MiniappErrorCode, error_body, limit_error_body
 from svoi_pravila.application.errors import (
     AccessNotGranted,
     BotChatUnavailable,
@@ -14,6 +16,8 @@ from svoi_pravila.application.errors import (
     ContactLimitReached,
     NotFound,
     OpenRuleLimitReached,
+    ServiceBudgetExhausted,
+    UserQuotaExhausted,
 )
 from svoi_pravila.domain.errors import InvalidTransitionError, InvalidValueError
 
@@ -47,12 +51,50 @@ def _miniapp_json(code: MiniappErrorCode, status_code: int) -> JSONResponse:
     )
 
 
-def register_miniapp_exception_handlers(app: FastAPI) -> None:
+def limit_json_response(
+    code: MiniappErrorCode,
+    *,
+    status_code: int,
+    resets_at: datetime,
+    display_timezone: str,
+) -> JSONResponse:
+    """JSON limit error; ``Retry-After`` for service budget (seconds until reset)."""
+    body = limit_error_body(code, resets_at=resets_at, display_timezone=display_timezone)
+    headers: dict[str, str] = {"Cache-Control": "no-store"}
+    if code is MiniappErrorCode.SERVICE_BUDGET_EXHAUSTED:
+        now = datetime.now(tz=UTC)
+        headers["Retry-After"] = str(max(0, int((resets_at - now).total_seconds())))
+    return JSONResponse(
+        status_code=status_code,
+        content=body.model_dump(mode="json"),
+        headers=headers,
+    )
+
+
+def register_miniapp_exception_handlers(app: FastAPI, *, display_timezone: str) -> None:
     """Register JSON error handlers with Cache-Control: no-store."""
 
     @app.exception_handler(MiniappHttpError)
     async def _miniapp_http_error(_request: Request, exc: MiniappHttpError) -> JSONResponse:
         return _miniapp_json(exc.code, exc.status_code)
+
+    @app.exception_handler(UserQuotaExhausted)
+    async def _user_quota(_request: Request, exc: UserQuotaExhausted) -> JSONResponse:
+        return limit_json_response(
+            MiniappErrorCode.QUOTA_EXHAUSTED,
+            status_code=429,
+            resets_at=exc.resets_at,
+            display_timezone=display_timezone,
+        )
+
+    @app.exception_handler(ServiceBudgetExhausted)
+    async def _service_budget(_request: Request, exc: ServiceBudgetExhausted) -> JSONResponse:
+        return limit_json_response(
+            MiniappErrorCode.SERVICE_BUDGET_EXHAUSTED,
+            status_code=503,
+            resets_at=exc.resets_at,
+            display_timezone=display_timezone,
+        )
 
     @app.exception_handler(NotFound)
     async def _not_found(_request: Request, _exc: NotFound) -> JSONResponse:

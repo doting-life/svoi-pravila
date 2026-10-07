@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from asyncio import CancelledError
 from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass, replace
+from datetime import date
 from typing import Protocol
 
 from svoi_pravila.application.applied_rules import applied_rule_views
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.errors import (
+    CacheUnavailable,
     GenerationRefusedByProvider,
     GenerationUnavailable,
     IncomingTextTooLong,
@@ -16,8 +19,9 @@ from svoi_pravila.application.errors import (
     InvalidGenerationOutput,
     NotFound,
     ScenarioBusy,
-    ScenarioQuotaExceeded,
+    ServiceBudgetExhausted,
     UsageEventWriteFailed,
+    UserQuotaExhausted,
 )
 from svoi_pravila.application.ports.clock import Clock
 from svoi_pravila.application.ports.concurrency import ConcurrencyGuard
@@ -37,20 +41,34 @@ from svoi_pravila.application.ports.generation import (
     TokenUsage,
 )
 from svoi_pravila.application.ports.id_generator import IdGenerator
+from svoi_pravila.application.ports.llm_budget import BudgetExhausted, LlmBudget
 from svoi_pravila.application.ports.monotonic import MonotonicClock
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
-from svoi_pravila.application.ports.rate_limiter import RateLimiter
+from svoi_pravila.application.ports.quota_gate import (
+    QuotaExhausted,
+    QuotaGate,
+    QuotaReservation,
+)
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.ports.usage_event_sink import UsageEventSink
 from svoi_pravila.application.use_cases._access import require_access
+from svoi_pravila.application.use_cases._cancelled_budget import (
+    CancelledGeneration,
+    handle_generation_cancelled,
+)
 from svoi_pravila.application.use_cases._generation_context import load_active_contact_rule_context
+from svoi_pravila.application.use_cases._limits import generation_unavailable_from_cache
 from svoi_pravila.domain.enums import (
+    LimitKind,
+    QuotaClass,
     RelationshipKind,
+    UsageEventKind,
     UsageOutcome,
     UsageScenario,
     UsageSurface,
 )
 from svoi_pravila.domain.ids import TelegramUserId, UsageEventId
+from svoi_pravila.domain.product_day import product_day
 from svoi_pravila.domain.usage import UsageEvent
 
 _LOCK_MARGIN_SECONDS = 5
@@ -76,7 +94,8 @@ class DecodeIncomingPorts:
     catalog: ConsentCatalog
     generator: TextGenerator
     guard: ConcurrencyGuard
-    quota: RateLimiter
+    quota_gate: QuotaGate
+    llm_budget: LlmBudget
     sink: UsageEventSink
     clock: Clock
     monotonic: MonotonicClock
@@ -84,6 +103,8 @@ class DecodeIncomingPorts:
     pseudonymizer: Pseudonymizer
     crisis_screen: CrisisScreen
     deadline_seconds: float
+    max_output_tokens: int
+    analytics_timezone: str
 
 
 class IncomingDecoder(Protocol):
@@ -110,6 +131,19 @@ class _UsageDraft:
     usage: TokenUsage
     unavailable_kind: str | None
     safety: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _StreamArgs:
+    """Provider-stream inputs after quota reservation."""
+
+    text: str
+    user_key: str
+    surface: UsageSurface
+    relationship: RelationshipKind
+    rules: tuple[RuleContext, ...]
+    day: date
+    started: float
 
 
 class DecodeIncoming:
@@ -140,56 +174,149 @@ class DecodeIncoming:
         token = await self._ports.guard.acquire(lock_key, ttl_seconds=ttl)
         if token is None:
             raise ScenarioBusy()
-        started = self._ports.monotonic.monotonic()
-        first_chunk_at: float | None = None
         try:
-            quota_pseudonym = self._ports.pseudonymizer.pseudonymize(_QUOTA_PURPOSE, user_key)
-            decision = await self._ports.quota.check(quota_pseudonym)
-            if not decision.allowed:
-                raise ScenarioQuotaExceeded()
-            request = DecodeRequest(
-                incoming=text,
-                rules=rules,
+            async for event in self._produce(
+                text=text,
+                user_key=user_key,
+                surface=surface,
                 relationship=relationship,
-                deadline_seconds=self._ports.deadline_seconds,
+                rules=rules,
+            ):
+                yield event
+        finally:
+            await self._ports.guard.release(lock_key, token)
+
+    async def _produce(
+        self,
+        *,
+        text: str,
+        user_key: str,
+        surface: UsageSurface,
+        relationship: RelationshipKind,
+        rules: tuple[RuleContext, ...],
+    ) -> AsyncGenerator[DecodeEvent]:
+        # Normative order after lock: budget check → quota reserve → provider → persist → budget.add
+        day = product_day(self._ports.clock.now(), self._ports.analytics_timezone)
+        reservation: QuotaReservation | None = None
+        started = self._ports.monotonic.monotonic()
+        first_chunk_at: list[float] = []
+        provider_started = [False]
+        try:
+            reservation = await self._reserve(user_key=user_key, surface=surface, day=day)
+            started = self._ports.monotonic.monotonic()
+            stream = _StreamArgs(
+                text=text,
+                user_key=user_key,
+                surface=surface,
+                relationship=relationship,
+                rules=rules,
+                day=day,
+                started=started,
             )
-            async for event in self._ports.generator.decode_stream(request):
-                if isinstance(event, AnalysisChunk):
-                    if first_chunk_at is None:
-                        first_chunk_at = self._ports.monotonic.monotonic()
-                    yield event
-                else:
-                    completed = replace(
-                        event,
-                        applied_rules=applied_rule_views(rules, event.result.applied_rule_indexes),
-                    )
-                    yield completed
-                    await self._persist(
-                        self._event_from_completed(
-                            user_key=user_key,
-                            surface=surface,
-                            started=started,
-                            first_chunk_at=first_chunk_at,
-                            completed=completed,
-                        )
-                    )
-        except (
-            GenerationUnavailable,
-            GenerationRefusedByProvider,
-            InvalidGenerationOutput,
-        ) as exc:
+            async for event in self._stream_provider(stream, first_chunk_at, provider_started):
+                yield event
+        except GenerationUnavailable as exc:
+            if reservation is not None:
+                await self._ports.quota_gate.refund(reservation)
             await self._persist(
                 self._event_from_failure(
                     user_key=user_key,
                     surface=surface,
                     started=started,
-                    first_chunk_at=first_chunk_at,
+                    first_chunk_at=first_chunk_at[0] if first_chunk_at else None,
                     error=exc,
                 )
             )
             raise
-        finally:
-            await self._ports.guard.release(lock_key, token)
+        except (GenerationRefusedByProvider, InvalidGenerationOutput) as exc:
+            await self._persist(
+                self._event_from_failure(
+                    user_key=user_key,
+                    surface=surface,
+                    started=started,
+                    first_chunk_at=first_chunk_at[0] if first_chunk_at else None,
+                    error=exc,
+                )
+            )
+            await self._budget_add(day, exc.usage.billable)
+            raise
+        except CancelledError:
+            await handle_generation_cancelled(
+                CancelledGeneration(
+                    provider_started=provider_started[0],
+                    reservation=reservation,
+                    quota_gate=self._ports.quota_gate,
+                    llm_budget=self._ports.llm_budget,
+                    day=day,
+                    input_chars=len(text),
+                    max_output_tokens=self._ports.max_output_tokens,
+                )
+            )
+            raise
+
+    async def _reserve(
+        self, *, user_key: str, surface: UsageSurface, day: date
+    ) -> QuotaReservation:
+        """Budget check then DECODE quota reserve; raises typed limit / cache errors."""
+        try:
+            budget = await self._ports.llm_budget.check(day)
+        except CacheUnavailable as exc:
+            raise generation_unavailable_from_cache(exc) from exc
+        if isinstance(budget, BudgetExhausted):
+            await self._persist(
+                self._event_from_limited(user_key, surface, LimitKind.GLOBAL_BUDGET)
+            )
+            raise ServiceBudgetExhausted(resets_at=budget.resets_at)
+        quota_pseudonym = self._ports.pseudonymizer.pseudonymize(_QUOTA_PURPOSE, user_key)
+        try:
+            decision = await self._ports.quota_gate.reserve(quota_pseudonym, QuotaClass.DECODE, day)
+        except CacheUnavailable as exc:
+            raise generation_unavailable_from_cache(exc) from exc
+        if isinstance(decision, QuotaExhausted):
+            await self._persist(self._event_from_limited(user_key, surface, LimitKind.USER_QUOTA))
+            raise UserQuotaExhausted(resets_at=decision.resets_at)
+        return decision.reservation
+
+    async def _stream_provider(
+        self,
+        args: _StreamArgs,
+        first_chunk_at: list[float],
+        provider_started: list[bool],
+    ) -> AsyncGenerator[DecodeEvent]:
+        request = DecodeRequest(
+            incoming=args.text,
+            rules=args.rules,
+            relationship=args.relationship,
+            deadline_seconds=self._ports.deadline_seconds,
+        )
+        provider_started[0] = True
+        async for event in self._ports.generator.decode_stream(request):
+            if isinstance(event, AnalysisChunk):
+                if not first_chunk_at:
+                    first_chunk_at.append(self._ports.monotonic.monotonic())
+                yield event
+                continue
+            completed = replace(
+                event,
+                applied_rules=applied_rule_views(args.rules, event.result.applied_rule_indexes),
+            )
+            yield completed
+            await self._persist(
+                self._event_from_completed(
+                    user_key=args.user_key,
+                    surface=args.surface,
+                    started=args.started,
+                    first_chunk_at=first_chunk_at[0] if first_chunk_at else None,
+                    completed=completed,
+                )
+            )
+            await self._budget_add(args.day, completed.result.meta.usage.billable)
+
+    async def _budget_add(self, day: date, billable_tokens: int) -> None:
+        try:
+            await self._ports.llm_budget.add(day, billable_tokens)
+        except CacheUnavailable as exc:
+            raise generation_unavailable_from_cache(exc) from exc
 
     async def _load_context(
         self, telegram_user_id: TelegramUserId
@@ -250,6 +377,33 @@ class DecodeIncoming:
                 unavailable_kind=None,
                 safety=SafetyVerdict.CRISIS.value,
             )
+        )
+
+    def _event_from_limited(
+        self, user_key: str, surface: UsageSurface, limit_kind: LimitKind
+    ) -> UsageEvent:
+        occurred = self._ports.clock.now().replace(microsecond=0)
+        analytics = self._ports.pseudonymizer.pseudonymize(_ANALYTICS_PURPOSE, user_key)
+        return UsageEvent(
+            id=UsageEventId(self._ports.ids.new_id()),
+            occurred_at=occurred,
+            user_pseudonym=analytics,
+            scenario=UsageScenario.DECODE,
+            surface=surface,
+            outcome=UsageOutcome.LIMITED,
+            unavailable_kind=None,
+            safety=None,
+            model=None,
+            prompt_version=None,
+            latency_ms=0,
+            ttfc_ms=None,
+            attempts=0,
+            input_tokens=0,
+            output_tokens=0,
+            billable_tokens=0,
+            event_kind=UsageEventKind.GENERATION,
+            variant_firmness=None,
+            limit_kind=limit_kind,
         )
 
     def _event_from_completed(

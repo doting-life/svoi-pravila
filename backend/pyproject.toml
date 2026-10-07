@@ -64,6 +64,10 @@ packages = ["src/svoi_pravila"]
 "src/svoi_pravila/adapters/channels/telegram/localization/ru.json" = "svoi_pravila/adapters/channels/telegram/localization/ru.json"
 "src/svoi_pravila/api/miniapp/localization/ru.json" = "svoi_pravila/api/miniapp/localization/ru.json"
 "src/svoi_pravila/privacy/ru.json" = "svoi_pravila/privacy/ru.json"
+"src/svoi_pravila/limits/ru.json" = "svoi_pravila/limits/ru.json"
+"src/svoi_pravila/adapters/cache/lua/quota_reserve.lua" = "svoi_pravila/adapters/cache/lua/quota_reserve.lua"
+"src/svoi_pravila/adapters/cache/lua/quota_refund.lua" = "svoi_pravila/adapters/cache/lua/quota_refund.lua"
+"src/svoi_pravila/adapters/cache/lua/budget_add.lua" = "svoi_pravila/adapters/cache/lua/budget_add.lua"
 "src/svoi_pravila/domain/safety/crisis_patterns/ru/v2.txt" = "svoi_pravila/domain/safety/crisis_patterns/ru/v2.txt"
 "src/svoi_pravila/domain/safety/crisis_copy/ru/v1.txt" = "svoi_pravila/domain/safety/crisis_copy/ru/v1.txt"
 "src/svoi_pravila/domain/safety/decode_copy/ru/v1.txt" = "svoi_pravila/domain/safety/decode_copy/ru/v1.txt"
@@ -201,6 +205,27 @@ forbidden_modules = [
     "svoi_pravila.crypto",
     "svoi_pravila.benchmarks",
     "svoi_pravila.evals",
+    "svoi_pravila.limits",
+]
+
+[[tool.importlinter.contracts]]
+name = "Limits is a leaf package"
+type = "forbidden"
+source_modules = [
+    "svoi_pravila.limits",
+]
+forbidden_modules = [
+    "svoi_pravila.domain",
+    "svoi_pravila.application",
+    "svoi_pravila.adapters",
+    "svoi_pravila.api",
+    "svoi_pravila.bootstrap",
+    "svoi_pravila.config",
+    "svoi_pravila.observability",
+    "svoi_pravila.crypto",
+    "svoi_pravila.privacy",
+    "svoi_pravila.benchmarks",
+    "svoi_pravila.evals",
 ]
 
 [[tool.importlinter.contracts]]
@@ -214,6 +239,7 @@ forbidden_modules = [
     "svoi_pravila.observability",
     "svoi_pravila.crypto",
     "svoi_pravila.privacy",
+    "svoi_pravila.limits",
     "fastapi",
     "starlette",
     "pydantic",
@@ -243,6 +269,7 @@ forbidden_modules = [
     "svoi_pravila.observability",
     "svoi_pravila.crypto",
     "svoi_pravila.privacy",
+    "svoi_pravila.limits",
     "fastapi",
     "starlette",
     "pydantic",

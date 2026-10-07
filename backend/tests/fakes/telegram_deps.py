@@ -61,6 +61,7 @@ from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
 from tests.fakes.pair_notifier import FakePairNotifier
 from tests.fakes.prepared import FakePreparedResults
+from tests.fakes.quota_budget import FakeLlmBudget, FakeQuotaGate
 from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter, FakeUpdateDeduplicator
 from tests.fakes.rule_sources import FakeRuleSources
 from tests.fakes.sleeper import GateSleeper, ImmediateSleeper
@@ -80,6 +81,7 @@ class TelegramTestDeps:
     rate_limit: int = 30
     quota_limit: int = 20
     inline_quota_limit: int = 30
+    budget_exhausted: bool = False
     generator: FakeTextGenerator | None = None
     guard: FakeConcurrencyGuard | None = None
     sink: RecordingUsageEventSink | FailingUsageEventSink | None = None
@@ -94,7 +96,6 @@ class TelegramTestDeps:
     inline_deadline_seconds: float = 8.0
     debounce_seconds: float = 0.0
     inline_cache_seconds: int = 30
-    suggest_quota_limit: int = 10
     pair_notifier: FakePairNotifier | None = None
     tokens: FakeTokenGenerator | None = None
     bot_username: str | None = "test_bot"
@@ -114,13 +115,15 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
     tone_catalog = StaticToneSuggestionCatalog()
     notifier = chosen.pair_notifier or FakePairNotifier()
     tokens = chosen.tokens or FakeTokenGenerator()
+    llm_budget = FakeLlmBudget(exhausted=chosen.budget_exhausted)
     decode = DecodeIncoming(
         DecodeIncomingPorts(
             uow_factory=uow,
             catalog=catalog,
             generator=generator,
             guard=chosen.guard or FakeConcurrencyGuard(),
-            quota=FakeRateLimiter(limit=chosen.quota_limit),
+            quota_gate=FakeQuotaGate(limit=chosen.quota_limit),
+            llm_budget=llm_budget,
             sink=sink,
             clock=clock,
             monotonic=clock,
@@ -128,6 +131,8 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             pseudonymizer=pseudonymizer,
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=chosen.deadline_seconds,
+            max_output_tokens=1000,
+            analytics_timezone="Europe/Moscow",
         )
     )
     reuse = make_inline_reuse(clock, ttl_seconds=float(chosen.inline_cache_seconds))
@@ -136,7 +141,8 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             uow_factory=uow,
             catalog=catalog,
             generator=generator,
-            quota=FakeRateLimiter(limit=chosen.inline_quota_limit),
+            quota_gate=FakeQuotaGate(limit=chosen.inline_quota_limit),
+            llm_budget=llm_budget,
             sink=sink,
             clock=clock,
             monotonic=clock,
@@ -146,7 +152,9 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             reuse=reuse,
             min_chars=chosen.inline_min_chars,
             deadline_seconds=chosen.inline_deadline_seconds,
+            max_output_tokens=1000,
             intent_prefixes=help_say_intent_prefixes(strings),
+            analytics_timezone="Europe/Moscow",
         )
     )
     rule_sources = chosen.rule_sources or FakeRuleSources()
@@ -156,7 +164,7 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             catalog=catalog,
             rule_sources=rule_sources,
             generator=generator,
-            quota=FakeRateLimiter(limit=chosen.suggest_quota_limit),
+            llm_budget=llm_budget,
             sink=sink,
             clock=clock,
             monotonic=clock,
@@ -164,6 +172,8 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             pseudonymizer=pseudonymizer,
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=chosen.deadline_seconds,
+            max_output_tokens=1000,
+            analytics_timezone="Europe/Moscow",
         )
     )
     return TelegramDeps(

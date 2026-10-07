@@ -636,7 +636,7 @@ async def test_auth_logs_c0_reason_only(
 async def test_non_miniapp_validation_keeps_detail() -> None:
     """RequestValidationError outside /api/v1 must not use mini-app envelope."""
     app = FastAPI()
-    register_miniapp_exception_handlers(app)
+    register_miniapp_exception_handlers(app, display_timezone="Europe/Moscow")
 
     @app.post("/other")
     async def other(payload: dict[str, str]) -> dict[str, str]:

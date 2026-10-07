@@ -7,7 +7,7 @@ import json
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 from uuid import uuid4
 
 import pytest
@@ -22,6 +22,7 @@ from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
 from tests.fakes.pair_notifier import FakePairNotifier
 from tests.fakes.prepared import FakePreparedResults
+from tests.fakes.quota_budget import FakeLlmBudget, FakeQuotaGate
 from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
 from tests.fakes.rule_sources import FakeRuleSources
 from tests.fakes.tokens import FakeTokenGenerator
@@ -463,18 +464,111 @@ async def test_decode_validation_before_stream(world: AppWorld) -> None:
 
 
 @pytest.mark.unit
+async def test_decode_quota_exhausted_json_before_sse(world: AppWorld) -> None:
+    await world.ensure_granted_user(_TG)
+    app = _app(
+        world,
+        build_miniapp_decode_bundle(world, quota_gate=FakeQuotaGate(limit=0)),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/decode",
+            headers=_auth(),
+            json={"text": "обычный текст для квоты"},
+        )
+    assert response.status_code == 429
+    assert response.headers.get("content-type", "").startswith("application/json")
+    body = response.json()
+    assert body["code"] == "quota_exhausted"
+    assert body["message"]
+    assert "retry_at" in body
+    assert "event:" not in response.text
+
+
+@pytest.mark.unit
+async def test_decode_service_budget_exhausted_json_before_sse(world: AppWorld) -> None:
+    await world.ensure_granted_user(_TG)
+    app = _app(
+        world,
+        build_miniapp_decode_bundle(world, llm_budget=FakeLlmBudget(exhausted=True)),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/decode",
+            headers=_auth(),
+            json={"text": "обычный текст для бюджета"},
+        )
+    assert response.status_code == 503
+    assert response.headers.get("Retry-After") is not None
+    body = response.json()
+    assert body["code"] == "service_budget_exhausted"
+    assert body["message"]
+    assert "retry_at" in body
+
+
+@pytest.mark.unit
+async def test_decode_crisis_with_quota_and_budget_exhausted(world: AppWorld) -> None:
+    await world.ensure_granted_user(_TG)
+    crisis_text = "хочу покончить с собой"
+    app = _app(
+        world,
+        build_miniapp_decode_bundle(
+            world,
+            quota_gate=FakeQuotaGate(limit=0),
+            llm_budget=FakeLlmBudget(exhausted=True),
+        ),
+    )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/decode",
+            headers=_auth(),
+            json={"text": crisis_text},
+        )
+    assert response.status_code == 200
+    assert [name for name, _ in _parse_sse(response.text)] == ["crisis"]
+
+
+@pytest.mark.unit
+async def test_decode_empty_stream_returns_empty_sse(world: AppWorld) -> None:
+    await world.ensure_granted_user(_TG)
+
+    class _EmptyStream:
+        async def decode_stream(self, request: DecodeRequest) -> AsyncIterator[DecodeEvent]:
+            del request
+            for _ in ():
+                yield AnalysisChunk(text="")
+
+    app = _app(world, build_miniapp_decode_bundle(world, generator=cast(Any, _EmptyStream())))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/decode",
+            headers=_auth(),
+            json={"text": "текст без событий"},
+        )
+    assert response.status_code == 200
+    assert response.headers.get("content-type", "").startswith("text/event-stream")
+    assert response.text == ""
+
+
+@pytest.mark.unit
 async def test_decode_client_cancel_releases_without_completion(world: AppWorld) -> None:
     """Cancelling the SSE consumer must not leave DecodeIncoming hung on the lock."""
     await world.ensure_granted_user(_TG)
+    from svoi_pravila.domain.cancelled_billable import estimate_cancelled_billable
+
     slow = _SlowGenerator()
     sink = RecordingUsageEventSink()
+    quota_gate = FakeQuotaGate(limit=20)
+    budget = FakeLlmBudget()
+    text = "текст для отмены потока"
     decode = DecodeIncoming(
         DecodeIncomingPorts(
             uow_factory=world.uow_factory,
             catalog=world.catalog,
             generator=slow,
             guard=FakeConcurrencyGuard(),
-            quota=FakeRateLimiter(limit=20),
+            quota_gate=quota_gate,
+            llm_budget=budget,
             sink=sink,
             clock=world.clock,
             monotonic=world.clock,
@@ -482,6 +576,8 @@ async def test_decode_client_cancel_releases_without_completion(world: AppWorld)
             pseudonymizer=FakePseudonymizer(),
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
+            max_output_tokens=1000,
+            analytics_timezone="Europe/Moscow",
         )
     )
     from svoi_pravila.api.miniapp.decode_sse import DecodeStreamPorts, iter_decode_sse
@@ -494,17 +590,27 @@ async def test_decode_client_cancel_releases_without_completion(world: AppWorld)
         rule_sources=FakeRuleSources(),
         pseudonymizer=FakePseudonymizer(),
     )
-    agen: AsyncGenerator[str] = iter_decode_sse(
-        ports,
-        actor=user,
-        telegram_user_id=TelegramUserId(_TG),
-        text="текст для отмены потока",
-    )
-    first = await agen.__anext__()
-    assert "analysis" in first
-    await agen.aclose()
-    await asyncio.sleep(0)
+
+    async def _consume() -> None:
+        agen: AsyncGenerator[str] = iter_decode_sse(
+            ports,
+            actor=user,
+            telegram_user_id=TelegramUserId(_TG),
+            text=text,
+        )
+        first = await agen.__anext__()
+        assert "analysis" in first
+        async for _frame in agen:
+            pass
+
+    task = asyncio.create_task(_consume())
+    await slow.started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
     assert slow.completed is False
+    assert quota_gate.refund_calls == []
+    assert budget.spent == estimate_cancelled_billable(len(text), 1000)
 
 
 @pytest.mark.unit
@@ -640,6 +746,33 @@ async def test_suggest_from_decode_crisis_returns_support_copy(world: AppWorld) 
 
 
 @pytest.mark.unit
+async def test_suggest_from_decode_service_budget_exhausted(world: AppWorld) -> None:
+    contact_id = await _activate_contact(world)
+    sources = FakeRuleSources()
+    bundle = build_miniapp_decode_bundle(
+        world,
+        rule_sources=sources,
+        suggest_llm_budget=FakeLlmBudget(exhausted=True),
+    )
+    token = await sources.store(
+        FakePseudonymizer().pseudonymize("rule_source", str(_TG)),
+        RuleSourcePayload(contact_id=contact_id, incoming_text="предложи правило"),
+    )
+    app = _app(world, bundle)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/suggestions/from-decode",
+            headers=_auth(),
+            json={"token": token},
+        )
+    assert response.status_code == 503
+    body = response.json()
+    assert body["code"] == "service_budget_exhausted"
+    assert body["message"]
+    assert "retry_at" in body
+
+
+@pytest.mark.unit
 async def test_seal_helper_parity_insert_and_rule_source_token() -> None:
     completed = DecodeCompleted(analysis="a", result=_ok_result())
     prepared = FakePreparedResults()
@@ -764,7 +897,8 @@ async def test_decode_unknown_stream_error_propagates(world: AppWorld) -> None:
             catalog=world.catalog,
             generator=_BoomGenerator(),
             guard=FakeConcurrencyGuard(),
-            quota=FakeRateLimiter(limit=20),
+            quota_gate=FakeQuotaGate(limit=20),
+            llm_budget=FakeLlmBudget(),
             sink=sink,
             clock=world.clock,
             monotonic=world.clock,
@@ -772,6 +906,8 @@ async def test_decode_unknown_stream_error_propagates(world: AppWorld) -> None:
             pseudonymizer=FakePseudonymizer(),
             crisis_screen=CrisisScreen.load_ru_v2(),
             deadline_seconds=45.0,
+            max_output_tokens=1000,
+            analytics_timezone="Europe/Moscow",
         )
     )
     bundle = build_miniapp_decode_bundle(world)

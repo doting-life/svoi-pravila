@@ -12,6 +12,7 @@ from hypothesis import strategies as st
 
 from svoi_pravila.domain.enums import (
     Firmness,
+    LimitKind,
     UsageEventKind,
     UsageOutcome,
     UsageScenario,
@@ -167,6 +168,46 @@ def test_usage_event_screened_crisis_without_model() -> None:
         replace(event, model="x")
     with pytest.raises(InvalidValueError, match="generation metrics"):
         replace(event, attempts=1)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("limit_kind", [LimitKind.USER_QUOTA, LimitKind.GLOBAL_BUDGET])
+def test_usage_event_limited_requires_kind_zero_tokens_no_model(limit_kind: LimitKind) -> None:
+    event = UsageEvent(
+        id=UsageEventId(UUID(int=4)),
+        occurred_at=_NOW,
+        user_pseudonym=_PSEUDO,
+        scenario=UsageScenario.DECODE,
+        surface=UsageSurface.DM,
+        outcome=UsageOutcome.LIMITED,
+        unavailable_kind=None,
+        safety=None,
+        model=None,
+        prompt_version=None,
+        latency_ms=0,
+        ttfc_ms=None,
+        attempts=0,
+        input_tokens=0,
+        output_tokens=0,
+        billable_tokens=0,
+        limit_kind=limit_kind,
+    )
+    assert event.outcome is UsageOutcome.LIMITED
+    assert event.limit_kind is limit_kind
+    assert event.model is None
+    assert event.billable_tokens == 0
+    with pytest.raises(InvalidValueError, match="limit_kind"):
+        replace(event, limit_kind=None)
+    with pytest.raises(InvalidValueError, match="model"):
+        replace(event, model="x")
+    with pytest.raises(InvalidValueError, match="generation metrics"):
+        replace(event, attempts=1)
+    with pytest.raises(InvalidValueError, match="generation metrics"):
+        replace(event, input_tokens=1)
+    with pytest.raises(InvalidValueError, match="safety"):
+        replace(event, safety="ok")
+    with pytest.raises(InvalidValueError, match="limit_kind is only allowed"):
+        replace(_event(), limit_kind=LimitKind.USER_QUOTA)
 
 
 @given(st.text(alphabet="0123456789abcdef", min_size=64, max_size=64))

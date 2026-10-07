@@ -511,6 +511,20 @@ export interface components {
             link: string;
         };
         /**
+         * LimitErrorBody
+         * @description Quota / service-budget exhaustion (ADR-0009) with retry metadata.
+         */
+        LimitErrorBody: {
+            code: components["schemas"]["MiniappErrorCode"];
+            /** Message */
+            message: string;
+            /**
+             * Retry At
+             * Format: date-time
+             */
+            retry_at: string;
+        };
+        /**
          * MeResponse
          * @description Current user onboarding and limits (C0/C1).
          */
@@ -540,7 +554,7 @@ export interface components {
          * @description Stable C0 error codes returned to the mini-app client.
          * @enum {string}
          */
-        MiniappErrorCode: "unauthorized" | "init_data_invalid" | "init_data_expired" | "rate_limited" | "onboarding_required" | "consent_required" | "not_found" | "contact_limit" | "open_rule_limit" | "bot_chat_unavailable" | "contact_already_linked" | "contact_not_paired" | "invalid_transition" | "validation_error" | "body_too_large" | "text_too_short" | "text_too_long" | "quota_exceeded" | "generation_unavailable" | "invalid_output" | "busy";
+        MiniappErrorCode: "unauthorized" | "init_data_invalid" | "init_data_expired" | "rate_limited" | "onboarding_required" | "consent_required" | "not_found" | "contact_limit" | "open_rule_limit" | "bot_chat_unavailable" | "contact_already_linked" | "contact_not_paired" | "invalid_transition" | "validation_error" | "body_too_large" | "text_too_short" | "text_too_long" | "quota_exceeded" | "quota_exhausted" | "service_budget_exhausted" | "generation_unavailable" | "invalid_output" | "busy";
         /**
          * PrivacyActionTextsResponse
          * @description Revoke or delete blurb and confirm copy (C0).
@@ -647,7 +661,7 @@ export interface components {
              * Outcome
              * @enum {string}
              */
-            outcome: "ok" | "none" | "unavailable" | "crisis" | "quota_exceeded" | "pending_exists";
+            outcome: "ok" | "none" | "unavailable" | "crisis" | "pending_exists";
             /** Resources */
             resources?: string[] | null;
             suggestion?: components["schemas"]["SuggestionItem"] | null;
@@ -776,6 +790,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
+                };
+            };
         };
     };
     createContact: {
@@ -863,6 +886,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
                 };
             };
         };
@@ -956,6 +988,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
+                };
+            };
         };
     };
     activateContact: {
@@ -1039,6 +1080,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
                 };
             };
         };
@@ -1126,6 +1176,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
                 };
             };
         };
@@ -1217,6 +1276,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
+                };
+            };
         };
     };
     listRules: {
@@ -1302,6 +1370,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
                 };
             };
         };
@@ -1395,6 +1472,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
+                };
+            };
         };
     };
     listSuggestions: {
@@ -1480,6 +1566,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
                 };
             };
         };
@@ -1569,7 +1664,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorBody"];
+                    "application/json": components["schemas"]["LimitErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
                 };
             };
         };
@@ -1655,6 +1759,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
                 };
             };
         };
@@ -1744,6 +1857,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
+                };
+            };
         };
     };
     deleteMyAccount: {
@@ -1831,6 +1953,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
+                };
+            };
         };
     };
     exportMyData: {
@@ -1916,6 +2047,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
+                };
+            };
         };
     };
     getPrivacyTexts: {
@@ -1999,6 +2139,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
                 };
             };
         };
@@ -2088,6 +2237,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
+                };
+            };
         };
     };
     archiveRule: {
@@ -2173,6 +2331,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
                 };
             };
         };
@@ -2262,6 +2429,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
+                };
+            };
         };
     };
     suggestFromDecode: {
@@ -2348,7 +2524,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ErrorBody"];
+                    "application/json": components["schemas"]["LimitErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
                 };
             };
         };
@@ -2438,6 +2623,15 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
+                };
+            };
         };
     };
     dismissSuggestion: {
@@ -2523,6 +2717,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
                 };
             };
         };

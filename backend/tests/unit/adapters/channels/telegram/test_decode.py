@@ -260,7 +260,7 @@ async def test_decode_maps_errors() -> None:
     bot2 = Bot(token="1:TEST", session=session2)
     life2 = build_telegram_lifecycle(_settings(), quota_deps, bot=bot2)
     await life2.dispatcher.feed_update(bot2, _text_update(31, 403, "x"))
-    assert quota_deps.strings.decode_quota in _sent_texts(session2)
+    assert any("лимит" in text.casefold() for text in _sent_texts(session2))
 
     cases = (
         (
@@ -448,7 +448,8 @@ def test_render_decode_safety_and_copy_truncation() -> None:
 
 @pytest.mark.unit
 def test_decode_error_reply_unknown_application_error() -> None:
-    assert _decode_error_reply(ConflictError(), load_ru_strings()) is None
+    deps = make_telegram_deps()
+    assert _decode_error_reply(ConflictError(), deps) is None
 
 
 class _RaisingDecode:

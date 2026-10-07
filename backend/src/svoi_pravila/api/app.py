@@ -34,6 +34,8 @@ def create_app(
     check_readiness: CheckReadiness,
     environment: Environment,
     hooks: AppLifecycleHooks | None = None,
+    *,
+    display_timezone: str = "Europe/Moscow",
 ) -> FastAPI:
     """Build the ASGI app with already-constructed collaborators (no globals)."""
     lifecycle = hooks or AppLifecycleHooks()
@@ -58,7 +60,7 @@ def create_app(
     )
     app.add_middleware(RequestLoggingMiddleware)
     app.add_middleware(BodyLimitMiddleware)
-    register_miniapp_exception_handlers(app)
+    register_miniapp_exception_handlers(app, display_timezone=display_timezone)
     for router in lifecycle.extra_routers:
         app.include_router(router)
 

@@ -115,15 +115,24 @@ export function DecodeScreen({
             });
             if (!response.ok) {
                 let code = "generation_unavailable";
+                let serverMessage: string | undefined;
                 try {
-                    const body = (await response.json()) as { code?: string };
+                    const body = (await response.json()) as { code?: string; message?: string };
                     if (typeof body.code === "string") {
                         code = body.code;
+                    }
+                    if (typeof body.message === "string" && body.message.length > 0) {
+                        serverMessage = body.message;
                     }
                 } catch {
                     // keep default
                 }
-                setPhase({ kind: "error", message: errorMessageForCode(code) });
+                const message =
+                    (code === "quota_exhausted" || code === "service_budget_exhausted") &&
+                    serverMessage !== undefined
+                        ? serverMessage
+                        : errorMessageForCode(code);
+                setPhase({ kind: "error", message });
                 telegram.hapticNotification("error");
                 return;
             }
@@ -191,7 +200,13 @@ export function DecodeScreen({
         );
         setSuggestBusy(false);
         if (unwrapped.error !== undefined || unwrapped.data === undefined) {
-            setSuggestMessage(ru.decodeErrorUnavailable);
+            const err = unwrapped.error;
+            const code = err?.code;
+            const useServer =
+                (code === "quota_exhausted" || code === "service_budget_exhausted") &&
+                typeof err?.message === "string" &&
+                err.message.length > 0;
+            setSuggestMessage(useServer ? err.message : ru.decodeErrorUnavailable);
             telegram.hapticNotification("error");
             return;
         }
@@ -211,7 +226,6 @@ export function DecodeScreen({
         const messages: Record<string, string> = {
             none: ru.decodeSuggestNone,
             unavailable: ru.decodeSuggestUnavailable,
-            quota_exceeded: ru.decodeSuggestQuota,
             pending_exists: ru.decodeSuggestPending,
         };
         setSuggestMessage(messages[outcome] ?? ru.decodeErrorUnavailable);

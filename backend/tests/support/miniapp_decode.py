@@ -22,9 +22,12 @@ from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
 from tests.fakes.concurrency import FakeConcurrencyGuard
 from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.prepared import FakePreparedResults
-from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
+from tests.fakes.quota_budget import FakeLlmBudget, FakeQuotaGate
+from tests.fakes.rate_limit import FakePseudonymizer
 from tests.fakes.rule_sources import FakeRuleSources
 from tests.fakes.usage_sink import RecordingUsageEventSink
+
+_ANALYTICS_TZ = "Europe/Moscow"
 
 
 class _DecodeWorld(Protocol):
@@ -63,6 +66,9 @@ def build_miniapp_decode_bundle(
     prepared_results: PreparedResults | None = None,
     rule_sources: RuleSources | None = None,
     pseudonymizer: Pseudonymizer | None = None,
+    quota_gate: FakeQuotaGate | None = None,
+    llm_budget: FakeLlmBudget | None = None,
+    suggest_llm_budget: FakeLlmBudget | None = None,
 ) -> MiniappDecodeBundle:
     """Wire DecodeIncoming and SuggestRuleFromDecode with in-memory fakes."""
     gen = generator or FakeTextGenerator(stream_chunks=("анализ ", "готово"))
@@ -72,13 +78,17 @@ def build_miniapp_decode_bundle(
     sink = RecordingUsageEventSink()
     crisis = CrisisScreen.load_ru_v2()
     monotonic = cast(MonotonicClock, world.clock)
+    gate = quota_gate if quota_gate is not None else FakeQuotaGate(limit=20)
+    budget = llm_budget if llm_budget is not None else FakeLlmBudget()
+    suggest_budget = suggest_llm_budget if suggest_llm_budget is not None else budget
     decode = DecodeIncoming(
         DecodeIncomingPorts(
             uow_factory=world.uow_factory,
             catalog=world.catalog,
             generator=gen,
             guard=FakeConcurrencyGuard(),
-            quota=FakeRateLimiter(limit=20),
+            quota_gate=gate,
+            llm_budget=budget,
             sink=sink,
             clock=world.clock,
             monotonic=monotonic,
@@ -86,6 +96,8 @@ def build_miniapp_decode_bundle(
             pseudonymizer=pseudo,
             crisis_screen=crisis,
             deadline_seconds=45.0,
+            max_output_tokens=1000,
+            analytics_timezone=_ANALYTICS_TZ,
         )
     )
     suggest = SuggestRuleFromDecode(
@@ -94,7 +106,7 @@ def build_miniapp_decode_bundle(
             catalog=world.catalog,
             rule_sources=sources,
             generator=gen,
-            quota=FakeRateLimiter(limit=20),
+            llm_budget=suggest_budget,
             sink=sink,
             clock=world.clock,
             monotonic=monotonic,
@@ -102,6 +114,8 @@ def build_miniapp_decode_bundle(
             pseudonymizer=pseudo,
             crisis_screen=crisis,
             deadline_seconds=45.0,
+            max_output_tokens=1000,
+            analytics_timezone=_ANALYTICS_TZ,
         )
     )
     return MiniappDecodeBundle(

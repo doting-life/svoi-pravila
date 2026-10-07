@@ -59,13 +59,28 @@ class UsageSurface(StrEnum):
 
 
 class UsageOutcome(StrEnum):
-    """C0 outcome of a generation attempt or a pre-LLM crisis screen."""
+    """C0 outcome of a generation attempt, crisis screen, or limit stop."""
 
     OK = "ok"
     INVALID_OUTPUT = "invalid_output"
     REFUSED = "refused"
     UNAVAILABLE = "unavailable"
     SCREENED = "screened"
+    LIMITED = "limited"
+
+
+class QuotaClass(StrEnum):
+    """Per-user daily quota class (ADR-0009)."""
+
+    INLINE = "inline"
+    DECODE = "decode"
+
+
+class LimitKind(StrEnum):
+    """Which limit stopped a generation before the provider call (ADR-0009)."""
+
+    USER_QUOTA = "user_quota"
+    GLOBAL_BUDGET = "global_budget"
 
 
 class UsageEventKind(StrEnum):

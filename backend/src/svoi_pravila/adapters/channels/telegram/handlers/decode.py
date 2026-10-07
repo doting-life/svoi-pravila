@@ -9,7 +9,6 @@ from aiogram.types import Message
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.handlers.helpers import render_current_step
-from svoi_pravila.adapters.channels.telegram.localization import TelegramStrings
 from svoi_pravila.adapters.channels.telegram.presenters import (
     TELEGRAM_MESSAGE_MAX,
     render_applied_rule_citations,
@@ -30,7 +29,8 @@ from svoi_pravila.application.errors import (
     InvalidGenerationOutput,
     NotFound,
     ScenarioBusy,
-    ScenarioQuotaExceeded,
+    ServiceBudgetExhausted,
+    UserQuotaExhausted,
 )
 from svoi_pravila.application.ports.generation import AnalysisChunk, DecodeCompleted, SafetyVerdict
 from svoi_pravila.application.rule_source import rule_source_callback_data
@@ -42,6 +42,7 @@ from svoi_pravila.application.use_cases.get_onboarding_step import (
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramIdQuery
 from svoi_pravila.domain.enums import UsageSurface
 from svoi_pravila.domain.ids import TelegramUserId
+from svoi_pravila.limits import format_reset_hhmm, load_limits_catalog
 
 _COPY_MAX = 256
 
@@ -92,7 +93,7 @@ def build_decode_router() -> Router:
         except (NotFound, AccessNotGranted):
             await render_current_step(message, tg_deps, message.from_user.id)
         except ApplicationError as exc:
-            reply = _decode_error_reply(exc, tg_deps.strings)
+            reply = _decode_error_reply(exc, tg_deps)
             if reply is None:
                 raise
             await message.answer(reply)
@@ -166,10 +167,16 @@ async def _stream_decode(
                     await message.answer(citation)
 
 
-def _decode_error_reply(exc: ApplicationError, strings: TelegramStrings) -> str | None:
+def _decode_error_reply(exc: ApplicationError, tg_deps: TelegramDeps) -> str | None:
+    strings = tg_deps.strings
+    if isinstance(exc, UserQuotaExhausted):
+        reset = format_reset_hhmm(exc.resets_at, str(tg_deps.display_timezone))
+        return load_limits_catalog().user_quota_message(reset)
+    if isinstance(exc, ServiceBudgetExhausted):
+        reset = format_reset_hhmm(exc.resets_at, str(tg_deps.display_timezone))
+        return load_limits_catalog().service_budget_message(reset)
     mapping: tuple[tuple[type[ApplicationError], str], ...] = (
         (ScenarioBusy, strings.decode_busy),
-        (ScenarioQuotaExceeded, strings.decode_quota),
         (IncomingTextTooShort, strings.decode_too_short),
         (IncomingTextTooLong, strings.decode_too_long),
         (InvalidGenerationOutput, strings.decode_invalid),

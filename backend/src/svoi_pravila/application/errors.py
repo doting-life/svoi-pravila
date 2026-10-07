@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 
 from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
@@ -18,6 +18,14 @@ class UnavailableKind(StrEnum):
     AUTH = "auth"
     SERVER = "server"
     NETWORK = "network"
+
+
+class CacheErrorKind(StrEnum):
+    """C0 classifier for Valkey/cache failures (no Redis exception text)."""
+
+    NETWORK = "network"
+    TIMEOUT = "timeout"
+    SERVER = "server"
 
 
 class InvalidOutputReason(StrEnum):
@@ -42,6 +50,14 @@ class InvalidOutputReason(StrEnum):
 
 class ApplicationError(Exception):
     """Base class for application errors."""
+
+
+class CacheUnavailable(ApplicationError):
+    """Valkey operation failed; LLM paths fail closed as unavailable."""
+
+    def __init__(self, kind: CacheErrorKind) -> None:
+        self.kind = kind
+        super().__init__(kind.value)
 
 
 class NotFound(ApplicationError):
@@ -165,8 +181,20 @@ class ScenarioBusy(ApplicationError):
     """A decode (or other scenario) is already in flight for this user."""
 
 
-class ScenarioQuotaExceeded(ApplicationError):
-    """The per-user scenario quota window is exhausted."""
+class UserQuotaExhausted(ApplicationError):
+    """The per-user daily quota class is exhausted (ADR-0009)."""
+
+    def __init__(self, *, resets_at: datetime) -> None:
+        self.resets_at = resets_at
+        super().__init__("user quota exhausted")
+
+
+class ServiceBudgetExhausted(ApplicationError):
+    """The global daily LLM token budget is exhausted (ADR-0009)."""
+
+    def __init__(self, *, resets_at: datetime) -> None:
+        self.resets_at = resets_at
+        super().__init__("service budget exhausted")
 
 
 class IncomingTextTooShort(ApplicationError):
@@ -221,7 +249,8 @@ class InvalidGenerationOutput(ApplicationError):
 
 
 InlineProduceError = (
-    ScenarioQuotaExceeded
+    UserQuotaExhausted
+    | ServiceBudgetExhausted
     | GenerationUnavailable
     | GenerationRefusedByProvider
     | InvalidGenerationOutput

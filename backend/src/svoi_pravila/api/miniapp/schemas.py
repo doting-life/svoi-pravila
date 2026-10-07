@@ -179,7 +179,6 @@ class SuggestFromDecodeResponse(BaseModel):
         "none",
         "unavailable",
         "crisis",
-        "quota_exceeded",
         "pending_exists",
     ]
     suggestion: SuggestionItem | None = None

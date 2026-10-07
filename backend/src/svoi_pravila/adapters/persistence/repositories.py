@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import Select, delete, func, or_, select
+from sqlalchemy import Select, delete, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
@@ -36,6 +37,7 @@ from svoi_pravila.domain.contact import Contact
 from svoi_pravila.domain.enums import (
     ConsentKind,
     Firmness,
+    LimitKind,
     RelationshipKind,
     RuleCategory,
     RuleStatus,
@@ -613,6 +615,7 @@ class SqlAlchemyUsageEventRepository:
             variant_firmness=None
             if row.variant_firmness is None
             else Firmness(row.variant_firmness),
+            limit_kind=None if row.limit_kind is None else LimitKind(row.limit_kind),
         )
 
     async def get(self, event_id: UsageEventId) -> UsageEvent | None:
@@ -644,6 +647,7 @@ class SqlAlchemyUsageEventRepository:
             variant_firmness=(
                 None if event.variant_firmness is None else event.variant_firmness.value
             ),
+            limit_kind=None if event.limit_kind is None else event.limit_kind.value,
         )
         self._session.add(row)
         self._registry.register(UsageEventRow, event.id, row)
@@ -654,6 +658,25 @@ class SqlAlchemyUsageEventRepository:
             delete(UsageEventRow).where(UsageEventRow.user_pseudonym == user_pseudonym)
         )
         await flush_or_raise(self._session)
+
+    async def sum_billable_for_day(self, day: date, timezone: str) -> int:
+        """Sum billable tokens whose ``occurred_at`` falls in the product day."""
+        result = await self._session.execute(
+            text(
+                """
+                SELECT COALESCE(SUM(billable_tokens), 0)::bigint AS total
+                FROM usage_events
+                WHERE occurred_at >= timezone(:tz, CAST(:day AS timestamp without time zone))
+                  AND occurred_at < timezone(
+                      :tz,
+                      CAST(:day AS timestamp without time zone) + interval '1 day'
+                  )
+                """
+            ),
+            {"day": day, "tz": timezone},
+        )
+        total = result.scalar_one()
+        return int(total)
 
 
 class SqlAlchemyRuleSuggestionRepository:

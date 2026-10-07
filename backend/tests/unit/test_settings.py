@@ -7,9 +7,11 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr, ValidationError
 
+from svoi_pravila.bootstrap import load_settings
 from svoi_pravila.config import (
     DatabaseSettings,
     Environment,
+    LlmDailyTokenBudgetMissingError,
     LlmToolSettings,
     LogLevel,
     Settings,
@@ -152,6 +154,7 @@ def _set_base_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SP_GIGACHAT_TIMEOUT_SECONDS", "5")
     monkeypatch.setenv("SP_GIGACHAT_MAX_RETRIES", "0")
     monkeypatch.setenv("SP_PSEUDONYM_PEPPER", _PEPPER)
+    monkeypatch.setenv("SP_LLM_DAILY_TOKEN_BUDGET", "20000")
     monkeypatch.setenv("SP_TELEGRAM_UPDATES_MODE", "disabled")
     monkeypatch.delenv("SP_TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("SP_TELEGRAM_WEBHOOK_BASE_URL", raising=False)
@@ -351,12 +354,23 @@ def test_rate_limit_and_lifecycle_defaults() -> None:
     assert settings.telegram_dedup_ttl_seconds == 300
     assert settings.telegram_shutdown_grace_seconds == 10.0
     assert settings.inline_min_chars == 8
-    assert settings.inline_per_hour == 30
+    assert settings.quota_inline_per_day == 300
+    assert settings.quota_decode_per_day == 40
+    assert settings.llm_daily_token_budget == 20_000
     assert settings.inline_deadline_seconds == 8.0
     assert settings.inline_debounce_ms == 600
     assert settings.inline_cache_seconds == 30
     assert settings.inline_reuse_max_entries == 10_000
     assert settings.prepared_result_ttl_seconds == 600
+
+
+@pytest.mark.unit
+def test_load_settings_requires_llm_daily_token_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SP_ENVIRONMENT", "test")
+    _set_base_env(monkeypatch)
+    monkeypatch.delenv("SP_LLM_DAILY_TOKEN_BUDGET", raising=False)
+    with pytest.raises(LlmDailyTokenBudgetMissingError):
+        load_settings()
 
 
 @pytest.mark.unit

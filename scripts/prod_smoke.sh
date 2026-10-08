@@ -8,7 +8,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-# shellcheck disable=SC1091
+# shellcheck source=scripts/image-pins.env
 source "$ROOT/scripts/image-pins.env"
 
 PROJECT="${PROD_SMOKE_PROJECT:-svoi-pravila-prod-smoke}"
@@ -16,6 +16,8 @@ DOMAIN="svoi.localhost"
 EXPECTED_HSTS="max-age=31536000; includeSubDomains"
 RELEASE_SHA="0000000000000000000000000000000000000000"
 OFFSITE_WARN="backup: offsite not configured (local copy only)"
+BACKUP_UID=1500
+BACKUP_MODE=600
 
 if [[ -z "${CI_TMPDIR:-}" ]]; then
   TMP="$(mktemp -d "${TMPDIR:-/tmp}/svoi-pravila-prod-smoke.XXXXXX")"
@@ -26,10 +28,12 @@ ENV_FILE="${TMP}/env"
 RELEASE_ENV="${TMP}/release.env"
 STUB_DIR="${TMP}/stub"
 BACKUPS_DIR="${TMP}/backups"
-ETC_DIR="${TMP}/etc-svoi-pravila"
+BACKUP_REMOTE_DIR="${TMP}/backup-remote"
 # Offsite target must live under the /backups bind so rclone inside the container can see it.
 OFFSITE_DIR="${BACKUPS_DIR}/.offsite-sp"
-mkdir -p "$STUB_DIR" "$BACKUPS_DIR" "$ETC_DIR" "$OFFSITE_DIR"
+mkdir -p "$STUB_DIR" "$BACKUPS_DIR" "$BACKUP_REMOTE_DIR" "$OFFSITE_DIR"
+# Container runs as UID 1500; make the bind writable without requiring host root chown.
+chmod 0777 "$BACKUPS_DIR"
 export SP_ENV_FILE="$ENV_FILE"
 
 compose=(
@@ -146,7 +150,7 @@ SMOKE_HTTPS_PORT=${HTTPS_PORT}
 SMOKE_STUB_DIR=${STUB_DIR}
 SMOKE_CERTIFI_BUNDLE=${CERTIFI_BUNDLE}
 SMOKE_BACKUPS_DIR=${BACKUPS_DIR}
-SMOKE_ETC_DIR=${ETC_DIR}
+SMOKE_BACKUP_REMOTE_DIR=${BACKUP_REMOTE_DIR}
 EOF
 
 PATH_SECRET="$(env_value SP_TELEGRAM_WEBHOOK_PATH_SECRET)"
@@ -255,10 +259,24 @@ done
   || fail "network edge must not be internal"
 echo "prod-smoke: isolation_ok"
 
+prepare_backup_dirs() {
+  mkdir -p "${BACKUPS_DIR}/daily" "${BACKUPS_DIR}/monthly" "${BACKUPS_DIR}/pre-release" \
+    "${OFFSITE_DIR}/svoi-pravila/daily" "${OFFSITE_DIR}/svoi-pravila/monthly" \
+    "${OFFSITE_DIR}/svoi-pravila/pre-release"
+  chmod 0777 "$BACKUPS_DIR" \
+    "${BACKUPS_DIR}/daily" "${BACKUPS_DIR}/monthly" "${BACKUPS_DIR}/pre-release" \
+    "$OFFSITE_DIR" \
+    "${OFFSITE_DIR}/svoi-pravila" \
+    "${OFFSITE_DIR}/svoi-pravila/daily" \
+    "${OFFSITE_DIR}/svoi-pravila/monthly" \
+    "${OFFSITE_DIR}/svoi-pravila/pre-release"
+}
+
 seed_named_dumps() {
   local target_dir="$1" count="$2" prefix="$3"
   local i stamp
   mkdir -p "$target_dir"
+  chmod 0777 "$target_dir"
   for ((i = 1; i <= count; i++)); do
     stamp="$(printf '%s%02dT000000Z' "$prefix" "$i")"
     # Encrypted garbage is enough for retention prune; restore-verify uses real dumps.
@@ -279,14 +297,53 @@ decrypt_dump_ok() {
     || fail "age decrypt failed for ${path}"
 }
 
+dump_basenames() {
+  local dir="$1"
+  local -a files=()
+  local f
+  shopt -s nullglob
+  files=("${dir}"/svoi-pravila-*.dump.age)
+  shopt -u nullglob
+  for f in "${files[@]}"; do
+    basename "$f"
+  done | sort
+}
+
 count_age() {
-  find "$1" -maxdepth 1 -type f -name '*.dump.age' 2>/dev/null | wc -l | tr -d ' '
+  local dir="$1"
+  local -a files=()
+  shopt -s nullglob
+  files=("${dir}"/svoi-pravila-*.dump.age)
+  shopt -u nullglob
+  printf '%s\n' "${#files[@]}"
+}
+
+newest_dump_basename() {
+  local dir="$1"
+  dump_basenames "$dir" | tail -n 1
+}
+
+first_dump_basename() {
+  local dir="$1"
+  dump_basenames "$dir" | head -n 1
+}
+
+assert_dump_owner_mode() {
+  # Assert inside the container: Docker Desktop remaps UIDs on the host bind.
+  local rel="$1"
+  local got
+  got="$("${compose[@]}" run --rm -T --no-deps --entrypoint stat backup \
+    -c '%u %a' "/backups/${rel}")"
+  got="$(printf '%s' "$got" | tr -d '\r')"
+  [[ "$got" == "${BACKUP_UID} ${BACKUP_MODE}" ]] \
+    || fail "expected uid=${BACKUP_UID} mode=${BACKUP_MODE} for /backups/${rel}, got '${got}'"
+  echo "prod-smoke: dump_owner_mode_ok uid=${BACKUP_UID} mode=${BACKUP_MODE} path=/backups/${rel}"
 }
 
 echo "prod-smoke: backups segment 1 (local only, no rclone.conf)"
-rm -rf "${BACKUPS_DIR:?}"/*
-mkdir -p "${BACKUPS_DIR}/daily" "${BACKUPS_DIR}/monthly" "${BACKUPS_DIR}/pre-release"
-rm -f "${ETC_DIR}/rclone.conf"
+rm -rf "${BACKUPS_DIR:?}/"*
+prepare_backup_dirs
+rm -f "${BACKUP_REMOTE_DIR}/rclone.conf"
 backup_log="${TMP}/backup-local.log"
 if ! "${compose[@]}" run --rm -T backup >"$backup_log" 2>&1; then
   cat "$backup_log" >&2
@@ -297,12 +354,14 @@ grep -F "$OFFSITE_WARN" "$backup_log" >/dev/null \
 "${compose[@]}" run --rm -T -e "SP_RELEASE_SHA=${RELEASE_SHA}" backup --pre-release \
   >"${TMP}/backup-prerelease.log" 2>&1 \
   || { cat "${TMP}/backup-prerelease.log" >&2; fail "pre-release backup (local-only) failed"; }
-daily_local="$(ls -1 "${BACKUPS_DIR}/daily" | grep '\.dump\.age$' | head -n 1 || true)"
-pre_local="$(ls -1 "${BACKUPS_DIR}/pre-release" | grep -- "-${RELEASE_SHA}\\.dump\\.age$" | head -n 1 || true)"
-monthly_local="$(ls -1 "${BACKUPS_DIR}/monthly" | grep '\.dump\.age$' | head -n 1 || true)"
+daily_local="$(first_dump_basename "${BACKUPS_DIR}/daily")"
+pre_local="$(dump_basenames "${BACKUPS_DIR}/pre-release" | grep -- "-${RELEASE_SHA}\\.dump\\.age$" | head -n 1 || true)"
+# grep exit 1 means no match — fail below if empty.
+monthly_local="$(first_dump_basename "${BACKUPS_DIR}/monthly")"
 [[ -n "$daily_local" ]] || fail "no local daily backup object"
 [[ -n "$pre_local" ]] || fail "no local pre-release backup object"
 [[ -n "$monthly_local" ]] || fail "no local monthly backup object"
+assert_dump_owner_mode "daily/${daily_local}"
 decrypt_dump_ok "${BACKUPS_DIR}/daily/${daily_local}"
 decrypt_dump_ok "${BACKUPS_DIR}/pre-release/${pre_local}"
 "${compose[@]}" run --rm -T --no-deps \
@@ -315,14 +374,12 @@ echo "prod-smoke: backups segment 2 (local rclone remote sp)"
 rm -rf "${BACKUPS_DIR:?}/"*
 # rclone type=local uses the path after "sp:" as a host path inside the container.
 OFFSITE_REMOTE_PATH="/backups/.offsite-sp/svoi-pravila"
-mkdir -p "${BACKUPS_DIR}/daily" "${BACKUPS_DIR}/monthly" "${BACKUPS_DIR}/pre-release" \
-  "${OFFSITE_DIR}/svoi-pravila/daily" "${OFFSITE_DIR}/svoi-pravila/monthly" \
-  "${OFFSITE_DIR}/svoi-pravila/pre-release"
-cat >"${ETC_DIR}/rclone.conf" <<'EOF'
+prepare_backup_dirs
+cat >"${BACKUP_REMOTE_DIR}/rclone.conf" <<'EOF'
 [sp]
 type = local
 EOF
-chmod 0600 "${ETC_DIR}/rclone.conf"
+chmod 0600 "${BACKUP_REMOTE_DIR}/rclone.conf"
 # Seed past retention so the next run prunes to keep counts 30 / 12 / 10.
 seed_named_dumps "${BACKUPS_DIR}/daily" 30 "202001"
 seed_named_dumps "${BACKUPS_DIR}/monthly" 12 "202002"
@@ -356,9 +413,11 @@ grep -F "$OFFSITE_WARN" "${TMP}/backup-offsite.log" >/dev/null \
 [[ "$(count_age "${OFFSITE_DIR}/svoi-pravila/pre-release")" == "10" ]] \
   || fail "offsite pre-release retention expected 10"
 
-newest_daily="$(ls -1 "${BACKUPS_DIR}/daily" | grep '\.dump\.age$' | sort | tail -n 1)"
-newest_offsite="$(ls -1 "${OFFSITE_DIR}/svoi-pravila/daily" | grep '\.dump\.age$' | sort | tail -n 1)"
-[[ "$newest_daily" == "$newest_offsite" ]] || fail "local and offsite newest daily names differ"
+newest_daily="$(newest_dump_basename "${BACKUPS_DIR}/daily")"
+newest_offsite="$(newest_dump_basename "${OFFSITE_DIR}/svoi-pravila/daily")"
+[[ -n "$newest_daily" && "$newest_daily" == "$newest_offsite" ]] \
+  || fail "local and offsite newest daily names differ"
+assert_dump_owner_mode "daily/${newest_daily}"
 decrypt_dump_ok "${BACKUPS_DIR}/daily/${newest_daily}"
 decrypt_dump_ok "${OFFSITE_DIR}/svoi-pravila/daily/${newest_offsite}"
 "${compose[@]}" run --rm -T --no-deps \

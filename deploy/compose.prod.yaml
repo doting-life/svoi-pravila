@@ -232,7 +232,7 @@ services:
     profiles: ["backup"]
     image: ${BACKUP_IMAGE}
     restart: "no"
-    user: "0:0"
+    user: "1500:1500"
     environment:
       PGHOST: postgres
       PGUSER: ${POSTGRES_USER}
@@ -241,10 +241,10 @@ services:
       SP_BACKUP_AGE_RECIPIENT: ${SP_BACKUP_AGE_RECIPIENT}
       SP_BACKUP_REMOTE_PATH: ${SP_BACKUP_REMOTE_PATH:-svoi-pravila}
       SP_RELEASE_SHA: ${SP_RELEASE_SHA:-}
-      RCLONE_CONFIG: /etc/svoi-pravila/rclone.conf
+      RCLONE_CONFIG: /etc/svoi-pravila/backup-remote/rclone.conf
     volumes:
       - /srv/svoi-pravila/backups:/backups
-      - /etc/svoi-pravila:/etc/svoi-pravila:ro
+      - /etc/svoi-pravila/backup-remote:/etc/svoi-pravila/backup-remote:ro
     networks:
       - data
       - egress

@@ -26,7 +26,7 @@
 - `/srv/svoi-pravila/backups/` — локальные зашифрованные бэкапы (`daily/`, `monthly/`, `pre-release/`, режим 700).
 - `/etc/svoi-pravila/env` — все настройки и секреты (режим 600).
 - `/etc/svoi-pravila/ghcr-token` — токен `read:packages` для скачивания образов (режим 600).
-- `/etc/svoi-pravila/rclone.conf` — по желанию: внешняя копия бэкапов (режим 600; remote `sp`).
+- `/etc/svoi-pravila/backup-remote/` — каталог только для опционального `rclone.conf` (режим 700; контейнер backup монтирует его read-only, без остальных секретов).
 
 Важно знать:
 
@@ -64,14 +64,14 @@ sudo SP_DEPLOY_SSH_PUBKEY='ssh-ed25519 AAAA... вы@ноутбук' \
 
 Скрипт:
 
-- создаёт пользователя `deploy` с вашим SSH-ключом и добавляет его в группу `sudo`;
+- создаёт пользователя `deploy` с фиксированным UID/GID `1500:1500` и вашим SSH-ключом, добавляет его в группу `sudo` (если пользователь уже есть с другим UID — останавливается);
 - если у `deploy` ещё нет пароля, запрашивает его интерактивно (пароль только для `sudo`; SSH остаётся по ключу). Без TTY скрипт останавливается до hardening SSH;
 - закрывает SSH: вход только по ключу, только `deploy`, без root — только после ключа и пароля sudo;
 - включает ufw: открыты 22, 80, 443;
 - включает автоматические обновления безопасности (перезагрузка в 04:30 UTC при необходимости; контейнеры поднимаются сами);
 - ставит Docker из официального apt-репозитория (отпечаток ключа проверяется);
 - ограничивает размер журналов Docker и journald, ставит часовой пояс UTC;
-- создаёт `/srv/svoi-pravila`, `/srv/svoi-pravila/backups` (режим 700, владелец `deploy`) и `/etc/svoi-pravila`;
+- создаёт `/srv/svoi-pravila`, `/srv/svoi-pravila/backups` (режим 700, владелец `deploy` / 1500:1500), `/etc/svoi-pravila` и `/etc/svoi-pravila/backup-remote` (режим 700);
 - генерирует read-only deploy-ключ для чтения репозитория. Если репозиторий ещё недоступен, скрипт печатает публичный ключ и завершается с кодом 3. Добавьте ключ в GitHub (Settings, Deploy keys, без права записи) и запустите скрипт ещё раз;
 - копирует `deploy/env.prod.example` в `/etc/svoi-pravila/env` (если файла нет) и создаёт пустой `/etc/svoi-pravila/ghcr-token`;
 - ставит и включает `svoi-pravila-backup.timer` (каждый день 03:30 UTC; до первого успешного релиза unit пропускается через `ExecCondition`).
@@ -188,7 +188,7 @@ nano /etc/svoi-pravila/env
 
 ```bash
 scp rclone.conf deploy@<host>:/tmp/rclone.conf
-ssh deploy@<host> 'sudo install -m 600 -o root -g deploy /tmp/rclone.conf /etc/svoi-pravila/rclone.conf && rm /tmp/rclone.conf'
+ssh deploy@<host> 'install -m 600 -o deploy -g deploy /tmp/rclone.conf /etc/svoi-pravila/backup-remote/rclone.conf && rm /tmp/rclone.conf'
 ```
 
 Примеры фрагментов (создайте через `rclone config` на Mac, затем перенесите файл):
@@ -210,7 +210,7 @@ scope = drive.file
 token = {"access_token":"...","token_type":"bearer","refresh_token":"...","expiry":"..."}
 ```
 
-Префикс пути задаётся `SP_BACKUP_REMOTE_PATH` (по умолчанию `svoi-pravila`). Без файла `rclone.conf` бэкап пишет только локально и пишет предупреждение `offsite not configured (local copy only)`.
+Префикс пути задаётся `SP_BACKUP_REMOTE_PATH` (по умолчанию `svoi-pravila`). Без файла `/etc/svoi-pravila/backup-remote/rclone.conf` бэкап пишет только локально и пишет предупреждение `offsite not configured (local copy only)`. Контейнер backup работает от UID 1500 без root и без доступа к `/etc/svoi-pravila/env`.
 
 ### Проверка восстановления (раз в месяц)
 

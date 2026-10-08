@@ -78,6 +78,7 @@ on_exit() {
   if [[ "$rollout_started" -eq 1 ]]; then
     {
       echo "release: FAILED for ${sha} (exit ${rc}). Recent service logs:"
+      # Best-effort diagnostics; must not mask the original release failure.
       compose logs --no-color --tail 40 api migrate miniapp || true
       echo "release: roll back to the previous release with:"
       echo "release:   ${DEPLOY_DIR}/rollback.sh"

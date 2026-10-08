@@ -13,8 +13,11 @@
 set -euo pipefail
 
 DEPLOY_USER="deploy"
+DEPLOY_UID=1500
+DEPLOY_GID=1500
 APP_DIR="/srv/svoi-pravila"
 ETC_DIR="/etc/svoi-pravila"
+BACKUP_REMOTE_DIR="${ETC_DIR}/backup-remote"
 REPO_DIR="${APP_DIR}/repo"
 REPO_KEY_NAME="svoi_pravila_repo"
 GITHUB_HOST_KEY="github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
@@ -69,9 +72,23 @@ install_packages() {
 }
 
 setup_deploy_user() {
-  if ! id "$DEPLOY_USER" >/dev/null 2>&1; then
-    log "creating user ${DEPLOY_USER}"
-    adduser --disabled-password --gecos "" "$DEPLOY_USER" >/dev/null
+  local existing_uid existing_gid
+  if getent group "$DEPLOY_USER" >/dev/null; then
+    existing_gid="$(getent group "$DEPLOY_USER" | cut -d: -f3)"
+    [[ "$existing_gid" == "$DEPLOY_GID" ]] \
+      || die "group ${DEPLOY_USER} exists with gid ${existing_gid}, expected ${DEPLOY_GID}"
+  else
+    groupadd --gid "$DEPLOY_GID" "$DEPLOY_USER"
+  fi
+  if id "$DEPLOY_USER" >/dev/null 2>&1; then
+    existing_uid="$(id -u "$DEPLOY_USER")"
+    existing_gid="$(id -g "$DEPLOY_USER")"
+    [[ "$existing_uid" == "$DEPLOY_UID" && "$existing_gid" == "$DEPLOY_GID" ]] \
+      || die "user ${DEPLOY_USER} exists with uid:gid ${existing_uid}:${existing_gid}, expected ${DEPLOY_UID}:${DEPLOY_GID}"
+  else
+    log "creating user ${DEPLOY_USER} (${DEPLOY_UID}:${DEPLOY_GID})"
+    adduser --disabled-password --gecos "" --uid "$DEPLOY_UID" --gid "$DEPLOY_GID" \
+      "$DEPLOY_USER" >/dev/null
   fi
   local ssh_dir="/home/${DEPLOY_USER}/.ssh"
   install -d -m 0700 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$ssh_dir"
@@ -216,6 +233,7 @@ setup_directories() {
     "${APP_DIR}/backups/monthly" \
     "${APP_DIR}/backups/pre-release"
   install -d -m 0750 -o root -g "$DEPLOY_USER" "$ETC_DIR"
+  install -d -m 0700 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$BACKUP_REMOTE_DIR"
 }
 
 as_deploy() {

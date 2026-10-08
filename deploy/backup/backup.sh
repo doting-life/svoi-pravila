@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # Encrypted PostgreSQL backup: pg_dump -Fc | age → local /backups (atomic).
-# Optional offsite copy via rclone remote "sp" when /etc/svoi-pravila/rclone.conf exists.
-# Plaintext never touches disk. Runs inside the backup image.
+# Optional offsite copy via rclone remote "sp" when backup-remote/rclone.conf exists.
+# Plaintext never touches disk. Runs inside the backup image as UID 1500.
 set -euo pipefail
+umask 077
 
 KEEP_DAILY=30
 KEEP_MONTHLY=12
 KEEP_PRE_RELEASE=10
 LOCAL_ROOT="${SP_BACKUP_LOCAL_ROOT:-/backups}"
-RCLONE_CONF="${RCLONE_CONFIG:-/etc/svoi-pravila/rclone.conf}"
+RCLONE_CONF="${RCLONE_CONFIG:-/etc/svoi-pravila/backup-remote/rclone.conf}"
 NAME_RE='^svoi-pravila-[0-9]{8}T[0-9]{6}Z(-[0-9a-f]{40})?\.dump\.age$'
 AGE_RECIPIENT_RE='^age1[02-9ac-hj-np-z]{58}$'
 
@@ -21,10 +22,11 @@ Usage: backup.sh [--pre-release]
   --pre-release    backup taken right before a release into /backups/pre-release;
                    the release sha is read from SP_RELEASE_SHA when set.
 
-  When /etc/svoi-pravila/rclone.conf defines remote "sp", the same object is also
-  copied to sp:${SP_BACKUP_REMOTE_PATH}/<dir>/ with the same retention. If the
-  file is absent, a warning is logged and the run succeeds (local copy only).
-  A configured offsite that fails makes the run fail (local copy is kept).
+  When /etc/svoi-pravila/backup-remote/rclone.conf defines remote "sp", the same
+  object is also copied to sp:${SP_BACKUP_REMOTE_PATH}/<dir>/ with the same
+  retention. If the file is absent, a warning is logged and the run succeeds
+  (local copy only). A configured offsite that fails makes the run fail
+  (local copy is kept).
 
 Required environment: PGHOST PGUSER PGPASSWORD PGDATABASE
                       SP_BACKUP_AGE_RECIPIENT
@@ -43,6 +45,42 @@ warn() {
 die() {
   printf 'backup: %s\n' "$*" >&2
   exit 1
+}
+
+list_local_dumps() {
+  local list_dir="$1"
+  local -a files=()
+  local f
+  # BusyBox find has no -printf; list with bash globs (nullglob).
+  shopt -s nullglob
+  files=("${list_dir}"/svoi-pravila-*.dump.age)
+  shopt -u nullglob
+  for f in "${files[@]}"; do
+    basename "$f"
+  done | sort
+}
+
+# Lists object names on a remote prefix. An empty/missing prefix (first offsite run)
+# is an expected case and yields no names.
+list_remote_dumps() {
+  local remote_base="$1"
+  local tmp err rc
+  tmp="$(mktemp)"
+  err="$(mktemp)"
+  rc=0
+  rclone lsf --files-only "$remote_base" >"$tmp" 2>"$err" || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    sort "$tmp"
+    rm -f "$tmp" "$err"
+    return 0
+  fi
+  if grep -qiE 'directory not found|didn.t find section|not found' "$err"; then
+    rm -f "$tmp" "$err"
+    return 0
+  fi
+  cat "$err" >&2
+  rm -f "$tmp" "$err"
+  return "$rc"
 }
 
 mode=daily
@@ -105,13 +143,7 @@ pg_dump --format=custom --no-password \
 chmod 0600 "$tmp_path"
 mv -f "$tmp_path" "$final_path"
 chmod 0600 "$final_path"
-# Preserve host ownership of the bind mount when running as root in the container.
-if [[ "$(id -u)" -eq 0 ]]; then
-  chown --reference="$LOCAL_ROOT" "$final_path" 2>/dev/null \
-    || chown --reference="$local_dir" "$final_path" 2>/dev/null \
-    || true
-fi
-size="$(stat -c %s "$final_path" 2>/dev/null || stat -f %z "$final_path")"
+size="$(stat -c %s "$final_path")"
 [[ "$size" =~ ^[0-9]+$ && "$size" -gt 0 ]] || die "local dump is missing or empty"
 log "wrote ${dir}/${name} (${size} bytes)"
 
@@ -134,7 +166,7 @@ prune_local() {
     if [[ "$name_item" =~ $NAME_RE ]]; then
       names+=("$name_item")
     fi
-  done < <(ls -1 "${LOCAL_ROOT}/${prune_dir}" 2>/dev/null | sort || true)
+  done < <(list_local_dumps "${LOCAL_ROOT}/${prune_dir}")
   local excess=$((${#names[@]} - keep))
   if [[ "$excess" -le 0 ]]; then
     return 0
@@ -156,7 +188,7 @@ prune_remote() {
     if [[ "$name_item" =~ $NAME_RE ]]; then
       names+=("$name_item")
     fi
-  done < <(rclone lsf --files-only "$remote_base" 2>/dev/null | sort || true)
+  done < <(list_remote_dumps "$remote_base")
   local excess=$((${#names[@]} - keep))
   if [[ "$excess" -le 0 ]]; then
     return 0
@@ -184,9 +216,6 @@ if [[ "$mode" == "daily" ]]; then
   if [[ -z "$month_existing" ]]; then
     cp -p "$final_path" "${LOCAL_ROOT}/monthly/${name}"
     chmod 0600 "${LOCAL_ROOT}/monthly/${name}"
-    if [[ "$(id -u)" -eq 0 ]]; then
-      chown --reference="$LOCAL_ROOT" "${LOCAL_ROOT}/monthly/${name}" 2>/dev/null || true
-    fi
     log "kept ${name} as the monthly backup for ${month}"
   fi
   prune_local daily "$KEEP_DAILY"
@@ -199,8 +228,9 @@ if [[ "$offsite_enabled" -eq 1 ]]; then
   copy_offsite "$dir" "$name"
   if [[ "$mode" == "daily" ]]; then
     if [[ -f "${LOCAL_ROOT}/monthly/${name}" ]]; then
-      month_remote="$(rclone lsf --files-only --include "svoi-pravila-${month}*.dump.age" \
-        "sp:${remote_path}/monthly" 2>/dev/null || true)"
+      month_remote="$(list_remote_dumps "sp:${remote_path}/monthly" \
+        | grep -E "^svoi-pravila-${month}" || true)"
+      # grep exit 1 means no match — expected when this month has no remote copy yet.
       if [[ -z "$month_remote" ]]; then
         copy_offsite monthly "$name"
       fi

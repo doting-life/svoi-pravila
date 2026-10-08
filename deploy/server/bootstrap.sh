@@ -13,8 +13,11 @@
 set -euo pipefail
 
 DEPLOY_USER="deploy"
+DEPLOY_UID=1500
+DEPLOY_GID=1500
 APP_DIR="/srv/svoi-pravila"
 ETC_DIR="/etc/svoi-pravila"
+BACKUP_REMOTE_DIR="${ETC_DIR}/backup-remote"
 REPO_DIR="${APP_DIR}/repo"
 REPO_KEY_NAME="svoi_pravila_repo"
 GITHUB_HOST_KEY="github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
@@ -69,9 +72,23 @@ install_packages() {
 }
 
 setup_deploy_user() {
-  if ! id "$DEPLOY_USER" >/dev/null 2>&1; then
-    log "creating user ${DEPLOY_USER}"
-    adduser --disabled-password --gecos "" "$DEPLOY_USER" >/dev/null
+  local existing_uid existing_gid
+  if getent group "$DEPLOY_USER" >/dev/null; then
+    existing_gid="$(getent group "$DEPLOY_USER" | cut -d: -f3)"
+    [[ "$existing_gid" == "$DEPLOY_GID" ]] \
+      || die "group ${DEPLOY_USER} exists with gid ${existing_gid}, expected ${DEPLOY_GID}"
+  else
+    groupadd --gid "$DEPLOY_GID" "$DEPLOY_USER"
+  fi
+  if id "$DEPLOY_USER" >/dev/null 2>&1; then
+    existing_uid="$(id -u "$DEPLOY_USER")"
+    existing_gid="$(id -g "$DEPLOY_USER")"
+    [[ "$existing_uid" == "$DEPLOY_UID" && "$existing_gid" == "$DEPLOY_GID" ]] \
+      || die "user ${DEPLOY_USER} exists with uid:gid ${existing_uid}:${existing_gid}, expected ${DEPLOY_UID}:${DEPLOY_GID}"
+  else
+    log "creating user ${DEPLOY_USER} (${DEPLOY_UID}:${DEPLOY_GID})"
+    adduser --disabled-password --gecos "" --uid "$DEPLOY_UID" --gid "$DEPLOY_GID" \
+      "$DEPLOY_USER" >/dev/null
   fi
   local ssh_dir="/home/${DEPLOY_USER}/.ssh"
   install -d -m 0700 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$ssh_dir"
@@ -82,6 +99,25 @@ setup_deploy_user() {
     printf '%s\n' "$SP_DEPLOY_SSH_PUBKEY" >>"${ssh_dir}/authorized_keys"
     log "authorized the deploy SSH key"
   fi
+  usermod -aG sudo "$DEPLOY_USER"
+  log "added ${DEPLOY_USER} to the sudo group"
+}
+
+ensure_deploy_sudo_password() {
+  # passwd -S second field: P = password set, L/NP/LK = locked or empty.
+  local status
+  status="$(passwd -S "$DEPLOY_USER" 2>/dev/null | awk '{ print $2 }')"
+  if [[ "$status" == "P" ]]; then
+    return 0
+  fi
+  if [[ -t 0 ]]; then
+    log "set a password for ${DEPLOY_USER} (sudo only; SSH stays key-only)"
+    passwd "$DEPLOY_USER"
+  else
+    die "deploy has no sudo password; re-run bootstrap with a TTY so passwd can run before sshd hardening"
+  fi
+  status="$(passwd -S "$DEPLOY_USER" 2>/dev/null | awk '{ print $2 }')"
+  [[ "$status" == "P" ]] || die "deploy sudo password was not set"
 }
 
 harden_sshd() {
@@ -191,7 +227,13 @@ setup_time() {
 setup_directories() {
   install -d -m 0750 -o "$DEPLOY_USER" -g "$DEPLOY_USER" \
     "$APP_DIR" "${APP_DIR}/releases" "${APP_DIR}/state"
+  install -d -m 0700 -o "$DEPLOY_USER" -g "$DEPLOY_USER" \
+    "${APP_DIR}/backups" \
+    "${APP_DIR}/backups/daily" \
+    "${APP_DIR}/backups/monthly" \
+    "${APP_DIR}/backups/pre-release"
   install -d -m 0750 -o root -g "$DEPLOY_USER" "$ETC_DIR"
+  install -d -m 0700 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$BACKUP_REMOTE_DIR"
 }
 
 as_deploy() {
@@ -253,7 +295,9 @@ install_systemd_units() {
 preflight
 install_packages
 setup_deploy_user
+ensure_deploy_sudo_password
 harden_sshd
+log "keep this session open; from a second terminal test: ssh ${DEPLOY_USER}@<host> && sudo true"
 setup_firewall
 setup_unattended_upgrades
 install_docker

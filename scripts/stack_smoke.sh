@@ -285,13 +285,14 @@ test "$edge_internal" = "false"
 metrics_internal="$(docker network inspect "$metrics_net" --format '{{.Internal}}')"
 test "$metrics_internal" = "true"
 
-"${compose[@]}" exec -T grafana sh -c '
+"${compose[@]}" exec -T grafana sh -s <<'PROBE'
 set -eu
 # BusyBox wget: TCP open then protocol failure still proves the port is reachable.
 # "bad address" / resolve failure means the hostname is not on Grafana networks.
 probe_ok() {
   host="$1"
   port="$2"
+  # wget non-zero is expected (HTTP failure after TCP connect).
   err="$(wget -T 2 -O /dev/null "http://${host}:${port}/" 2>&1 || true)"
   printf "%s\n" "$err" | grep -qiE "bad address|Name or service not known|nodename nor servname" && return 1
   printf "%s\n" "$err" | grep -qiE "connection refused" && return 1
@@ -300,6 +301,7 @@ probe_ok() {
 probe_fail() {
   host="$1"
   port="$2"
+  # wget non-zero is expected when the peer is unreachable or refuses.
   err="$(wget -T 2 -O /dev/null "http://${host}:${port}/" 2>&1 || true)"
   printf "%s\n" "$err" | grep -qiE "bad address|Name or service not known|nodename nor servname|connection refused|timed out|Network is unreachable" && return 0
   return 1
@@ -309,5 +311,5 @@ probe_ok prometheus 9090
 probe_fail api 8000
 probe_fail api 9100
 probe_fail valkey 6379
-'
+PROBE
 echo "grafana_isolation_ok"

@@ -17,6 +17,10 @@ CI_SH_PATH = ROOT / "scripts" / "ci.sh"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 CI_JOBS_RE = re.compile(r"^CI_JOBS\s*:?=\s*(.+)$", re.MULTILINE)
 JOB_FN_RE = re.compile(r"^job_([a-z0-9_]+)\s*\(\)", re.MULTILINE)
+PUBLISH_FN_BODY_RE = re.compile(
+    r"^job_publish\s*\(\)\s*\{(.*?)^\}",
+    re.MULTILINE | re.DOTALL,
+)
 INTERNAL_JOB_FNS = frozenset({"workflow", "toolchain"})
 PUBLISH_JOB = "publish"
 PUBLISH_IF = "github.event_name == 'push' && github.ref == 'refs/heads/master'"
@@ -39,6 +43,26 @@ def job_functions_from_ci_sh(text: str) -> set[str]:
     return set(JOB_FN_RE.findall(text))
 
 
+def _check_publish_function_body(ci_sh: str) -> list[str]:
+    """Require job_publish to run image-scan before the registry push."""
+    errors: list[str] = []
+    match = PUBLISH_FN_BODY_RE.search(ci_sh)
+    if match is None:
+        return [f"ci.sh missing job_{PUBLISH_JOB} body"]
+    body = match.group(1)
+    scan_at = body.find("image-scan")
+    push_at = body.find("publish push")
+    if push_at < 0:
+        push_at = body.find('make -C "$ROOT" publish')
+    if scan_at < 0:
+        errors.append(f"job_{PUBLISH_JOB} must run image-scan before publish")
+    elif push_at < 0:
+        errors.append(f"job_{PUBLISH_JOB} must contain a publish push stage")
+    elif scan_at > push_at:
+        errors.append(f"job_{PUBLISH_JOB} must run image-scan before the publish push stage")
+    return errors
+
+
 def check_job_functions(ci_sh: str, jobs: list[str]) -> list[str]:
     """Return mismatches between CI_JOBS names and job_* functions in ci.sh."""
     errors: list[str] = []
@@ -54,6 +78,8 @@ def check_job_functions(ci_sh: str, jobs: list[str]) -> list[str]:
     if extras:
         extra_names = ", ".join(sorted(f"job_{item}" for item in extras))
         errors.append(f"ci.sh has unexpected job functions: {extra_names}")
+    if PUBLISH_JOB in found:
+        errors.extend(_check_publish_function_body(ci_sh))
     return errors
 
 

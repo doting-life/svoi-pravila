@@ -1,6 +1,6 @@
 # Overlay used only by scripts/prod_smoke.sh on top of compose.prod.yaml.
 # Caddy issues a local certificate for svoi.localhost (no ACME), Telegram is an offline stub
-# reachable under the name api.telegram.org, and backups go to a local volume instead of S3.
+# reachable under the name api.telegram.org, and backups use a host bind under CI_TMPDIR.
 services:
   miniapp:
     ports: !override
@@ -34,12 +34,10 @@ services:
       - no-new-privileges:true
 
   backup:
-    user: "0:0"
+    user: "1500:1500"
     environment:
-      RCLONE_CONFIG_SP_TYPE: local
-      SP_BACKUP_REMOTE: sp:/backups
-    volumes:
-      - smoke_backups:/backups
-
-volumes:
-  smoke_backups:
+      SP_BACKUP_REMOTE_PATH: ${SP_BACKUP_REMOTE_PATH:-svoi-pravila}
+      RCLONE_CONFIG: /etc/svoi-pravila/backup-remote/rclone.conf
+    volumes: !override
+      - ${SMOKE_BACKUPS_DIR}:/backups
+      - ${SMOKE_BACKUP_REMOTE_DIR}:/etc/svoi-pravila/backup-remote:ro

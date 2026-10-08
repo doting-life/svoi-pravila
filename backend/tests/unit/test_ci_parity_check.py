@@ -78,7 +78,25 @@ job_secrets() { :; }
 job_image() { :; }
 job_stack_smoke() { :; }
 job_prod_smoke() { :; }
-job_publish() { :; }
+job_publish() {
+  run_stage publish scan make -C "$ROOT" image-scan
+  run_stage publish push make -C "$ROOT" publish
+}
+job_ownership_guard() { :; }
+"""
+
+INVALID_CI_SH_PUBLISH_NO_SCAN = """
+job_workflow() { :; }
+job_toolchain() { :; }
+job_backend() { :; }
+job_miniapp() { :; }
+job_secrets() { :; }
+job_image() { :; }
+job_stack_smoke() { :; }
+job_prod_smoke() { :; }
+job_publish() {
+  run_stage publish push make -C "$ROOT" publish
+}
 job_ownership_guard() { :; }
 """
 
@@ -323,5 +341,25 @@ def test_parity_rejects_workflow_level_packages_write() -> None:
 @pytest.mark.unit
 def test_parity_rejects_missing_publish_function() -> None:
     module = _load()
-    errors = module.check_job_functions(VALID_CI_SH.replace("job_publish() { :; }\n", ""), JOBS)
+    errors = module.check_job_functions(
+        VALID_CI_SH.replace(
+            'job_publish() {\n  run_stage publish scan make -C "$ROOT" image-scan\n'
+            '  run_stage publish push make -C "$ROOT" publish\n}\n',
+            "",
+        ),
+        JOBS,
+    )
     assert any("missing job_publish" in item for item in errors)
+
+
+@pytest.mark.unit
+def test_parity_accepts_publish_with_image_scan_before_push() -> None:
+    module = _load()
+    assert module.check_job_functions(VALID_CI_SH, JOBS) == []
+
+
+@pytest.mark.unit
+def test_parity_rejects_publish_without_image_scan() -> None:
+    module = _load()
+    errors = module.check_job_functions(INVALID_CI_SH_PUBLISH_NO_SCAN, JOBS)
+    assert any("image-scan" in item for item in errors)

@@ -1,18 +1,23 @@
 #!/usr/bin/env bash
 # Restore the newest (or a named) encrypted backup into a throw-away database and sanity-check it.
+# Default source is the local /backups directory. --remote reads from rclone remote "sp".
 # The live database is never touched. Plaintext is streamed, never written to disk.
 set -euo pipefail
 
+LOCAL_ROOT="${SP_BACKUP_LOCAL_ROOT:-/backups}"
+RCLONE_CONF="${RCLONE_CONFIG:-/etc/svoi-pravila/backup-remote/rclone.conf}"
 NAME_RE='^svoi-pravila-[0-9]{8}T[0-9]{6}Z(-[0-9a-f]{40})?\.dump\.age$'
 
 usage() {
   cat <<'EOF'
-Usage: restore-verify.sh [--dir daily|monthly|pre-release] [OBJECT_NAME]
+Usage: restore-verify.sh [--remote] [--dir daily|monthly|pre-release] [OBJECT_NAME]
 
-Defaults to the newest object in <remote>/daily.
+Defaults to the newest object in /backups/daily.
+With --remote, reads from sp:${SP_BACKUP_REMOTE_PATH}/<dir>/ (requires rclone.conf).
 
 Required environment: PGHOST PGUSER PGPASSWORD PGDATABASE
-                      SP_BACKUP_REMOTE SP_BACKUP_AGE_IDENTITY_FILE
+                      SP_BACKUP_AGE_IDENTITY_FILE
+Optional: SP_BACKUP_REMOTE_PATH (default svoi-pravila)
 EOF
 }
 
@@ -25,10 +30,54 @@ die() {
   exit 1
 }
 
+list_local_dumps() {
+  local list_dir="$1"
+  local -a files=()
+  local f
+  [[ -d "${LOCAL_ROOT}/${list_dir}" ]] \
+    || die "local backup directory ${list_dir} is missing"
+  # BusyBox find has no -printf; list with bash globs (nullglob).
+  shopt -s nullglob
+  files=("${LOCAL_ROOT}/${list_dir}"/svoi-pravila-*.dump.age)
+  shopt -u nullglob
+  for f in "${files[@]}"; do
+    basename "$f"
+  done | sort
+}
+
+# Empty/missing remote prefix is an expected first-run case and yields no names.
+list_remote_dumps() {
+  local list_dir="$1"
+  local remote_base="sp:${remote_path}/${list_dir}"
+  local tmp err rc
+  export RCLONE_CONFIG="$RCLONE_CONF"
+  tmp="$(mktemp)"
+  err="$(mktemp)"
+  rc=0
+  rclone lsf --files-only "$remote_base" >"$tmp" 2>"$err" || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    sort "$tmp"
+    rm -f "$tmp" "$err"
+    return 0
+  fi
+  if grep -qiE 'directory not found|didn.t find section|not found' "$err"; then
+    rm -f "$tmp" "$err"
+    return 0
+  fi
+  cat "$err" >&2
+  rm -f "$tmp" "$err"
+  return "$rc"
+}
+
 dir=daily
 object=""
+use_remote=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --remote)
+      use_remote=1
+      shift
+      ;;
     --dir)
       [[ $# -ge 2 ]] || die "--dir needs a value"
       dir="$2"
@@ -55,15 +104,24 @@ case "$dir" in
   *) die "--dir must be daily, monthly or pre-release" ;;
 esac
 
-for var in PGHOST PGUSER PGPASSWORD PGDATABASE SP_BACKUP_REMOTE SP_BACKUP_AGE_IDENTITY_FILE; do
+for var in PGHOST PGUSER PGPASSWORD PGDATABASE SP_BACKUP_AGE_IDENTITY_FILE; do
   [[ -n "${!var:-}" ]] || die "${var} is required"
 done
 [[ -r "$SP_BACKUP_AGE_IDENTITY_FILE" ]] || die "age identity file is not readable"
 
-remote="${SP_BACKUP_REMOTE%/}"
+remote_path="${SP_BACKUP_REMOTE_PATH:-svoi-pravila}"
+remote_path="${remote_path%/}"
+
+if [[ "$use_remote" -eq 1 ]]; then
+  [[ -r "$RCLONE_CONF" ]] || die "rclone.conf is required for --remote"
+  grep -qE '^\[sp\][[:space:]]*$' "$RCLONE_CONF" || die "rclone.conf must define remote [sp]"
+  export RCLONE_CONFIG="$RCLONE_CONF"
+  listing="$(list_remote_dumps "$dir")"
+else
+  listing="$(list_local_dumps "$dir")"
+fi
 
 if [[ -z "$object" ]]; then
-  listing="$(rclone lsf --files-only "${remote}/${dir}" | sort)"
   while IFS= read -r candidate; do
     if [[ "$candidate" =~ $NAME_RE ]]; then
       object="$candidate"
@@ -77,15 +135,23 @@ scratch="restore_verify_$(date -u +%Y%m%d%H%M%S)_$$"
 [[ "$scratch" != "$PGDATABASE" ]] || die "scratch database must differ from the live database"
 
 drop_scratch() {
-  dropdb --if-exists --force "$scratch" >/dev/null 2>&1 || true
+  # --if-exists makes a missing scratch DB a no-op (expected after a prior cleanup).
+  dropdb --if-exists --force "$scratch"
 }
 trap drop_scratch EXIT
 
 log "restoring ${dir}/${object} into ${scratch}"
 createdb "$scratch"
-rclone cat "${remote}/${dir}/${object}" \
-  | age --decrypt --identity "$SP_BACKUP_AGE_IDENTITY_FILE" \
-  | pg_restore --dbname="$scratch" --no-owner --no-acl --exit-on-error
+if [[ "$use_remote" -eq 1 ]]; then
+  rclone cat "sp:${remote_path}/${dir}/${object}" \
+    | age --decrypt --identity "$SP_BACKUP_AGE_IDENTITY_FILE" \
+    | pg_restore --dbname="$scratch" --no-owner --no-acl --exit-on-error
+else
+  [[ -r "${LOCAL_ROOT}/${dir}/${object}" ]] || die "local object ${dir}/${object} is missing"
+  age --decrypt --identity "$SP_BACKUP_AGE_IDENTITY_FILE" \
+    <"${LOCAL_ROOT}/${dir}/${object}" \
+    | pg_restore --dbname="$scratch" --no-owner --no-acl --exit-on-error
+fi
 
 revisions="$(psql --dbname="$scratch" --no-psqlrc --tuples-only --no-align \
   --command='SELECT count(*) FROM alembic_version')"

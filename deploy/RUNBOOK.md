@@ -23,8 +23,10 @@
 - `/srv/svoi-pravila/repo` — клон репозитория (compose-файл, Prometheus, дашборды Grafana, скрипты). Релиз переключает его на нужный коммит.
 - `/srv/svoi-pravila/releases/<sha>.env` — закреплённые digest образов релиза.
 - `/srv/svoi-pravila/state/` — `current`, `previous` (sha) и ссылка `current.env`.
+- `/srv/svoi-pravila/backups/` — локальные зашифрованные бэкапы (`daily/`, `monthly/`, `pre-release/`, режим 700).
 - `/etc/svoi-pravila/env` — все настройки и секреты (режим 600).
 - `/etc/svoi-pravila/ghcr-token` — токен `read:packages` для скачивания образов (режим 600).
+- `/etc/svoi-pravila/backup-remote/` — каталог только для опционального `rclone.conf` (режим 700; контейнер backup монтирует его read-only, без остальных секретов).
 
 Важно знать:
 
@@ -37,19 +39,18 @@
 
 1. VPS с Ubuntu 24.04, IPv4-адрес, SSH-доступ от root (только для первого запуска).
 2. Доменное имя и DNS-запись A (и AAAA, если есть IPv6) на адрес VPS. Без неё Caddy не получит сертификат Let's Encrypt.
-3. Бот в [@BotFather](https://t.me/BotFather): токен, Main Mini App с адресом `https://<домен>`, inline-режим, запрет добавления в группы (см. раздел «Telegram setup» в `README.md`).
+3. Бот в [@BotFather](https://t.me/BotFather): токен, Main Mini App с адресом `https://<домен>`, inline-режим, `/setinlinefeedback` Enabled (100%), запрет добавления в группы (см. раздел «Telegram setup» в `README.md`).
 4. Ключ GigaChat и решение по `SP_LLM_DAILY_TOKEN_BUDGET`.
-5. S3-совместимое хранилище для бэкапов (отдельный бакет, ключ доступа только на запись и список; удаление нужно, чтобы работала ротация копий, поэтому включите версионирование у провайдера, если оно есть).
-6. Пара ключей age для шифрования бэкапов, создаётся на вашем компьютере, не на сервере:
+5. Пара ключей age для шифрования бэкапов, создаётся на вашем компьютере, не на сервере:
 
    ```bash
    age-keygen -o svoi-pravila-backup.key
    ```
 
-   В `SP_BACKUP_AGE_RECIPIENT` кладётся только публичная строка `age1...`. Секретный файл сохраните в менеджере паролей и в офлайн-копии. Без него бэкапы нельзя расшифровать.
-7. SSH-ключ для пользователя `deploy` (публичная часть пойдёт в `bootstrap.sh`).
-8. Токен GitHub с правом `read:packages` (для `ghcr-token`), если пакеты приватные. Логин — в `SP_GHCR_USER`.
-9. GitHub Actions: публикация образов использует встроенный `GITHUB_TOKEN`; в настройках репозитория (Settings, Actions, General, Workflow permissions) токену должна быть разрешена запись пакетов. Первый раз после публикации проверьте видимость пакетов в профиле владельца.
+   В `SP_BACKUP_AGE_RECIPIENT` кладётся только публичная строка `age1...`. Секретный файл сохраните в менеджере паролей и в офлайн-копии. Без него бэкапы нельзя расшифровать. Локальные бэкапы пишутся на диск VPS; Object Storage не обязателен (внешняя копия — по желанию, раздел «Внешняя копия»).
+6. SSH-ключ для пользователя `deploy` (публичная часть пойдёт в `bootstrap.sh`).
+7. Токен GitHub с правом `read:packages` (для `ghcr-token`), если пакеты приватные. Логин — в `SP_GHCR_USER`.
+8. GitHub Actions: публикация образов использует встроенный `GITHUB_TOKEN`; в настройках репозитория (Settings, Actions, General, Workflow permissions) токену должна быть разрешена запись пакетов. Первый раз после публикации проверьте видимость пакетов в профиле владельца.
 
 ## 3. Первичная подготовка сервера
 
@@ -63,28 +64,61 @@ sudo SP_DEPLOY_SSH_PUBKEY='ssh-ed25519 AAAA... вы@ноутбук' \
 
 Скрипт:
 
-- создаёт пользователя `deploy` с вашим SSH-ключом;
-- закрывает SSH: вход только по ключу, только `deploy`, без root;
+- создаёт пользователя `deploy` с фиксированным UID/GID `1500:1500` и вашим SSH-ключом, добавляет его в группу `sudo` (если пользователь уже есть с другим UID — останавливается);
+- если у `deploy` ещё нет пароля, запрашивает его интерактивно (пароль только для `sudo`; SSH остаётся по ключу). Без TTY скрипт останавливается до hardening SSH;
+- закрывает SSH: вход только по ключу, только `deploy`, без root — только после ключа и пароля sudo;
 - включает ufw: открыты 22, 80, 443;
 - включает автоматические обновления безопасности (перезагрузка в 04:30 UTC при необходимости; контейнеры поднимаются сами);
 - ставит Docker из официального apt-репозитория (отпечаток ключа проверяется);
 - ограничивает размер журналов Docker и journald, ставит часовой пояс UTC;
-- создаёт `/srv/svoi-pravila` и `/etc/svoi-pravila`;
+- создаёт `/srv/svoi-pravila`, `/srv/svoi-pravila/backups` (режим 700, владелец `deploy` / 1500:1500), `/etc/svoi-pravila` и `/etc/svoi-pravila/backup-remote` (режим 700);
 - генерирует read-only deploy-ключ для чтения репозитория. Если репозиторий ещё недоступен, скрипт печатает публичный ключ и завершается с кодом 3. Добавьте ключ в GitHub (Settings, Deploy keys, без права записи) и запустите скрипт ещё раз;
 - копирует `deploy/env.prod.example` в `/etc/svoi-pravila/env` (если файла нет) и создаёт пустой `/etc/svoi-pravila/ghcr-token`;
-- ставит и включает `svoi-pravila-backup.timer` (каждый день 03:30 UTC).
+- ставит и включает `svoi-pravila-backup.timer` (каждый день 03:30 UTC; до первого успешного релиза unit пропускается через `ExecCondition`).
 
-Не закрывайте сессию root, пока не проверите вход `ssh deploy@<сервер>` из второго окна.
+Не закрывайте сессию root, пока не проверите из второго окна: `ssh deploy@<сервер>` и `sudo true`.
+
+### Проверка доступности GigaChat с сервера
+
+После bootstrap и до первого релиза убедитесь, что с VPS открыт путь к API GigaChat (токены не тратятся: ожидаются отказы авторизации, не сетевой обрыв). Команды от `deploy`:
+
+```bash
+CACERT=/srv/svoi-pravila/repo/backend/certs/russian_trusted_root_ca.pem
+
+curl -sS -o /dev/null -w '%{http_code}\n' --cacert "$CACERT" \
+  -X POST 'https://ngw.devices.sberbank.ru:9443/api/v2/oauth' \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -H 'Accept: application/json' \
+  -d 'scope=GIGACHAT_API_PERS'
+
+curl -sS -o /dev/null -w '%{http_code}\n' --cacert "$CACERT" \
+  'https://gigachat.devices.sberbank.ru/api/v1/models'
+```
+
+Ожидайте код `400` или `401`. Если в ответе `000` (нет соединения) — остановитесь и разберитесь с сетью/DNS/TLS до релиза.
 
 ## 4. Секреты и настройки
 
-Откройте `/etc/svoi-pravila/env` и замените все значения `CHANGE_ME`. У каждой переменной в файле есть комментарий и команда генерации. Правила:
+Откройте файл редактором без записи секретов в историю shell:
+
+```bash
+nano /etc/svoi-pravila/env
+```
+
+Замените все значения `CHANGE_ME`. У каждой переменной в файле есть комментарий и команда генерации. Правила:
 
 - без кавычек и без символа `$` в значениях;
 - права файла 600, владелец `deploy`;
 - `SP_DATA_KEK` и `SP_PSEUDONYM_PEPPER` генерируются один раз (`openssl rand -base64 32`). Потеря `SP_DATA_KEK` означает безвозвратную потерю всех правил и меток. Сразу сохраните копию в менеджере паролей, отдельно от бэкапов базы. Менять ключ можно только по процедуре ротации (раздел 9);
 - пароли и секреты вебхука: `openssl rand -hex 24`;
-- токен для ghcr: `printf '%s' '<токен>' > /etc/svoi-pravila/ghcr-token` (права 600 сохраняются).
+- токен для ghcr (не светить в истории shell):
+
+  ```bash
+  read -rs GHCR_TOKEN
+  printf '%s' "$GHCR_TOKEN" > /etc/svoi-pravila/ghcr-token
+  unset GHCR_TOKEN
+  chmod 600 /etc/svoi-pravila/ghcr-token
+  ```
 
 `release.sh` перед каждым релизом сверяет файл с `deploy/env.prod.example`: любая переменная из примера должна быть заполнена. Настройки, которые задаёт compose (`SP_DATABASE_URL`, `SP_VALKEY_URL`, режим вебхука, `SP_MINIAPP_URL` и другие), в файл не добавляйте.
 
@@ -138,14 +172,49 @@ sudo SP_DEPLOY_SSH_PUBKEY='ssh-ed25519 AAAA... вы@ноутбук' \
 
 ## 7. Резервные копии
 
-- Таймер `svoi-pravila-backup.timer` запускает бэкап каждый день в 03:30 UTC (с догоном, если сервер был выключен). Проверка: `systemctl list-timers svoi-pravila-backup.timer`, журнал: `journalctl -u svoi-pravila-backup.service -n 50`.
-- Формат: `pg_dump -Fc`, поток шифруется `age` публичным ключом и сразу уходит в S3 через `rclone`; открытый дамп на диск не пишется.
-- Хранение в бакете: `daily/` — 30 последних, `monthly/` — 12 (первая копия каждого месяца), `pre-release/` — 10 копий перед релизами. Имя объекта: `svoi-pravila-<UTC время>[-<sha>].dump.age`.
+- Таймер `svoi-pravila-backup.timer` запускает бэкап каждый день в 03:30 UTC (с догоном, если сервер был выключен). До первого успешного релиза unit спокойно пропускается (`ExecCondition` на `/srv/svoi-pravila/state/current.env`). Проверка: `systemctl list-timers svoi-pravila-backup.timer`, журнал: `journalctl -u svoi-pravila-backup.service -n 50`.
+- Формат: `pg_dump -Fc`, поток шифруется `age` публичным ключом и атомарно пишется в `/srv/svoi-pravila/backups/<dir>/` (внутри контейнера `/backups`). Открытый дамп на диск не пишется. Права файлов 600, владелец `deploy`.
+- Хранение локально: `daily/` — 30 последних, `monthly/` — 12 (первая копия каждого месяца), `pre-release/` — 10 копий перед релизами. Имя: `svoi-pravila-<UTC время>[-<sha>].dump.age`.
 - Ручной запуск: `docker compose --project-directory /srv/svoi-pravila/repo/deploy -f /srv/svoi-pravila/repo/deploy/compose.prod.yaml --env-file /etc/svoi-pravila/env --env-file /srv/svoi-pravila/state/current.env run --rm -T backup`.
+- Раз в месяц скопируйте месячную копию на ноутбук:
+
+  ```bash
+  scp deploy@<host>:/srv/svoi-pravila/backups/monthly/<файл> ~/Backups/svoi-pravila/
+  ```
+
+### Внешняя копия (по желанию)
+
+Если нужен второй экземпляр вне VPS, настройте rclone на своём компьютере (remote с именем `sp`), скопируйте конфиг на сервер:
+
+```bash
+scp rclone.conf deploy@<host>:/tmp/rclone.conf
+ssh deploy@<host> 'install -m 600 -o deploy -g deploy /tmp/rclone.conf /etc/svoi-pravila/backup-remote/rclone.conf && rm /tmp/rclone.conf'
+```
+
+Примеры фрагментов (создайте через `rclone config` на Mac, затем перенесите файл):
+
+Яндекс.Диск:
+
+```ini
+[sp]
+type = yandex
+token = {"access_token":"...","token_type":"bearer","expiry":"..."}
+```
+
+Google Drive:
+
+```ini
+[sp]
+type = drive
+scope = drive.file
+token = {"access_token":"...","token_type":"bearer","refresh_token":"...","expiry":"..."}
+```
+
+Префикс пути задаётся `SP_BACKUP_REMOTE_PATH` (по умолчанию `svoi-pravila`). Без файла `/etc/svoi-pravila/backup-remote/rclone.conf` бэкап пишет только локально и пишет предупреждение `offsite not configured (local copy only)`. Контейнер backup работает от UID 1500 без root и без доступа к `/etc/svoi-pravila/env`.
 
 ### Проверка восстановления (раз в месяц)
 
-Копия, которую не пробовали восстановить, бэкапом не считается. Скрипт `restore-verify.sh` расшифровывает последнюю копию, разворачивает её во временную базу, проверяет `alembic_version` и наличие таблиц и удаляет временную базу. Боевая база не затрагивается. Секретный ключ age временно кладётся на сервер и удаляется сразу после проверки:
+Копия, которую не пробовали восстановить, бэкапом не считается. Скрипт `restore-verify.sh` по умолчанию читает локальный `/backups`; с флагом `--remote` — с remote `sp`. Расшифровывает последнюю копию, разворачивает во временную базу, проверяет `alembic_version` и наличие таблиц, удаляет временную базу. Боевая база не затрагивается. Секретный ключ age временно кладётся на сервер и удаляется сразу после проверки:
 
 ```bash
 install -m 600 /dev/null /tmp/backup.key   # затем вставьте содержимое файла svoi-pravila-backup.key
@@ -157,7 +226,7 @@ docker compose --project-directory /srv/svoi-pravila/repo/deploy \
 shred -u /tmp/backup.key
 ```
 
-Параметры скрипта: `--dir daily|monthly|pre-release` и имя объекта вторым аргументом.
+Параметры скрипта: `--remote`, `--dir daily|monthly|pre-release` и имя объекта вторым аргументом.
 
 ### Восстановление боевой базы
 
@@ -167,12 +236,11 @@ shred -u /tmp/backup.key
 4. Загрузите копию поверх: выполните внутри контейнера backup (ключ age смонтируйте, как выше)
 
    ```bash
-   rclone cat "$SP_BACKUP_REMOTE/daily/<объект>" \
-     | age --decrypt --identity /run/age.key \
+   age --decrypt --identity /run/age.key </backups/daily/<объект> \
      | pg_restore --clean --if-exists --no-owner --dbname="$PGDATABASE"
    ```
 
-   через `compose run --rm -T --no-deps -v /tmp/backup.key:/run/age.key:ro --entrypoint bash backup -c '<команда>'`.
+   через `compose run --rm -T --no-deps -v /tmp/backup.key:/run/age.key:ro --entrypoint bash backup -c '<команда>'`. Для внешней копии: `rclone cat sp:${SP_BACKUP_REMOTE_PATH}/daily/<объект> | age ...`.
 5. Снова `compose run --rm -T migrate`, затем `compose up -d --wait`.
 6. Проверьте, что `current.env` указывает на нужный релиз, и запустите `release.sh <sha>`, чтобы выполнить все проверки.
 
@@ -180,7 +248,7 @@ shred -u /tmp/backup.key
 
 ### Потеря сервера целиком
 
-Новый VPS, `bootstrap.sh`, тот же `/etc/svoi-pravila/env` (включая `SP_DATA_KEK` из вашей копии), обновить DNS, `release.sh <sha>` последнего релиза и восстановление из последней копии по шагам выше.
+Новый VPS, `bootstrap.sh`, тот же `/etc/svoi-pravila/env` (включая `SP_DATA_KEK` из вашей копии), обновить DNS, `release.sh <sha>` последнего релиза и восстановление из последней копии (локальной с ноутбука, с внешней копии или с уцелевшего диска) по шагам выше.
 
 ## 8. Наблюдение и диагностика
 

@@ -110,6 +110,25 @@ preflight() {
   [[ "$(stat -c %a "$GHCR_TOKEN_FILE")" == "600" ]] || die "${GHCR_TOKEN_FILE} must have mode 600"
   free_kb="$(df -Pk /var/lib/docker | awk 'NR == 2 { print $4 }')"
   [[ "$free_kb" -ge "$MIN_FREE_KB" ]] || die "less than 3 GiB free on /var/lib/docker"
+  local backups_dir="/srv/svoi-pravila/backups"
+  [[ -d "$backups_dir" ]] || die "${backups_dir} is missing (create it mode 700 owned by deploy)"
+  [[ "$(stat -c %a "$backups_dir")" == "700" ]] || die "${backups_dir} must have mode 700"
+  local backup_free_kb newest_bytes needed_kb twice_kb
+  backup_free_kb="$(df -Pk "$backups_dir" | awk 'NR == 2 { print $4 }')"
+  newest_bytes=0
+  if compgen -G "${backups_dir}/*/*.dump.age" >/dev/null; then
+    newest_bytes="$(find "$backups_dir" -type f -name '*.dump.age' -printf '%s\n' \
+      | sort -n | tail -n 1)"
+  fi
+  needed_kb="$MIN_FREE_KB"
+  if [[ "$newest_bytes" =~ ^[0-9]+$ && "$newest_bytes" -gt 0 ]]; then
+    twice_kb=$(((newest_bytes * 2 + 1023) / 1024))
+    if [[ "$twice_kb" -gt "$needed_kb" ]]; then
+      needed_kb="$twice_kb"
+    fi
+  fi
+  [[ "$backup_free_kb" -ge "$needed_kb" ]] \
+    || die "less than ${needed_kb} KiB free on ${backups_dir} (need max(3 GiB, 2× newest dump))"
   install -d -m 0750 "$RELEASES_DIR" "$STATE_DIR"
 }
 

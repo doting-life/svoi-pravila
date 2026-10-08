@@ -232,20 +232,19 @@ services:
     profiles: ["backup"]
     image: ${BACKUP_IMAGE}
     restart: "no"
+    user: "0:0"
     environment:
       PGHOST: postgres
       PGUSER: ${POSTGRES_USER}
       PGPASSWORD: ${POSTGRES_PASSWORD}
       PGDATABASE: ${POSTGRES_DB}
       SP_BACKUP_AGE_RECIPIENT: ${SP_BACKUP_AGE_RECIPIENT}
-      SP_BACKUP_REMOTE: sp:${SP_BACKUP_BUCKET}/${SP_BACKUP_PREFIX}
+      SP_BACKUP_REMOTE_PATH: ${SP_BACKUP_REMOTE_PATH:-svoi-pravila}
       SP_RELEASE_SHA: ${SP_RELEASE_SHA:-}
-      RCLONE_CONFIG_SP_TYPE: s3
-      RCLONE_CONFIG_SP_PROVIDER: ${SP_BACKUP_S3_PROVIDER}
-      RCLONE_CONFIG_SP_ENDPOINT: ${SP_BACKUP_S3_ENDPOINT}
-      RCLONE_CONFIG_SP_REGION: ${SP_BACKUP_S3_REGION}
-      RCLONE_CONFIG_SP_ACCESS_KEY_ID: ${SP_BACKUP_S3_ACCESS_KEY_ID}
-      RCLONE_CONFIG_SP_SECRET_ACCESS_KEY: ${SP_BACKUP_S3_SECRET_ACCESS_KEY}
+      RCLONE_CONFIG: /etc/svoi-pravila/rclone.conf
+    volumes:
+      - /srv/svoi-pravila/backups:/backups
+      - /etc/svoi-pravila:/etc/svoi-pravila:ro
     networks:
       - data
       - egress

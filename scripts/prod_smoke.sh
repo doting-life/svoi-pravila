@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Production-shaped smoke: compose.prod.yaml + compose.prod-smoke.yaml with locally built images,
-# a Caddy-issued local certificate, an offline Telegram stub and a local backup target.
+# a Caddy-issued local certificate, an offline Telegram stub and local-first backups
+# (with and without optional rclone offsite).
 # Expects `make image` to have produced the svoi-pravila*:ci images. Never reads the repo .env.
 set -euo pipefail
 
@@ -14,6 +15,7 @@ PROJECT="${PROD_SMOKE_PROJECT:-svoi-pravila-prod-smoke}"
 DOMAIN="svoi.localhost"
 EXPECTED_HSTS="max-age=31536000; includeSubDomains"
 RELEASE_SHA="0000000000000000000000000000000000000000"
+OFFSITE_WARN="backup: offsite not configured (local copy only)"
 
 if [[ -z "${CI_TMPDIR:-}" ]]; then
   TMP="$(mktemp -d "${TMPDIR:-/tmp}/svoi-pravila-prod-smoke.XXXXXX")"
@@ -23,7 +25,10 @@ fi
 ENV_FILE="${TMP}/env"
 RELEASE_ENV="${TMP}/release.env"
 STUB_DIR="${TMP}/stub"
-mkdir -p "$STUB_DIR"
+BACKUPS_DIR="${TMP}/backups"
+ETC_DIR="${TMP}/etc-svoi-pravila"
+OFFSITE_DIR="${TMP}/offsite"
+mkdir -p "$STUB_DIR" "$BACKUPS_DIR" "$ETC_DIR" "$OFFSITE_DIR"
 export SP_ENV_FILE="$ENV_FILE"
 
 compose=(
@@ -124,10 +129,7 @@ set_key "$ENV_FILE" SP_GRAFANA_ADMIN_PASSWORD "$(openssl rand -hex 24)"
 set_key "$ENV_FILE" SP_GHCR_OWNER "ci"
 set_key "$ENV_FILE" SP_GHCR_USER "ci"
 set_key "$ENV_FILE" SP_BACKUP_AGE_RECIPIENT "$AGE_RECIPIENT"
-set_key "$ENV_FILE" SP_BACKUP_S3_ENDPOINT "http://unused.invalid"
-set_key "$ENV_FILE" SP_BACKUP_S3_ACCESS_KEY_ID "prod-smoke"
-set_key "$ENV_FILE" SP_BACKUP_S3_SECRET_ACCESS_KEY "prod-smoke"
-set_key "$ENV_FILE" SP_BACKUP_BUCKET "prod-smoke"
+set_key "$ENV_FILE" SP_BACKUP_REMOTE_PATH "svoi-pravila"
 if grep -qE '^[A-Z][A-Z0-9_]*=CHANGE_ME$' "$ENV_FILE"; then
   fail "deploy/env.prod.example has CHANGE_ME values the smoke test does not fill"
 fi
@@ -142,6 +144,8 @@ SMOKE_HTTP_PORT=${HTTP_PORT}
 SMOKE_HTTPS_PORT=${HTTPS_PORT}
 SMOKE_STUB_DIR=${STUB_DIR}
 SMOKE_CERTIFI_BUNDLE=${CERTIFI_BUNDLE}
+SMOKE_BACKUPS_DIR=${BACKUPS_DIR}
+SMOKE_ETC_DIR=${ETC_DIR}
 EOF
 
 PATH_SECRET="$(env_value SP_TELEGRAM_WEBHOOK_PATH_SECRET)"
@@ -250,19 +254,115 @@ done
   || fail "network edge must not be internal"
 echo "prod-smoke: isolation_ok"
 
-echo "prod-smoke: running backups"
-"${compose[@]}" run --rm -T backup
-"${compose[@]}" run --rm -T -e "SP_RELEASE_SHA=${RELEASE_SHA}" backup --pre-release
-daily="$("${compose[@]}" run --rm -T --no-deps --entrypoint rclone backup lsf sp:/backups/daily)"
-pre="$("${compose[@]}" run --rm -T --no-deps --entrypoint rclone backup lsf sp:/backups/pre-release)"
-monthly="$("${compose[@]}" run --rm -T --no-deps --entrypoint rclone backup lsf sp:/backups/monthly)"
-[[ "$daily" =~ \.dump\.age ]] || fail "no daily backup object"
-[[ "$pre" == *"-${RELEASE_SHA}.dump.age"* ]] || fail "no pre-release backup object"
-[[ "$monthly" =~ \.dump\.age ]] || fail "no monthly backup object"
+seed_named_dumps() {
+  local target_dir="$1" count="$2" prefix="$3"
+  local i stamp
+  mkdir -p "$target_dir"
+  for ((i = 1; i <= count; i++)); do
+    stamp="$(printf '%s%02dT000000Z' "$prefix" "$i")"
+    # Encrypted garbage is enough for retention prune; restore-verify uses real dumps.
+    printf 'seed-%s' "$stamp" | docker run --rm -i --entrypoint age "$BACKUP_IMAGE" \
+      --recipient "$AGE_RECIPIENT" >"${target_dir}/svoi-pravila-${stamp}.dump.age"
+    chmod 0600 "${target_dir}/svoi-pravila-${stamp}.dump.age"
+  done
+}
+
+decrypt_dump_ok() {
+  local path="$1"
+  [[ -s "$path" ]] || fail "missing encrypted dump ${path}"
+  docker run --rm \
+    -v "${TMP}/age.key:/run/age.key:ro" \
+    -v "${path}:/in.dump.age:ro" \
+    --entrypoint age "$BACKUP_IMAGE" \
+    --decrypt --identity /run/age.key /in.dump.age >/dev/null \
+    || fail "age decrypt failed for ${path}"
+}
+
+count_age() {
+  find "$1" -maxdepth 1 -type f -name '*.dump.age' 2>/dev/null | wc -l | tr -d ' '
+}
+
+echo "prod-smoke: backups segment 1 (local only, no rclone.conf)"
+rm -rf "${BACKUPS_DIR:?}"/*
+mkdir -p "${BACKUPS_DIR}/daily" "${BACKUPS_DIR}/monthly" "${BACKUPS_DIR}/pre-release"
+rm -f "${ETC_DIR}/rclone.conf"
+backup_log="${TMP}/backup-local.log"
+if ! "${compose[@]}" run --rm -T backup >"$backup_log" 2>&1; then
+  cat "$backup_log" >&2
+  fail "daily backup (local-only) failed"
+fi
+grep -F "$OFFSITE_WARN" "$backup_log" >/dev/null \
+  || fail "expected warning '${OFFSITE_WARN}' in local-only backup log"
+"${compose[@]}" run --rm -T -e "SP_RELEASE_SHA=${RELEASE_SHA}" backup --pre-release \
+  >"${TMP}/backup-prerelease.log" 2>&1 \
+  || { cat "${TMP}/backup-prerelease.log" >&2; fail "pre-release backup (local-only) failed"; }
+daily_local="$(ls -1 "${BACKUPS_DIR}/daily" | grep '\.dump\.age$' | head -n 1 || true)"
+pre_local="$(ls -1 "${BACKUPS_DIR}/pre-release" | grep -- "-${RELEASE_SHA}\\.dump\\.age$" | head -n 1 || true)"
+monthly_local="$(ls -1 "${BACKUPS_DIR}/monthly" | grep '\.dump\.age$' | head -n 1 || true)"
+[[ -n "$daily_local" ]] || fail "no local daily backup object"
+[[ -n "$pre_local" ]] || fail "no local pre-release backup object"
+[[ -n "$monthly_local" ]] || fail "no local monthly backup object"
+decrypt_dump_ok "${BACKUPS_DIR}/daily/${daily_local}"
+decrypt_dump_ok "${BACKUPS_DIR}/pre-release/${pre_local}"
 "${compose[@]}" run --rm -T --no-deps \
   -v "${TMP}/age.key:/run/age.key:ro" \
   -e SP_BACKUP_AGE_IDENTITY_FILE=/run/age.key \
   --entrypoint restore-verify.sh backup
-echo "prod-smoke: backup_restore_ok"
+echo "prod-smoke: backup_local_only_ok"
+
+echo "prod-smoke: backups segment 2 (local rclone remote sp)"
+rm -rf "${BACKUPS_DIR:?}"/* "${OFFSITE_DIR:?}"/*
+mkdir -p "${BACKUPS_DIR}/daily" "${BACKUPS_DIR}/monthly" "${BACKUPS_DIR}/pre-release" \
+  "${OFFSITE_DIR}/svoi-pravila/daily" "${OFFSITE_DIR}/svoi-pravila/monthly" \
+  "${OFFSITE_DIR}/svoi-pravila/pre-release"
+cat >"${ETC_DIR}/rclone.conf" <<EOF
+[sp]
+type = local
+remote = ${OFFSITE_DIR}
+EOF
+chmod 0600 "${ETC_DIR}/rclone.conf"
+# Seed past retention so the next run prunes to keep counts 30 / 12 / 10.
+seed_named_dumps "${BACKUPS_DIR}/daily" 30 "202001"
+seed_named_dumps "${BACKUPS_DIR}/monthly" 12 "202002"
+seed_named_dumps "${BACKUPS_DIR}/pre-release" 10 "202003"
+cp -a "${BACKUPS_DIR}/daily/." "${OFFSITE_DIR}/svoi-pravila/daily/"
+cp -a "${BACKUPS_DIR}/monthly/." "${OFFSITE_DIR}/svoi-pravila/monthly/"
+cp -a "${BACKUPS_DIR}/pre-release/." "${OFFSITE_DIR}/svoi-pravila/pre-release/"
+
+"${compose[@]}" run --rm -T backup >"${TMP}/backup-offsite.log" 2>&1 \
+  || { cat "${TMP}/backup-offsite.log" >&2; fail "daily backup (with offsite) failed"; }
+grep -F "$OFFSITE_WARN" "${TMP}/backup-offsite.log" >/dev/null \
+  && fail "offsite-configured run must not warn about missing offsite"
+"${compose[@]}" run --rm -T -e "SP_RELEASE_SHA=${RELEASE_SHA}" backup --pre-release \
+  >"${TMP}/backup-offsite-pre.log" 2>&1 \
+  || { cat "${TMP}/backup-offsite-pre.log" >&2; fail "pre-release backup (with offsite) failed"; }
+
+[[ "$(count_age "${BACKUPS_DIR}/daily")" == "30" ]] \
+  || fail "local daily retention expected 30, got $(count_age "${BACKUPS_DIR}/daily")"
+[[ "$(count_age "${BACKUPS_DIR}/monthly")" == "12" ]] \
+  || fail "local monthly retention expected 12, got $(count_age "${BACKUPS_DIR}/monthly")"
+[[ "$(count_age "${BACKUPS_DIR}/pre-release")" == "10" ]] \
+  || fail "local pre-release retention expected 10, got $(count_age "${BACKUPS_DIR}/pre-release")"
+[[ "$(count_age "${OFFSITE_DIR}/svoi-pravila/daily")" == "30" ]] \
+  || fail "offsite daily retention expected 30"
+[[ "$(count_age "${OFFSITE_DIR}/svoi-pravila/monthly")" == "12" ]] \
+  || fail "offsite monthly retention expected 12"
+[[ "$(count_age "${OFFSITE_DIR}/svoi-pravila/pre-release")" == "10" ]] \
+  || fail "offsite pre-release retention expected 10"
+
+newest_daily="$(ls -1 "${BACKUPS_DIR}/daily" | grep '\.dump\.age$' | sort | tail -n 1)"
+newest_offsite="$(ls -1 "${OFFSITE_DIR}/svoi-pravila/daily" | grep '\.dump\.age$' | sort | tail -n 1)"
+[[ "$newest_daily" == "$newest_offsite" ]] || fail "local and offsite newest daily names differ"
+decrypt_dump_ok "${BACKUPS_DIR}/daily/${newest_daily}"
+decrypt_dump_ok "${OFFSITE_DIR}/svoi-pravila/daily/${newest_offsite}"
+"${compose[@]}" run --rm -T --no-deps \
+  -v "${TMP}/age.key:/run/age.key:ro" \
+  -e SP_BACKUP_AGE_IDENTITY_FILE=/run/age.key \
+  --entrypoint restore-verify.sh backup
+"${compose[@]}" run --rm -T --no-deps \
+  -v "${TMP}/age.key:/run/age.key:ro" \
+  -e SP_BACKUP_AGE_IDENTITY_FILE=/run/age.key \
+  --entrypoint restore-verify.sh backup --remote
+echo "prod-smoke: backup_offsite_ok"
 
 echo "prod-smoke: PASS"

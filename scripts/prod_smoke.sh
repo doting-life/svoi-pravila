@@ -408,7 +408,9 @@ cat >"${BACKUP_REMOTE_DIR}/rclone.conf" <<'EOF'
 [sp]
 type = local
 EOF
-chmod 0600 "${BACKUP_REMOTE_DIR}/rclone.conf"
+# World-readable: container UID 1500 must read a host-owned file on Linux binds.
+# Smoke conf has no secrets (type=local only).
+chmod 0644 "${BACKUP_REMOTE_DIR}/rclone.conf"
 # Seed past retention so the next run prunes to keep counts 30 / 12 / 10.
 seed_named_dumps "${BACKUPS_DIR}/daily" 30 "202001"
 seed_named_dumps "${BACKUPS_DIR}/monthly" 12 "202002"

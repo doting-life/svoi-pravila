@@ -163,11 +163,10 @@ job_publish() {
   # Digests are captured into the stage log; echo them for RUNBOOK §5 / the quiet job log.
   local digest_log="${CI_LOG_DIR}/publish-push.log"
   local digests
-  digests="$(grep -E '^ghcr\.io/[^[:space:]]+@sha256:[0-9a-f]+$' "$digest_log")"
-  [[ -n "$digests" ]] || {
+  if ! digests="$(grep -E '^ghcr\.io/[^[:space:]]+@sha256:[0-9a-f]+$' "$digest_log")"; then
     echo "ci: publish digests missing from ${digest_log}" >&2
     exit 1
-  }
+  fi
   echo "ci: publish digests"
   printf '%s\n' "$digests"
   if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then

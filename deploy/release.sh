@@ -61,7 +61,7 @@ DEPLOY_DIR="${REPO_DIR}/deploy"
 RELEASE_ENV="${RELEASES_DIR}/${sha}.env"
 rollout_started=0
 rollout_started_at=0
-miniapp_started_at=0
+stack_ready_at=0
 
 compose() {
   docker compose --project-directory "$DEPLOY_DIR" -f "${DEPLOY_DIR}/compose.prod.yaml" \
@@ -233,27 +233,6 @@ webhook_registered() {
   [[ "$(jq -r '.result.url' <<<"$info")" == "$expected" ]]
 }
 
-# Docker StartedAt (RFC3339) → UTC epoch seconds (GNU date on Debian 13).
-iso_to_epoch() {
-  local iso="$1"
-  iso="${iso%Z}"
-  iso="${iso%%.*}"
-  date -u -d "${iso}Z" +%s
-}
-
-record_miniapp_started_at() {
-  local cid started
-  cid="$(compose ps -q miniapp)"
-  cid="$(printf '%s\n' "$cid" | head -n 1)"
-  [[ -n "$cid" ]] || die "miniapp container is not running"
-  started="$(docker inspect --format '{{.State.StartedAt}}' "$cid")"
-  [[ -n "$started" && "$started" != "<no value>" ]] \
-    || die "could not read miniapp container StartedAt"
-  miniapp_started_at="$(iso_to_epoch "$started")"
-  [[ "$miniapp_started_at" =~ ^[0-9]+$ ]] || die "invalid miniapp StartedAt: ${started}"
-  log "miniapp started at $(date -u -d "@${miniapp_started_at}" +%Y-%m-%dT%H:%M:%SZ) (epoch ${miniapp_started_at})"
-}
-
 assess_webhook_last_error() {
   local info message err_epoch err_utc note
   info="$(webhook_info)"
@@ -271,8 +250,8 @@ assess_webhook_last_error() {
     note=" (before this rollout)"
   fi
   log "webhook last error at ${err_utc}: ${message}${note}"
-  if [[ "$err_epoch" -gt "$miniapp_started_at" ]]; then
-    die "webhook last error is newer than miniapp start (${err_utc}); release failed"
+  if [[ "$err_epoch" -gt "$stack_ready_at" ]]; then
+    die "webhook last error is newer than stack ready (${err_utc}); release failed"
   fi
 }
 
@@ -306,7 +285,8 @@ else
   compose run --rm -T migrate
   compose up -d --wait --wait-timeout 300 --remove-orphans
 fi
+stack_ready_at="$(date -u +%s)"
+log "stack ready at $(date -u -d "@${stack_ready_at}" +%Y-%m-%dT%H:%M:%SZ)"
 
-record_miniapp_started_at
 run_checks
 log "release ${sha} is live"

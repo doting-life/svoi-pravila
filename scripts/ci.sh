@@ -149,6 +149,7 @@ job_prod_smoke() {
 job_publish() {
   run_stage publish toolchain job_toolchain
   run_stage publish build make -C "$ROOT" image
+  run_stage publish scan make -C "$ROOT" image-scan
   run_stage publish push make -C "$ROOT" publish
 }
 

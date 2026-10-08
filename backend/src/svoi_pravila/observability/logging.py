@@ -72,10 +72,16 @@ def configure_logging(settings: SupportsLogLevel, stream: IO[str]) -> None:
     root.addHandler(handler)
     root.setLevel(settings.log_level.value)
 
-    for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "sqlalchemy", "asyncio", "alembic"):
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access", "asyncio", "alembic"):
         logger = logging.getLogger(name)
         logger.handlers.clear()
         logger.propagate = True
         logger.setLevel(settings.log_level.value)
+
+    # SQLAlchemy statement/pool INFO would dominate production logs at the app level.
+    sqlalchemy_logger = logging.getLogger("sqlalchemy")
+    sqlalchemy_logger.handlers.clear()
+    sqlalchemy_logger.propagate = True
+    sqlalchemy_logger.setLevel(logging.WARNING)
 
     logging.getLogger("uvicorn.access").disabled = True

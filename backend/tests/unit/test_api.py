@@ -63,17 +63,51 @@ async def test_request_log_uses_route_template_not_raw_path(
     capture_log_events: Callable[[], list[dict[str, Any]]],
 ) -> None:
     app = create_app(CheckReadiness([], 1.0), Environment.TEST)
+
+    @app.get("/items/{item_id}")
+    async def item(item_id: str) -> dict[str, str]:
+        return {"id": item_id}
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        await client.get("/healthz?token=should-not-appear")
+        await client.get("/items/42?token=should-not-appear")
         await client.get("/no-such-route")
 
     events = [event for event in capture_log_events() if event.get("event") == "http_request"]
-    assert any(event.get("route") == "/healthz" for event in events)
+    assert any(event.get("route") == "/items/{item_id}" for event in events)
     assert any(event.get("route") == "<unmatched>" for event in events)
     serialized = str(events)
     assert "should-not-appear" not in serialized
     assert "token=" not in serialized
+
+
+@pytest.mark.unit
+async def test_successful_probe_requests_are_not_logged(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    app = create_app(CheckReadiness([OkProbe("db")], 1.0), Environment.TEST)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        assert (await client.get("/healthz")).status_code == 200
+        assert (await client.get("/readyz")).status_code == 200
+
+    events = [event for event in capture_log_events() if event.get("event") == "http_request"]
+    assert events == []
+
+
+@pytest.mark.unit
+async def test_failed_probe_request_is_logged(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    app = create_app(CheckReadiness([FailingProbe("db")], 1.0), Environment.TEST)
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        assert (await client.get("/readyz")).status_code == 503
+
+    events = [event for event in capture_log_events() if event.get("event") == "http_request"]
+    assert len(events) == 1
+    assert events[0]["route"] == "/readyz"
+    assert events[0]["status_code"] == 503
 
 
 @pytest.mark.unit

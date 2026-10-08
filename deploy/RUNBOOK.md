@@ -60,10 +60,10 @@
 
 ```bash
 SHA=<git-sha>
-curl -fsSL "https://raw.githubusercontent.com/doting-life/svoi_pravila/${SHA}/deploy/server/bootstrap.sh" \
+curl -fsSL "https://raw.githubusercontent.com/doting-life/svoi-pravila/${SHA}/deploy/server/bootstrap.sh" \
   -o /tmp/bootstrap.sh
-sudo SP_DEPLOY_SSH_PUBKEY='ssh-ed25519 AAAA... вы@ноутбук' \
-     SP_REPO_SSH_URL='git@github.com:<владелец>/<репозиторий>.git' \
+sudo SP_DEPLOY_SSH_PUBKEY="$(head -n 1 ~/.ssh/authorized_keys)" \
+     SP_REPO_SSH_URL='git@github.com:doting-life/svoi-pravila.git' \
      bash /tmp/bootstrap.sh
 ```
 

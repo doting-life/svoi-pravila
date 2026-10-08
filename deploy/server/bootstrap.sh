@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# One-time (and safely repeatable) preparation of an Ubuntu 24.04 VPS for Svoi Pravila.
+# One-time (and safely repeatable) preparation of a Debian 13 (trixie) VPS for Svoi Pravila.
 #
 #   sudo SP_DEPLOY_SSH_PUBKEY='ssh-ed25519 AAAA... you@laptop' \
 #        SP_REPO_SSH_URL='git@github.com:<owner>/<repo>.git' \
 #        bash bootstrap.sh
 #
 # Hardens SSH (key-only, deploy user only, no root login), opens ufw 22/80/443, enables
-# unattended upgrades, installs Docker from the official apt repository, limits logs, sets UTC,
-# prepares /srv/svoi-pravila and /etc/svoi-pravila, clones the repository with a read-only deploy
-# key and installs the backup systemd units. Existing configuration files of the application are
-# never overwritten.
+# unattended upgrades, installs Docker from the official Debian apt repository, limits logs,
+# sets UTC, prepares /srv/svoi-pravila and /etc/svoi-pravila, clones the repository with a
+# read-only deploy key and installs the backup systemd units. Existing configuration files of
+# the application are never overwritten.
 set -euo pipefail
 
 DEPLOY_USER="deploy"
@@ -54,8 +54,8 @@ preflight() {
   local os_id os_version
   os_id="$(awk -F= '$1 == "ID" { gsub(/"/, "", $2); print $2 }' /etc/os-release)"
   os_version="$(awk -F= '$1 == "VERSION_ID" { gsub(/"/, "", $2); print $2 }' /etc/os-release)"
-  [[ "$os_id" == "ubuntu" && "$os_version" == "24.04" ]] \
-    || die "Ubuntu 24.04 is required, found ${os_id} ${os_version}"
+  [[ "$os_id" == "debian" && "$os_version" == "13" ]] \
+    || die "Debian 13 is required, found ${os_id} ${os_version}"
   [[ -n "${SP_DEPLOY_SSH_PUBKEY:-}" ]] || die "SP_DEPLOY_SSH_PUBKEY is required"
   [[ "$SP_DEPLOY_SSH_PUBKEY" =~ $SSH_KEY_RE ]] || die "SP_DEPLOY_SSH_PUBKEY is not a public SSH key"
   if [[ ! -d "${REPO_DIR}/.git" ]]; then
@@ -68,7 +68,7 @@ install_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update -qq
   apt-get install -y -qq --no-install-recommends \
-    ca-certificates curl gnupg ufw unattended-upgrades jq git openssh-server openssl
+    ca-certificates curl gnupg ufw unattended-upgrades jq git openssh-server openssl sudo
 }
 
 setup_deploy_user() {
@@ -87,8 +87,8 @@ setup_deploy_user() {
       || die "user ${DEPLOY_USER} exists with uid:gid ${existing_uid}:${existing_gid}, expected ${DEPLOY_UID}:${DEPLOY_GID}"
   else
     log "creating user ${DEPLOY_USER} (${DEPLOY_UID}:${DEPLOY_GID})"
-    adduser --disabled-password --gecos "" --uid "$DEPLOY_UID" --gid "$DEPLOY_GID" \
-      "$DEPLOY_USER" >/dev/null
+    useradd --uid "$DEPLOY_UID" --gid "$DEPLOY_GID" --create-home --shell /bin/bash \
+      "$DEPLOY_USER"
   fi
   local ssh_dir="/home/${DEPLOY_USER}/.ssh"
   install -d -m 0700 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$ssh_dir"
@@ -106,7 +106,7 @@ setup_deploy_user() {
 ensure_deploy_sudo_password() {
   # passwd -S second field: P = password set, L/NP/LK = locked or empty.
   local status
-  status="$(passwd -S "$DEPLOY_USER" 2>/dev/null | awk '{ print $2 }')"
+  status="$(passwd -S "$DEPLOY_USER" | awk '{ print $2 }')"
   if [[ "$status" == "P" ]]; then
     return 0
   fi
@@ -116,8 +116,50 @@ ensure_deploy_sudo_password() {
   else
     die "deploy has no sudo password; re-run bootstrap with a TTY so passwd can run before sshd hardening"
   fi
-  status="$(passwd -S "$DEPLOY_USER" 2>/dev/null | awk '{ print $2 }')"
+  status="$(passwd -S "$DEPLOY_USER" | awk '{ print $2 }')"
   [[ "$status" == "P" ]] || die "deploy sudo password was not set"
+}
+
+sshd_effective() {
+  local key="$1"
+  sshd -T | awk -v k="$key" 'tolower($1) == k { print tolower($2); exit }'
+}
+
+list_sshd_conflicts() {
+  local pattern="$1"
+  local f
+  shopt -s nullglob
+  for f in /etc/ssh/sshd_config.d/*; do
+    if grep -qiE "$pattern" "$f"; then
+      printf '%s\n' "$f"
+    fi
+  done
+  shopt -u nullglob
+}
+
+assert_sshd_effective() {
+  local permitroot passwordauth kbdinteractive allowusers
+  local conflicts=()
+  permitroot="$(sshd_effective permitrootlogin)"
+  passwordauth="$(sshd_effective passwordauthentication)"
+  kbdinteractive="$(sshd_effective kbdinteractiveauthentication)"
+  allowusers="$(sshd_effective allowusers)"
+  if [[ "$permitroot" == "no" \
+    && "$passwordauth" == "no" \
+    && "$kbdinteractive" == "no" \
+    && "$allowusers" == "$DEPLOY_USER" ]]; then
+    log "sshd -T ok (permitrootlogin=no passwordauthentication=no kbdinteractiveauthentication=no allowusers=${DEPLOY_USER})"
+    return 0
+  fi
+  mapfile -t conflicts < <(
+    {
+      list_sshd_conflicts '^[[:space:]]*PermitRootLogin[[:space:]]+'
+      list_sshd_conflicts '^[[:space:]]*PasswordAuthentication[[:space:]]+'
+      list_sshd_conflicts '^[[:space:]]*KbdInteractiveAuthentication[[:space:]]+'
+      list_sshd_conflicts '^[[:space:]]*AllowUsers[[:space:]]+'
+    } | sort -u
+  )
+  die "sshd -T assertion failed: permitrootlogin='${permitroot}' passwordauthentication='${passwordauth}' kbdinteractiveauthentication='${kbdinteractive}' allowusers='${allowusers}'; conflicting drop-ins: ${conflicts[*]:-none}"
 }
 
 harden_sshd() {
@@ -133,11 +175,18 @@ LoginGraceTime 30
 ClientAliveInterval 300
 ClientAliveCountMax 2
 EOF
+  sshd -t || die "sshd configuration is invalid; check /etc/ssh/sshd_config.d/10-svoi-pravila.conf"
+  # Debian 13 may enable ssh.socket; reload-via-HUP then fails to rebind port 22.
+  if systemctl is-enabled --quiet ssh.socket || systemctl is-active --quiet ssh.socket; then
+    log "disabling ssh.socket; using ssh.service as the OpenSSH listener"
+    systemctl disable --now ssh.socket
+    systemctl enable --now ssh.service
+  fi
+  systemctl try-reload-or-restart ssh
   if [[ "$FILE_CHANGED" -eq 1 ]]; then
-    sshd -t || die "sshd configuration is invalid; check /etc/ssh/sshd_config.d/10-svoi-pravila.conf"
-    systemctl try-reload-or-restart ssh
     log "sshd hardened (keep this session open and test a deploy login before closing it)"
   fi
+  assert_sshd_effective
 }
 
 setup_firewall() {
@@ -151,6 +200,7 @@ setup_firewall() {
 }
 
 setup_unattended_upgrades() {
+  # Debian's 50unattended-upgrades already includes Debian-Security origins; keep reboot policy here.
   install_file /etc/apt/apt.conf.d/20auto-upgrades 0644 root:root <<'EOF'
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
@@ -167,7 +217,7 @@ install_docker() {
   if [[ ! -s /etc/apt/keyrings/docker.asc ]]; then
     log "fetching the Docker apt key"
     tmp="$(mktemp)"
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o "$tmp"
+    curl -fsSL https://download.docker.com/linux/debian/gpg -o "$tmp"
     fingerprint="$(gpg --show-keys --with-colons "$tmp" | awk -F: '$1 == "fpr" { print $10; exit }')"
     [[ "$fingerprint" == "$DOCKER_KEY_FINGERPRINT" ]] \
       || die "Docker apt key fingerprint mismatch: ${fingerprint}"
@@ -178,8 +228,8 @@ install_docker() {
   arch="$(dpkg --print-architecture)"
   install_file /etc/apt/sources.list.d/docker.sources 0644 root:root <<EOF
 Types: deb
-URIs: https://download.docker.com/linux/ubuntu
-Suites: noble
+URIs: https://download.docker.com/linux/debian
+Suites: trixie
 Components: stable
 Architectures: ${arch}
 Signed-By: /etc/apt/keyrings/docker.asc
@@ -221,7 +271,21 @@ EOF
 
 setup_time() {
   timedatectl set-timezone UTC
-  timedatectl set-ntp true
+  if dpkg-query -W -f='${Status}' chrony | grep -q 'install ok installed'; then
+    log "chrony is installed; leaving it as the time sync service"
+    if systemctl cat chrony.service >/dev/null; then
+      systemctl enable --now chrony.service
+    elif systemctl cat chronyd.service >/dev/null; then
+      systemctl enable --now chronyd.service
+    else
+      die "chrony is installed but neither chrony.service nor chronyd.service is available"
+    fi
+  else
+    log "installing systemd-timesyncd"
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get install -y -qq --no-install-recommends systemd-timesyncd
+    timedatectl set-ntp true
+  fi
 }
 
 setup_directories() {

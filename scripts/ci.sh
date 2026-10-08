@@ -58,8 +58,16 @@ run_stage() {
     echo "ci: ${job} ${stage} PASS $((end - start))s"
   else
     echo "ci: ${job} ${stage} FAIL $((end - start))s"
-    echo "---- last 40 lines of ${log} ----"
-    tail -n 40 "$log" || true
+    echo "---- diagnostic lines of ${log} ----"
+    # Prefer quiet fail markers so bulky compose dumps do not hide the reason.
+    if grep -E '^(prod-smoke:|backup:|stack-smoke:)' "$log" >/dev/null 2>&1; then
+      grep -E '^(prod-smoke:|backup:|stack-smoke:|.*Error|.*FAIL|.*Permission denied)' "$log" \
+        | tail -n 40 || true
+    else
+      tail -n 40 "$log" || true
+    fi
+    echo "---- last 20 lines of ${log} ----"
+    tail -n 20 "$log" || true
     echo "---- log: ${log} ----"
     exit "$rc"
   fi

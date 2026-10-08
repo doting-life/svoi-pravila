@@ -68,9 +68,11 @@ wipe_backups_bind() {
 cleanup() {
   local rc=$?
   if [[ "$rc" -ne 0 && -f "$RELEASE_ENV" ]]; then
-    echo "prod-smoke: FAILED (exit ${rc}); recent service logs follow" >&2
-    # Keep the tail short so the quiet CI summary still shows the fail reason above.
-    "${compose[@]}" logs --no-color --tail 20 api migrate miniapp telegram-stub >&2 || true
+    # Write bulky service logs aside so the quiet CI tail keeps the fail reason.
+    local svc_log="${TMP}/service-logs-on-fail.txt"
+    echo "prod-smoke: FAILED (exit ${rc}); service logs: ${svc_log}" >&2
+    "${compose[@]}" logs --no-color --tail 40 api migrate miniapp telegram-stub \
+      >"$svc_log" 2>&1 || true
   fi
   if [[ -f "$RELEASE_ENV" ]]; then
     # Best-effort teardown after the smoke run.
@@ -315,7 +317,8 @@ seed_named_dumps() {
 decrypt_dump_ok() {
   local path="$1"
   [[ -s "$path" ]] || fail "missing encrypted dump ${path}"
-  docker run --rm \
+  # Dumps are mode 600 owned by UID 1500; the image USER is 10001 and cannot read them on Linux.
+  docker run --rm --user "${BACKUP_UID}:${BACKUP_UID}" \
     -v "${TMP}/age.key:/run/age.key:ro" \
     -v "${path}:/in.dump.age:ro" \
     --entrypoint age "$BACKUP_IMAGE" \

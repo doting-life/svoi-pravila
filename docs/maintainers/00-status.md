@@ -234,7 +234,12 @@
 - chrony не трогается, иначе ставится `systemd-timesyncd`.
 
 Дефект: в RUNBOOK §3 скрипт скачивается из `doting-life/svoi_pravila` (с подчёркиванием) — это другой репозиторий организации с другим кодом; наш — `doting-life/svoi-pravila`. Ссылки в отчётах Cursor ведут туда же |
-| 0023-d | RUNBOOK repo URL; publish digests in the job log | `task/0023-d-runbook-url` | выдан | — |
+| 0023-d | RUNBOOK repo URL; publish digests; webhook last error | `task/0023-d-runbook-url` | проверен 08.10 | **CHANGES** → 0023-e. CI #32 зелёный. Принято: ссылка на скрипт в RUNBOOK ведёт в `doting-life/svoi-pravila`; digest образов печатаются в логе и сводке `publish`.
+
+Дефекты:
+- релиз падает, если ошибка вебхука новее старта `miniapp`. Когда образ `miniapp` не меняется, контейнер не пересоздаётся и время его старта остаётся от прошлого релиза. Тогда кратковременный 502 во время пересоздания `api` (Telegram повторит доставку) обрушит исправный релиз. Порог — момент готовности всего стека (после `compose up --wait`), а не старт `miniapp`;
+- `digests="$(grep …)"` под `set -e` завершает скрипт до понятного сообщения об ошибке |
+| 0023-e | Webhook error threshold = stack ready | `task/0023-d-runbook-url` | выдан | — |
 | 0023 | Production on VPS (ADR-0011) | `task/0023-production` | проверен 08.10 | **ACCEPT** (при зелёном CI #29). Гейты CTO: бэкенд 1176, мини-приложение 230. Часть 0 закрыта:
 - шаг согласий без кнопок прав при первом запуске;
 - «Люди» — строки с переходом;

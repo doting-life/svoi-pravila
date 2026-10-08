@@ -50,6 +50,21 @@ fail() {
   exit 1
 }
 
+# UID 1500 may own trees under the backups bind on Linux; remove via the image as root.
+wipe_backups_bind() {
+  if [[ ! -d "$BACKUPS_DIR" ]]; then
+    return 0
+  fi
+  if [[ -z "${BACKUP_IMAGE:-}" ]]; then
+    rm -rf "${BACKUPS_DIR:?}/"*
+    return 0
+  fi
+  docker run --rm --user 0:0 \
+    -v "${BACKUPS_DIR}:/backups" \
+    --entrypoint sh "$BACKUP_IMAGE" \
+    -c 'find /backups -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+}
+
 cleanup() {
   local rc=$?
   if [[ "$rc" -ne 0 && -f "$RELEASE_ENV" ]]; then
@@ -61,7 +76,9 @@ cleanup() {
     # Best-effort teardown after the smoke run.
     "${compose[@]}" --profile backup down -v --remove-orphans >/dev/null 2>&1 || true
   fi
-  rm -rf "$TMP"
+  # Best-effort: Linux bind trees owned by UID 1500 must not mask the original exit.
+  wipe_backups_bind >/dev/null 2>&1 || true
+  rm -rf "$TMP" || true
   exit "$rc"
 }
 trap cleanup EXIT
@@ -262,12 +279,19 @@ done
 echo "prod-smoke: isolation_ok"
 
 prepare_backup_dirs() {
-  # Leave daily/monthly/pre-release for the container (UID 1500) to create so it owns them.
-  mkdir -p "$BACKUPS_DIR" \
+  # Host-owned 0777 dirs: UID 1500 can write dumps (mode 600); the runner can wipe the bind.
+  mkdir -p "$BACKUPS_DIR/daily" \
+    "$BACKUPS_DIR/monthly" \
+    "$BACKUPS_DIR/pre-release" \
     "${OFFSITE_DIR}/svoi-pravila/daily" \
     "${OFFSITE_DIR}/svoi-pravila/monthly" \
     "${OFFSITE_DIR}/svoi-pravila/pre-release"
-  chmod 0777 "$BACKUPS_DIR" "$OFFSITE_DIR" "${OFFSITE_DIR}/svoi-pravila" \
+  chmod 0777 "$BACKUPS_DIR" \
+    "$BACKUPS_DIR/daily" \
+    "$BACKUPS_DIR/monthly" \
+    "$BACKUPS_DIR/pre-release" \
+    "$OFFSITE_DIR" \
+    "${OFFSITE_DIR}/svoi-pravila" \
     "${OFFSITE_DIR}/svoi-pravila/daily" \
     "${OFFSITE_DIR}/svoi-pravila/monthly" \
     "${OFFSITE_DIR}/svoi-pravila/pre-release"
@@ -343,7 +367,7 @@ assert_dump_owner_mode() {
 }
 
 echo "prod-smoke: backups segment 1 (local only, no rclone.conf)"
-rm -rf "${BACKUPS_DIR:?}/"*
+wipe_backups_bind
 prepare_backup_dirs
 rm -f "${BACKUP_REMOTE_DIR}/rclone.conf"
 backup_log="${TMP}/backup-local.log"
@@ -373,7 +397,7 @@ decrypt_dump_ok "${BACKUPS_DIR}/pre-release/${pre_local}"
 echo "prod-smoke: backup_local_only_ok"
 
 echo "prod-smoke: backups segment 2 (local rclone remote sp)"
-rm -rf "${BACKUPS_DIR:?}/"*
+wipe_backups_bind
 # rclone type=local uses the path after "sp:" as a host path inside the container.
 OFFSITE_REMOTE_PATH="/backups/.offsite-sp/svoi-pravila"
 prepare_backup_dirs

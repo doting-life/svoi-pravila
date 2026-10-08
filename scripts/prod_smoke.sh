@@ -27,7 +27,8 @@ RELEASE_ENV="${TMP}/release.env"
 STUB_DIR="${TMP}/stub"
 BACKUPS_DIR="${TMP}/backups"
 ETC_DIR="${TMP}/etc-svoi-pravila"
-OFFSITE_DIR="${TMP}/offsite"
+# Offsite target must live under the /backups bind so rclone inside the container can see it.
+OFFSITE_DIR="${BACKUPS_DIR}/.offsite-sp"
 mkdir -p "$STUB_DIR" "$BACKUPS_DIR" "$ETC_DIR" "$OFFSITE_DIR"
 export SP_ENV_FILE="$ENV_FILE"
 
@@ -311,14 +312,15 @@ decrypt_dump_ok "${BACKUPS_DIR}/pre-release/${pre_local}"
 echo "prod-smoke: backup_local_only_ok"
 
 echo "prod-smoke: backups segment 2 (local rclone remote sp)"
-rm -rf "${BACKUPS_DIR:?}"/* "${OFFSITE_DIR:?}"/*
+rm -rf "${BACKUPS_DIR:?}/"*
+# rclone type=local uses the path after "sp:" as a host path inside the container.
+OFFSITE_REMOTE_PATH="/backups/.offsite-sp/svoi-pravila"
 mkdir -p "${BACKUPS_DIR}/daily" "${BACKUPS_DIR}/monthly" "${BACKUPS_DIR}/pre-release" \
   "${OFFSITE_DIR}/svoi-pravila/daily" "${OFFSITE_DIR}/svoi-pravila/monthly" \
   "${OFFSITE_DIR}/svoi-pravila/pre-release"
-cat >"${ETC_DIR}/rclone.conf" <<EOF
+cat >"${ETC_DIR}/rclone.conf" <<'EOF'
 [sp]
 type = local
-remote = ${OFFSITE_DIR}
 EOF
 chmod 0600 "${ETC_DIR}/rclone.conf"
 # Seed past retention so the next run prunes to keep counts 30 / 12 / 10.
@@ -329,11 +331,15 @@ cp -a "${BACKUPS_DIR}/daily/." "${OFFSITE_DIR}/svoi-pravila/daily/"
 cp -a "${BACKUPS_DIR}/monthly/." "${OFFSITE_DIR}/svoi-pravila/monthly/"
 cp -a "${BACKUPS_DIR}/pre-release/." "${OFFSITE_DIR}/svoi-pravila/pre-release/"
 
-"${compose[@]}" run --rm -T backup >"${TMP}/backup-offsite.log" 2>&1 \
+"${compose[@]}" run --rm -T -e "SP_BACKUP_REMOTE_PATH=${OFFSITE_REMOTE_PATH}" backup \
+  >"${TMP}/backup-offsite.log" 2>&1 \
   || { cat "${TMP}/backup-offsite.log" >&2; fail "daily backup (with offsite) failed"; }
 grep -F "$OFFSITE_WARN" "${TMP}/backup-offsite.log" >/dev/null \
   && fail "offsite-configured run must not warn about missing offsite"
-"${compose[@]}" run --rm -T -e "SP_RELEASE_SHA=${RELEASE_SHA}" backup --pre-release \
+"${compose[@]}" run --rm -T \
+  -e "SP_RELEASE_SHA=${RELEASE_SHA}" \
+  -e "SP_BACKUP_REMOTE_PATH=${OFFSITE_REMOTE_PATH}" \
+  backup --pre-release \
   >"${TMP}/backup-offsite-pre.log" 2>&1 \
   || { cat "${TMP}/backup-offsite-pre.log" >&2; fail "pre-release backup (with offsite) failed"; }
 
@@ -362,6 +368,7 @@ decrypt_dump_ok "${OFFSITE_DIR}/svoi-pravila/daily/${newest_offsite}"
 "${compose[@]}" run --rm -T --no-deps \
   -v "${TMP}/age.key:/run/age.key:ro" \
   -e SP_BACKUP_AGE_IDENTITY_FILE=/run/age.key \
+  -e "SP_BACKUP_REMOTE_PATH=${OFFSITE_REMOTE_PATH}" \
   --entrypoint restore-verify.sh backup --remote
 echo "prod-smoke: backup_offsite_ok"
 

@@ -70,7 +70,6 @@ done
   || die "SP_BACKUP_AGE_RECIPIENT must be an age public key (age1...)"
 
 remote_path="${SP_BACKUP_REMOTE_PATH:-svoi-pravila}"
-remote_path="${remote_path#/}"
 remote_path="${remote_path%/}"
 [[ -n "$remote_path" ]] || die "SP_BACKUP_REMOTE_PATH must not be empty"
 

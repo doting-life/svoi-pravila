@@ -71,7 +71,6 @@ done
 [[ -r "$SP_BACKUP_AGE_IDENTITY_FILE" ]] || die "age identity file is not readable"
 
 remote_path="${SP_BACKUP_REMOTE_PATH:-svoi-pravila}"
-remote_path="${remote_path#/}"
 remote_path="${remote_path%/}"
 
 list_local() {

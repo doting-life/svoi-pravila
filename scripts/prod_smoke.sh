@@ -54,9 +54,11 @@ cleanup() {
   local rc=$?
   if [[ "$rc" -ne 0 && -f "$RELEASE_ENV" ]]; then
     echo "prod-smoke: FAILED (exit ${rc}); recent service logs follow" >&2
-    "${compose[@]}" logs --no-color --tail 60 api migrate miniapp telegram-stub >&2 || true
+    # Keep the tail short so the quiet CI summary still shows the fail reason above.
+    "${compose[@]}" logs --no-color --tail 20 api migrate miniapp telegram-stub >&2 || true
   fi
   if [[ -f "$RELEASE_ENV" ]]; then
+    # Best-effort teardown after the smoke run.
     "${compose[@]}" --profile backup down -v --remove-orphans >/dev/null 2>&1 || true
   fi
   rm -rf "$TMP"
@@ -260,13 +262,12 @@ done
 echo "prod-smoke: isolation_ok"
 
 prepare_backup_dirs() {
-  mkdir -p "${BACKUPS_DIR}/daily" "${BACKUPS_DIR}/monthly" "${BACKUPS_DIR}/pre-release" \
-    "${OFFSITE_DIR}/svoi-pravila/daily" "${OFFSITE_DIR}/svoi-pravila/monthly" \
+  # Leave daily/monthly/pre-release for the container (UID 1500) to create so it owns them.
+  mkdir -p "$BACKUPS_DIR" \
+    "${OFFSITE_DIR}/svoi-pravila/daily" \
+    "${OFFSITE_DIR}/svoi-pravila/monthly" \
     "${OFFSITE_DIR}/svoi-pravila/pre-release"
-  chmod 0777 "$BACKUPS_DIR" \
-    "${BACKUPS_DIR}/daily" "${BACKUPS_DIR}/monthly" "${BACKUPS_DIR}/pre-release" \
-    "$OFFSITE_DIR" \
-    "${OFFSITE_DIR}/svoi-pravila" \
+  chmod 0777 "$BACKUPS_DIR" "$OFFSITE_DIR" "${OFFSITE_DIR}/svoi-pravila" \
     "${OFFSITE_DIR}/svoi-pravila/daily" \
     "${OFFSITE_DIR}/svoi-pravila/monthly" \
     "${OFFSITE_DIR}/svoi-pravila/pre-release"
@@ -276,13 +277,14 @@ seed_named_dumps() {
   local target_dir="$1" count="$2" prefix="$3"
   local i stamp
   mkdir -p "$target_dir"
+  # World-writable so UID 1500 can prune host-created seeds (Linux bind mounts).
   chmod 0777 "$target_dir"
   for ((i = 1; i <= count; i++)); do
     stamp="$(printf '%s%02dT000000Z' "$prefix" "$i")"
     # Encrypted garbage is enough for retention prune; restore-verify uses real dumps.
     printf 'seed-%s' "$stamp" | docker run --rm -i --entrypoint age "$BACKUP_IMAGE" \
       --recipient "$AGE_RECIPIENT" >"${target_dir}/svoi-pravila-${stamp}.dump.age"
-    chmod 0600 "${target_dir}/svoi-pravila-${stamp}.dump.age"
+    chmod 0666 "${target_dir}/svoi-pravila-${stamp}.dump.age"
   done
 }
 

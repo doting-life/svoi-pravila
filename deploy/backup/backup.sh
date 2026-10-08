@@ -126,7 +126,9 @@ if [[ "$mode" == "pre-release" ]]; then
 fi
 
 local_dir="${LOCAL_ROOT}/${dir}"
-install -d -m 0700 "$LOCAL_ROOT" "${LOCAL_ROOT}/daily" "${LOCAL_ROOT}/monthly" "${LOCAL_ROOT}/pre-release"
+# Create subdirs only; do not chmod the bind-mount root or host-owned seed dirs.
+# umask 077 makes dirs we create mode 700 and dump files mode 600.
+mkdir -p "${LOCAL_ROOT}/daily" "${LOCAL_ROOT}/monthly" "${LOCAL_ROOT}/pre-release"
 final_path="${local_dir}/${name}"
 tmp_path="${local_dir}/.${name}.tmp.$$"
 

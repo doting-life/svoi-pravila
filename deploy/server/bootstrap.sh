@@ -82,6 +82,25 @@ setup_deploy_user() {
     printf '%s\n' "$SP_DEPLOY_SSH_PUBKEY" >>"${ssh_dir}/authorized_keys"
     log "authorized the deploy SSH key"
   fi
+  usermod -aG sudo "$DEPLOY_USER"
+  log "added ${DEPLOY_USER} to the sudo group"
+}
+
+ensure_deploy_sudo_password() {
+  # passwd -S second field: P = password set, L/NP/LK = locked or empty.
+  local status
+  status="$(passwd -S "$DEPLOY_USER" 2>/dev/null | awk '{ print $2 }')"
+  if [[ "$status" == "P" ]]; then
+    return 0
+  fi
+  if [[ -t 0 ]]; then
+    log "set a password for ${DEPLOY_USER} (sudo only; SSH stays key-only)"
+    passwd "$DEPLOY_USER"
+  else
+    die "deploy has no sudo password; re-run bootstrap with a TTY so passwd can run before sshd hardening"
+  fi
+  status="$(passwd -S "$DEPLOY_USER" 2>/dev/null | awk '{ print $2 }')"
+  [[ "$status" == "P" ]] || die "deploy sudo password was not set"
 }
 
 harden_sshd() {
@@ -191,6 +210,11 @@ setup_time() {
 setup_directories() {
   install -d -m 0750 -o "$DEPLOY_USER" -g "$DEPLOY_USER" \
     "$APP_DIR" "${APP_DIR}/releases" "${APP_DIR}/state"
+  install -d -m 0700 -o "$DEPLOY_USER" -g "$DEPLOY_USER" \
+    "${APP_DIR}/backups" \
+    "${APP_DIR}/backups/daily" \
+    "${APP_DIR}/backups/monthly" \
+    "${APP_DIR}/backups/pre-release"
   install -d -m 0750 -o root -g "$DEPLOY_USER" "$ETC_DIR"
 }
 
@@ -253,7 +277,9 @@ install_systemd_units() {
 preflight
 install_packages
 setup_deploy_user
+ensure_deploy_sudo_password
 harden_sshd
+log "keep this session open; from a second terminal test: ssh ${DEPLOY_USER}@<host> && sudo true"
 setup_firewall
 setup_unattended_upgrades
 install_docker

@@ -8,6 +8,7 @@ Type=oneshot
 User=deploy
 Group=deploy
 WorkingDirectory=/srv/svoi-pravila/repo/deploy
+ExecCondition=/usr/bin/test -f /srv/svoi-pravila/state/current.env
 ExecStart=/usr/bin/docker compose --project-directory /srv/svoi-pravila/repo/deploy -f /srv/svoi-pravila/repo/deploy/compose.prod.yaml --env-file /etc/svoi-pravila/env --env-file /srv/svoi-pravila/state/current.env run --rm --no-deps backup
 TimeoutStartSec=1h
 Nice=10

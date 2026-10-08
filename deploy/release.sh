@@ -61,7 +61,7 @@ DEPLOY_DIR="${REPO_DIR}/deploy"
 RELEASE_ENV="${RELEASES_DIR}/${sha}.env"
 rollout_started=0
 rollout_started_at=0
-stack_ready_at=0
+https_ready_at=0
 
 compose() {
   docker compose --project-directory "$DEPLOY_DIR" -f "${DEPLOY_DIR}/compose.prod.yaml" \
@@ -250,8 +250,8 @@ assess_webhook_last_error() {
     note=" (before this rollout)"
   fi
   log "webhook last error at ${err_utc}: ${message}${note}"
-  if [[ "$err_epoch" -gt "$stack_ready_at" ]]; then
-    die "webhook last error is newer than stack ready (${err_utc}); release failed"
+  if [[ "$err_epoch" -gt "$https_ready_at" ]]; then
+    die "webhook last error is newer than HTTPS ready (${err_utc}); release failed"
   fi
 }
 
@@ -260,6 +260,8 @@ run_checks() {
   log "api ready: ok"
   wait_until 240 "HTTPS with the expected CSP and HSTS headers" https_headers_ok
   log "https csp and hsts: ok"
+  https_ready_at="$(date -u +%s)"
+  log "https ready at $(date -u -d "@${https_ready_at}" +%Y-%m-%dT%H:%M:%SZ)"
   wait_until 60 "the Telegram webhook to point at this server" webhook_registered
   log "telegram webhook registered: ok"
   assess_webhook_last_error
@@ -285,8 +287,6 @@ else
   compose run --rm -T migrate
   compose up -d --wait --wait-timeout 300 --remove-orphans
 fi
-stack_ready_at="$(date -u +%s)"
-log "stack ready at $(date -u -d "@${stack_ready_at}" +%Y-%m-%dT%H:%M:%SZ)"
 
 run_checks
 log "release ${sha} is live"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Awaitable, Callable, MutableMapping
+from http import HTTPStatus
 from typing import Any
 
 import structlog
@@ -14,6 +15,8 @@ Scope = MutableMapping[str, Any]
 Receive = Callable[[], Awaitable[MutableMapping[str, Any]]]
 Send = Callable[[MutableMapping[str, Any]], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
+
+_PROBE_ROUTES = frozenset({"/healthz", "/readyz"})
 
 
 class RequestLoggingMiddleware:
@@ -45,11 +48,16 @@ class RequestLoggingMiddleware:
                 status_code = 500
             route = scope.get("route")
             route_template = getattr(route, "path", None) or "<unmatched>"
-            duration_ms = round((time.perf_counter() - started) * 1000, 2)
-            logger.info(
-                "http_request",
-                method=scope.get("method"),
-                route=route_template,
-                status_code=status_code,
-                duration_ms=duration_ms,
+            successful_probe = (
+                route_template in _PROBE_ROUTES
+                and HTTPStatus.OK <= status_code < HTTPStatus.MULTIPLE_CHOICES
             )
+            if not successful_probe:
+                duration_ms = round((time.perf_counter() - started) * 1000, 2)
+                logger.info(
+                    "http_request",
+                    method=scope.get("method"),
+                    route=route_template,
+                    status_code=status_code,
+                    duration_ms=duration_ms,
+                )

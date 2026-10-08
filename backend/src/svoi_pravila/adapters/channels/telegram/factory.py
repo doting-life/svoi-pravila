@@ -62,7 +62,7 @@ def build_telegram_lifecycle(
             raise RuntimeError(msg)
         base = settings.telegram_webhook_base_url.rstrip("/")
         path_secret = settings.telegram_webhook_path_secret.get_secret_value()
-        webhook_url = f"{base}/telegram/webhook/{path_secret}"
+        webhook_url = f"{base}/tg/{path_secret}"
         webhook_secret = settings.telegram_webhook_secret_token.get_secret_value()
 
     if settings.miniapp_url is None:

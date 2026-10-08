@@ -120,7 +120,7 @@ function MiniappShell({
                     <OnboardingConsentScreen
                         telegram={telegram}
                         consentKind="personal_data"
-                        accountExists
+                        consentsRevoked
                         botUsername={null}
                         onAdvanced={advanceConsent}
                         onAccountDeleted={onAccountDeleted}
@@ -143,7 +143,7 @@ function MiniappShell({
                 <OnboardingConsentScreen
                     telegram={telegram}
                     consentKind={data.consent_kind ?? null}
-                    accountExists={data.account_exists}
+                    consentsRevoked={data.consents_revoked}
                     botUsername={data.bot_username}
                     onAdvanced={advanceConsent}
                     onAccountDeleted={onAccountDeleted}
@@ -239,7 +239,6 @@ function MiniappShell({
                                 paired: contact.paired,
                             });
                         }}
-                        onActivated={activateLocally}
                     />
                 </Page>
             );
@@ -319,6 +318,7 @@ function MiniappShell({
                         label={screen.label}
                         relationship={screen.relationship}
                         paired={screen.paired}
+                        activeContactId={activeContactId}
                         displayTimezone={data.display_timezone}
                         telegram={telegram}
                         onAddRule={() => {
@@ -335,6 +335,7 @@ function MiniappShell({
                         onRenamed={(label) => {
                             setNav((current) => replaceTop(current, { ...screen, label }));
                         }}
+                        onActivated={activateLocally}
                     />
                 </Page>
             );

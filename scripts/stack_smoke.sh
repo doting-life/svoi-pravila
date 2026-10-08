@@ -64,7 +64,10 @@ project="${COMPOSE_PROJECT_NAME:-svoi-pravila-ci}"
 docker compose -p "$project" --env-file "$ENV_FILE" \
   --profile app --profile observability down -v >/dev/null 2>&1 || true
 
-make -C "$ROOT" up ENV_FILE="$ENV_FILE"
+if ! make -C "$ROOT" up ENV_FILE="$ENV_FILE"; then
+  docker compose -p "$project" --env-file "$ENV_FILE" --profile app logs --no-color api >&2 || true
+  exit 1
+fi
 make -C "$ROOT" observability-up ENV_FILE="$ENV_FILE"
 
 API_BIND="$(compose_port api 8000)"

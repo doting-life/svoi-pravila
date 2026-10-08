@@ -81,6 +81,38 @@ jobs:
       - name: Stack smoke
         run: make ci JOB=stack-smoke
 
+  prod-smoke:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Toolchain
+        uses: ./.github/actions/toolchain
+
+      - name: Production smoke
+        run: make ci JOB=prod-smoke
+
+  publish:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    needs: [backend, miniapp, secrets, image, stack-smoke, prod-smoke]
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Toolchain
+        uses: ./.github/actions/toolchain
+
+      - name: Publish images
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: make ci JOB=publish
+
   ownership-guard:
     if: github.event_name != 'schedule' && github.event_name == 'pull_request' && startsWith(github.head_ref, 'task/')
     runs-on: ubuntu-latest

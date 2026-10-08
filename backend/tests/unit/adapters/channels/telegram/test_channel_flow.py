@@ -145,6 +145,9 @@ async def test_webhook_startup_calls() -> None:
     await lifecycle.shutdown()
     kinds = [type(req) for req in session.requests]
     assert SetWebhook in kinds
+    registered = [req for req in session.requests if isinstance(req, SetWebhook)]
+    assert [req.url for req in registered] == [f"https://example.example/tg/{'p' * 32}"]
+    assert [req.secret_token for req in registered] == ["s" * 32]
 
 
 @pytest.mark.unit

@@ -18,6 +18,12 @@ SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 CI_JOBS_RE = re.compile(r"^CI_JOBS\s*:?=\s*(.+)$", re.MULTILINE)
 JOB_FN_RE = re.compile(r"^job_([a-z0-9_]+)\s*\(\)", re.MULTILINE)
 INTERNAL_JOB_FNS = frozenset({"workflow", "toolchain"})
+PUBLISH_JOB = "publish"
+PUBLISH_IF = "github.event_name == 'push' && github.ref == 'refs/heads/master'"
+PUBLISH_NEEDS = frozenset(
+    {"backend", "miniapp", "secrets", "image", "stack-smoke", "prod-smoke"},
+)
+PUBLISH_PERMISSIONS = {"packages": "write", "contents": "read"}
 
 
 def job_list_from_makefile(text: str) -> list[str]:
@@ -42,7 +48,9 @@ def check_job_functions(ci_sh: str, jobs: list[str]) -> list[str]:
         fn = name.replace("-", "_")
         if fn not in found:
             errors.append(f"ci.sh missing job_{fn} for {name}")
-    extras = found - expected - INTERNAL_JOB_FNS
+    if PUBLISH_JOB not in found:
+        errors.append(f"ci.sh missing job_{PUBLISH_JOB}")
+    extras = found - expected - INTERNAL_JOB_FNS - {PUBLISH_JOB}
     if extras:
         extra_names = ", ".join(sorted(f"job_{item}" for item in extras))
         errors.append(f"ci.sh has unexpected job functions: {extra_names}")
@@ -84,6 +92,29 @@ def _uses_parts(value: str) -> tuple[str, str]:
     return name, pin
 
 
+def _has_packages_write(permissions: object) -> bool:
+    return isinstance(permissions, dict) and permissions.get("packages") == "write"
+
+
+def _check_publish_job(job: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    condition = " ".join(str(job.get("if", "")).split())
+    if condition != PUBLISH_IF:
+        errors.append(f"job {PUBLISH_JOB} if {condition!r} is not {PUBLISH_IF!r}")
+    needs = job.get("needs")
+    needs_set = {str(item) for item in needs} if isinstance(needs, list) else set()
+    if needs_set != PUBLISH_NEEDS:
+        errors.append(
+            f"job {PUBLISH_JOB} needs {sorted(needs_set)} must equal {sorted(PUBLISH_NEEDS)}"
+        )
+    permissions = job.get("permissions")
+    if permissions != PUBLISH_PERMISSIONS:
+        errors.append(
+            f"job {PUBLISH_JOB} permissions {permissions!r} must equal {PUBLISH_PERMISSIONS!r}"
+        )
+    return errors
+
+
 def check_workflow(
     workflow: dict[str, Any],
     action: dict[str, Any],
@@ -101,8 +132,13 @@ def check_workflow(
     if not isinstance(declared, dict):
         return ["workflow has no jobs"]
     names = list(declared.keys())
-    if set(names) != set(jobs):
-        errors.append(f"job set {names} does not equal {jobs}")
+    if PUBLISH_JOB in jobs:
+        errors.append(f"{PUBLISH_JOB} must not be listed in CI_JOBS (make ci never publishes)")
+    expected_names = {*jobs, PUBLISH_JOB}
+    if set(names) != expected_names:
+        errors.append(f"job set {names} does not equal {sorted(expected_names)}")
+    if _has_packages_write(workflow.get("permissions")):
+        errors.append("workflow-level permissions must not grant packages: write")
 
     for name, job in declared.items():
         if not isinstance(job, dict):
@@ -110,6 +146,10 @@ def check_workflow(
             continue
         if "services" in job:
             errors.append(f"job {name} must not declare services")
+        if name == PUBLISH_JOB:
+            errors.extend(_check_publish_job(job))
+        elif _has_packages_write(job.get("permissions")):
+            errors.append(f"job {name} must not have packages: write; only {PUBLISH_JOB} may")
         job_env = job.get("env")
         if isinstance(job_env, dict):
             sp_keys = [key for key in job_env if str(key).startswith("SP_")]

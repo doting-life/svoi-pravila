@@ -46,11 +46,12 @@ RUN mkdir -p /config/caddy /data/caddy \
 FROM alpine:3.23.6@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0 AS static
 COPY --from=build /app/dist /srv
 COPY Caddyfile /etc/caddy/Caddyfile
+COPY Caddyfile.prod /etc/caddy/Caddyfile.prod
 RUN chown -R 0:0 /srv /etc/caddy \
 	&& find /srv -type d -exec chmod 0555 {} + \
 	&& find /srv -type f -exec chmod 0444 {} + \
 	&& chmod 0555 /etc/caddy \
-	&& chmod 0444 /etc/caddy/Caddyfile
+	&& chmod 0444 /etc/caddy/Caddyfile /etc/caddy/Caddyfile.prod
 
 FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 

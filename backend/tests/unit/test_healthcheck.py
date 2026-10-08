@@ -11,8 +11,7 @@ from typing import Any, ClassVar, cast
 
 import pytest
 
-from svoi_pravila.bootstrap import healthcheck
-from tests.factories import make_settings
+from svoi_pravila.healthcheck import main as healthcheck
 
 
 def _free_port() -> int:
@@ -69,10 +68,7 @@ def _local_http_server(
 @pytest.mark.unit
 def test_healthcheck_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     with _local_http_server(_handler(status_code=200, body=b'{"ready":true}')) as port:
-        monkeypatch.setattr(
-            "svoi_pravila.bootstrap.load_settings",
-            lambda: make_settings(http_port=port),
-        )
+        monkeypatch.setenv("SP_HTTP_PORT", str(port))
         with pytest.raises(SystemExit) as exited:
             healthcheck()
         assert exited.value.code == 0
@@ -81,10 +77,7 @@ def test_healthcheck_ready(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.unit
 def test_healthcheck_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     with _local_http_server(_handler(status_code=503, body=b'{"ready":false}')) as port:
-        monkeypatch.setattr(
-            "svoi_pravila.bootstrap.load_settings",
-            lambda: make_settings(http_port=port),
-        )
+        monkeypatch.setenv("SP_HTTP_PORT", str(port))
         with pytest.raises(SystemExit) as exited:
             healthcheck()
         assert exited.value.code == 1
@@ -93,10 +86,7 @@ def test_healthcheck_not_ready(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.unit
 def test_healthcheck_connection_refused(monkeypatch: pytest.MonkeyPatch) -> None:
     port = _free_port()
-    monkeypatch.setattr(
-        "svoi_pravila.bootstrap.load_settings",
-        lambda: make_settings(http_port=port),
-    )
+    monkeypatch.setenv("SP_HTTP_PORT", str(port))
     with pytest.raises(SystemExit) as exited:
         healthcheck()
     assert exited.value.code == 1
@@ -109,10 +99,23 @@ def test_healthcheck_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
         _handler(status_code=200, block_event=block),
         release_on_teardown=block,
     ) as port:
-        monkeypatch.setattr(
-            "svoi_pravila.bootstrap.load_settings",
-            lambda: make_settings(http_port=port),
-        )
+        monkeypatch.setenv("SP_HTTP_PORT", str(port))
         with pytest.raises(SystemExit) as exited:
             healthcheck()
         assert exited.value.code == 1
+
+
+@pytest.mark.unit
+def test_healthcheck_invalid_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SP_HTTP_PORT", "not-a-port")
+    with pytest.raises(SystemExit) as exited:
+        healthcheck()
+    assert exited.value.code == 1
+
+
+@pytest.mark.unit
+def test_healthcheck_out_of_range_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SP_HTTP_PORT", "70000")
+    with pytest.raises(SystemExit) as exited:
+        healthcheck()
+    assert exited.value.code == 1

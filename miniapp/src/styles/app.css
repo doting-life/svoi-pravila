@@ -1113,10 +1113,9 @@ a:hover {
     color: var(--ink-3);
 }
 
-.person__actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+.person__chevron {
+    flex-shrink: 0;
+    color: var(--ink-3);
 }
 
 /* Contact detail */
@@ -1125,6 +1124,12 @@ a:hover {
     display: flex;
     align-items: center;
     gap: 14px;
+}
+
+.detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
 }
 
 .detail-header__text {

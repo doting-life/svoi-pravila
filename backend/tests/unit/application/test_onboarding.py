@@ -55,6 +55,7 @@ async def test_unknown_user_is_at_age(world: AppWorld) -> None:
         GetOnboardingStepQuery(TelegramUserId(1))
     )
     assert result.step.kind is OnboardingStepKind.AGE
+    assert result.consents_revoked is False
 
 
 @pytest.mark.unit
@@ -130,6 +131,25 @@ async def test_outdated_consent_returns_that_step(world: AppWorld) -> None:
     assert step.step.kind is OnboardingStepKind.CONSENT
     assert step.step.consent_kind is ConsentKind.PERSONAL_DATA
     assert step.step.consent_version == "2"
+    assert step.consents_revoked is False
+
+
+@pytest.mark.unit
+async def test_revoked_consents_flag(world: AppWorld) -> None:
+    user = await world.ensure_granted_user(51)
+    before = await GetOnboardingStep(world.uow_factory, world.catalog).execute(
+        GetOnboardingStepQuery(user.telegram_user_id)
+    )
+    assert before.consents_revoked is False
+    async with world.uow_factory() as uow:
+        for consent in await uow.consents.list_for_user(user.id):
+            await uow.consents.update(consent.revoke(world.clock.now()))
+        await uow.commit()
+    after = await GetOnboardingStep(world.uow_factory, world.catalog).execute(
+        GetOnboardingStepQuery(user.telegram_user_id)
+    )
+    assert after.step.kind is OnboardingStepKind.CONSENT
+    assert after.consents_revoked is True
 
 
 @pytest.mark.unit

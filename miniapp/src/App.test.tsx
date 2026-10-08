@@ -13,6 +13,7 @@ const meDone = {
     consent_version: null,
     active_contact_id: "c1",
     account_exists: true,
+    consents_revoked: false,
     bot_username: "svoi_test_bot",
     decode_remaining: 5,
     max_contacts: 20,
@@ -201,7 +202,7 @@ describe("App", () => {
         expect(await screen.findByText("age failed")).toBeInTheDocument();
     });
 
-    it("shows the consent onboarding screen with document and rights", async () => {
+    it("hides export/delete on first-run consent and shows them after revoke", async () => {
         let meCalls = 0;
         const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
             const request = input instanceof Request ? input : new Request(String(input), init);
@@ -215,6 +216,7 @@ describe("App", () => {
                             onboarding_step: "consent",
                             consent_kind: "personal_data",
                             consent_version: "1",
+                            consents_revoked: false,
                         }),
                     );
                 }
@@ -245,9 +247,11 @@ describe("App", () => {
             screen.getByText(ru.onboardingViaBot.replace("{bot}", "svoi_test_bot")),
         ).toBeInTheDocument();
         expect(
-            await screen.findByRole("button", { name: ru.privacyExportAction }),
-        ).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: ru.privacyDeleteAction })).toBeInTheDocument();
+            screen.queryByRole("button", { name: ru.privacyExportAction }),
+        ).not.toBeInTheDocument();
+        expect(
+            screen.queryByRole("button", { name: ru.privacyDeleteAction }),
+        ).not.toBeInTheDocument();
 
         const accept = screen.getByRole("button", { name: ru.onboardingAccept });
         expect(accept).toBeDisabled();
@@ -274,6 +278,32 @@ describe("App", () => {
                     new URL(call[0].url).pathname === "/api/v1/me/consents",
             );
         expect(grants).toHaveLength(2);
+    });
+
+    it("shows export/delete on consent after prior revoke", async () => {
+        const fetchImpl = mockFetch([
+            {
+                path: "/api/v1/me",
+                body: {
+                    ...meDone,
+                    onboarding_step: "consent",
+                    consent_kind: "personal_data",
+                    consent_version: "1",
+                    consents_revoked: true,
+                },
+            },
+            { path: "/api/v1/consents/personal_data/document", body: personalDoc },
+            { path: "/api/v1/consents/special_category/document", body: specialDoc },
+            { path: "/api/v1/privacy/texts", body: privacyTexts },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        expect(
+            await screen.findByRole("heading", { name: ru.onboardingConsentTitle }),
+        ).toBeInTheDocument();
+        expect(
+            await screen.findByRole("button", { name: ru.privacyExportAction }),
+        ).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: ru.privacyDeleteAction })).toBeInTheDocument();
     });
 
     it("shows the unauthorized gate on 401 without rights actions", async () => {
@@ -441,6 +471,7 @@ describe("App", () => {
                         onboarding_step: "consent",
                         consent_kind: "personal_data",
                         consent_version: "1",
+                        consents_revoked: true,
                     }),
                 );
             }
@@ -618,6 +649,7 @@ describe("App", () => {
                     onboarding_step: "consent",
                     consent_kind: "personal_data",
                     consent_version: "1",
+                    consents_revoked: true,
                 },
             },
             { path: "/api/v1/consents/personal_data/document", body: personalDoc },
@@ -662,6 +694,7 @@ describe("App", () => {
                         onboarding_step: "consent",
                         consent_kind: "personal_data",
                         consent_version: "1",
+                        consents_revoked: true,
                     }),
                 );
             }
@@ -837,6 +870,8 @@ describe("App", () => {
                 body: { ...meDone, active_contact_id: null },
             },
             { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
             {
                 method: "PATCH",
                 path: "/api/v1/contacts/c1",
@@ -846,8 +881,9 @@ describe("App", () => {
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
         await openPeople();
-        expect(await screen.findByText("Аня")).toBeInTheDocument();
-        click(ru.contactsRename);
+        fireEvent.click(await screen.findByText("Аня"));
+        expect(await screen.findByRole("button", { name: ru.contactEdit })).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.contactEdit }));
         const dialog = await screen.findByRole("dialog");
         fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "Анна" } });
         fireEvent.click(within(dialog).getByRole("button", { name: ru.save }));
@@ -882,6 +918,8 @@ describe("App", () => {
                 body: { ...meDone, active_contact_id: null },
             },
             { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
             {
                 method: "PATCH",
                 path: "/api/v1/contacts/c1",
@@ -914,7 +952,8 @@ describe("App", () => {
         });
         fireEvent.click(within(addDialog).getByRole("button", { name: ru.cancel }));
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-        click(ru.contactsRename);
+        fireEvent.click(screen.getByText("Аня"));
+        fireEvent.click(await screen.findByRole("button", { name: ru.contactEdit }));
         const dialog = await screen.findByRole("dialog");
         fireEvent.change(within(dialog).getByRole("textbox"), { target: { value: "" } });
         fireEvent.click(within(dialog).getByRole("button", { name: ru.save }));

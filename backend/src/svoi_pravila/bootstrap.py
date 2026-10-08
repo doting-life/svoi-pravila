@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import http.client
 import sys
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
@@ -130,9 +129,6 @@ from svoi_pravila.config import (
 from svoi_pravila.crypto import HmacPseudonymizer
 from svoi_pravila.observability import configure_logging
 from svoi_pravila.observability.metrics import EventLoopLagMonitor, start_metrics_server
-
-_HEALTHCHECK_TIMEOUT_SECONDS = 2.0
-_HTTP_OK = 200
 
 
 @dataclass(frozen=True, slots=True)
@@ -715,27 +711,3 @@ def serve() -> None:
         access_log=False,
         log_config=None,
     )
-
-
-def healthcheck() -> None:
-    """GET local ``/readyz``; exit 0 on HTTP 200, otherwise 1.
-
-    Intended as the container healthcheck entrypoint. Never prints response
-    bodies or settings.
-    """
-    settings = load_settings()
-    connection = http.client.HTTPConnection(
-        "127.0.0.1",
-        settings.http_port,
-        timeout=_HEALTHCHECK_TIMEOUT_SECONDS,
-    )
-    try:
-        connection.request("GET", "/readyz")
-        response = connection.getresponse()
-        response.read()
-        code = response.status
-    except (OSError, TimeoutError, http.client.HTTPException):
-        sys.exit(1)
-    finally:
-        connection.close()
-    sys.exit(0 if code == _HTTP_OK else 1)

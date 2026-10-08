@@ -2,13 +2,13 @@
 	audit secrets migrations-check image image-scan openapi miniapp-install miniapp-api-check \
 	miniapp-check miniapp-tunnel miniapp-tunnel-down observability-up observability-down \
 	dev-env infra-up infra-down build up down logs ps bench-llm eval-llm analytics check \
-	toolchain-check stack-smoke ownership-guard hooks ci quick
+	toolchain-check stack-smoke prod-smoke publish ownership-guard hooks ci quick
 
 BACKEND := backend
 MINIAPP := miniapp
 include scripts/image-pins.env
 export GITLEAKS_IMAGE TRIVY_IMAGE ACTIONLINT_IMAGE
-CI_JOBS := backend miniapp secrets image stack-smoke ownership-guard
+CI_JOBS := backend miniapp secrets image stack-smoke prod-smoke ownership-guard
 export CI_JOBS
 export JOB
 export BASE
@@ -105,6 +105,12 @@ toolchain-check:
 
 stack-smoke:
 	./scripts/stack_smoke.sh
+
+prod-smoke:
+	./scripts/prod_smoke.sh
+
+publish:
+	./scripts/publish.sh
 
 ownership-guard:
 	BASE="$(BASE)" ./scripts/ownership_guard.sh

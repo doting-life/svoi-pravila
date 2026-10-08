@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-# shellcheck disable=SC1091
+# shellcheck source=scripts/image-pins.env
 source "$ROOT/scripts/image-pins.env"
 
 if [[ -z "${CI_JOBS:-}" ]]; then
@@ -95,7 +95,7 @@ job_workflow() {
   run_stage workflow actionlint \
     docker run --rm -v "$ROOT:/repo:ro" --workdir /repo "$ACTIONLINT_IMAGE" -color
   run_stage workflow parity \
-    bash -c 'cd "$1/backend" && uv run --locked python ../scripts/ci_parity_check.py' _ "$ROOT"
+    bash -c "cd \"${ROOT}/backend\" && uv run --locked python ../scripts/ci_parity_check.py"
 }
 
 job_toolchain() {
@@ -125,6 +125,7 @@ job_miniapp() {
 
 job_secrets() {
   run_stage secrets toolchain job_toolchain
+  run_stage secrets shellcheck make -C "$ROOT" shellcheck
   run_stage secrets scan make -C "$ROOT" secrets
 }
 

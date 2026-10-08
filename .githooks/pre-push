@@ -13,6 +13,7 @@ while read -r _local_ref local_sha _remote_ref _remote_sha; do
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/svoi-pravila-pre-push.XXXXXX")"
   worktree="${tmp}/wt"
   cleanup() {
+    # Best-effort worktree cleanup after the push CI run.
     git -C "$repo" worktree remove --force "$worktree" >/dev/null 2>&1 || true
     rm -rf "$tmp"
   }

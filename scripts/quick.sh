@@ -26,6 +26,7 @@ run_step() {
   else
     echo "quick: ${name} FAIL $((end - start))s"
     echo "---- last 40 lines of ${log} ----"
+    # Log may be empty if the step failed before writing output.
     tail -n 40 "$log" || true
     echo "---- log: ${log} ----"
     exit "$rc"
@@ -67,6 +68,7 @@ miniapp_vitest_related() {
   )
 }
 
+run_step shellcheck make -C "$ROOT" shellcheck
 run_step ruff-format uv_backend ruff format --check src tests migrations
 run_step ruff-check uv_backend ruff check src tests migrations
 run_step mypy uv_backend mypy src tests
@@ -78,6 +80,7 @@ while IFS= read -r rel; do
   [[ -n "$rel" ]] || continue
   CHANGED+=("$rel")
 done < <(
+  # No matching miniapp files is an expected empty result (grep exit 1).
   git diff --name-only --diff-filter=ACMR "${BASE}...HEAD" -- miniapp \
     | sed 's|^miniapp/||' \
     | grep -E '\.(ts|tsx|js|jsx|mjs|cjs|css|json)$' \

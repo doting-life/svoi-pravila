@@ -2,12 +2,12 @@
 	audit secrets migrations-check image image-scan openapi miniapp-install miniapp-api-check \
 	miniapp-check miniapp-tunnel miniapp-tunnel-down observability-up observability-down \
 	dev-env infra-up infra-down build up down logs ps bench-llm eval-llm analytics check \
-	toolchain-check stack-smoke prod-smoke publish ownership-guard hooks ci quick
+	toolchain-check stack-smoke prod-smoke publish ownership-guard hooks ci quick shellcheck
 
 BACKEND := backend
 MINIAPP := miniapp
 include scripts/image-pins.env
-export GITLEAKS_IMAGE TRIVY_IMAGE ACTIONLINT_IMAGE
+export GITLEAKS_IMAGE TRIVY_IMAGE ACTIONLINT_IMAGE SHELLCHECK_IMAGE
 CI_JOBS := backend miniapp secrets image stack-smoke prod-smoke ownership-guard
 export CI_JOBS
 export JOB
@@ -93,6 +93,9 @@ audit:
 
 secrets:
 	./scripts/secrets.sh
+
+shellcheck:
+	./scripts/shellcheck.sh
 
 image:
 	./scripts/image.sh

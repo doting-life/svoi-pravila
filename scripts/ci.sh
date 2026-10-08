@@ -160,6 +160,26 @@ job_publish() {
   run_stage publish build make -C "$ROOT" image
   run_stage publish scan make -C "$ROOT" image-scan
   run_stage publish push make -C "$ROOT" publish
+  # Digests are captured into the stage log; echo them for RUNBOOK §5 / the quiet job log.
+  local digest_log="${CI_LOG_DIR}/publish-push.log"
+  local digests
+  digests="$(grep -E '^ghcr\.io/[^[:space:]]+@sha256:[0-9a-f]+$' "$digest_log")"
+  [[ -n "$digests" ]] || {
+    echo "ci: publish digests missing from ${digest_log}" >&2
+    exit 1
+  }
+  echo "ci: publish digests"
+  printf '%s\n' "$digests"
+  if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
+    {
+      echo "### Published image digests"
+      echo
+      local bt='`'
+      while IFS= read -r line; do
+        printf -- '- %s%s%s\n' "$bt" "$line" "$bt"
+      done <<<"$digests"
+    } >>"$GITHUB_STEP_SUMMARY"
+  fi
 }
 
 job_ownership_guard() {

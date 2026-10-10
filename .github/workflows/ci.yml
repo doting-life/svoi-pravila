@@ -16,11 +16,12 @@ concurrency:
 
 jobs:
   backend:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Toolchain
         uses: ./.github/actions/toolchain
@@ -29,11 +30,12 @@ jobs:
         run: make ci JOB=backend
 
   miniapp:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Toolchain
         uses: ./.github/actions/toolchain
@@ -42,7 +44,6 @@ jobs:
         run: make ci JOB=miniapp
 
   secrets:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -61,6 +62,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Toolchain
         uses: ./.github/actions/toolchain
@@ -69,11 +72,12 @@ jobs:
         run: make ci JOB=image
 
   stack-smoke:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Toolchain
         uses: ./.github/actions/toolchain
@@ -82,11 +86,12 @@ jobs:
         run: make ci JOB=stack-smoke
 
   prod-smoke:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Toolchain
         uses: ./.github/actions/toolchain
@@ -104,6 +109,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
 
       - name: Toolchain
         uses: ./.github/actions/toolchain
@@ -114,7 +121,7 @@ jobs:
         run: make ci JOB=publish
 
   ownership-guard:
-    if: github.event_name != 'schedule' && github.event_name == 'pull_request' && startsWith(github.head_ref, 'task/')
+    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'task/')
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

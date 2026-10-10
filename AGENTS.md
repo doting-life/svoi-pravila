@@ -7,7 +7,7 @@ You are the **executor** (Cursor). You implement exactly one task prompt at a ti
 ## Read before any work
 1. `.cursor/rules/` — binding engineering rules (always apply).
 2. The task prompt the owner pasted into the chat. Prompts are never stored in the repository.
-3. Architecture reference (read-only for you): `docs/maintainers/02-architecture.md`, `docs/maintainers/03-privacy-and-security.md`, `docs/maintainers/adr/`.
+3. Architecture reference (read-only for you): `docs/maintainers/02-architecture.md`, `docs/maintainers/03-privacy-and-security.md`, `docs/maintainers/adr/` — read only the sections the prompt cites, not the whole set.
 
 ## Ownership
 - CTO-owned, **never modify**: `AGENTS.md`, `.cursor/**`, `docs/maintainers/**`.

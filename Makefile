@@ -7,7 +7,7 @@
 BACKEND := backend
 MINIAPP := miniapp
 include scripts/image-pins.env
-export GITLEAKS_IMAGE TRIVY_IMAGE ACTIONLINT_IMAGE SHELLCHECK_IMAGE
+export GITLEAKS_IMAGE TRIVY_IMAGE ACTIONLINT_IMAGE SHELLCHECK_IMAGE PROMETHEUS_IMAGE
 CI_JOBS := backend miniapp secrets image stack-smoke prod-smoke ownership-guard
 export CI_JOBS
 export JOB

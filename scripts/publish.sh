@@ -19,7 +19,6 @@ IMAGES=(
   "svoi-pravila-miniapp:ci:svoi-pravila-miniapp"
   "svoi-pravila-grafana:ci:svoi-pravila-grafana"
   "svoi-pravila-backup:ci:svoi-pravila-backup"
-  "svoi-pravila-prometheus:ci:svoi-pravila-prometheus"
 )
 
 die() {

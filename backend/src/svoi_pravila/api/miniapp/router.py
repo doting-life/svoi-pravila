@@ -35,6 +35,8 @@ from svoi_pravila.api.miniapp.schemas import (
     InviteResolveResponse,
     InviteResponse,
     MeResponse,
+    PendingRuleItem,
+    PendingRuleListResponse,
     PrivacyTextsResponse,
     RenameContactRequest,
     RuleItem,
@@ -95,6 +97,11 @@ from svoi_pravila.application.use_cases.issue_export_download import (
 )
 from svoi_pravila.application.use_cases.leave_pair import LeavePair, LeavePairCommand
 from svoi_pravila.application.use_cases.list_contacts import ListContacts, ListContactsCommand
+from svoi_pravila.application.use_cases.list_pending_rules import (
+    ListPendingRules,
+    ListPendingRulesQuery,
+    needs_actor_decision,
+)
 from svoi_pravila.application.use_cases.list_rules import ListRules, ListRulesCommand
 from svoi_pravila.application.use_cases.list_suggestions import (
     ListSuggestions,
@@ -133,13 +140,12 @@ from svoi_pravila.domain.enums import (
     QuotaClass,
     RelationshipKind,
     RuleCategory,
-    RuleStatus,
     UsageSurface,
 )
 from svoi_pravila.domain.ids import ContactId, RuleId, RuleSuggestionId, UserId
 from svoi_pravila.domain.product_day import product_day
 from svoi_pravila.domain.rules import MAX_OPEN_RULES_PER_SCOPE, PairScope, Rule
-from svoi_pravila.domain.text import ContactLabel, RuleText
+from svoi_pravila.domain.text import RULE_TEXT_MAX_CHARS, ContactLabel, RuleText
 from svoi_pravila.domain.user import User
 from svoi_pravila.privacy import load_privacy_catalog
 
@@ -182,6 +188,7 @@ class MiniappRouterBindings:
     create_invite: CreateInvite
     leave_pair: LeavePair
     list_rules: ListRules
+    list_pending_rules: ListPendingRules
     propose_rule: ProposeRule
     archive_rule: ArchiveRule
     approve_rule: ApproveRule
@@ -227,12 +234,7 @@ def _contact_item(contact: Contact) -> ContactItem:
 
 
 def _needs_my_approval(rule: Rule, actor_id: UserId) -> bool:
-    if not isinstance(rule.scope, PairScope):
-        return False
-    if rule.status is not RuleStatus.PROPOSED:
-        return False
-    pending = rule.pending_revision
-    return pending is not None and actor_id in rule.approvers and actor_id != pending.author_id
+    return needs_actor_decision(rule, actor_id)
 
 
 def _rule_item_from_view(view: RuleListItemView, *, needs_my_approval: bool) -> RuleItem:
@@ -447,6 +449,7 @@ async def _build_me_response(
             "consents_revoked": step_result.consents_revoked,
             "max_contacts": MAX_CONTACTS_PER_USER,
             "max_open_rules": MAX_OPEN_RULES_PER_SCOPE,
+            "rule_text_max_chars": RULE_TEXT_MAX_CHARS,
             "display_timezone": bindings.display_timezone,
             "bot_username": username,
             "decode_remaining": decode_remaining,
@@ -882,6 +885,36 @@ def _register_rules(
     actor_dep: Any,
 ) -> None:
     """Register rules routes."""
+
+    @router.get(
+        "/rules/pending",
+        operation_id="listPendingRules",
+        response_model=PendingRuleListResponse,
+        responses=_ERROR_RESPONSES,
+    )
+    async def list_pending_rules(
+        response: Response,
+        actor: actor_dep,
+    ) -> PendingRuleListResponse:
+        no_store(response)
+        result = await bindings.list_pending_rules.execute(ListPendingRulesQuery(actor_id=actor.id))
+        return PendingRuleListResponse(
+            items=[
+                PendingRuleItem.model_validate(
+                    {
+                        "id": str(item.rule_id),
+                        "contact_id": str(item.contact_id),
+                        "contact_label": item.contact_label.value,
+                        "category": item.category.value,
+                        "status": item.status.value,
+                        "text": item.text.value,
+                        "shared": item.shared,
+                        "has_pending_edit": item.has_pending_edit,
+                    }
+                )
+                for item in result.items
+            ]
+        )
 
     @router.get(
         "/contacts/{contact_id}/rules",

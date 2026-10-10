@@ -75,13 +75,13 @@ async def _grant(
     return accepted.user.id
 
 
-def _assert_web_app(req: SendMessage, strings: TelegramStrings) -> None:
+def _assert_web_app(req: SendMessage, strings: TelegramStrings, *, url: str = _MINIAPP) -> None:
     markup = req.reply_markup
     assert isinstance(markup, InlineKeyboardMarkup)
     button = markup.inline_keyboard[0][0]
     assert button.text == strings.dm_open_app
     assert isinstance(button.web_app, WebAppInfo)
-    assert button.web_app.url == _MINIAPP
+    assert button.web_app.url == url
 
 
 @pytest.mark.unit
@@ -141,7 +141,7 @@ async def test_telegram_pair_notifier_happy_paths_and_guards(
     ]
     assert proposed
     assert "shared for dm" not in str(proposed[-1].text)
-    _assert_web_app(proposed[-1], strings)
+    _assert_web_app(proposed[-1], strings, url=f"{_MINIAPP}/#pending")
 
     await notifier.shared_rule_decided(inviter_id, shared.rule.id, approved=True)
     await notifier.shared_rule_decided(inviter_id, shared.rule.id, approved=False)

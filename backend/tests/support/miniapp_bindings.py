@@ -26,6 +26,7 @@ from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.application.use_cases.issue_export_download import IssueExportDownload
 from svoi_pravila.application.use_cases.leave_pair import LeavePair
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
+from svoi_pravila.application.use_cases.list_pending_rules import ListPendingRules
 from svoi_pravila.application.use_cases.list_rules import ListRules
 from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
@@ -76,6 +77,7 @@ def build_test_miniapp_bindings(
         ),
         "leave_pair": LeavePair(world.uow_factory, world.ids, world.clock, pair_notifier),
         "list_rules": ListRules(world.uow_factory, world.catalog),
+        "list_pending_rules": ListPendingRules(world.uow_factory, world.catalog),
         "propose_rule": ProposeRule(
             world.uow_factory, world.catalog, world.ids, world.clock, pair_notifier
         ),

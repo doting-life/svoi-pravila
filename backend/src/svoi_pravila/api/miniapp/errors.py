@@ -32,6 +32,9 @@ class MiniappErrorCode(StrEnum):
     BODY_TOO_LARGE = "body_too_large"
     TEXT_TOO_SHORT = "text_too_short"
     TEXT_TOO_LONG = "text_too_long"
+    RULE_TEXT_EMPTY = "rule_text_empty"
+    RULE_TEXT_TOO_LONG = "rule_text_too_long"
+    RULE_TEXT_INVALID_CHARS = "rule_text_invalid_chars"
     QUOTA_EXCEEDED = "quota_exceeded"
     QUOTA_EXHAUSTED = "quota_exhausted"
     SERVICE_BUDGET_EXHAUSTED = "service_budget_exhausted"
@@ -57,6 +60,15 @@ class LimitErrorBody(BaseModel):
     code: MiniappErrorCode
     message: str = Field(min_length=1)
     retry_at: datetime
+
+
+class RuleTextTooLongErrorBody(BaseModel):
+    """Rule text length error with code-point counts."""
+
+    code: MiniappErrorCode
+    message: str = Field(min_length=1)
+    max: int = Field(ge=1)
+    actual: int = Field(ge=0)
 
 
 def error_body(code: MiniappErrorCode) -> ErrorBody:
@@ -85,3 +97,17 @@ def limit_error_body(
         msg = f"limit_error_body does not support {code.value}"
         raise ValueError(msg)
     return LimitErrorBody(code=code, message=message, retry_at=resets_at)
+
+
+def rule_text_too_long_body(*, maximum: int, actual: int) -> RuleTextTooLongErrorBody:
+    """Build rule_text_too_long with max/actual code-point counts."""
+    message = load_ru_messages().get(MiniappErrorCode.RULE_TEXT_TOO_LONG.value)
+    if message is None:
+        msg = "missing mini-app message for rule_text_too_long"
+        raise KeyError(msg)
+    return RuleTextTooLongErrorBody(
+        code=MiniappErrorCode.RULE_TEXT_TOO_LONG,
+        message=message,
+        max=maximum,
+        actual=actual,
+    )

@@ -84,6 +84,23 @@ class OpenRuleLimitReached(ApplicationError):
     """Scope already has the maximum number of open rules."""
 
 
+class RuleTextEmpty(ApplicationError):
+    """Rule text is empty after normalization."""
+
+
+class RuleTextTooLong(ApplicationError):
+    """Rule text exceeds the maximum Unicode code-point length."""
+
+    def __init__(self, *, maximum: int, actual: int) -> None:
+        self.max = maximum
+        self.actual = actual
+        super().__init__(f"rule text too long: {actual} > {maximum}")
+
+
+class RuleTextInvalidChars(ApplicationError):
+    """Rule text contains forbidden control characters."""
+
+
 class ContactAlreadyLinked(ApplicationError):
     """Contact is already linked to a pair."""
 

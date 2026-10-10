@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 from svoi_pravila.adapters.channels.telegram.bot_username import BotUsernameCache
+from svoi_pravila.adapters.system.tone_suggestion_catalog import StaticToneSuggestionCatalog
 from svoi_pravila.api.miniapp import MiniappDeps, MiniappRouterBindings
+from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.ports.pair_notifier import PairNotifier
 from svoi_pravila.application.ports.rate_limiter import RateLimiter
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
@@ -13,6 +15,10 @@ from svoi_pravila.application.use_cases.accept_invite import AcceptInvite
 from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestion
 from svoi_pravila.application.use_cases.approve_rule import ApproveRule
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
+from svoi_pravila.application.use_cases.compose_generation import (
+    ComposeGeneration,
+    ComposeGenerationPorts,
+)
 from svoi_pravila.application.use_cases.create_contact import CreateContact
 from svoi_pravila.application.use_cases.create_invite import CreateInvite
 from svoi_pravila.application.use_cases.delete_my_account import (
@@ -30,6 +36,10 @@ from svoi_pravila.application.use_cases.list_pending_rules import ListPendingRul
 from svoi_pravila.application.use_cases.list_rules import ListRules
 from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
+from svoi_pravila.application.use_cases.record_inline_choice import (
+    RecordInlineChoice,
+    RecordInlineChoicePorts,
+)
 from svoi_pravila.application.use_cases.reject_pending_rule import RejectPendingRule
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.resolve_invite import ResolveInvite
@@ -37,7 +47,7 @@ from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllCons
 from svoi_pravila.application.use_cases.serve_export_download import ServeExportDownload
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from tests.fakes.export_download import FakeExportDownloadStore
-from tests.fakes.quota_budget import FakeQuotaGate
+from tests.fakes.quota_budget import FakeLlmBudget, FakeQuotaGate
 from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
 from tests.support.miniapp_decode import MiniappDecodeBundle
 
@@ -117,6 +127,34 @@ def build_test_miniapp_bindings(
         "miniapp_url": miniapp_url,
         "decode_incoming": decode_bundle.decode_incoming,
         "suggest_rule_from_decode": decode_bundle.suggest_rule_from_decode,
+        "compose_generation": ComposeGeneration(
+            ComposeGenerationPorts(
+                uow_factory=world.uow_factory,
+                catalog=world.catalog,
+                generator=decode_bundle.generator,
+                quota_gate=FakeQuotaGate(limit=300),
+                llm_budget=FakeLlmBudget(),
+                sink=decode_bundle.sink,
+                clock=world.clock,
+                monotonic=world.clock,
+                ids=world.ids,
+                pseudonymizer=decode_bundle.pseudonymizer,
+                crisis_screen=CrisisScreen.load_ru_v2(),
+                deadline_seconds=8.0,
+                analytics_timezone=display_timezone,
+            )
+        ),
+        "record_choice": RecordInlineChoice(
+            RecordInlineChoicePorts(
+                sink=decode_bundle.sink,
+                uow_factory=world.uow_factory,
+                catalog=world.catalog,
+                tone_catalog=StaticToneSuggestionCatalog(),
+                clock=world.clock,
+                ids=world.ids,
+                pseudonymizer=decode_bundle.pseudonymizer,
+            )
+        ),
         "prepared_results": decode_bundle.prepared_results,
         "rule_sources": decode_bundle.rule_sources,
         "pseudonymizer": decode_bundle.pseudonymizer,

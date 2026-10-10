@@ -17,6 +17,7 @@ def applied_rule_views(
             rule = rules[index]
             views.append(
                 AppliedRuleView(
+                    index=index,
                     category=rule.category,
                     text=rule.text,
                     effective_since=rule.effective_since,

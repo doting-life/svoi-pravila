@@ -40,6 +40,10 @@ from svoi_pravila.application.ports.generation import (
 )
 from svoi_pravila.application.ports.inline_result_reuse import InlineResultReuse
 from svoi_pravila.application.ports.llm_budget import BudgetExhausted, BudgetOk
+from svoi_pravila.application.use_cases.compose_generation import (
+    ComposeGeneration,
+    ComposeGenerationPorts,
+)
 from svoi_pravila.application.use_cases.create_contact import CreateContact, CreateContactCommand
 from svoi_pravila.application.use_cases.delete_my_account import (
     DeleteMyAccount,
@@ -99,6 +103,7 @@ class _Fakes:
     sink: RecordingUsageEventSink | FailingUsageEventSink | None = None
     reuse: InlineResultReuse | None = None
     min_chars: int = 8
+    intent_prefixes: tuple[tuple[str, HelpSayIntent], ...] = _PREFIXES
 
 
 def _ports(
@@ -113,8 +118,8 @@ def _ports(
     reuse: InlineResultReuse = (
         chosen.reuse if chosen.reuse is not None else make_inline_reuse(world.clock)
     )
-    use_case = InlineCompose(
-        InlineComposePorts(
+    compose_generation = ComposeGeneration(
+        ComposeGenerationPorts(
             uow_factory=world.uow_factory,
             catalog=world.catalog,
             generator=chosen.generator or FakeTextGenerator(),
@@ -126,11 +131,18 @@ def _ports(
             ids=world.ids,
             pseudonymizer=FakePseudonymizer(),
             crisis_screen=CrisisScreen.load_ru_v2(),
+            deadline_seconds=8.0,
+            analytics_timezone="Europe/Moscow",
+        )
+    )
+    use_case = InlineCompose(
+        InlineComposePorts(
+            uow_factory=world.uow_factory,
+            catalog=world.catalog,
+            compose=compose_generation,
             reuse=reuse,
             min_chars=chosen.min_chars,
-            deadline_seconds=8.0,
-            intent_prefixes=_PREFIXES,
-            analytics_timezone="Europe/Moscow",
+            intent_prefixes=chosen.intent_prefixes,
         )
     )
     return use_case, sink, reuse
@@ -388,25 +400,12 @@ async def test_inline_compose_persist_before_budget_add(world: AppWorld) -> None
 async def test_inline_compose_skips_blank_prefix_entries(world: AppWorld) -> None:
     await world.ensure_granted_user(100)
     generator = FakeTextGenerator()
-    use_case = InlineCompose(
-        InlineComposePorts(
-            uow_factory=world.uow_factory,
-            catalog=world.catalog,
+    use_case, _sink, _ = _ports(
+        world,
+        _Fakes(
             generator=generator,
-            quota_gate=FakeQuotaGate(limit=30),
-            llm_budget=FakeLlmBudget(),
-            sink=RecordingUsageEventSink(),
-            clock=world.clock,
-            monotonic=world.clock,
-            ids=world.ids,
-            pseudonymizer=FakePseudonymizer(),
-            crisis_screen=CrisisScreen.load_ru_v2(),
-            reuse=make_inline_reuse(world.clock),
-            min_chars=8,
-            deadline_seconds=8.0,
             intent_prefixes=(("", HelpSayIntent.OTHER), *_PREFIXES),
-            analytics_timezone="Europe/Moscow",
-        )
+        ),
     )
     await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough draft"))
     assert generator.soften_calls

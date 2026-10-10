@@ -22,4 +22,5 @@ def test_applied_rule_views_skips_out_of_range_and_keeps_order() -> None:
     rules = (_rule("a"), _rule("b"), _rule("c"))
     views = applied_rule_views(rules, (0, 9, 2, -1, 1, 0))
     assert tuple(view.text for view in views) == ("a", "c", "b", "a")
+    assert tuple(view.index for view in views) == (0, 2, 1, 0)
     assert applied_rule_views((), (0,)) == ()

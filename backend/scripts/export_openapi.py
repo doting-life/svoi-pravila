@@ -24,6 +24,7 @@ from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestio
 from svoi_pravila.application.use_cases.approve_rule import ApproveRule
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
+from svoi_pravila.application.use_cases.compose_generation import ComposeGeneration
 from svoi_pravila.application.use_cases.create_contact import CreateContact
 from svoi_pravila.application.use_cases.create_invite import CreateInvite
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming
@@ -38,6 +39,7 @@ from svoi_pravila.application.use_cases.list_pending_rules import ListPendingRul
 from svoi_pravila.application.use_cases.list_rules import ListRules
 from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
+from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoice
 from svoi_pravila.application.use_cases.reject_pending_rule import RejectPendingRule
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.resolve_invite import ResolveInvite
@@ -86,6 +88,8 @@ def _openapi_bindings() -> MiniappRouterBindings:
         miniapp_url="https://miniapp.example",
         decode_incoming=cast(DecodeIncoming, _stub()),
         suggest_rule_from_decode=cast(SuggestRuleFromDecode, _stub()),
+        compose_generation=cast(ComposeGeneration, _stub()),
+        record_choice=cast(RecordInlineChoice, _stub()),
         prepared_results=cast(PreparedResults, _stub()),
         rule_sources=cast(RuleSources, _stub()),
         pseudonymizer=cast(Pseudonymizer, _stub()),

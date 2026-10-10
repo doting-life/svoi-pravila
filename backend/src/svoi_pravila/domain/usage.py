@@ -151,6 +151,6 @@ class UsageEvent:
         if self.outcome is not UsageOutcome.OK:
             msg = "result_chosen outcome must be ok"
             raise InvalidValueError(msg)
-        if self.surface is not UsageSurface.INLINE:
-            msg = "result_chosen surface must be inline"
+        if self.surface not in {UsageSurface.INLINE, UsageSurface.MINIAPP}:
+            msg = "result_chosen surface must be inline or miniapp"
             raise InvalidValueError(msg)

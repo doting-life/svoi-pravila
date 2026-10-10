@@ -221,6 +221,65 @@ class DecodeRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
 
+ComposeIntent = Literal[
+    "soften",
+    "decline",
+    "set_boundary",
+    "admit_fault",
+    "reconnect",
+    "other",
+]
+
+
+class ComposeRequest(BaseModel):
+    """POST /compose — draft to soften or help-say (same text bound as inline)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    draft: str = Field(min_length=1, max_length=4000)
+    intent: ComposeIntent
+    contact_id: str | None = None
+
+
+class ComposeVariantItem(BaseModel):
+    """One compose variant (C1 text; never persisted by the server)."""
+
+    text: str = Field(min_length=1, max_length=1000)
+    firmness: Literal["gentle", "balanced", "firm"]
+
+
+class ComposeAppliedRuleItem(BaseModel):
+    """Rule the model reported as applied (index into the request context)."""
+
+    index: int = Field(ge=0)
+    text: str = Field(min_length=1)
+
+
+class ComposeResponse(BaseModel):
+    """POST /compose result (no prepared-result tokens)."""
+
+    safety: Literal["ok", "crisis", "refuse_manipulation"]
+    variants: list[ComposeVariantItem]
+    applied_rules: list[ComposeAppliedRuleItem]
+    lead: str | None = None
+    resources: list[str] | None = None
+
+
+class ComposeChoiceRequest(BaseModel):
+    """POST /compose/choice — tone signal only (no text)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scenario: Literal["soften", "help_say"]
+    firmness: Literal["gentle", "balanced", "firm"]
+
+
+class ComposeChoiceResponse(BaseModel):
+    """POST /compose/choice acknowledgement."""
+
+    outcome: Literal["recorded"]
+
+
 class SuggestFromDecodeRequest(BaseModel):
     """POST /suggestions/from-decode — one-shot rule-source token."""
 

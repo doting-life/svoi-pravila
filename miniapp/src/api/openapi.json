@@ -65,6 +65,198 @@
         "title": "AcceptSuggestionResponse",
         "type": "object"
       },
+      "ComposeAppliedRuleItem": {
+        "description": "Rule the model reported as applied (index into the request context).",
+        "properties": {
+          "index": {
+            "minimum": 0.0,
+            "title": "Index",
+            "type": "integer"
+          },
+          "text": {
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "text"
+        ],
+        "title": "ComposeAppliedRuleItem",
+        "type": "object"
+      },
+      "ComposeChoiceRequest": {
+        "additionalProperties": false,
+        "description": "POST /compose/choice — tone signal only (no text).",
+        "properties": {
+          "firmness": {
+            "enum": [
+              "gentle",
+              "balanced",
+              "firm"
+            ],
+            "title": "Firmness",
+            "type": "string"
+          },
+          "scenario": {
+            "enum": [
+              "soften",
+              "help_say"
+            ],
+            "title": "Scenario",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scenario",
+          "firmness"
+        ],
+        "title": "ComposeChoiceRequest",
+        "type": "object"
+      },
+      "ComposeChoiceResponse": {
+        "description": "POST /compose/choice acknowledgement.",
+        "properties": {
+          "outcome": {
+            "const": "recorded",
+            "title": "Outcome",
+            "type": "string"
+          }
+        },
+        "required": [
+          "outcome"
+        ],
+        "title": "ComposeChoiceResponse",
+        "type": "object"
+      },
+      "ComposeRequest": {
+        "additionalProperties": false,
+        "description": "POST /compose — draft to soften or help-say (same text bound as inline).",
+        "properties": {
+          "contact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contact Id"
+          },
+          "draft": {
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Draft",
+            "type": "string"
+          },
+          "intent": {
+            "enum": [
+              "soften",
+              "decline",
+              "set_boundary",
+              "admit_fault",
+              "reconnect",
+              "other"
+            ],
+            "title": "Intent",
+            "type": "string"
+          }
+        },
+        "required": [
+          "draft",
+          "intent"
+        ],
+        "title": "ComposeRequest",
+        "type": "object"
+      },
+      "ComposeResponse": {
+        "description": "POST /compose result (no prepared-result tokens).",
+        "properties": {
+          "applied_rules": {
+            "items": {
+              "$ref": "#/components/schemas/ComposeAppliedRuleItem"
+            },
+            "title": "Applied Rules",
+            "type": "array"
+          },
+          "lead": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lead"
+          },
+          "resources": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resources"
+          },
+          "safety": {
+            "enum": [
+              "ok",
+              "crisis",
+              "refuse_manipulation"
+            ],
+            "title": "Safety",
+            "type": "string"
+          },
+          "variants": {
+            "items": {
+              "$ref": "#/components/schemas/ComposeVariantItem"
+            },
+            "title": "Variants",
+            "type": "array"
+          }
+        },
+        "required": [
+          "safety",
+          "variants",
+          "applied_rules"
+        ],
+        "title": "ComposeResponse",
+        "type": "object"
+      },
+      "ComposeVariantItem": {
+        "description": "One compose variant (C1 text; never persisted by the server).",
+        "properties": {
+          "firmness": {
+            "enum": [
+              "gentle",
+              "balanced",
+              "firm"
+            ],
+            "title": "Firmness",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "firmness"
+        ],
+        "title": "ComposeVariantItem",
+        "type": "object"
+      },
       "ConfirmTrueRequest": {
         "additionalProperties": false,
         "description": "Destructive confirmations: body must be exactly ``{\"confirm\": true}``.",
@@ -959,6 +1151,264 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v1/compose": {
+      "post": {
+        "operationId": "composeVariants",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComposeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Compose Variants",
+        "tags": [
+          "miniapp"
+        ]
+      }
+    },
+    "/api/v1/compose/choice": {
+      "post": {
+        "operationId": "composeChoice",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComposeChoiceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposeChoiceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Compose Choice",
+        "tags": [
+          "miniapp"
+        ]
+      }
+    },
     "/api/v1/consents/{kind}/document": {
       "get": {
         "operationId": "getConsentDocument",

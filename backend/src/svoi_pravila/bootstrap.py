@@ -78,6 +78,10 @@ from svoi_pravila.application.use_cases.accept_suggestion import AcceptSuggestio
 from svoi_pravila.application.use_cases.approve_rule import ApproveRule
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
+from svoi_pravila.application.use_cases.compose_generation import (
+    ComposeGeneration,
+    ComposeGenerationPorts,
+)
 from svoi_pravila.application.use_cases.create_contact import CreateContact
 from svoi_pravila.application.use_cases.create_invite import CreateInvite
 from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, DecodeIncomingPorts
@@ -161,6 +165,8 @@ class _MiniappWire:
     bot: Bot
     inline_reuse: InlineResultReuse
     decode: _DecodeWire
+    compose_generation: ComposeGeneration
+    record_choice: RecordInlineChoice
     pair_notifier: PairNotifier
     bot_username: BotUsernameCache
     invite_tokens: SecretsInviteTokenGenerator
@@ -280,6 +286,8 @@ def _build_miniapp_mount(
             miniapp_url=settings.miniapp_url,
             decode_incoming=wire.decode.decode_incoming,
             suggest_rule_from_decode=wire.decode.suggest_rule_from_decode,
+            compose_generation=wire.compose_generation,
+            record_choice=wire.record_choice,
             prepared_results=wire.decode.prepared_results,
             rule_sources=wire.decode.rule_sources,
             pseudonymizer=ports.pseudonymizer,
@@ -358,6 +366,55 @@ def _wire_quota_budget(
         clock=clock,
     )
     return guard, quota_gate, llm_budget
+
+
+@dataclass(frozen=True, slots=True)
+class _ComposeWireDeps:
+    """Collaborators for shared compose generation and choice recording."""
+
+    ports: _CorePorts
+    generator: GigaChatTextGenerator
+    quota_gate: ValkeyQuotaGate
+    llm_budget: ValkeyLlmBudget
+    sink: MetricsUsageEventSink
+    monotonic: SystemMonotonicClock
+    crisis_screen: CrisisScreen
+    tone_catalog: StaticToneSuggestionCatalog
+    deadline_seconds: float
+    analytics_timezone: str
+
+
+def _wire_compose_stack(deps: _ComposeWireDeps) -> tuple[ComposeGeneration, RecordInlineChoice]:
+    """Shared soften/help-say generation and choice recording for mini-app and inline."""
+    compose = ComposeGeneration(
+        ComposeGenerationPorts(
+            uow_factory=deps.ports.uow_factory,
+            catalog=deps.ports.catalog,
+            generator=deps.generator,
+            quota_gate=deps.quota_gate,
+            llm_budget=deps.llm_budget,
+            sink=deps.sink,
+            clock=deps.ports.clock,
+            monotonic=deps.monotonic,
+            ids=deps.ports.ids,
+            pseudonymizer=deps.ports.pseudonymizer,
+            crisis_screen=deps.crisis_screen,
+            deadline_seconds=deps.deadline_seconds,
+            analytics_timezone=deps.analytics_timezone,
+        )
+    )
+    choice = RecordInlineChoice(
+        RecordInlineChoicePorts(
+            sink=deps.sink,
+            uow_factory=deps.ports.uow_factory,
+            catalog=deps.ports.catalog,
+            tone_catalog=deps.tone_catalog,
+            clock=deps.ports.clock,
+            ids=deps.ports.ids,
+            pseudonymizer=deps.ports.pseudonymizer,
+        )
+    )
+    return compose, choice
 
 
 def create_application(settings: Settings) -> FastAPI:
@@ -448,6 +505,20 @@ def create_application(settings: Settings) -> FastAPI:
         prepared_results=prepared_results,
         rule_sources=rule_sources,
     )
+    compose_generation, record_choice = _wire_compose_stack(
+        _ComposeWireDeps(
+            ports=core,
+            generator=generator,
+            quota_gate=quota_gate,
+            llm_budget=llm_budget,
+            sink=sink,
+            monotonic=monotonic,
+            crisis_screen=crisis_screen,
+            tone_catalog=tone_catalog,
+            deadline_seconds=settings.inline_deadline_seconds,
+            analytics_timezone=settings.analytics_timezone,
+        )
+    )
     lifecycle: TelegramLifecycle | None = None
     routers: list[APIRouter] = []
     shared_bot: Bot | None = None
@@ -471,6 +542,8 @@ def create_application(settings: Settings) -> FastAPI:
                     bot=shared_bot,
                     inline_reuse=inline_reuse,
                     decode=decode_wire,
+                    compose_generation=compose_generation,
+                    record_choice=record_choice,
                     pair_notifier=pair_notifier,
                     bot_username=bot_username,
                     invite_tokens=invite_tokens,
@@ -487,37 +560,17 @@ def create_application(settings: Settings) -> FastAPI:
             InlineComposePorts(
                 uow_factory=uow_factory,
                 catalog=catalog,
-                generator=generator,
-                quota_gate=quota_gate,
-                llm_budget=llm_budget,
-                sink=sink,
-                clock=clock,
-                monotonic=monotonic,
-                ids=ids,
-                pseudonymizer=pseudonymizer,
-                crisis_screen=crisis_screen,
+                compose=compose_generation,
                 reuse=inline_reuse,
                 min_chars=settings.inline_min_chars,
-                deadline_seconds=settings.inline_deadline_seconds,
                 intent_prefixes=help_say_intent_prefixes(strings),
-                analytics_timezone=settings.analytics_timezone,
             )
         )
         deps = TelegramDeps(
             strings=strings,
             get_user_by_telegram_id=GetUserByTelegramId(uow_factory),
             inline_compose=inline_compose,
-            record_inline_choice=RecordInlineChoice(
-                RecordInlineChoicePorts(
-                    sink=sink,
-                    uow_factory=uow_factory,
-                    catalog=catalog,
-                    tone_catalog=tone_catalog,
-                    clock=clock,
-                    ids=ids,
-                    pseudonymizer=pseudonymizer,
-                )
-            ),
+            record_inline_choice=record_choice,
             prepared_results=decode_wire.prepared_results,
             inline_queries=InlineQueryCoordinator(
                 AsyncioSleeper(),

@@ -22,6 +22,10 @@ from svoi_pravila.api.miniapp.http import MiniappHttpError
 from svoi_pravila.api.miniapp.schemas import (
     AcceptInviteRequest,
     AcceptSuggestionResponse,
+    ComposeChoiceRequest,
+    ComposeChoiceResponse,
+    ComposeRequest,
+    ComposeResponse,
     ConfirmTrueRequest,
     ConsentDocumentResponse,
     ContactItem,
@@ -46,9 +50,18 @@ from svoi_pravila.api.miniapp.schemas import (
     SuggestionItem,
     SuggestionListResponse,
 )
-from svoi_pravila.application.errors import NotFound
+from svoi_pravila.application.errors import (
+    GenerationRefusedByProvider,
+    GenerationUnavailable,
+    IncomingTextTooLong,
+    IncomingTextTooShort,
+    InvalidGenerationOutput,
+    InvalidInlineResultRef,
+    NotFound,
+)
 from svoi_pravila.application.ports.bot_username import BotUsername
 from svoi_pravila.application.ports.clock import Clock
+from svoi_pravila.application.ports.generation import HelpSayIntent
 from svoi_pravila.application.ports.prepared_results import PreparedResults
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.quota_gate import QuotaGate
@@ -67,6 +80,10 @@ from svoi_pravila.application.use_cases.accept_suggestion import (
 )
 from svoi_pravila.application.use_cases.approve_rule import ApproveRule, ApproveRuleCommand
 from svoi_pravila.application.use_cases.archive_rule import ArchiveRule, ArchiveRuleCommand
+from svoi_pravila.application.use_cases.compose_generation import (
+    ComposeGeneration,
+    ComposeGenerationCommand,
+)
 from svoi_pravila.application.use_cases.create_contact import (
     CreateContact,
     CreateContactCommand,
@@ -108,6 +125,10 @@ from svoi_pravila.application.use_cases.list_suggestions import (
     ListSuggestionsCommand,
 )
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule, ProposeRuleCommand
+from svoi_pravila.application.use_cases.record_inline_choice import (
+    RecordInlineChoice,
+    RecordInlineChoiceCommand,
+)
 from svoi_pravila.application.use_cases.reject_pending_rule import (
     RejectPendingRule,
     RejectPendingRuleCommand,
@@ -137,9 +158,11 @@ from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
 from svoi_pravila.domain.contact import MAX_CONTACTS_PER_USER, Contact
 from svoi_pravila.domain.enums import (
     ConsentKind,
+    Firmness,
     QuotaClass,
     RelationshipKind,
     RuleCategory,
+    UsageScenario,
     UsageSurface,
 )
 from svoi_pravila.domain.ids import ContactId, RuleId, RuleSuggestionId, UserId
@@ -211,6 +234,8 @@ class MiniappRouterBindings:
     miniapp_url: str | None
     decode_incoming: DecodeIncoming
     suggest_rule_from_decode: SuggestRuleFromDecode
+    compose_generation: ComposeGeneration
+    record_choice: RecordInlineChoice
     prepared_results: PreparedResults
     rule_sources: RuleSources
     pseudonymizer: Pseudonymizer
@@ -295,6 +320,7 @@ def build_miniapp_router(bindings: MiniappRouterBindings) -> APIRouter:
     _register_rules(router, bindings, actor_dep)
     _register_suggestions(router, bindings, actor_dep)
     _register_decode(router, bindings, actor_dep)
+    _register_compose(router, bindings, actor_dep)
     if bindings.enable_test_routes:
         _register_test_routes(router)
     return router
@@ -315,6 +341,97 @@ def _register_test_routes(router: APIRouter) -> None:
             yield format_sse("probe", {"phase": "done"})
 
         return StreamingResponse(frames(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+
+_COMPOSE_INTENT_MAP: dict[str, HelpSayIntent | None] = {
+    "soften": None,
+    "decline": HelpSayIntent.DECLINE,
+    "set_boundary": HelpSayIntent.SET_BOUNDARY,
+    "admit_fault": HelpSayIntent.ADMIT_FAULT,
+    "reconnect": HelpSayIntent.RECONNECT_AFTER_CONFLICT,
+    "other": HelpSayIntent.OTHER,
+}
+
+
+def _register_compose(
+    router: APIRouter,
+    bindings: MiniappRouterBindings,
+    actor_dep: Any,
+) -> None:
+    """Register compose JSON and choice routes."""
+
+    @router.post(
+        "/compose",
+        operation_id="composeVariants",
+        response_model=ComposeResponse,
+        responses=_LIMIT_ERROR_RESPONSES,
+    )
+    async def compose_variants(
+        body: ComposeRequest,
+        response: Response,
+        actor: actor_dep,
+    ) -> ComposeResponse:
+        no_store(response)
+        contact_id: ContactId | None = None
+        if body.contact_id is not None:
+            contact_id = ContactId(parse_path_uuid(body.contact_id))
+        intent = _COMPOSE_INTENT_MAP[body.intent]
+        try:
+            result = await bindings.compose_generation.execute(
+                ComposeGenerationCommand(
+                    telegram_user_id=actor.telegram_user_id,
+                    draft=body.draft,
+                    intent=intent,
+                    contact_id=contact_id,
+                    surface=UsageSurface.MINIAPP,
+                )
+            )
+        except IncomingTextTooShort as exc:
+            raise MiniappHttpError(MiniappErrorCode.TEXT_TOO_SHORT, 422) from exc
+        except IncomingTextTooLong as exc:
+            raise MiniappHttpError(MiniappErrorCode.TEXT_TOO_LONG, 422) from exc
+        except GenerationUnavailable as exc:
+            raise MiniappHttpError(MiniappErrorCode.GENERATION_UNAVAILABLE, 503) from exc
+        except (GenerationRefusedByProvider, InvalidGenerationOutput) as exc:
+            raise MiniappHttpError(MiniappErrorCode.INVALID_OUTPUT, 502) from exc
+        payload: dict[str, Any] = {
+            "safety": result.safety.value,
+            "variants": [
+                {"text": item.text, "firmness": item.firmness.value} for item in result.variants
+            ],
+            "applied_rules": [
+                {"index": rule.index, "text": rule.text} for rule in result.applied_rules
+            ],
+        }
+        if result.safety.value == "crisis":
+            payload["lead"] = load_crisis_lead()
+            payload["resources"] = list(load_support_resources())
+        return ComposeResponse.model_validate(payload)
+
+    @router.post(
+        "/compose/choice",
+        operation_id="composeChoice",
+        response_model=ComposeChoiceResponse,
+        responses=_ERROR_RESPONSES,
+    )
+    async def compose_choice(
+        body: ComposeChoiceRequest,
+        response: Response,
+        actor: actor_dep,
+    ) -> ComposeChoiceResponse:
+        no_store(response)
+        try:
+            await bindings.record_choice.execute(
+                RecordInlineChoiceCommand(
+                    telegram_user_id=actor.telegram_user_id,
+                    scenario=UsageScenario(body.scenario),
+                    firmness=Firmness(body.firmness),
+                    surface=UsageSurface.MINIAPP,
+                )
+            )
+        except InvalidInlineResultRef as exc:
+            raise MiniappHttpError(MiniappErrorCode.VALIDATION_ERROR, 422) from exc
+        return ComposeChoiceResponse(outcome="recorded")
 
 
 def _register_decode(

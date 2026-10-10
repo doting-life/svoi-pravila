@@ -53,6 +53,7 @@ class RuleContext:
 class AppliedRuleView:
     """Rule context selected by validated ``applied_rule_indexes``."""
 
+    index: int
     category: RuleCategory
     text: str
     effective_since: datetime

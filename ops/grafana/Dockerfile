@@ -105,6 +105,9 @@ COPY --from=prompluginbuild /out/gpx_grafana-prometheus-datasource_linux_${TARGE
 RUN chmod 0755 /usr/share/grafana/bin/grafana \
 		/usr/share/grafana/plugins/grafana-postgresql-datasource/gpx_grafana_postgresql_datasource_linux_${TARGETARCH} \
 		/usr/share/grafana/plugins/prometheus/gpx_grafana-prometheus-datasource_linux_${TARGETARCH} \
+	&& rm -f \
+		/usr/share/grafana/plugins/grafana-postgresql-datasource/MANIFEST.txt \
+		/usr/share/grafana/plugins/prometheus/MANIFEST.txt \
 	&& chown -R 472:472 /usr/share/grafana/plugins \
 	&& chown 472:472 /usr/share/grafana/bin/grafana
 

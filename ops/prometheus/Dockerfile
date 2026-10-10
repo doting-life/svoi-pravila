@@ -16,15 +16,17 @@ RUN set -eu; \
 		https://github.com/prometheus/prometheus.git .; \
 	test "$(git rev-parse HEAD)" = "${PROM_COMMIT}"; \
 	go get "golang.org/x/net@v${NET_VERSION}"; \
-	CGO_ENABLED=0 go build -trimpath -tags netgo,osusergo \
+	CGO_ENABLED=0 go build -trimpath -buildvcs=false -tags netgo,osusergo \
 		-ldflags "-s -w" -o /out/prometheus ./cmd/prometheus; \
-	CGO_ENABLED=0 go build -trimpath -tags netgo,osusergo \
+	CGO_ENABLED=0 go build -trimpath -buildvcs=false -tags netgo,osusergo \
 		-ldflags "-s -w" -o /out/promtool ./cmd/promtool
 
 FROM alpine:3.23.6@sha256:85fe1e81d6758c208f3e1eed4338a1997e19d4be002d4dd32d3100c9a8c010a0
 
 COPY --from=build /out/prometheus /out/promtool /bin/
 COPY prometheus.yml /etc/prometheus/prometheus.yml
+# Named volume /prometheus inherits ownership from this directory on first mount.
+RUN mkdir -p /prometheus && chown nobody:nobody /prometheus
 USER nobody
 EXPOSE 9090
 VOLUME ["/prometheus"]

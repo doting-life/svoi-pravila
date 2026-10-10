@@ -94,7 +94,8 @@ API_IMAGE="$(image_id svoi-pravila:ci)"
 MINIAPP_IMAGE="$(image_id svoi-pravila-miniapp:ci)"
 GRAFANA_IMAGE="$(image_id svoi-pravila-grafana:ci)"
 BACKUP_IMAGE="$(image_id svoi-pravila-backup:ci)"
-PROMETHEUS_IMAGE="$(image_id svoi-pravila-prometheus:ci)"
+# Upstream digest from scripts/image-pins.env (sourced above).
+: "${PROMETHEUS_IMAGE:?PROMETHEUS_IMAGE is unset}"
 
 set_key() {
   local file="$1" key="$2" value="$3"

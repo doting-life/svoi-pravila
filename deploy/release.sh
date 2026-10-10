@@ -2,9 +2,10 @@
 # Deploy one published release to this server:
 #   deploy/release.sh <git-sha>
 #
-# Checks out that commit, pulls the four images tagged with it from ghcr.io, pins them by digest
-# in /srv/svoi-pravila/releases/<sha>.env, takes a pre-release backup, runs migrations, starts the
-# stack and verifies it (API readiness, Telegram webhook, HTTPS with CSP and HSTS).
+# Checks out that commit, pulls the four published images tagged with it from ghcr.io, pins them
+# by digest in /srv/svoi-pravila/releases/<sha>.env (Prometheus uses the digest pin from
+# image-pins.env), takes a pre-release backup, runs migrations, starts the stack and verifies it
+# (API readiness, Telegram webhook, HTTPS with CSP and HSTS).
 # On failure it prints the rollback command. Run it as the deploy user.
 #
 # Internal: `--rollback <sha>` (used by rollback.sh) redeploys an older release without running
@@ -20,7 +21,7 @@ ENV_FILE="/etc/svoi-pravila/env"
 GHCR_TOKEN_FILE="/etc/svoi-pravila/ghcr-token"
 EXAMPLE_ENV="${SCRIPT_DIR}/env.prod.example"
 REGISTRY="ghcr.io"
-IMAGE_NAMES=(api miniapp grafana backup prometheus)
+IMAGE_NAMES=(api miniapp grafana backup)
 MIN_FREE_KB=$((3 * 1024 * 1024))
 EXPECTED_HSTS="max-age=31536000; includeSubDomains"
 export SP_ENV_FILE="$ENV_FILE"
@@ -158,6 +159,7 @@ write_release_env() {
     upper="$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')"
     printf '%s_IMAGE=%s\n' "$upper" "$digest" >>"$tmp"
   done
+  printf 'PROMETHEUS_IMAGE=%s\n' "$(env_value "${REPO_DIR}/scripts/image-pins.env" PROMETHEUS_IMAGE)" >>"$tmp"
   chmod 0640 "$tmp"
   mv "$tmp" "$RELEASE_ENV"
 }

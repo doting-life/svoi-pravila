@@ -137,10 +137,27 @@ job_secrets() {
   run_stage secrets scan make -C "$ROOT" secrets
 }
 
+scope_py() {
+  (
+    cd "$ROOT/backend"
+    uv run --locked python ../scripts/ci_scope.py "$@"
+  )
+}
+
 job_image() {
   run_stage image toolchain job_toolchain
   run_stage image build make -C "$ROOT" image
-  run_stage image scan make -C "$ROOT" image-scan
+  set +e
+  scope_py --image-scan
+  local scan_rc=$?
+  set -e
+  if [[ "$scan_rc" -eq 0 ]]; then
+    run_stage image scan make -C "$ROOT" image-scan
+  elif [[ "$scan_rc" -eq 3 ]]; then
+    echo "ci: image scan skipped (scope)"
+  else
+    exit "$scan_rc"
+  fi
 }
 
 job_stack_smoke() {
@@ -193,10 +210,26 @@ run_job() {
     echo "unknown JOB=${name}" >&2
     exit 1
   fi
+  # publish is master-only in the workflow; it is never change-scoped away.
+  if [[ "$name" != "publish" ]]; then
+    set +e
+    scope_py --check-job "$name"
+    local scope_rc=$?
+    set -e
+    if [[ "$scope_rc" -eq 3 ]]; then
+      return 0
+    fi
+    if [[ "$scope_rc" -ne 0 ]]; then
+      exit "$scope_rc"
+    fi
+  fi
   "$fn"
 }
 
 run_stage setup materialize materialize
+# Scope resolution needs a resolved origin/master (shallow clones).
+run_stage setup scope-fetch \
+  bash -c "cd \"${ROOT}\" && git rev-parse --verify origin/master >/dev/null 2>&1 || git fetch --no-tags origin master:refs/remotes/origin/master"
 job_workflow
 
 if [[ -n "${JOB:-}" ]]; then

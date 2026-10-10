@@ -1,0 +1,27 @@
+# Timed Trivy exceptions for third-party internal images only (ADR-0012).
+# Allowed images: grafana, prometheus. api / miniapp / backup are forbidden.
+exceptions:
+  - cve: CVE-2026-78667
+    image: grafana
+    statement: Grafana listens on 127.0.0.1 only; Prometheus is on internal networks only
+    expires: "2026-11-09"
+  - cve: CVE-2026-78669
+    image: grafana
+    statement: Grafana listens on 127.0.0.1 only; Prometheus is on internal networks only
+    expires: "2026-11-09"
+  - cve: CVE-2026-97031
+    image: grafana
+    statement: Grafana listens on 127.0.0.1 only; Prometheus is on internal networks only
+    expires: "2026-11-09"
+  - cve: CVE-2026-78667
+    image: prometheus
+    statement: Grafana listens on 127.0.0.1 only; Prometheus is on internal networks only
+    expires: "2026-11-09"
+  - cve: CVE-2026-78669
+    image: prometheus
+    statement: Grafana listens on 127.0.0.1 only; Prometheus is on internal networks only
+    expires: "2026-11-09"
+  - cve: CVE-2026-97031
+    image: prometheus
+    statement: Grafana listens on 127.0.0.1 only; Prometheus is on internal networks only
+    expires: "2026-11-09"

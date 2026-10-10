@@ -21,6 +21,7 @@ export type OverlayScreen =
           readonly initialText?: string;
       }
     | { readonly name: "decode" }
+    | { readonly name: "compose" }
     | { readonly name: "limit"; readonly kind: LimitKind; readonly message: string | null }
     | { readonly name: "deleteConfirm" }
     | { readonly name: "invite" }

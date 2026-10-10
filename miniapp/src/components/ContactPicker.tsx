@@ -9,6 +9,11 @@ export type ContactPickerProps = {
     readonly activeContactId: string | null | undefined;
     readonly onSelect: (contact: Contact) => void;
     readonly onClose: () => void;
+    readonly noneOption?: {
+        readonly label: string;
+        readonly selected: boolean;
+        readonly onSelect: () => void;
+    };
 };
 
 export function ContactPicker({
@@ -16,6 +21,7 @@ export function ContactPicker({
     activeContactId,
     onSelect,
     onClose,
+    noneOption,
 }: ContactPickerProps) {
     return (
         <Sheet
@@ -27,8 +33,24 @@ export function ContactPicker({
                 </Button>
             }
         >
-            {contacts.length === 0 ? <p className="muted">{ru.pickerEmpty}</p> : null}
+            {contacts.length === 0 && noneOption === undefined ? (
+                <p className="muted">{ru.pickerEmpty}</p>
+            ) : null}
             <div className="picker">
+                {noneOption !== undefined ? (
+                    <button
+                        type="button"
+                        className="picker__item"
+                        aria-current={noneOption.selected ? "true" : undefined}
+                        onClick={() => {
+                            noneOption.onSelect();
+                        }}
+                    >
+                        <span className="picker__text">
+                            <span className="person__name">{noneOption.label}</span>
+                        </span>
+                    </button>
+                ) : null}
                 {contacts.map((contact) => (
                     <button
                         key={contact.id}

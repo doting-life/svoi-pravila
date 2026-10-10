@@ -60,6 +60,13 @@ describe("navigation stack", () => {
         expect(popScreen(confirm).root).toBe("privacy");
     });
 
+    it("pushes and pops the compose overlay", () => {
+        const opened = pushScreen(createInitialNavigation(), { name: "compose" });
+        expect(currentScreen(opened)).toEqual({ name: "compose" });
+        expect(canGoBack(opened)).toBe(true);
+        expect(currentScreen(popScreen(opened))).toEqual({ name: "home" });
+    });
+
     it("replaces the top overlay in place", () => {
         let state = pushScreen(createInitialNavigation(), { name: "decode" });
         state = replaceTop(state, { name: "limit", kind: "quota", message: null });

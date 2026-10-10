@@ -4,7 +4,7 @@ import { Avatar } from "../components/Avatar";
 import { Button } from "../components/Button";
 import { Card } from "../components/Card";
 import { ContactPicker } from "../components/ContactPicker";
-import { ChatIcon, KeyboardIcon } from "../components/icons";
+import { ChatIcon, KeyboardIcon, PencilIcon } from "../components/icons";
 import { Skeleton } from "../components/Skeleton";
 import { ErrorView } from "../components/StatusViews";
 import type { ApiError } from "../api/errors";
@@ -31,6 +31,7 @@ export type HomeScreenProps = {
     readonly pendingRules: PendingRulesState;
     readonly focusPending?: boolean;
     readonly onOpenDecode: () => void;
+    readonly onOpenCompose: () => void;
     readonly onOpenPeople: () => void;
     readonly onOpenContactRules: (contact: Contact) => void;
     readonly onAddRule: (contact: Contact) => void;
@@ -252,6 +253,7 @@ export function HomeScreen({
     pendingRules,
     focusPending = false,
     onOpenDecode,
+    onOpenCompose,
     onOpenPeople,
     onOpenContactRules,
     onAddRule,
@@ -330,18 +332,34 @@ export function HomeScreen({
                         onAddRule={onAddRule}
                     />
 
-                    <button
-                        type="button"
-                        className="home-decode-row"
-                        onClick={onOpenDecode}
-                        aria-label={`${ru.homeDecodeTitle}. ${ru.homeDecodeCta}`}
-                    >
-                        <ChatIcon size={22} />
-                        <span className="home-decode-row__text" aria-hidden="true">
-                            <span className="home-decode-row__title">{ru.homeDecodeTitle}</span>
-                            <span className="home-decode-row__cta">{ru.homeDecodeCta}</span>
-                        </span>
-                    </button>
+                    <div className="home-action-stack">
+                        <button
+                            type="button"
+                            className="home-decode-row"
+                            onClick={onOpenDecode}
+                            aria-label={`${ru.homeDecodeTitle}. ${ru.homeDecodeCta}`}
+                        >
+                            <ChatIcon size={22} />
+                            <span className="home-decode-row__text" aria-hidden="true">
+                                <span className="home-decode-row__title">{ru.homeDecodeTitle}</span>
+                                <span className="home-decode-row__cta">{ru.homeDecodeCta}</span>
+                            </span>
+                        </button>
+                        <button
+                            type="button"
+                            className="home-compose-row"
+                            onClick={onOpenCompose}
+                            aria-label={`${ru.homeComposeTitle}. ${ru.homeComposeCta}`}
+                        >
+                            <PencilIcon size={22} />
+                            <span className="home-compose-row__text" aria-hidden="true">
+                                <span className="home-compose-row__title">
+                                    {ru.homeComposeTitle}
+                                </span>
+                                <span className="home-compose-row__cta">{ru.homeComposeCta}</span>
+                            </span>
+                        </button>
+                    </div>
 
                     <SuggestionCard contact={active} telegram={telegram} />
                 </>

@@ -55,8 +55,8 @@ required-version = "==0.12.22"
 packages = ["src/svoi_pravila"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"src/svoi_pravila/adapters/llm/prompts/soften/v3.md" = "svoi_pravila/adapters/llm/prompts/soften/v3.md"
-"src/svoi_pravila/adapters/llm/prompts/help_say/v4.md" = "svoi_pravila/adapters/llm/prompts/help_say/v4.md"
+"src/svoi_pravila/adapters/llm/prompts/soften/v4.md" = "svoi_pravila/adapters/llm/prompts/soften/v4.md"
+"src/svoi_pravila/adapters/llm/prompts/help_say/v5.md" = "svoi_pravila/adapters/llm/prompts/help_say/v5.md"
 "src/svoi_pravila/adapters/llm/prompts/decode/v3.md" = "svoi_pravila/adapters/llm/prompts/decode/v3.md"
 "src/svoi_pravila/adapters/llm/prompts/decode_analysis/v1.md" = "svoi_pravila/adapters/llm/prompts/decode_analysis/v1.md"
 "src/svoi_pravila/adapters/llm/prompts/suggest_rule/v1.md" = "svoi_pravila/adapters/llm/prompts/suggest_rule/v1.md"

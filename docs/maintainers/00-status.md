@@ -284,7 +284,13 @@
 - коды ошибок API, сброс ошибки формы.
 
 Дефект: переход из уведомления сверяет `location.hash` строго с `pending`. Но Telegram сам дописывает свои параметры запуска в hash адреса мини-приложения (`#pending&tgWebAppData=…`), поэтому в настоящем Telegram переход не сработает; тест на поддельном Telegram этого не моделирует. Нужен параметр запроса без идентификаторов |
-| 0027 | Change-scoped checks; image scan per ADR-0012; Grafana/Prometheus back to official images | `task/0027-ci-scope` | выдан | — |
+| 0027 | Change-scoped checks; image scan per ADR-0012; Grafana/Prometheus back to official images | `task/0027-ci-scope` | проверен 10.10 | **CHANGES** → 0027-a. Принято по коду:
+- правило области проверок (`scripts/ci_scope.py`), неизвестный путь — полный набор, табличные тесты;
+- скан только при изменении входов образов, по расписанию и перед публикацией; исключения с обоснованием и сроком до 09.11, для `api`/`miniapp`/`backup` запрещены тестом;
+- официальные Grafana (подписанные плагины, без разрешения неподписанных) и Prometheus по digest, четыре публикуемых образа.
+
+Дефект: хук передаёт `PUSH_REF=refs/heads/master`, и при push в `master` проверка всегда полная. Push документов CTO по-прежнему гонит весь набор — ради этого задача и делалась. Полный набор обязателен только на GitHub (push в `master`, расписание); хук ограничивает проверки изменениями относительно `origin/master` |
+| 0027-a | Hook scopes master pushes by change | `task/0027-ci-scope` | выдан | — |
 | 0026.1-a | Deep link via query parameter | `task/0026-1-rules-home` | выдан (после 0027) | — |
 | 0023 | Production on VPS (ADR-0011) | `task/0023-production` | проверен 08.10 | **ACCEPT** (при зелёном CI #29). Гейты CTO: бэкенд 1176, мини-приложение 230. Часть 0 закрыта:
 - шаг согласий без кнопок прав при первом запуске;

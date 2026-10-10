@@ -75,6 +75,9 @@ ARG GRAFANA_PROM_PLUGIN_URL=https://grafana.com/api/plugins/prometheus/versions/
 ARG GRAFANA_PROM_PLUGIN_SHA256=e0871397ef37dcfe76dd14ab534256acaf7f57caefe370fc19e55b8496a423b8
 
 ENV GF_PATHS_PLUGINS=/usr/share/grafana/plugins
+# Rebuilt plugin gobinaries invalidate Grafana's signed MANIFEST; allow these
+# two baked-in datasources only (ADR-0008-style rebuild above).
+ENV GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS=grafana-postgresql-datasource,prometheus
 
 RUN apk add --no-cache curl unzip \
 	&& mkdir -p /usr/share/grafana/plugins \

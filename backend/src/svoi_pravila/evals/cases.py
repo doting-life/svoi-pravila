@@ -28,6 +28,8 @@ EvalCategory = Literal[
     "incoming_manipulation",
     "prompt_injection",
     "coercive_threat",
+    "rule_leak",
+    "rule_effect",
 ]
 ExpectedVerdict = Literal["ok", "crisis", "refuse_manipulation"]
 OPERATIONS: tuple[RunOperation, ...] = ("soften", "help_say", "decode_stream")
@@ -41,6 +43,8 @@ CATEGORIES: tuple[EvalCategory, ...] = (
     "incoming_manipulation",
     "prompt_injection",
     "coercive_threat",
+    "rule_leak",
+    "rule_effect",
 )
 EXPECTED_VERDICTS: tuple[ExpectedVerdict, ...] = ("ok", "crisis", "refuse_manipulation")
 _CATEGORY_RUN_RANK: dict[EvalCategory, int] = {
@@ -63,6 +67,8 @@ class EvalCase:
     soften: SoftenRequest | None = None
     help_say: HelpSayRequest | None = None
     decode: DecodeRequest | None = None
+    stop_stems: tuple[str, ...] = ()
+    effect_pair: str | None = None
 
     def screen_text(self) -> str:
         """User-supplied text the crisis screen inspects."""
@@ -74,6 +80,16 @@ class EvalCase:
             return self.decode.incoming
         msg = f"case {self.id} has no request payload"
         raise ValueError(msg)
+
+    def has_rules(self) -> bool:
+        """True when the case supplies a non-empty rule context."""
+        if self.soften is not None:
+            return bool(self.soften.rules)
+        if self.help_say is not None:
+            return bool(self.help_say.rules)
+        if self.decode is not None:
+            return bool(self.decode.rules)
+        return False
 
 
 def _rules(raw: object) -> tuple[RuleContext, ...]:
@@ -118,6 +134,15 @@ def parse_case(raw: object) -> EvalCase:
     relationship = RelationshipKind(str(raw.get("relationship", "other")))
     rules = _rules(raw.get("rules"))
     smoke = bool(raw.get("smoke", False))
+    stop_stems = _stop_stems(raw.get("stop_stems"))
+    effect_pair_raw = raw.get("effect_pair")
+    effect_pair = str(effect_pair_raw) if effect_pair_raw is not None else None
+    if category == "rule_leak" and not stop_stems:
+        msg = "rule_leak cases require stop_stems"
+        raise ValueError(msg)
+    if category == "rule_effect" and not effect_pair:
+        msg = "rule_effect cases require effect_pair"
+        raise ValueError(msg)
     if operation == "soften":
         return EvalCase(
             id=ident,
@@ -125,6 +150,8 @@ def parse_case(raw: object) -> EvalCase:
             category=category,
             expected=expected,
             smoke=smoke,
+            stop_stems=stop_stems,
+            effect_pair=effect_pair,
             soften=SoftenRequest(
                 draft=str(raw["draft"]),
                 rules=rules,
@@ -139,6 +166,8 @@ def parse_case(raw: object) -> EvalCase:
             category=category,
             expected=expected,
             smoke=smoke,
+            stop_stems=stop_stems,
+            effect_pair=effect_pair,
             help_say=HelpSayRequest(
                 intent=HelpSayIntent(str(raw["intent"])),
                 details=str(raw["details"]),
@@ -153,6 +182,8 @@ def parse_case(raw: object) -> EvalCase:
         category=category,
         expected=expected,
         smoke=smoke,
+        stop_stems=stop_stems,
+        effect_pair=effect_pair,
         decode=DecodeRequest(
             incoming=str(raw["incoming"]),
             rules=rules,
@@ -160,6 +191,15 @@ def parse_case(raw: object) -> EvalCase:
             deadline_seconds=1.0,
         ),
     )
+
+
+def _stop_stems(raw: object) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        msg = "stop_stems must be a list"
+        raise TypeError(msg)
+    return tuple(str(item) for item in raw)
 
 
 def load_cases(path: Path) -> list[EvalCase]:
@@ -231,8 +271,9 @@ def filter_cases(
     *,
     smoke: bool = False,
     case_ids: tuple[str, ...] | None = None,
+    categories: tuple[EvalCategory, ...] | None = None,
 ) -> list[EvalCase]:
-    """Apply smoke / id filters."""
+    """Apply smoke / id / category filters."""
     selected = cases
     if case_ids is not None:
         wanted = set(case_ids)
@@ -241,6 +282,9 @@ def filter_cases(
         if missing:
             msg = f"unknown case ids: {', '.join(sorted(missing))}"
             raise ValueError(msg)
+    if categories is not None:
+        wanted_cats = set(categories)
+        selected = [case for case in selected if case.category in wanted_cats]
     if smoke:
         selected = [case for case in selected if case.smoke]
     return selected
@@ -256,6 +300,8 @@ def with_deadline(case: EvalCase, deadline: float) -> EvalCase:
             category=case.category,
             expected=case.expected,
             smoke=case.smoke,
+            stop_stems=case.stop_stems,
+            effect_pair=case.effect_pair,
             soften=SoftenRequest(
                 draft=req.draft,
                 rules=req.rules,
@@ -271,6 +317,8 @@ def with_deadline(case: EvalCase, deadline: float) -> EvalCase:
             category=case.category,
             expected=case.expected,
             smoke=case.smoke,
+            stop_stems=case.stop_stems,
+            effect_pair=case.effect_pair,
             help_say=HelpSayRequest(
                 intent=help_req.intent,
                 details=help_req.details,
@@ -289,6 +337,8 @@ def with_deadline(case: EvalCase, deadline: float) -> EvalCase:
         category=case.category,
         expected=case.expected,
         smoke=case.smoke,
+        stop_stems=case.stop_stems,
+        effect_pair=case.effect_pair,
         decode=DecodeRequest(
             incoming=req_d.incoming,
             rules=req_d.rules,

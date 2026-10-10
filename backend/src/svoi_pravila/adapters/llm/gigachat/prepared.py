@@ -33,7 +33,7 @@ def prepare_soften(request: SoftenRequest) -> PreparedMessages:
     marker = allocate_boundary_marker(
         untrusted_texts(request.draft, request.relationship.value, rules=request.rules)
     )
-    template, prompt_version = load_prompt_template("soften", "v3")
+    template, prompt_version = load_prompt_template("soften", "v4")
     system = render_system_prompt(template, boundary_marker=marker)
     user = wrap_untrusted_payload(
         marker,
@@ -58,7 +58,7 @@ def prepare_help_say(request: HelpSayRequest) -> PreparedMessages:
             rules=request.rules,
         )
     )
-    template, prompt_version = load_prompt_template("help_say", "v4")
+    template, prompt_version = load_prompt_template("help_say", "v5")
     system = render_system_prompt(template, boundary_marker=marker)
     user = wrap_untrusted_payload(
         marker,

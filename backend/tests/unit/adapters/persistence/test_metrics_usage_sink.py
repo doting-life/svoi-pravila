@@ -172,7 +172,7 @@ async def test_ttfc_only_when_present_and_tokens_on_generation() -> None:
         surface=UsageSurface.INLINE,
         ttfc_ms=None,
         model="GigaChat-3-Lightning",
-        prompt_version="soften@v3",
+        prompt_version="soften@v4",
     )
     ttfc_before = _hist_sum("sp_llm_ttfc_seconds", scenario="decode", surface="miniapp")
     await sink.record(with_ttfc)

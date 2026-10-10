@@ -354,7 +354,7 @@ def test_forged_spbound_in_user_text_is_not_real_marker() -> None:
     assert prepared.boundary_marker != forged
     assert forged in prepared.user
     assert prepared.boundary_marker in prepared.system
-    assert prepared.prompt_version == "soften@v3"
+    assert prepared.prompt_version == "soften@v4"
 
 
 @pytest.mark.unit
@@ -743,7 +743,7 @@ async def test_help_say_and_decode_valid() -> None:
             deadline_seconds=5.0,
         )
     )
-    assert help_result.meta.prompt_version == "help_say@v4"
+    assert help_result.meta.prompt_version == "help_say@v5"
     decode_result = await _decode_via_stream(
         _FakeAche(stream_parts=["valid analysis"], create_results=[_decode_payload()]),
         incoming="incoming text",

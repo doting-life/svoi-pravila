@@ -109,26 +109,33 @@ def test_jobs_for_paths(
 
 
 @pytest.mark.unit
-def test_force_full_suite_master_and_schedule(scope: ModuleType) -> None:
+def test_force_full_suite_github_only(scope: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     assert scope.force_full_suite(github_event_name="schedule") is True
     assert scope.force_full_suite(github_ref="refs/heads/master") is True
-    assert scope.force_full_suite(push_ref="refs/heads/master") is True
-    assert scope.force_full_suite(push_ref="master") is True
+    # Local pre-push to master must not force the full suite.
+    monkeypatch.setenv("PUSH_REF", "refs/heads/master")
     assert (
         scope.force_full_suite(
             github_event_name="pull_request",
             github_ref="refs/pull/1/merge",
-            push_ref="refs/heads/task/0027-ci-scope",
         )
         is False
     )
+    monkeypatch.delenv("PUSH_REF", raising=False)
+    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
+    monkeypatch.delenv("GITHUB_REF", raising=False)
+    assert scope.force_full_suite() is False
 
 
 @pytest.mark.unit
-def test_decide_force_all_scans(scope: ModuleType) -> None:
-    decision = scope.decide(["docs/x.md"], force_all=True)
-    assert decision.jobs == frozenset(scope.all_jobs())
-    assert decision.image_scan is True
+def test_decide_hook_docs_vs_github_master(scope: ModuleType) -> None:
+    docs = ["docs/maintainers/00-status.md", "AGENTS.md"]
+    hook = scope.decide(docs, force_all=False)
+    assert hook.jobs == frozenset({"secrets", "ownership-guard"})
+    assert hook.image_scan is False
+    github = scope.decide(docs, force_all=True)
+    assert github.jobs == frozenset(scope.all_jobs())
+    assert github.image_scan is True
 
 
 @pytest.mark.unit

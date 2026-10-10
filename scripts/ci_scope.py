@@ -71,17 +71,17 @@ def force_full_suite(
     *,
     github_event_name: str | None = None,
     github_ref: str | None = None,
-    push_ref: str | None = None,
 ) -> bool:
-    """Master pushes and the schedule always run every CI job (and scan)."""
+    """Force every CI job (and image-scan) on GitHub master pushes and schedule.
+
+    The pre-push hook always scopes by the diff against origin/master, including
+    local pushes to master (PUSH_REF is ignored here).
+    """
     event = github_event_name if github_event_name is not None else os.environ.get("GITHUB_EVENT_NAME")
     if event == "schedule":
         return True
     ref = github_ref if github_ref is not None else os.environ.get("GITHUB_REF")
     if ref == "refs/heads/master":
-        return True
-    pushed = push_ref if push_ref is not None else os.environ.get("PUSH_REF")
-    if pushed in {"refs/heads/master", "master"}:
         return True
     return False
 

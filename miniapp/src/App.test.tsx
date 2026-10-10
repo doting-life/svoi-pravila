@@ -1132,6 +1132,68 @@ describe("App", () => {
         expect(screen.queryByText(ru.addRuleEmpty)).not.toBeInTheDocument();
     });
 
+    it("rejects invalid chars and too-long add-rule text locally", async () => {
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        await openPeople();
+        fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.contactAddRule }));
+        fireEvent.change(screen.getByRole("textbox"), { target: { value: "a\tb" } });
+        fireEvent.click(screen.getByRole("button", { name: ru.addRuleSubmit }));
+        expect(await screen.findByText(ru.addRuleInvalidChars)).toBeInTheDocument();
+        fireEvent.change(screen.getByRole("textbox"), {
+            target: { value: "x".repeat(501) },
+        });
+        fireEvent.click(screen.getByRole("button", { name: ru.addRuleSubmit }));
+        expect(
+            await screen.findByText(
+                ru.addRuleTooLong
+                    .replace("{n}", "501")
+                    .replace("{max}", "500")
+                    .replace("{over}", "1"),
+            ),
+        ).toBeInTheDocument();
+    });
+
+    it("maps server rule-text error codes on create", async () => {
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+            {
+                method: "POST",
+                path: "/api/v1/contacts/c1/rules",
+                status: 422,
+                body: {
+                    code: "rule_text_too_long",
+                    message: "too long",
+                    max: 500,
+                    actual: 501,
+                },
+            },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        await openPeople();
+        fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.contactAddRule }));
+        fireEvent.change(screen.getByRole("textbox"), { target: { value: "сервер отверг" } });
+        fireEvent.click(screen.getByRole("button", { name: ru.addRuleSubmit }));
+        expect(
+            await screen.findByText(
+                ru.addRuleTooLong
+                    .replace("{n}", "501")
+                    .replace("{max}", "500")
+                    .replace("{over}", "1"),
+            ),
+        ).toBeInTheDocument();
+    });
+
     it("shows home pending block, rules preview, and people badge", async () => {
         const pendingItem = {
             id: "r-pending",
@@ -1179,6 +1241,80 @@ describe("App", () => {
                 }),
             ).toBe(true);
         });
+    });
+
+    it("rejects a pending rule from home", async () => {
+        const pendingItem = {
+            id: "r-pending",
+            contact_id: "c1",
+            contact_label: "Аня",
+            category: "other",
+            status: "proposed",
+            text: "отклонить это",
+            shared: true,
+            has_pending_edit: false,
+        };
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/rules/pending", body: { items: [pendingItem] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+            {
+                method: "POST",
+                path: "/api/v1/rules/r-pending/reject",
+                body: { ...rule, id: "r-pending", status: "rejected", shared: true },
+            },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        expect(await screen.findByTestId("home-pending")).toBeInTheDocument();
+        fireEvent.click(await screen.findByRole("button", { name: ru.ruleReject }));
+        await waitFor(() => {
+            expect(
+                vi.mocked(fetchImpl).mock.calls.some((call) => {
+                    const request = call[0];
+                    const url = request instanceof Request ? request.url : "";
+                    return url.includes("/reject");
+                }),
+            ).toBe(true);
+        });
+    });
+
+    it("keeps pending when approve or reject fails", async () => {
+        const pendingItem = {
+            id: "r-pending",
+            contact_id: "c1",
+            contact_label: "Аня",
+            category: "other",
+            status: "proposed",
+            text: "ошибка решения",
+            shared: true,
+            has_pending_edit: false,
+        };
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/rules/pending", body: { items: [pendingItem] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+            {
+                method: "POST",
+                path: "/api/v1/rules/r-pending/approve",
+                status: 404,
+                body: { code: "not_found", message: "gone" },
+            },
+            {
+                method: "POST",
+                path: "/api/v1/rules/r-pending/reject",
+                status: 404,
+                body: { code: "not_found", message: "gone" },
+            },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        expect(await screen.findByTestId("home-pending")).toBeInTheDocument();
+        fireEvent.click(await screen.findByRole("button", { name: ru.ruleApprove }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.ruleReject }));
+        expect(await screen.findByTestId("home-pending")).toBeInTheDocument();
     });
 
     it("focuses pending from #pending hash on boot", async () => {

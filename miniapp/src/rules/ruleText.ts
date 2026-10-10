@@ -24,10 +24,8 @@ function isForbiddenControl(char: string): boolean {
     if (char === "\n") {
         return false;
     }
-    const code = char.codePointAt(0);
-    if (code === undefined) {
-        return false;
-    }
+    // Iteration yields non-empty strings; codePointAt(0) is defined.
+    const code = char.codePointAt(0) ?? 0;
     // Unicode Cc: C0 controls, DEL, and C1 controls (U+0080–U+009F).
     return code < 32 || code === 0x7f || (code >= 0x80 && code <= 0x9f);
 }

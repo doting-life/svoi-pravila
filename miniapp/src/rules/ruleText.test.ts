@@ -23,10 +23,21 @@ describe("ruleText", () => {
     it("rejects empty, too long, and control chars", () => {
         expect(validateRuleText("   ", 500)).toMatchObject({ ok: false, error: "empty" });
         expect(validateRuleText("a\tb", 500)).toMatchObject({ ok: false, error: "invalid_chars" });
+        expect(validateRuleText("a\u007fb", 500)).toMatchObject({
+            ok: false,
+            error: "invalid_chars",
+        });
         expect(validateRuleText("x".repeat(501), 500)).toMatchObject({
             ok: false,
             error: "too_long",
             actual: 501,
+        });
+    });
+
+    it("allows newlines in rule text", () => {
+        expect(validateRuleText("строка1\nстрока2", 500)).toEqual({
+            ok: true,
+            value: "строка1\nстрока2",
         });
     });
 });

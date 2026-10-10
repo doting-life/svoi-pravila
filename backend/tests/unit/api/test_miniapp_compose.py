@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -29,6 +30,15 @@ from svoi_pravila.api.app import AppLifecycleHooks, create_app
 from svoi_pravila.api.miniapp import MiniappDeps, build_miniapp_router
 from svoi_pravila.api.miniapp.errors import MiniappErrorCode
 from svoi_pravila.application.crisis_screen import CrisisScreen
+from svoi_pravila.application.errors import (
+    GenerationUnavailable,
+    IncomingTextTooLong,
+    IncomingTextTooShort,
+    InvalidGenerationOutput,
+    InvalidInlineResultRef,
+    InvalidOutputReason,
+    UnavailableKind,
+)
 from svoi_pravila.application.ports.generation import (
     GenerationMeta,
     SafetyVerdict,
@@ -53,6 +63,17 @@ from svoi_pravila.domain.enums import (
     UsageSurface,
 )
 from svoi_pravila.domain.text import ContactLabel
+
+
+@dataclass
+class _Boom:
+    """Use-case stand-in that raises a configured exception."""
+
+    exc: BaseException
+
+    async def execute(self, _command: object) -> Any:
+        raise self.exc
+
 
 _TOKEN = "9:UNIT-MINIAPP"
 _NOW = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
@@ -268,3 +289,140 @@ async def test_compose_choice_records_scenario(mini_world: AppWorld) -> None:
     assert choices[0].scenario is UsageScenario.HELP_SAY
     assert choices[0].variant_firmness is Firmness.FIRM
     assert choices[0].surface is UsageSurface.MINIAPP
+
+
+@pytest.mark.unit
+async def test_compose_crisis_includes_lead_and_resources(mini_world: AppWorld) -> None:
+    await mini_world.ensure_granted_user(_TG)
+    app, gen, _ = _build_compose_app(mini_world)
+    headers = _auth_header(_TG)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/compose",
+            headers=headers,
+            json={"draft": "я не хочу жить больше", "intent": "soften"},
+        )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["safety"] == "crisis"
+    assert body["variants"] == []
+    assert isinstance(body["lead"], str) and body["lead"]
+    assert isinstance(body["resources"], list) and body["resources"]
+    assert gen.soften_calls == []
+
+
+@pytest.mark.unit
+async def test_compose_maps_provider_errors(mini_world: AppWorld) -> None:
+    await mini_world.ensure_granted_user(_TG)
+    unavailable = FakeTextGenerator()
+    unavailable.soften_error = GenerationUnavailable(
+        UnavailableKind.TIMEOUT,
+        usage=TokenUsage(),
+        attempts=1,
+        model="fake",
+        prompt_version="soften@v4",
+    )
+    app, _, _ = _build_compose_app(mini_world, generator=unavailable)
+    headers = _auth_header(_TG)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/compose",
+            headers=headers,
+            json={"draft": "длинный достаточно текст", "intent": "soften"},
+        )
+    assert response.status_code == 503
+    assert response.json()["code"] == MiniappErrorCode.GENERATION_UNAVAILABLE
+
+    invalid = FakeTextGenerator()
+    invalid.soften_error = InvalidGenerationOutput(
+        (InvalidOutputReason.FIRMNESS_SET,),
+        usage=TokenUsage(),
+        attempts=1,
+        model="fake",
+        prompt_version="soften@v4",
+    )
+    app, _, _ = _build_compose_app(mini_world, generator=invalid)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/compose",
+            headers=headers,
+            json={"draft": "длинный достаточно текст", "intent": "soften"},
+        )
+    assert response.status_code == 502
+    assert response.json()["code"] == MiniappErrorCode.INVALID_OUTPUT
+
+
+@pytest.mark.unit
+async def test_compose_maps_defensive_bound_errors(mini_world: AppWorld) -> None:
+    await mini_world.ensure_granted_user(_TG)
+    auth = MiniappDeps(
+        init_data_verifier=AiogramInitDataVerifier(
+            SecretStr(_TOKEN), mini_world.clock, max_age_seconds=3600
+        ),
+        rate_limiter=FakeRateLimiter(limit=120),
+        pseudonymizer=FakePseudonymizer(),
+        get_user_by_telegram_id=GetUserByTelegramId(mini_world.uow_factory),
+        get_onboarding_step=GetOnboardingStep(mini_world.uow_factory, mini_world.catalog),
+    )
+    decode_bundle = build_miniapp_decode_bundle(mini_world)
+    headers = _auth_header(_TG)
+    for exc, code, status in (
+        (IncomingTextTooShort(), MiniappErrorCode.TEXT_TOO_SHORT, 422),
+        (IncomingTextTooLong(), MiniappErrorCode.TEXT_TOO_LONG, 422),
+    ):
+        bindings = build_test_miniapp_bindings(
+            auth=auth,
+            world=mini_world,
+            decode_bundle=decode_bundle,
+            reuse=make_inline_reuse(mini_world.clock),
+            overrides={"compose_generation": _Boom(exc)},
+        )
+        app = create_app(
+            CheckReadiness(probes=(), timeout_seconds=1.0),
+            Environment.TEST,
+            AppLifecycleHooks(extra_routers=(build_miniapp_router(bindings),)),
+        )
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/compose",
+                headers=headers,
+                json={"draft": "длинный достаточно текст", "intent": "soften"},
+            )
+        assert response.status_code == status
+        assert response.json()["code"] == code
+
+
+@pytest.mark.unit
+async def test_compose_choice_maps_invalid_ref(mini_world: AppWorld) -> None:
+    await mini_world.ensure_granted_user(_TG)
+    auth = MiniappDeps(
+        init_data_verifier=AiogramInitDataVerifier(
+            SecretStr(_TOKEN), mini_world.clock, max_age_seconds=3600
+        ),
+        rate_limiter=FakeRateLimiter(limit=120),
+        pseudonymizer=FakePseudonymizer(),
+        get_user_by_telegram_id=GetUserByTelegramId(mini_world.uow_factory),
+        get_onboarding_step=GetOnboardingStep(mini_world.uow_factory, mini_world.catalog),
+    )
+    decode_bundle = build_miniapp_decode_bundle(mini_world)
+    bindings = build_test_miniapp_bindings(
+        auth=auth,
+        world=mini_world,
+        decode_bundle=decode_bundle,
+        reuse=make_inline_reuse(mini_world.clock),
+        overrides={"record_choice": _Boom(InvalidInlineResultRef())},
+    )
+    app = create_app(
+        CheckReadiness(probes=(), timeout_seconds=1.0),
+        Environment.TEST,
+        AppLifecycleHooks(extra_routers=(build_miniapp_router(bindings),)),
+    )
+    headers = _auth_header(_TG)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/compose/choice",
+            headers=headers,
+            json={"scenario": "soften", "firmness": "gentle"},
+        )
+    assert response.status_code == 422
+    assert response.json()["code"] == MiniappErrorCode.VALIDATION_ERROR

@@ -74,8 +74,9 @@ export const privacyTexts = {
 
 export function mockFetch(routes: readonly MockRoute[]): typeof fetch {
     const withDefaults: MockRoute[] = [
-        { path: "/api/v1/privacy/texts", body: privacyTexts },
         ...routes,
+        { path: "/api/v1/privacy/texts", body: privacyTexts },
+        { path: "/api/v1/rules/pending", body: { items: [] } },
     ];
     const impl: typeof fetch = (input, init) => {
         const request = input instanceof Request ? input : new Request(String(input), init);

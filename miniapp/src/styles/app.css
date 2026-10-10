@@ -471,6 +471,72 @@ a:hover {
 .rule-text {
     font-size: 16px;
     line-height: 23px;
+    white-space: pre-line;
+}
+
+.home-rules-preview {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.home-rules-preview__item {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.home-decode-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: 100%;
+    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--accent-soft);
+    color: var(--fg);
+    text-align: left;
+    cursor: pointer;
+}
+
+.home-decode-row__text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.home-decode-row__title {
+    font-weight: 600;
+}
+
+.home-decode-row__cta {
+    color: var(--accent);
+    font-size: 14px;
+}
+
+.tab-bar__badge {
+    position: absolute;
+    top: 2px;
+    right: calc(50% - 22px);
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: var(--warm);
+    color: var(--warm-fg, var(--fg));
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+}
+
+.person__pending-badge {
+    margin-left: auto;
 }
 
 .card__heading-row {
@@ -813,6 +879,7 @@ a:hover {
 }
 
 .tab-bar__item {
+    position: relative;
     min-height: 72px;
     padding: 0;
     border: 0;

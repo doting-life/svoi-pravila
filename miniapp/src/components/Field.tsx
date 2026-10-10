@@ -1,5 +1,6 @@
 import { useId, type ReactNode } from "react";
 
+import { codePointLength } from "../rules/ruleText";
 import { cx } from "./cx";
 
 type FieldBase = {
@@ -10,6 +11,8 @@ type FieldBase = {
     readonly disabled?: boolean;
     readonly placeholder?: string;
     readonly footer?: ReactNode;
+    /** Count Unicode code points (`[...text].length`) instead of UTF-16 units. */
+    readonly countCodePoints?: boolean;
 };
 
 export type TextAreaProps = FieldBase & {
@@ -52,8 +55,10 @@ export function TextArea({
     footer,
     rows = 5,
     large = false,
+    countCodePoints = false,
 }: TextAreaProps) {
     const id = useId();
+    const length = countCodePoints ? codePointLength(value) : value.length;
     return (
         <div className="field">
             <label className="field__label" htmlFor={id}>
@@ -67,7 +72,7 @@ export function TextArea({
                     large && "field__control--large",
                 )}
                 value={value}
-                maxLength={maxLength}
+                maxLength={countCodePoints ? undefined : maxLength}
                 rows={rows}
                 disabled={disabled}
                 placeholder={placeholder}
@@ -75,7 +80,7 @@ export function TextArea({
                     onChange(event.target.value);
                 }}
             />
-            <FieldFooter id={id} footer={footer} length={value.length} maxLength={maxLength} />
+            <FieldFooter id={id} footer={footer} length={length} maxLength={maxLength} />
         </div>
     );
 }
@@ -88,8 +93,10 @@ export function TextInput({
     disabled = false,
     placeholder,
     footer,
+    countCodePoints = false,
 }: TextInputProps) {
     const id = useId();
+    const length = countCodePoints ? codePointLength(value) : value.length;
     return (
         <div className="field">
             <label className="field__label" htmlFor={id}>
@@ -99,14 +106,14 @@ export function TextInput({
                 id={id}
                 className="field__control"
                 value={value}
-                maxLength={maxLength}
+                maxLength={countCodePoints ? undefined : maxLength}
                 disabled={disabled}
                 placeholder={placeholder}
                 onChange={(event) => {
                     onChange(event.target.value);
                 }}
             />
-            <FieldFooter id={id} footer={footer} length={value.length} maxLength={maxLength} />
+            <FieldFooter id={id} footer={footer} length={length} maxLength={maxLength} />
         </div>
     );
 }

@@ -6,6 +6,7 @@ import { LogoBubbles } from "./components/icons";
 import { ErrorView, LoadingView } from "./components/StatusViews";
 import { TabBar } from "./components/TabBar";
 import { useMe, type Me } from "./hooks/useMe";
+import { usePendingRules } from "./hooks/usePendingRules";
 import type { RuleCategory } from "./hooks/useRules";
 import { ru } from "./localization/ru";
 import {
@@ -69,6 +70,7 @@ function MiniappShell({
     readonly fetchImpl?: typeof fetch;
 }) {
     const me = useMe();
+    const pendingRules = usePendingRules();
     const [nav, setNav] = useState<NavigationState>(() =>
         createInitialNavigation(
             telegram.startParam?.startsWith("inv_") === true ? [{ name: "invite" }] : [],
@@ -76,6 +78,23 @@ function MiniappShell({
     );
     const [forceConsentGate, setForceConsentGate] = useState(false);
     const [local, setLocal] = useState<LocalOverrides | null>(null);
+    const [focusPending] = useState(() => {
+        if (typeof window === "undefined") {
+            return false;
+        }
+        return window.location.hash.replace(/^#/u, "") === "pending";
+    });
+
+    useEffect(() => {
+        if (!focusPending || typeof window === "undefined") {
+            return;
+        }
+        if (window.location.hash.replace(/^#/u, "") === "pending") {
+            const url = new URL(window.location.href);
+            url.hash = "";
+            window.history.replaceState(null, "", `${url.pathname}${url.search}`);
+        }
+    }, [focusPending]);
 
     useEffect(() => {
         const showBack =
@@ -197,9 +216,11 @@ function MiniappShell({
 
     const screen = currentScreen(nav);
     const isRoot = nav.stack.length === 0;
+    const pendingCount = pendingRules.status === "success" ? pendingRules.data.length : 0;
     const tabs = isRoot ? (
         <TabBar
             active={nav.root}
+            badges={{ people: pendingCount }}
             onChange={(tab) => {
                 setNav(selectRoot(tab));
             }}
@@ -214,11 +235,30 @@ function MiniappShell({
                         telegram={telegram}
                         activeContactId={activeContactId}
                         botUsername={data.bot_username}
+                        pendingRules={pendingRules}
+                        focusPending={focusPending}
                         onOpenDecode={() => {
                             push({ name: "decode" });
                         }}
                         onOpenPeople={() => {
                             setNav(selectRoot("people"));
+                        }}
+                        onOpenContactRules={(contact) => {
+                            push({
+                                name: "contactDetail",
+                                contactId: contact.id,
+                                label: contact.label,
+                                relationship: contact.relationship,
+                                paired: contact.paired,
+                            });
+                        }}
+                        onAddRule={(contact) => {
+                            push({
+                                name: "addRule",
+                                contactId: contact.id,
+                                label: contact.label,
+                                paired: contact.paired,
+                            });
                         }}
                         onActivated={activateLocally}
                     />
@@ -230,6 +270,14 @@ function MiniappShell({
                     <PeopleScreen
                         activeContactId={activeContactId}
                         telegram={telegram}
+                        pendingByContact={
+                            pendingRules.status === "success"
+                                ? pendingRules.data.reduce<Record<string, number>>((acc, item) => {
+                                      acc[item.contact_id] = (acc[item.contact_id] ?? 0) + 1;
+                                      return acc;
+                                  }, {})
+                                : {}
+                        }
                         onOpenContact={(contact) => {
                             push({
                                 name: "contactDetail",

@@ -229,8 +229,7 @@
             "type": "boolean"
           },
           "text": {
-            "maxLength": 280,
-            "minLength": 1,
+            "maxLength": 500,
             "title": "Text",
             "type": "string"
           }
@@ -490,6 +489,11 @@
             ],
             "title": "Onboarding Step",
             "type": "string"
+          },
+          "rule_text_max_chars": {
+            "minimum": 1.0,
+            "title": "Rule Text Max Chars",
+            "type": "integer"
           }
         },
         "required": [
@@ -498,6 +502,7 @@
           "consents_revoked",
           "max_contacts",
           "max_open_rules",
+          "rule_text_max_chars",
           "display_timezone",
           "bot_username",
           "decode_remaining"
@@ -525,6 +530,9 @@
           "body_too_large",
           "text_too_short",
           "text_too_long",
+          "rule_text_empty",
+          "rule_text_too_long",
+          "rule_text_invalid_chars",
           "quota_exceeded",
           "quota_exhausted",
           "service_budget_exhausted",
@@ -538,6 +546,85 @@
         ],
         "title": "MiniappErrorCode",
         "type": "string"
+      },
+      "PendingRuleItem": {
+        "description": "One rule awaiting the current user's decision.",
+        "properties": {
+          "category": {
+            "enum": [
+              "taboo_topic",
+              "how_to_ask",
+              "apology",
+              "conflict_protocol",
+              "other"
+            ],
+            "title": "Category",
+            "type": "string"
+          },
+          "contact_id": {
+            "title": "Contact Id",
+            "type": "string"
+          },
+          "contact_label": {
+            "title": "Contact Label",
+            "type": "string"
+          },
+          "has_pending_edit": {
+            "default": false,
+            "title": "Has Pending Edit",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "shared": {
+            "title": "Shared",
+            "type": "boolean"
+          },
+          "status": {
+            "enum": [
+              "proposed",
+              "active",
+              "rejected",
+              "archived"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "contact_id",
+          "contact_label",
+          "category",
+          "status",
+          "text",
+          "shared"
+        ],
+        "title": "PendingRuleItem",
+        "type": "object"
+      },
+      "PendingRuleListResponse": {
+        "description": "GET /rules/pending.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PendingRuleItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "PendingRuleListResponse",
+        "type": "object"
       },
       "PrivacyActionTextsResponse": {
         "description": "Revoke or delete blurb and confirm copy (C0).",
@@ -3465,6 +3552,125 @@
           }
         },
         "summary": "Get Privacy Texts",
+        "tags": [
+          "miniapp"
+        ]
+      }
+    },
+    "/api/v1/rules/pending": {
+      "get": {
+        "operationId": "listPendingRules",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingRuleListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LimitErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "List Pending Rules",
         "tags": [
           "miniapp"
         ]

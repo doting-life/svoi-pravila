@@ -329,6 +329,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/rules/pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Pending Rules */
+        get: operations["listPendingRules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/rules/{rule_id}/approve": {
         parameters: {
             query?: never;
@@ -710,13 +727,54 @@ export interface components {
              * @enum {string}
              */
             onboarding_step: "age" | "consent" | "done";
+            /** Rule Text Max Chars */
+            rule_text_max_chars: number;
         };
         /**
          * MiniappErrorCode
          * @description Stable C0 error codes returned to the mini-app client.
          * @enum {string}
          */
-        MiniappErrorCode: "unauthorized" | "init_data_invalid" | "init_data_expired" | "rate_limited" | "onboarding_required" | "consent_required" | "not_found" | "contact_limit" | "open_rule_limit" | "service_unavailable" | "contact_already_linked" | "contact_not_paired" | "invalid_transition" | "validation_error" | "body_too_large" | "text_too_short" | "text_too_long" | "quota_exceeded" | "quota_exhausted" | "service_budget_exhausted" | "generation_unavailable" | "invalid_output" | "busy" | "invite_invalid" | "invite_expired" | "invite_own" | "consent_stale";
+        MiniappErrorCode: "unauthorized" | "init_data_invalid" | "init_data_expired" | "rate_limited" | "onboarding_required" | "consent_required" | "not_found" | "contact_limit" | "open_rule_limit" | "service_unavailable" | "contact_already_linked" | "contact_not_paired" | "invalid_transition" | "validation_error" | "body_too_large" | "text_too_short" | "text_too_long" | "rule_text_empty" | "rule_text_too_long" | "rule_text_invalid_chars" | "quota_exceeded" | "quota_exhausted" | "service_budget_exhausted" | "generation_unavailable" | "invalid_output" | "busy" | "invite_invalid" | "invite_expired" | "invite_own" | "consent_stale";
+        /**
+         * PendingRuleItem
+         * @description One rule awaiting the current user's decision.
+         */
+        PendingRuleItem: {
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "taboo_topic" | "how_to_ask" | "apology" | "conflict_protocol" | "other";
+            /** Contact Id */
+            contact_id: string;
+            /** Contact Label */
+            contact_label: string;
+            /**
+             * Has Pending Edit
+             * @default false
+             */
+            has_pending_edit: boolean;
+            /** Id */
+            id: string;
+            /** Shared */
+            shared: boolean;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "proposed" | "active" | "rejected" | "archived";
+            /** Text */
+            text: string;
+        };
+        /**
+         * PendingRuleListResponse
+         * @description GET /rules/pending.
+         */
+        PendingRuleListResponse: {
+            /** Items */
+            items: components["schemas"]["PendingRuleItem"][];
+        };
         /**
          * PrivacyActionTextsResponse
          * @description Revoke or delete blurb and confirm copy (C0).
@@ -2806,6 +2864,100 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PrivacyTextsResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
+                };
+            };
+        };
+    };
+    listPendingRules: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingRuleListResponse"];
                 };
             };
             /** @description Unauthorized */

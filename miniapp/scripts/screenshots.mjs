@@ -54,6 +54,7 @@ const meDone = {
     consents_revoked: false,
     max_contacts: 20,
     max_open_rules: 50,
+    rule_text_max_chars: 500,
     display_timezone: "Europe/Moscow",
     bot_username: "svoi_test_bot",
     decode_remaining: 5,
@@ -310,8 +311,36 @@ async function mockApi(page, mode) {
             });
             return;
         }
+        if (path === "/api/v1/rules/pending") {
+            const items =
+                mode === "paired" || mode === "home-pending"
+                    ? [
+                          {
+                              id: sharedPending.id,
+                              contact_id: pairedContact.id,
+                              contact_label: pairedContact.label,
+                              category: sharedPending.category,
+                              status: sharedPending.status,
+                              text: sharedPending.text,
+                              shared: true,
+                              has_pending_edit: false,
+                          },
+                      ]
+                    : [];
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({ items }),
+            });
+            return;
+        }
         if (path.endsWith("/rules")) {
-            const rules = mode === "paired" ? [rule, sharedPending] : [rule];
+            const rules =
+                mode === "home-rules-empty"
+                    ? []
+                    : mode === "paired" || mode === "home-pending"
+                      ? [rule, sharedPending]
+                      : [rule];
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
@@ -455,6 +484,23 @@ async function captureScheme(browser, baseUrl, scheme) {
     await shot(unauthorized, `${scheme}-gate-unauthorized`);
     await unauthorized.close();
 
+    const homePending = await openApp(browser, baseUrl, scheme, "home-pending");
+    await homePending.waitForSelector("text=Ждёт вашего ответа");
+    await homePending.waitForSelector("text=извиняться спокойно");
+    await shot(homePending, `${scheme}-home-pending`);
+    await homePending.close();
+
+    const homeRules = await openApp(browser, baseUrl, scheme, "app");
+    await homeRules.waitForSelector("text=Мои правила для Аня");
+    await homeRules.waitForSelector("text=не повышать голос");
+    await shot(homeRules, `${scheme}-home-rules`);
+    await homeRules.close();
+
+    const homeRulesEmpty = await openApp(browser, baseUrl, scheme, "home-rules-empty");
+    await homeRulesEmpty.waitForSelector("text=Договоритесь о первом правиле");
+    await shot(homeRulesEmpty, `${scheme}-home-rules-empty`);
+    await homeRulesEmpty.close();
+
     const home = await openApp(browser, baseUrl, scheme, "paired");
     await home.waitForSelector("text=С кем сегодня важный разговор?");
     await home.waitForSelector("text=@svoi_test_bot");
@@ -485,6 +531,30 @@ async function captureScheme(browser, baseUrl, scheme) {
     await people.waitForSelector("text=Новое правило");
     await shot(people, `${scheme}-add-rule`);
     await people.close();
+
+    const addRulePaired = await openApp(browser, baseUrl, scheme, "paired");
+    await addRulePaired.getByRole("button", { name: "Люди", exact: true }).click();
+    await addRulePaired.getByRole("button", { name: /Боря/ }).first().click();
+    await addRulePaired.getByRole("button", { name: "Добавить правило" }).click();
+    await addRulePaired.waitForSelector("text=Новое правило");
+    await addRulePaired.getByLabel("Общее для двоих").click();
+    await addRulePaired.waitForSelector("text=увидит правило и подтвердит");
+    await shot(addRulePaired, `${scheme}-add-rule-scope-shared`);
+    await addRulePaired.getByLabel("Только моё").click();
+    await addRulePaired.waitForSelector("text=Видите только вы, действует сразу");
+    await shot(addRulePaired, `${scheme}-add-rule-scope-personal`);
+    await addRulePaired.getByRole("button", { name: "Сохранить правило" }).click();
+    await addRulePaired.waitForSelector("text=Напишите, о чём договорились");
+    await shot(addRulePaired, `${scheme}-add-rule-error-empty`);
+    await addRulePaired.locator("textarea").fill("x".repeat(501));
+    await addRulePaired.getByRole("button", { name: "Сохранить правило" }).click();
+    await addRulePaired.waitForSelector("text=сократите на");
+    await shot(addRulePaired, `${scheme}-add-rule-error-long`);
+    await addRulePaired.locator("textarea").fill("ok\tbad");
+    await addRulePaired.getByRole("button", { name: "Сохранить правило" }).click();
+    await addRulePaired.waitForSelector("text=служебные символы");
+    await shot(addRulePaired, `${scheme}-add-rule-error-chars`);
+    await addRulePaired.close();
 
     const unpairedInvite = await openApp(browser, baseUrl, scheme, "app");
     await unpairedInvite.getByRole("button", { name: "Люди", exact: true }).click();

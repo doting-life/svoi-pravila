@@ -82,19 +82,8 @@ function MiniappShell({
         if (typeof window === "undefined") {
             return false;
         }
-        return window.location.hash.replace(/^#/u, "") === "pending";
+        return new URLSearchParams(window.location.search).get("view") === "pending";
     });
-
-    useEffect(() => {
-        if (!focusPending || typeof window === "undefined") {
-            return;
-        }
-        if (window.location.hash.replace(/^#/u, "") === "pending") {
-            const url = new URL(window.location.href);
-            url.hash = "";
-            window.history.replaceState(null, "", `${url.pathname}${url.search}`);
-        }
-    }, [focusPending]);
 
     useEffect(() => {
         const showBack =

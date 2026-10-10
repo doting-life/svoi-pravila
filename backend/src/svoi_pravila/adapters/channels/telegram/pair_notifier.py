@@ -52,7 +52,7 @@ class TelegramPairNotifier:
             telegram_id,
             self._strings.pair_shared_rule_proposed,
             action="shared_rule_proposed",
-            web_app_url=f"{self._miniapp_url}/#pending",
+            web_app_url=f"{self._miniapp_url}/?view=pending",
         )
 
     async def shared_rule_decided(

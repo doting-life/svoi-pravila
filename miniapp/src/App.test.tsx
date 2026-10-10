@@ -1317,8 +1317,9 @@ describe("App", () => {
         expect(await screen.findByTestId("home-pending")).toBeInTheDocument();
     });
 
-    it("focuses pending from #pending hash on boot", async () => {
-        window.history.replaceState(null, "", "/#pending");
+    it("focuses pending from ?view=pending with Telegram hash on boot", async () => {
+        const telegramHash = "#tgWebAppData=stub&tgWebAppVersion=8.0";
+        window.history.replaceState(null, "", `/?view=pending${telegramHash}`);
         const pendingItem = {
             id: "r-pending",
             contact_id: "c1",
@@ -1346,7 +1347,7 @@ describe("App", () => {
         await waitFor(() => {
             expect(scrollIntoView).toHaveBeenCalled();
         });
-        expect(window.location.hash).toBe("");
+        expect(window.location.hash).toBe(telegramHash);
         window.history.replaceState(null, "", "/");
     });
 

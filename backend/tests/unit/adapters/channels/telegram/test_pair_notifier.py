@@ -141,7 +141,7 @@ async def test_telegram_pair_notifier_happy_paths_and_guards(
     ]
     assert proposed
     assert "shared for dm" not in str(proposed[-1].text)
-    _assert_web_app(proposed[-1], strings, url=f"{_MINIAPP}/#pending")
+    _assert_web_app(proposed[-1], strings, url=f"{_MINIAPP}/?view=pending")
 
     await notifier.shared_rule_decided(inviter_id, shared.rule.id, approved=True)
     await notifier.shared_rule_decided(inviter_id, shared.rule.id, approved=False)

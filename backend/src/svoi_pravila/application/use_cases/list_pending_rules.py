@@ -9,7 +9,7 @@ from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.use_cases._access import require_access
 from svoi_pravila.domain.enums import RuleCategory, RuleStatus
 from svoi_pravila.domain.ids import ContactId, RuleId, UserId
-from svoi_pravila.domain.rules import PairScope, Rule
+from svoi_pravila.domain.rules import PairScope, Rule, RuleRevision
 from svoi_pravila.domain.text import ContactLabel, RuleText
 
 
@@ -41,20 +41,25 @@ class ListPendingRulesResult:
     items: tuple[PendingRuleItem, ...]
 
 
-def needs_actor_decision(rule: Rule, actor_id: UserId) -> bool:
-    """True when the actor must approve or reject a pending revision."""
+def pending_revision_for_actor(rule: Rule, actor_id: UserId) -> RuleRevision | None:
+    """Pending revision the actor must approve or reject, if any."""
     if not isinstance(rule.scope, PairScope):
-        return False
+        return None
     pending = rule.pending_revision
     if pending is None:
-        return False
+        return None
     if actor_id not in rule.approvers:
-        return False
+        return None
     if actor_id == pending.author_id:
-        return False
-    if rule.status is RuleStatus.PROPOSED:
-        return True
-    return rule.status is RuleStatus.ACTIVE
+        return None
+    if rule.status is RuleStatus.PROPOSED or rule.status is RuleStatus.ACTIVE:
+        return pending
+    return None
+
+
+def needs_actor_decision(rule: Rule, actor_id: UserId) -> bool:
+    """True when the actor must approve or reject a pending revision."""
+    return pending_revision_for_actor(rule, actor_id) is not None
 
 
 class ListPendingRules:
@@ -82,9 +87,7 @@ class ListPendingRules:
                 for rule in rules:
                     if rule.id in seen_rules:
                         continue
-                    if not needs_actor_decision(rule, query.actor_id):
-                        continue
-                    pending = rule.pending_revision
+                    pending = pending_revision_for_actor(rule, query.actor_id)
                     if pending is None:
                         continue
                     seen_rules.add(rule.id)

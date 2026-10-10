@@ -8,3 +8,4 @@ docker buildx build --load -t svoi-pravila:ci -f "$ROOT/backend/Dockerfile" "$RO
 docker buildx build --load -t svoi-pravila-miniapp:ci -f "$ROOT/miniapp/Dockerfile" "$ROOT/miniapp"
 docker buildx build --load -t svoi-pravila-grafana:ci -f "$ROOT/ops/grafana/Dockerfile" "$ROOT/ops/grafana"
 docker buildx build --load -t svoi-pravila-backup:ci -f "$ROOT/deploy/backup/Dockerfile" "$ROOT/deploy/backup"
+docker buildx build --load -t svoi-pravila-prometheus:ci -f "$ROOT/ops/prometheus/Dockerfile" "$ROOT/ops/prometheus"

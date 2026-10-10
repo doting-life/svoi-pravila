@@ -20,7 +20,7 @@ ENV_FILE="/etc/svoi-pravila/env"
 GHCR_TOKEN_FILE="/etc/svoi-pravila/ghcr-token"
 EXAMPLE_ENV="${SCRIPT_DIR}/env.prod.example"
 REGISTRY="ghcr.io"
-IMAGE_NAMES=(api miniapp grafana backup)
+IMAGE_NAMES=(api miniapp grafana backup prometheus)
 MIN_FREE_KB=$((3 * 1024 * 1024))
 EXPECTED_HSTS="max-age=31536000; includeSubDomains"
 export SP_ENV_FILE="$ENV_FILE"
@@ -158,7 +158,6 @@ write_release_env() {
     upper="$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')"
     printf '%s_IMAGE=%s\n' "$upper" "$digest" >>"$tmp"
   done
-  printf 'PROMETHEUS_IMAGE=%s\n' "$(env_value "${REPO_DIR}/scripts/image-pins.env" PROMETHEUS_IMAGE)" >>"$tmp"
   chmod 0640 "$tmp"
   mv "$tmp" "$RELEASE_ENV"
 }

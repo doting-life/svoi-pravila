@@ -94,6 +94,7 @@ API_IMAGE="$(image_id svoi-pravila:ci)"
 MINIAPP_IMAGE="$(image_id svoi-pravila-miniapp:ci)"
 GRAFANA_IMAGE="$(image_id svoi-pravila-grafana:ci)"
 BACKUP_IMAGE="$(image_id svoi-pravila-backup:ci)"
+PROMETHEUS_IMAGE="$(image_id svoi-pravila-prometheus:ci)"
 
 set_key() {
   local file="$1" key="$2" value="$3"

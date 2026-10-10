@@ -16,7 +16,10 @@ export function unwrapApiResult<T>(result: OpenApiResult<T>): {
     }
     const parsed = parseErrorBody(result.error);
     return {
-        error: mapHttpError(result.response.status, parsed.message, parsed.code),
+        error: mapHttpError(result.response.status, parsed.message, parsed.code, {
+            ...(parsed.max !== undefined ? { max: parsed.max } : {}),
+            ...(parsed.actual !== undefined ? { actual: parsed.actual } : {}),
+        }),
     };
 }
 
@@ -29,6 +32,9 @@ export function unwrapEmptyResult(result: {
     }
     const parsed = parseErrorBody(result.error);
     return {
-        error: mapHttpError(result.response.status, parsed.message, parsed.code),
+        error: mapHttpError(result.response.status, parsed.message, parsed.code, {
+            ...(parsed.max !== undefined ? { max: parsed.max } : {}),
+            ...(parsed.actual !== undefined ? { actual: parsed.actual } : {}),
+        }),
     };
 }

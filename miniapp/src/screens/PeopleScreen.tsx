@@ -16,10 +16,16 @@ import type { TelegramAdapter } from "../telegram/webapp";
 export type PeopleScreenProps = {
     readonly activeContactId: string | null | undefined;
     readonly telegram: TelegramAdapter;
+    readonly pendingByContact?: Readonly<Record<string, number>>;
     readonly onOpenContact: (contact: Contact) => void;
 };
 
-export function PeopleScreen({ activeContactId, telegram, onOpenContact }: PeopleScreenProps) {
+export function PeopleScreen({
+    activeContactId,
+    telegram,
+    pendingByContact = {},
+    onOpenContact,
+}: PeopleScreenProps) {
     const contacts = useContacts();
     const [adding, setAdding] = useState(false);
 
@@ -56,6 +62,7 @@ export function PeopleScreen({ activeContactId, telegram, onOpenContact }: Peopl
                 <ul className="people-list">
                     {contacts.data.map((contact) => {
                         const isActive = contact.id === activeContactId;
+                        const pendingCount = pendingByContact[contact.id] ?? 0;
                         return (
                             <li key={contact.id}>
                                 <Card className="person">
@@ -74,6 +81,11 @@ export function PeopleScreen({ activeContactId, telegram, onOpenContact }: Peopl
                                                 {isActive ? ` · ${ru.contactsActiveBadge}` : ""}
                                             </span>
                                         </span>
+                                        {pendingCount > 0 ? (
+                                            <Badge tone="warm" className="person__pending-badge">
+                                                {pendingCount}
+                                            </Badge>
+                                        ) : null}
                                         {contact.paired ? (
                                             <Badge tone="warm">{ru.contactPairedBadge}</Badge>
                                         ) : null}

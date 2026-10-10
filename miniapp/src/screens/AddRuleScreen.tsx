@@ -4,8 +4,10 @@ import { Button } from "../components/Button";
 import { ChipGroup } from "../components/ChipGroup";
 import { TextArea } from "../components/Field";
 import { SegmentedControl } from "../components/SegmentedControl";
+import { useMe } from "../hooks/useMe";
 import { useRules, type RuleCategory } from "../hooks/useRules";
 import { ru, type CategoryKey } from "../localization/ru";
+import { codePointLength, validateRuleText } from "../rules/ruleText";
 import type { TelegramAdapter } from "../telegram/webapp";
 
 const CATEGORY_OPTIONS = (Object.keys(ru.categories) as CategoryKey[]).map((key) => ({
@@ -17,8 +19,6 @@ const SCOPE_OPTIONS = [
     { value: "personal", label: ru.addRuleScopePersonal },
     { value: "shared", label: ru.addRuleScopeShared },
 ] as const;
-
-const RULE_TEXT_MAX = 280;
 
 export type AddRuleScreenProps = {
     readonly contactId: string;
@@ -39,6 +39,8 @@ export function AddRuleScreen({
     initialCategory = "other",
     initialText = "",
 }: AddRuleScreenProps) {
+    const me = useMe();
+    const maxChars = me.status === "success" ? me.data.rule_text_max_chars : 500;
     const rules = useRules(contactId);
     const [category, setCategory] = useState<RuleCategory>(initialCategory);
     const [text, setText] = useState(initialText);
@@ -48,19 +50,53 @@ export function AddRuleScreen({
 
     const shared = paired && scope === "shared";
 
+    const clearError = () => {
+        setFormError(null);
+    };
+
+    const errorForClient = (error: "empty" | "too_long" | "invalid_chars", actual: number) => {
+        if (error === "empty") {
+            return ru.addRuleEmpty;
+        }
+        if (error === "invalid_chars") {
+            return ru.addRuleInvalidChars;
+        }
+        return ru.addRuleTooLong
+            .replace("{n}", String(actual))
+            .replace("{max}", String(maxChars))
+            .replace("{over}", String(actual - maxChars));
+    };
+
     const submit = async () => {
-        const trimmed = text.trim();
-        if (trimmed.length === 0 || trimmed.length > RULE_TEXT_MAX) {
-            setFormError(ru.addRuleValidation);
+        const checked = validateRuleText(text, maxChars);
+        if (!checked.ok) {
+            setFormError(errorForClient(checked.error, checked.actual));
             return;
         }
         setBusy(true);
         setFormError(null);
-        const result = await rules.createRule({ category, text: trimmed, shared });
+        const result = await rules.createRule({
+            category,
+            text: checked.value,
+            shared,
+        });
         setBusy(false);
         if (result.error !== undefined) {
             if (result.error.code === "open_rule_limit") {
                 setFormError(ru.addRuleOpenLimit);
+            } else if (result.error.code === "rule_text_empty") {
+                setFormError(ru.addRuleEmpty);
+            } else if (result.error.code === "rule_text_invalid_chars") {
+                setFormError(ru.addRuleInvalidChars);
+            } else if (result.error.code === "rule_text_too_long") {
+                const actual = result.error.actual ?? codePointLength(text);
+                const max = result.error.max ?? maxChars;
+                setFormError(
+                    ru.addRuleTooLong
+                        .replace("{n}", String(actual))
+                        .replace("{max}", String(max))
+                        .replace("{over}", String(actual - max)),
+                );
             } else if (
                 result.error.code === "validation_error" ||
                 result.error.kind === "validation"
@@ -95,9 +131,16 @@ export function AddRuleScreen({
                         legend={ru.addRuleScope}
                         options={SCOPE_OPTIONS}
                         value={scope}
-                        onChange={setScope}
+                        onChange={(next) => {
+                            clearError();
+                            setScope(next);
+                        }}
                     />
-                    {shared ? <p className="hint-text">{ru.addRuleSharedNote}</p> : null}
+                    <p className="hint-text">
+                        {shared
+                            ? ru.addRuleHintShared.replace("{label}", contactLabel)
+                            : ru.addRuleHintPersonal}
+                    </p>
                 </>
             ) : null}
 
@@ -105,17 +148,24 @@ export function AddRuleScreen({
                 legend={ru.addRuleCategory}
                 options={CATEGORY_OPTIONS}
                 value={category}
-                onChange={setCategory}
+                onChange={(next) => {
+                    clearError();
+                    setCategory(next);
+                }}
             />
 
             <TextArea
                 label={ru.addRuleText}
                 value={text}
-                maxLength={RULE_TEXT_MAX}
+                maxLength={maxChars}
+                countCodePoints
                 disabled={busy}
                 footer={ru.addRuleHint}
                 large
-                onChange={setText}
+                onChange={(next) => {
+                    clearError();
+                    setText(next);
+                }}
             />
 
             {formError !== null ? (
@@ -133,7 +183,9 @@ export function AddRuleScreen({
                         void submit();
                     }}
                 >
-                    {shared ? ru.addRuleSubmitShared : ru.addRuleSubmit}
+                    {shared
+                        ? ru.addRuleSubmitShared.replace("{label}", contactLabel)
+                        : ru.addRuleSubmit}
                 </Button>
             </div>
         </section>

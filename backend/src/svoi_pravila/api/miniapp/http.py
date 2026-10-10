@@ -8,7 +8,12 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from svoi_pravila.api.miniapp.errors import MiniappErrorCode, error_body, limit_error_body
+from svoi_pravila.api.miniapp.errors import (
+    MiniappErrorCode,
+    error_body,
+    limit_error_body,
+    rule_text_too_long_body,
+)
 from svoi_pravila.application.errors import (
     AccessNotGranted,
     CacheUnavailable,
@@ -16,6 +21,9 @@ from svoi_pravila.application.errors import (
     ContactLimitReached,
     NotFound,
     OpenRuleLimitReached,
+    RuleTextEmpty,
+    RuleTextInvalidChars,
+    RuleTextTooLong,
     ServiceBudgetExhausted,
     UserQuotaExhausted,
 )
@@ -24,8 +32,12 @@ from svoi_pravila.domain.errors import (
     InvalidValueError,
     InviteAlreadyAcceptedError,
     InviteExpiredError,
+    RuleTextEmptyError,
+    RuleTextInvalidCharsError,
+    RuleTextTooLongError,
     SelfInviteAcceptError,
 )
+from svoi_pravila.domain.text import RULE_TEXT_MAX_CHARS
 
 _MINIAPP_PREFIX = "/api/v1"
 
@@ -147,6 +159,46 @@ def register_miniapp_exception_handlers(app: FastAPI, *, display_timezone: str) 
     async def _invite_own(_request: Request, _exc: SelfInviteAcceptError) -> JSONResponse:
         return _miniapp_json(MiniappErrorCode.INVITE_OWN, 409)
 
+    @app.exception_handler(RuleTextEmptyError)
+    async def _rule_text_empty_domain(_request: Request, _exc: RuleTextEmptyError) -> JSONResponse:
+        return _miniapp_json(MiniappErrorCode.RULE_TEXT_EMPTY, 422)
+
+    @app.exception_handler(RuleTextInvalidCharsError)
+    async def _rule_text_invalid_chars_domain(
+        _request: Request, _exc: RuleTextInvalidCharsError
+    ) -> JSONResponse:
+        return _miniapp_json(MiniappErrorCode.RULE_TEXT_INVALID_CHARS, 422)
+
+    @app.exception_handler(RuleTextTooLongError)
+    async def _rule_text_too_long_domain(
+        _request: Request, exc: RuleTextTooLongError
+    ) -> JSONResponse:
+        body = rule_text_too_long_body(maximum=exc.max, actual=exc.actual)
+        return JSONResponse(
+            status_code=422,
+            content=body.model_dump(mode="json"),
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.exception_handler(RuleTextEmpty)
+    async def _rule_text_empty_app(_request: Request, _exc: RuleTextEmpty) -> JSONResponse:
+        return _miniapp_json(MiniappErrorCode.RULE_TEXT_EMPTY, 422)
+
+    @app.exception_handler(RuleTextInvalidChars)
+    async def _rule_text_invalid_chars_app(
+        _request: Request, _exc: RuleTextInvalidChars
+    ) -> JSONResponse:
+        return _miniapp_json(MiniappErrorCode.RULE_TEXT_INVALID_CHARS, 422)
+
+    @app.exception_handler(RuleTextTooLong)
+    async def _rule_text_too_long_app(_request: Request, exc: RuleTextTooLong) -> JSONResponse:
+        body = rule_text_too_long_body(maximum=exc.max, actual=exc.actual)
+        return JSONResponse(
+            status_code=422,
+            content=body.model_dump(mode="json"),
+            headers={"Cache-Control": "no-store"},
+        )
+
     @app.exception_handler(InvalidValueError)
     async def _invalid_value(_request: Request, _exc: InvalidValueError) -> JSONResponse:
         return _miniapp_json(MiniappErrorCode.VALIDATION_ERROR, 422)
@@ -160,4 +212,25 @@ def register_miniapp_exception_handlers(app: FastAPI, *, display_timezone: str) 
                 status_code=422,
                 content={"detail": exc.errors()},
             )
+        for err in exc.errors():
+            loc = err.get("loc", ())
+            if err.get("type") == "string_too_long" and "text" in loc:
+                ctx = err.get("ctx") or {}
+                actual = ctx.get("input_length")
+                if not isinstance(actual, int):
+                    input_value = err.get("input")
+                    actual = (
+                        len(input_value)
+                        if isinstance(input_value, str)
+                        else RULE_TEXT_MAX_CHARS + 1
+                    )
+                maximum = ctx.get("max_length", RULE_TEXT_MAX_CHARS)
+                if not isinstance(maximum, int):
+                    maximum = RULE_TEXT_MAX_CHARS
+                body = rule_text_too_long_body(maximum=maximum, actual=actual)
+                return JSONResponse(
+                    status_code=422,
+                    content=body.model_dump(mode="json"),
+                    headers={"Cache-Control": "no-store"},
+                )
         return _miniapp_json(MiniappErrorCode.VALIDATION_ERROR, 422)

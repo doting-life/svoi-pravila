@@ -7,6 +7,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
+from svoi_pravila.domain.text import RULE_TEXT_MAX_CHARS
+
 _HypothesisText = Annotated[str, Field(max_length=1000)]
 
 
@@ -63,4 +65,4 @@ class RuleCategoryOut(StrEnum):
 class SuggestRuleOut(BaseModel):
     verdict: SuggestRuleVerdictOut
     category: RuleCategoryOut | None = None
-    text: str | None = Field(default=None, max_length=280)
+    text: str | None = Field(default=None, max_length=RULE_TEXT_MAX_CHARS)

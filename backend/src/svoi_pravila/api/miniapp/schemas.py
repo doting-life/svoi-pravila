@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from svoi_pravila.domain.text import RULE_TEXT_MAX_CHARS
+
 
 class MeResponse(BaseModel):
     """Current user onboarding and limits (C0/C1)."""
@@ -19,6 +21,7 @@ class MeResponse(BaseModel):
     consents_revoked: bool
     max_contacts: int = Field(ge=1)
     max_open_rules: int = Field(ge=1)
+    rule_text_max_chars: int = Field(ge=1)
     display_timezone: str = Field(min_length=1)
     bot_username: str = Field(min_length=1)
     decode_remaining: int = Field(ge=0)
@@ -129,11 +132,30 @@ class RuleListResponse(BaseModel):
     rules: list[RuleItem]
 
 
+class PendingRuleItem(BaseModel):
+    """One rule awaiting the current user's decision."""
+
+    id: str
+    contact_id: str
+    contact_label: str
+    category: Literal["taboo_topic", "how_to_ask", "apology", "conflict_protocol", "other"]
+    status: Literal["proposed", "active", "rejected", "archived"]
+    text: str
+    shared: bool
+    has_pending_edit: bool = False
+
+
+class PendingRuleListResponse(BaseModel):
+    """GET /rules/pending."""
+
+    items: list[PendingRuleItem]
+
+
 class CreateRuleRequest(BaseModel):
     """POST /contacts/{id}/rules."""
 
     category: Literal["taboo_topic", "how_to_ask", "apology", "conflict_protocol", "other"]
-    text: str = Field(min_length=1, max_length=280)
+    text: str = Field(max_length=RULE_TEXT_MAX_CHARS)
     shared: bool = False
 
 

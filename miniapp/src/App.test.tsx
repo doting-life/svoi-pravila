@@ -18,6 +18,7 @@ const meDone = {
     decode_remaining: 5,
     max_contacts: 20,
     max_open_rules: 50,
+    rule_text_max_chars: 500,
     display_timezone: "Europe/Moscow",
 };
 
@@ -101,6 +102,12 @@ describe("App", () => {
                         headers: { "Content-Type": "application/json" },
                     }),
                 );
+            }
+            if (path === "/api/v1/privacy/texts") {
+                return Promise.resolve(jsonResponse(privacyTexts));
+            }
+            if (path === "/api/v1/rules/pending") {
+                return Promise.resolve(jsonResponse({ items: [] }));
             }
             contactsCalls += 1;
             if (contactsCalls <= 2) {
@@ -1120,7 +1127,228 @@ describe("App", () => {
         fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
         fireEvent.click(await screen.findByRole("button", { name: ru.contactAddRule }));
         fireEvent.click(screen.getByRole("button", { name: ru.addRuleSubmit }));
-        expect(await screen.findByText(ru.addRuleValidation)).toBeInTheDocument();
+        expect(await screen.findByText(ru.addRuleEmpty)).toBeInTheDocument();
+        fireEvent.change(screen.getByRole("textbox"), { target: { value: "ok" } });
+        expect(screen.queryByText(ru.addRuleEmpty)).not.toBeInTheDocument();
+    });
+
+    it("rejects invalid chars and too-long add-rule text locally", async () => {
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        await openPeople();
+        fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.contactAddRule }));
+        fireEvent.change(screen.getByRole("textbox"), { target: { value: "a\tb" } });
+        fireEvent.click(screen.getByRole("button", { name: ru.addRuleSubmit }));
+        expect(await screen.findByText(ru.addRuleInvalidChars)).toBeInTheDocument();
+        fireEvent.change(screen.getByRole("textbox"), {
+            target: { value: "x".repeat(501) },
+        });
+        fireEvent.click(screen.getByRole("button", { name: ru.addRuleSubmit }));
+        expect(
+            await screen.findByText(
+                ru.addRuleTooLong
+                    .replace("{n}", "501")
+                    .replace("{max}", "500")
+                    .replace("{over}", "1"),
+            ),
+        ).toBeInTheDocument();
+    });
+
+    it("maps server rule-text error codes on create", async () => {
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+            {
+                method: "POST",
+                path: "/api/v1/contacts/c1/rules",
+                status: 422,
+                body: {
+                    code: "rule_text_too_long",
+                    message: "too long",
+                    max: 500,
+                    actual: 501,
+                },
+            },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        await openPeople();
+        fireEvent.click(await screen.findByRole("button", { name: /Аня/ }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.contactAddRule }));
+        fireEvent.change(screen.getByRole("textbox"), { target: { value: "сервер отверг" } });
+        fireEvent.click(screen.getByRole("button", { name: ru.addRuleSubmit }));
+        expect(
+            await screen.findByText(
+                ru.addRuleTooLong
+                    .replace("{n}", "501")
+                    .replace("{max}", "500")
+                    .replace("{over}", "1"),
+            ),
+        ).toBeInTheDocument();
+    });
+
+    it("shows home pending block, rules preview, and people badge", async () => {
+        const pendingItem = {
+            id: "r-pending",
+            contact_id: "c1",
+            contact_label: "Аня",
+            category: "other",
+            status: "proposed",
+            text: "общее\nдля двоих",
+            shared: true,
+            has_pending_edit: false,
+        };
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/rules/pending", body: { items: [pendingItem] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [rule] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+            {
+                method: "POST",
+                path: "/api/v1/rules/r-pending/approve",
+                body: { ...rule, id: "r-pending", status: "active", shared: true },
+            },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        expect(await screen.findByText(ru.homePendingTitle)).toBeInTheDocument();
+        expect(screen.getByText(/общее/)).toBeInTheDocument();
+        expect(
+            await screen.findByText(ru.homeRulesSoloTitle.replace("{label}", "Аня")),
+        ).toBeInTheDocument();
+        expect(await screen.findByText("не повышать голос")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.tabPeople }));
+        expect(screen.getByRole("button", { name: ru.tabPeople })).toHaveAttribute(
+            "title",
+            `${ru.tabPeople}: 1`,
+        );
+        expect(screen.getByText("1")).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.tabHome }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.ruleApprove }));
+        await waitFor(() => {
+            expect(
+                vi.mocked(fetchImpl).mock.calls.some((call) => {
+                    const request = call[0];
+                    const url = request instanceof Request ? request.url : "";
+                    return url.includes("/approve");
+                }),
+            ).toBe(true);
+        });
+    });
+
+    it("rejects a pending rule from home", async () => {
+        const pendingItem = {
+            id: "r-pending",
+            contact_id: "c1",
+            contact_label: "Аня",
+            category: "other",
+            status: "proposed",
+            text: "отклонить это",
+            shared: true,
+            has_pending_edit: false,
+        };
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/rules/pending", body: { items: [pendingItem] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+            {
+                method: "POST",
+                path: "/api/v1/rules/r-pending/reject",
+                body: { ...rule, id: "r-pending", status: "rejected", shared: true },
+            },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        expect(await screen.findByTestId("home-pending")).toBeInTheDocument();
+        fireEvent.click(await screen.findByRole("button", { name: ru.ruleReject }));
+        await waitFor(() => {
+            expect(
+                vi.mocked(fetchImpl).mock.calls.some((call) => {
+                    const request = call[0];
+                    const url = request instanceof Request ? request.url : "";
+                    return url.includes("/reject");
+                }),
+            ).toBe(true);
+        });
+    });
+
+    it("keeps pending when approve or reject fails", async () => {
+        const pendingItem = {
+            id: "r-pending",
+            contact_id: "c1",
+            contact_label: "Аня",
+            category: "other",
+            status: "proposed",
+            text: "ошибка решения",
+            shared: true,
+            has_pending_edit: false,
+        };
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/rules/pending", body: { items: [pendingItem] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+            {
+                method: "POST",
+                path: "/api/v1/rules/r-pending/approve",
+                status: 404,
+                body: { code: "not_found", message: "gone" },
+            },
+            {
+                method: "POST",
+                path: "/api/v1/rules/r-pending/reject",
+                status: 404,
+                body: { code: "not_found", message: "gone" },
+            },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        expect(await screen.findByTestId("home-pending")).toBeInTheDocument();
+        fireEvent.click(await screen.findByRole("button", { name: ru.ruleApprove }));
+        fireEvent.click(await screen.findByRole("button", { name: ru.ruleReject }));
+        expect(await screen.findByTestId("home-pending")).toBeInTheDocument();
+    });
+
+    it("focuses pending from ?view=pending with Telegram hash on boot", async () => {
+        const telegramHash = "#tgWebAppData=stub&tgWebAppVersion=8.0";
+        window.history.replaceState(null, "", `/?view=pending${telegramHash}`);
+        const pendingItem = {
+            id: "r-pending",
+            contact_id: "c1",
+            contact_label: "Аня",
+            category: "other",
+            status: "proposed",
+            text: "ждёт ответа",
+            shared: true,
+            has_pending_edit: false,
+        };
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/rules/pending", body: { items: [pendingItem] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+        ]);
+        const scrollIntoView = vi.fn();
+        Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+            configurable: true,
+            value: scrollIntoView,
+        });
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        expect(await screen.findByTestId("home-pending")).toBeInTheDocument();
+        await waitFor(() => {
+            expect(scrollIntoView).toHaveBeenCalled();
+        });
+        expect(window.location.hash).toBe(telegramHash);
+        window.history.replaceState(null, "", "/");
     });
 
     it("creates a contact successfully", async () => {
@@ -1442,6 +1670,8 @@ describe("App", () => {
         const base = mockFetch([
             { path: "/api/v1/me", body: meDone },
             { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
             {
                 method: "POST",
                 path: "/api/v1/suggestions/from-decode",
@@ -1472,7 +1702,7 @@ describe("App", () => {
             return base(input, init);
         };
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        fireEvent.click(await screen.findByRole("button", { name: ru.homeDecodeCta }));
+        fireEvent.click(await screen.findByRole("button", { name: new RegExp(ru.homeDecodeCta) }));
         expect(await screen.findByRole("heading", { name: ru.decodeTitle })).toBeInTheDocument();
         fireEvent.change(screen.getByRole("textbox"), { target: { value: "входящее" } });
         fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
@@ -1628,7 +1858,11 @@ describe("App", () => {
         expect(await screen.findByText(ru.addRuleScope)).toBeInTheDocument();
         fireEvent.click(screen.getByLabelText(ru.addRuleScopeShared));
         fireEvent.change(screen.getByRole("textbox"), { target: { value: "общее новое" } });
-        fireEvent.click(screen.getByRole("button", { name: ru.addRuleSubmitShared }));
+        fireEvent.click(
+            screen.getByRole("button", {
+                name: ru.addRuleSubmitShared.replace("{label}", "Аня"),
+            }),
+        );
         await waitFor(() => {
             expect(
                 vi.mocked(fetchImpl).mock.calls.some((call) => {
@@ -1848,6 +2082,12 @@ describe("Home and navigation", () => {
             if (path === "/api/v1/me") {
                 return Promise.resolve(jsonResponse(meDone));
             }
+            if (path === "/api/v1/privacy/texts") {
+                return Promise.resolve(jsonResponse(privacyTexts));
+            }
+            if (path === "/api/v1/rules/pending") {
+                return Promise.resolve(jsonResponse({ items: [] }));
+            }
             calls += 1;
             return Promise.resolve(
                 calls === 1
@@ -1865,10 +2105,11 @@ describe("Home and navigation", () => {
         const fetchImpl = mockFetch([
             { path: "/api/v1/me", body: meDone },
             { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
             { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        fireEvent.click(await screen.findByRole("button", { name: ru.homeDecodeCta }));
+        fireEvent.click(await screen.findByRole("button", { name: new RegExp(ru.homeDecodeCta) }));
         expect(await screen.findByRole("heading", { name: ru.decodeTitle })).toBeInTheDocument();
         expect(screen.queryByRole("navigation", { name: ru.tabsLabel })).not.toBeInTheDocument();
     });
@@ -1879,6 +2120,7 @@ describe("Decode limits and crisis", () => {
         return mockFetch([
             { path: "/api/v1/me", body: meDone },
             { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
             { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
         ]);
     }
@@ -1886,7 +2128,7 @@ describe("Decode limits and crisis", () => {
     async function startDecode(fetchImpl: typeof fetch) {
         const adapter = fakeAdapter();
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
-        fireEvent.click(await screen.findByRole("button", { name: ru.homeDecodeCta }));
+        fireEvent.click(await screen.findByRole("button", { name: new RegExp(ru.homeDecodeCta) }));
         fireEvent.change(await screen.findByRole("textbox"), { target: { value: "входящее" } });
         fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
         return adapter;
@@ -1954,7 +2196,7 @@ describe("Decode limits and crisis", () => {
         const base = decodeBase();
         const fetchImpl = sseFetch(base, completed);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        fireEvent.click(await screen.findByRole("button", { name: ru.homeDecodeCta }));
+        fireEvent.click(await screen.findByRole("button", { name: new RegExp(ru.homeDecodeCta) }));
         expect(await screen.findByText(decodeRemainingLabel(5))).toBeInTheDocument();
         fireEvent.change(screen.getByRole("textbox"), { target: { value: "входящее" } });
         fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
@@ -1972,7 +2214,7 @@ describe("Decode limits and crisis", () => {
             { method: "POST", path: "/api/v1/contacts/c2/activate", status: 204, body: null },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        fireEvent.click(await screen.findByRole("button", { name: ru.homeDecodeCta }));
+        fireEvent.click(await screen.findByRole("button", { name: new RegExp(ru.homeDecodeCta) }));
         fireEvent.change(await screen.findByRole("textbox"), { target: { value: "не потерять" } });
         fireEvent.click(
             await screen.findByRole("button", { name: ru.decodeFrom.replace("{name}", "Аня") }),

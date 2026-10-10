@@ -34,6 +34,7 @@ from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.application.use_cases.issue_export_download import IssueExportDownload
 from svoi_pravila.application.use_cases.leave_pair import LeavePair
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
+from svoi_pravila.application.use_cases.list_pending_rules import ListPendingRules
 from svoi_pravila.application.use_cases.list_rules import ListRules
 from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
@@ -62,6 +63,7 @@ def _openapi_bindings() -> MiniappRouterBindings:
         create_invite=cast(CreateInvite, _stub()),
         leave_pair=cast(LeavePair, _stub()),
         list_rules=cast(ListRules, _stub()),
+        list_pending_rules=cast(ListPendingRules, _stub()),
         propose_rule=cast(ProposeRule, _stub()),
         archive_rule=cast(ArchiveRule, _stub()),
         approve_rule=cast(ApproveRule, _stub()),

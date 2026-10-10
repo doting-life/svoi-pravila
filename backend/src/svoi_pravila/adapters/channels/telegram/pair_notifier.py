@@ -52,6 +52,7 @@ class TelegramPairNotifier:
             telegram_id,
             self._strings.pair_shared_rule_proposed,
             action="shared_rule_proposed",
+            web_app_url=f"{self._miniapp_url}/?view=pending",
         )
 
     async def shared_rule_decided(
@@ -88,24 +89,31 @@ class TelegramPairNotifier:
                 return None
             return user.telegram_user_id.value
 
-    def _web_app_markup(self) -> InlineKeyboardMarkup:
+    def _web_app_markup(self, *, url: str | None = None) -> InlineKeyboardMarkup:
         return InlineKeyboardMarkup(
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
                         text=self._strings.dm_open_app,
-                        web_app=WebAppInfo(url=self._miniapp_url),
+                        web_app=WebAppInfo(url=url if url is not None else self._miniapp_url),
                     )
                 ]
             ]
         )
 
-    async def _send(self, telegram_id: int, text: str, *, action: str) -> None:
+    async def _send(
+        self,
+        telegram_id: int,
+        text: str,
+        *,
+        action: str,
+        web_app_url: str | None = None,
+    ) -> None:
         try:
             await self._bot.send_message(
                 telegram_id,
                 text,
-                reply_markup=self._web_app_markup(),
+                reply_markup=self._web_app_markup(url=web_app_url),
             )
         except TelegramAPIError as exc:
             logger.info(

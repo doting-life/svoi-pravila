@@ -17,6 +17,8 @@ export type ApiError = {
     readonly status: number | undefined;
     readonly message: string;
     readonly code: MiniappErrorCode | undefined;
+    readonly max?: number;
+    readonly actual?: number;
 };
 
 function kindFromStatus(status: number): ApiErrorKind {
@@ -51,6 +53,7 @@ export function mapHttpError(
     status: number | undefined,
     bodyMessage?: string,
     code?: MiniappErrorCode,
+    extras?: { max?: number; actual?: number },
 ): ApiError {
     if (status === undefined) {
         return {
@@ -65,18 +68,24 @@ export function mapHttpError(
         status,
         message: bodyMessage ?? "request failed",
         code,
+        ...(extras?.max !== undefined ? { max: extras.max } : {}),
+        ...(extras?.actual !== undefined ? { actual: extras.actual } : {}),
     };
 }
 
 export function parseErrorBody(body: unknown): {
     message: string | undefined;
     code: MiniappErrorCode | undefined;
+    max: number | undefined;
+    actual: number | undefined;
 } {
     if (typeof body !== "object" || body === null) {
-        return { message: undefined, code: undefined };
+        return { message: undefined, code: undefined, max: undefined, actual: undefined };
     }
-    const record = body as { message?: unknown; code?: unknown };
+    const record = body as { message?: unknown; code?: unknown; max?: unknown; actual?: unknown };
     const message = typeof record.message === "string" ? record.message : undefined;
     const code = typeof record.code === "string" ? (record.code as MiniappErrorCode) : undefined;
-    return { message, code };
+    const max = typeof record.max === "number" ? record.max : undefined;
+    const actual = typeof record.actual === "number" ? record.actual : undefined;
+    return { message, code, max, actual };
 }

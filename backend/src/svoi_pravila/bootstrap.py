@@ -95,6 +95,7 @@ from svoi_pravila.application.use_cases.inline_compose import InlineCompose, Inl
 from svoi_pravila.application.use_cases.issue_export_download import IssueExportDownload
 from svoi_pravila.application.use_cases.leave_pair import LeavePair
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
+from svoi_pravila.application.use_cases.list_pending_rules import ListPendingRules
 from svoi_pravila.application.use_cases.list_rules import ListRules
 from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
@@ -218,6 +219,7 @@ def _build_miniapp_mount(
             ),
             leave_pair=LeavePair(ports.uow_factory, ports.ids, ports.clock, wire.pair_notifier),
             list_rules=ListRules(ports.uow_factory, ports.catalog),
+            list_pending_rules=ListPendingRules(ports.uow_factory, ports.catalog),
             propose_rule=ProposeRule(
                 ports.uow_factory,
                 ports.catalog,

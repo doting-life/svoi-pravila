@@ -100,3 +100,48 @@ async def test_record_inline_choice_swallows_sink_failure() -> None:
     )
     assert result.suggestion_id is None
     assert result.tone_outcome is ToneSignalOutcome.SKIPPED_NO_CONTACT
+
+
+@pytest.mark.unit
+async def test_record_inline_choice_rejects_dm_surface() -> None:
+    sink = RecordingUsageEventSink()
+    use_case = _choice(sink)
+    with pytest.raises(InvalidInlineResultRef):
+        await use_case.execute(
+            RecordInlineChoiceCommand(
+                TelegramUserId(9),
+                scenario=UsageScenario.SOFTEN,
+                firmness=Firmness.GENTLE,
+                surface=UsageSurface.DM,
+            )
+        )
+    assert sink.events == []
+
+
+@pytest.mark.unit
+async def test_record_inline_choice_requires_ref_or_scenario_firmness() -> None:
+    sink = RecordingUsageEventSink()
+    use_case = _choice(sink)
+    with pytest.raises(InvalidInlineResultRef):
+        await use_case.execute(RecordInlineChoiceCommand(TelegramUserId(9)))
+    assert sink.events == []
+
+
+@pytest.mark.unit
+async def test_record_inline_choice_miniapp_scenario_firmness() -> None:
+    sink = RecordingUsageEventSink()
+    use_case = _choice(sink)
+    result = await use_case.execute(
+        RecordInlineChoiceCommand(
+            TelegramUserId(9),
+            scenario=UsageScenario.HELP_SAY,
+            firmness=Firmness.BALANCED,
+            surface=UsageSurface.MINIAPP,
+        )
+    )
+    assert result.tone_outcome is ToneSignalOutcome.SKIPPED_NO_CONTACT
+    event = sink.events[0]
+    assert event.event_kind is UsageEventKind.RESULT_CHOSEN
+    assert event.surface is UsageSurface.MINIAPP
+    assert event.scenario is UsageScenario.HELP_SAY
+    assert event.variant_firmness is Firmness.BALANCED

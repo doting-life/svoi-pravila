@@ -17,6 +17,7 @@ from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
     GenerationUnavailable,
     IncomingTextTooLong,
+    IncomingTextTooShort,
     InlineComposeFailed,
     InlineQueryTooShort,
     InvalidGenerationOutput,
@@ -29,6 +30,7 @@ from svoi_pravila.application.errors import (
 from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
 from svoi_pravila.application.ports.generation import (
     BOUNDED_TEXT_MAX,
+    BOUNDED_TEXT_MIN,
     GenerationMeta,
     HelpSayIntent,
     HelpSayResult,
@@ -42,6 +44,7 @@ from svoi_pravila.application.ports.inline_result_reuse import InlineResultReuse
 from svoi_pravila.application.ports.llm_budget import BudgetExhausted, BudgetOk
 from svoi_pravila.application.use_cases.compose_generation import (
     ComposeGeneration,
+    ComposeGenerationCommand,
     ComposeGenerationPorts,
 )
 from svoi_pravila.application.use_cases.create_contact import CreateContact, CreateContactCommand
@@ -106,6 +109,33 @@ class _Fakes:
     intent_prefixes: tuple[tuple[str, HelpSayIntent], ...] = _PREFIXES
 
 
+def _compose_generation(
+    world: AppWorld, fakes: _Fakes | None = None
+) -> tuple[ComposeGeneration, RecordingUsageEventSink | FailingUsageEventSink]:
+    chosen = fakes or _Fakes()
+    sink = chosen.sink if chosen.sink is not None else RecordingUsageEventSink()
+    return (
+        ComposeGeneration(
+            ComposeGenerationPorts(
+                uow_factory=world.uow_factory,
+                catalog=world.catalog,
+                generator=chosen.generator or FakeTextGenerator(),
+                quota_gate=chosen.quota_gate or FakeQuotaGate(limit=30),
+                llm_budget=chosen.llm_budget or FakeLlmBudget(),
+                sink=sink,
+                clock=world.clock,
+                monotonic=world.clock,
+                ids=world.ids,
+                pseudonymizer=FakePseudonymizer(),
+                crisis_screen=CrisisScreen.load_ru_v2(),
+                deadline_seconds=8.0,
+                analytics_timezone="Europe/Moscow",
+            )
+        ),
+        sink,
+    )
+
+
 def _ports(
     world: AppWorld, fakes: _Fakes | None = None
 ) -> tuple[
@@ -114,27 +144,10 @@ def _ports(
     InlineResultReuse,
 ]:
     chosen = fakes or _Fakes()
-    sink = chosen.sink if chosen.sink is not None else RecordingUsageEventSink()
     reuse: InlineResultReuse = (
         chosen.reuse if chosen.reuse is not None else make_inline_reuse(world.clock)
     )
-    compose_generation = ComposeGeneration(
-        ComposeGenerationPorts(
-            uow_factory=world.uow_factory,
-            catalog=world.catalog,
-            generator=chosen.generator or FakeTextGenerator(),
-            quota_gate=chosen.quota_gate or FakeQuotaGate(limit=30),
-            llm_budget=chosen.llm_budget or FakeLlmBudget(),
-            sink=sink,
-            clock=world.clock,
-            monotonic=world.clock,
-            ids=world.ids,
-            pseudonymizer=FakePseudonymizer(),
-            crisis_screen=CrisisScreen.load_ru_v2(),
-            deadline_seconds=8.0,
-            analytics_timezone="Europe/Moscow",
-        )
-    )
+    compose_generation, sink = _compose_generation(world, chosen)
     use_case = InlineCompose(
         InlineComposePorts(
             uow_factory=world.uow_factory,
@@ -827,3 +840,69 @@ async def test_inline_compose_forget_on_delete_and_revoke(world: AppWorld) -> No
     )
     assert after_revoke.reuse is InlineReuseStatus.MISS
     assert generator.call_count == 3
+
+
+@pytest.mark.unit
+async def test_compose_generation_execute_bounds_and_unknown_user(world: AppWorld) -> None:
+    await world.ensure_granted_user(100)
+    generator = FakeTextGenerator()
+    use_case, sink = _compose_generation(world, _Fakes(generator=generator))
+    assert BOUNDED_TEXT_MIN >= 1
+    with pytest.raises(IncomingTextTooShort):
+        await use_case.execute(
+            ComposeGenerationCommand(
+                telegram_user_id=TelegramUserId(100),
+                draft="",
+                intent=None,
+                contact_id=None,
+                surface=UsageSurface.MINIAPP,
+            )
+        )
+    with pytest.raises(IncomingTextTooLong):
+        await use_case.execute(
+            ComposeGenerationCommand(
+                telegram_user_id=TelegramUserId(100),
+                draft="x" * (BOUNDED_TEXT_MAX + 1),
+                intent=None,
+                contact_id=None,
+                surface=UsageSurface.MINIAPP,
+            )
+        )
+    with pytest.raises(NotFound):
+        await use_case.execute(
+            ComposeGenerationCommand(
+                telegram_user_id=TelegramUserId(404),
+                draft="long enough draft",
+                intent=None,
+                contact_id=None,
+                surface=UsageSurface.MINIAPP,
+            )
+        )
+    assert generator.soften_calls == []
+    assert isinstance(sink, RecordingUsageEventSink)
+    assert sink.events == []
+
+
+@pytest.mark.unit
+async def test_compose_generation_execute_crisis_before_quota(world: AppWorld) -> None:
+    await world.ensure_granted_user(100)
+    generator = FakeTextGenerator()
+    quota_gate = FakeQuotaGate(limit=0)
+    use_case, sink = _compose_generation(world, _Fakes(generator=generator, quota_gate=quota_gate))
+    result = await use_case.execute(
+        ComposeGenerationCommand(
+            telegram_user_id=TelegramUserId(100),
+            draft="я не хочу жить больше",
+            intent=None,
+            contact_id=None,
+            surface=UsageSurface.MINIAPP,
+        )
+    )
+    assert result.safety is SafetyVerdict.CRISIS
+    assert result.variants == ()
+    assert result.applied_rules == ()
+    assert generator.soften_calls == []
+    assert quota_gate.reserve_count() == 0
+    assert isinstance(sink, RecordingUsageEventSink)
+    assert sink.events[0].outcome is UsageOutcome.SCREENED
+    assert sink.events[0].surface is UsageSurface.MINIAPP

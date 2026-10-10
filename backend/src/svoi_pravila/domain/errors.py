@@ -15,6 +15,27 @@ class InvalidValueError(DomainError):
     """Raised when a value object or field fails validation."""
 
 
+class RuleTextEmptyError(InvalidValueError):
+    """Raised when RuleText is empty after normalization."""
+
+
+class RuleTextTooLongError(InvalidValueError):
+    """Raised when RuleText exceeds the maximum code-point length."""
+
+    max: int
+    actual: int
+
+    def __init__(self, *, maximum: int, actual: int) -> None:
+        self.max = maximum
+        self.actual = actual
+        message = f"RuleText length must be at most {maximum}, got {actual}"
+        super().__init__(message)
+
+
+class RuleTextInvalidCharsError(InvalidValueError):
+    """Raised when RuleText contains forbidden control characters."""
+
+
 class InvalidTransitionError(DomainError):
     """Raised when an entity state transition is not allowed."""
 

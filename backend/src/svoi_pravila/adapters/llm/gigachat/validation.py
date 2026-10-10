@@ -28,7 +28,7 @@ from svoi_pravila.application.ports.generation import (
 )
 from svoi_pravila.domain.enums import Firmness, RuleCategory
 from svoi_pravila.domain.errors import InvalidValueError
-from svoi_pravila.domain.text import RuleText
+from svoi_pravila.domain.text import RULE_TEXT_MAX_CHARS, RuleText
 
 _URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 _FENCE_RE = re.compile(r"```")
@@ -55,7 +55,7 @@ MAX_TOKENS_ANALYSIS = output_token_cap(MAX_ANALYSIS_CHARS)
 MAX_TOKENS_DECODE = output_token_cap(
     MAX_VARIANTS * MAX_VARIANT_CHARS + MAX_HYPOTHESES * MAX_VARIANT_CHARS + MAX_VARIANT_CHARS
 )
-MAX_RULE_CHARS = 280
+MAX_RULE_CHARS = RULE_TEXT_MAX_CHARS
 MAX_TOKENS_SUGGEST = output_token_cap(MAX_RULE_CHARS)
 
 
@@ -255,7 +255,7 @@ def rules_text(rules: tuple[RuleContext, ...]) -> str:
         lines.append(
             f"[{index}] category={rule.category.value}; since={rule.effective_since.isoformat()}"
         )
-        lines.append(rule.text)
+        lines.append(" ".join(rule.text.splitlines()))
     return "\n".join(lines)
 
 

@@ -6,9 +6,18 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-from svoi_pravila.domain.errors import InvalidValueError
+from svoi_pravila.domain.errors import (
+    InvalidValueError,
+    RuleTextEmptyError,
+    RuleTextInvalidCharsError,
+    RuleTextTooLongError,
+)
 
 _SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+_CRLF_RE = re.compile(r"\r\n|\r")
+_MULTI_BLANK_LINE_RE = re.compile(r"\n{3,}")
+
+RULE_TEXT_MAX_CHARS = 500
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,18 +48,34 @@ def _normalize_text(raw: str, *, min_len: int, max_len: int, name: str) -> str:
     return normalized
 
 
+def _normalize_rule_text(raw: str) -> str:
+    normalized = unicodedata.normalize("NFC", raw)
+    normalized = _CRLF_RE.sub("\n", normalized)
+    lines = [line.rstrip() for line in normalized.split("\n")]
+    normalized = "\n".join(lines)
+    normalized = _MULTI_BLANK_LINE_RE.sub("\n\n", normalized)
+    normalized = normalized.strip()
+    for char in normalized:
+        if char != "\n" and unicodedata.category(char) == "Cc":
+            msg = "RuleText must not contain control characters"
+            raise RuleTextInvalidCharsError(msg)
+    if not normalized:
+        msg = "RuleText must not be empty"
+        raise RuleTextEmptyError(msg)
+    length = len(normalized)
+    if length > RULE_TEXT_MAX_CHARS:
+        raise RuleTextTooLongError(maximum=RULE_TEXT_MAX_CHARS, actual=length)
+    return normalized
+
+
 @dataclass(frozen=True, slots=True)
 class RuleText:
-    """NFC-normalized rule text, 1-280 characters, no control characters."""
+    """NFC-normalized rule text, 1-500 characters, newlines allowed."""
 
     value: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "value",
-            _normalize_text(self.value, min_len=1, max_len=280, name="RuleText"),
-        )
+        object.__setattr__(self, "value", _normalize_rule_text(self.value))
 
 
 @dataclass(frozen=True, slots=True)

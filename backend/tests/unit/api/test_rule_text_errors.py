@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any, cast
 
 import pytest
+from fastapi.exceptions import RequestValidationError
 from httpx import ASGITransport, AsyncClient
+from starlette.requests import Request
 from tests.fakes.clock import FakeClock
 from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.ids import FakeIdGenerator
@@ -15,9 +18,20 @@ from tests.fakes.uow import InMemoryUnitOfWorkFactory
 from tests.unit.api.test_miniapp_api import _TG_A, _TG_B, _auth_header, _build_app
 from tests.unit.application.conftest import AppWorld
 
+from svoi_pravila.api.miniapp.errors import rule_text_too_long_body
+from svoi_pravila.application.errors import (
+    RuleTextEmpty,
+    RuleTextInvalidChars,
+    RuleTextTooLong,
+)
 from svoi_pravila.application.use_cases.accept_invite import AcceptInvite, AcceptInviteCommand
 from svoi_pravila.application.use_cases.resolve_invite import ResolveInvite, ResolveInviteCommand
 from svoi_pravila.domain.enums import RelationshipKind
+from svoi_pravila.domain.errors import (
+    RuleTextEmptyError,
+    RuleTextInvalidCharsError,
+    RuleTextTooLongError,
+)
 from svoi_pravila.domain.text import RULE_TEXT_MAX_CHARS, ContactLabel
 
 _NOW = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
@@ -143,3 +157,101 @@ async def test_pending_rules_endpoint_and_idor(mini_world: AppWorld) -> None:
 
         forbidden = await client.post(f"/api/v1/rules/{rule_id}/approve", headers=headers_s)
         assert forbidden.status_code == 404
+
+
+def _miniapp_request(path: str = "/api/v1/contacts/x/rules") -> Request:
+    return Request(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": path,
+            "raw_path": path.encode(),
+            "query_string": b"",
+            "headers": [],
+            "client": ("test", 123),
+            "server": ("test", 80),
+        }
+    )
+
+
+@pytest.mark.unit
+async def test_rule_text_exception_handlers_for_domain_and_app(mini_world: AppWorld) -> None:
+    await mini_world.ensure_granted_user(_TG_A)
+    app = _build_app(mini_world)
+    request = _miniapp_request()
+    cases: list[tuple[type[BaseException], BaseException, str]] = [
+        (RuleTextEmptyError, RuleTextEmptyError("empty"), "rule_text_empty"),
+        (RuleTextInvalidCharsError, RuleTextInvalidCharsError("bad"), "rule_text_invalid_chars"),
+        (
+            RuleTextTooLongError,
+            RuleTextTooLongError(maximum=RULE_TEXT_MAX_CHARS, actual=RULE_TEXT_MAX_CHARS + 1),
+            "rule_text_too_long",
+        ),
+        (RuleTextEmpty, RuleTextEmpty(), "rule_text_empty"),
+        (RuleTextInvalidChars, RuleTextInvalidChars(), "rule_text_invalid_chars"),
+        (
+            RuleTextTooLong,
+            RuleTextTooLong(maximum=RULE_TEXT_MAX_CHARS, actual=RULE_TEXT_MAX_CHARS + 1),
+            "rule_text_too_long",
+        ),
+    ]
+    for exc_type, exc, code in cases:
+        handler = cast(Any, app.exception_handlers[exc_type])
+        response = await handler(request, exc)
+        assert response.status_code == 422, code
+        payload = response.body
+        assert code.encode() in payload
+        if code == "rule_text_too_long":
+            assert b'"max":500' in payload or b'"max": 500' in payload
+
+
+@pytest.mark.unit
+async def test_rule_text_too_long_body_requires_catalog_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "svoi_pravila.api.miniapp.errors.load_ru_messages",
+        lambda: {},
+    )
+    with pytest.raises(KeyError, match="rule_text_too_long"):
+        rule_text_too_long_body(maximum=RULE_TEXT_MAX_CHARS, actual=RULE_TEXT_MAX_CHARS + 1)
+
+
+@pytest.mark.unit
+async def test_validation_too_long_fallback_when_ctx_incomplete(mini_world: AppWorld) -> None:
+    await mini_world.ensure_granted_user(_TG_A)
+    app = _build_app(mini_world)
+    handler = cast(Any, app.exception_handlers[RequestValidationError])
+    incomplete = RequestValidationError(
+        [
+            {
+                "type": "string_too_long",
+                "loc": ("body", "text"),
+                "msg": "String should have at most 500 characters",
+                "input": 123,
+                "ctx": {"max_length": "not-int"},
+            }
+        ]
+    )
+    response = await handler(_miniapp_request(), incomplete)
+    assert response.status_code == 422
+    assert b"rule_text_too_long" in response.body
+
+    complete = RequestValidationError(
+        [
+            {
+                "type": "string_too_long",
+                "loc": ("body", "text"),
+                "msg": "String should have at most 500 characters",
+                "input": "x" * (RULE_TEXT_MAX_CHARS + 3),
+                "ctx": {"max_length": RULE_TEXT_MAX_CHARS, "input_length": RULE_TEXT_MAX_CHARS + 3},
+            }
+        ]
+    )
+    response = await handler(_miniapp_request(), complete)
+    assert response.status_code == 422
+    assert b"rule_text_too_long" in response.body
+    assert str(RULE_TEXT_MAX_CHARS + 3).encode() in response.body

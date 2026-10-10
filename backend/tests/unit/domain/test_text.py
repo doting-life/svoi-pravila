@@ -91,6 +91,14 @@ def test_contact_label_bounds() -> None:
 
 
 @pytest.mark.unit
+def test_contact_label_rejects_empty() -> None:
+    with pytest.raises(InvalidValueError, match="must not be empty"):
+        ContactLabel("")
+    with pytest.raises(InvalidValueError, match="must not be empty"):
+        ContactLabel("   ")
+
+
+@pytest.mark.unit
 def test_contact_label_rejects_newlines() -> None:
     with pytest.raises(InvalidValueError):
         ContactLabel("a\nb")

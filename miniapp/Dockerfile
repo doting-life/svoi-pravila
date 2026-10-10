@@ -15,7 +15,7 @@ RUN pnpm build
 # ADR-0008: build Caddy v2.11.4 from source on a current Go toolchain.
 # https://github.com/caddyserver/caddy/releases/tag/v2.11.4
 # xcaddy: https://github.com/caddyserver/xcaddy/releases/tag/v0.4.7
-FROM golang:1.26.8-alpine@sha256:8ac98ca534ac3f51e1f420a1dd2c15e74c75cfa0f23f3ad27eb5d7236c349a0c AS caddybuild
+FROM golang:1.26.9-alpine@sha256:cdfd4fe2da6b225d8b40c6b7a105736e548e83ff56d5d8f9394446eeb5eb84e0 AS caddybuild
 
 RUN apk add --no-cache git ca-certificates \
 	&& go install github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.7
@@ -26,13 +26,14 @@ ENV XCADDY_GO_BUILD_FLAGS="-trimpath -ldflags '-w -s'"
 WORKDIR /build
 # Raise modules that still ship vulnerable in Hub caddy:2.11.4 (0013-a Trivy):
 #   golang.org/x/crypto@v0.55.0  — CVE-2026-56854
-#   golang.org/x/net@v0.58.0     — CVE-2026-46600 (also required by crypto/grpc)
+#   golang.org/x/net@v0.60.0     — CVE-2026-78669 (was v0.58.0 / CVE-2026-46600)
 #   golang.org/x/text@v0.39.0    — CVE-2026-56852
 #   google.golang.org/grpc@v1.83.2 — CVE-2026-84304, CVE-2026-84445, GHSA-hrxh-6v49-42gf
+# Go 1.26.9 stdlib — CVE-2026-78667, CVE-2026-78669, CVE-2026-97031
 RUN mkdir -p /out \
 	&& xcaddy build v2.11.4 --output /out/caddy \
 		--replace golang.org/x/crypto=golang.org/x/crypto@v0.55.0 \
-		--replace golang.org/x/net=golang.org/x/net@v0.58.0 \
+		--replace golang.org/x/net=golang.org/x/net@v0.60.0 \
 		--replace golang.org/x/text=golang.org/x/text@v0.39.0 \
 		--replace google.golang.org/grpc=google.golang.org/grpc@v1.83.2
 

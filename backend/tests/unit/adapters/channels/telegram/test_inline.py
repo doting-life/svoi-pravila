@@ -37,6 +37,7 @@ from tests.fakes.usage_sink import RecordingUsageEventSink
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
+from svoi_pravila.adapters.channels.telegram.handlers.inline import _button_text_with_label
 from svoi_pravila.adapters.channels.telegram.lifecycle import ALLOWED_UPDATES
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
@@ -222,6 +223,17 @@ async def test_inline_too_short_compose_handoff_button() -> None:
         miniapp_url=deps.miniapp_url or "",
         handoff=True,
     )
+
+
+@pytest.mark.unit
+def test_button_text_with_label_truncates_to_telegram_limit() -> None:
+    template = "Для: {label} · без подписи"
+    long_label = "я" * 80
+    text = _button_text_with_label(template, long_label)
+    assert len(text) <= 64
+    assert text.startswith("Для: ")
+    short = _button_text_with_label(template, "Лиза")
+    assert short == template.format(label="Лиза")
 
 
 @pytest.mark.unit

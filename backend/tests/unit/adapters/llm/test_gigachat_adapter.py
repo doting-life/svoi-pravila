@@ -362,7 +362,7 @@ async def test_soften_no_rules_payload_ok() -> None:
     )
     assert len(result.variants) == 3
     assert result.applied_rule_indexes == ()
-    assert result.meta.prompt_version == "soften@v5_no_rules"
+    assert result.meta.prompt_version == "soften@v5"
 
 
 @pytest.mark.unit
@@ -402,7 +402,7 @@ async def test_help_say_no_rules_payload_ok() -> None:
     )
     assert len(result.variants) == 3
     assert result.applied_rule_indexes == ()
-    assert result.meta.prompt_version == "help_say@v6_no_rules"
+    assert result.meta.prompt_version == "help_say@v6"
 
 
 @pytest.mark.unit
@@ -416,7 +416,7 @@ def test_prepare_no_rules_omits_applied_rule_indexes() -> None:
             deadline_seconds=5.0,
         )
     )
-    assert soften.prompt_version == "soften@v5_no_rules"
+    assert soften.prompt_version == "soften@v5"
     assert "applied_rule_indexes" not in soften.system
     help_prepared = gen.prepare_help_say(
         HelpSayRequest(
@@ -427,7 +427,7 @@ def test_prepare_no_rules_omits_applied_rule_indexes() -> None:
             deadline_seconds=5.0,
         )
     )
-    assert help_prepared.prompt_version == "help_say@v6_no_rules"
+    assert help_prepared.prompt_version == "help_say@v6"
     assert "applied_rule_indexes" not in help_prepared.system
 
 
@@ -475,7 +475,7 @@ def test_forged_spbound_in_user_text_is_not_real_marker() -> None:
     assert prepared.boundary_marker != forged
     assert forged in prepared.user
     assert prepared.boundary_marker in prepared.system
-    assert prepared.prompt_version == "soften@v5_no_rules"
+    assert prepared.prompt_version == "soften@v5"
     assert "applied_rule_indexes" not in prepared.system
 
 

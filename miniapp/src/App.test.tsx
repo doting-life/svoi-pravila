@@ -19,6 +19,7 @@ const meDone = {
     max_contacts: 20,
     max_open_rules: 50,
     rule_text_max_chars: 500,
+    incoming_text_max_chars: 4000,
     display_timezone: "Europe/Moscow",
 };
 

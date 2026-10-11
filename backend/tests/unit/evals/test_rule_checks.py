@@ -133,7 +133,7 @@ async def test_runner_rule_metrics_offline() -> None:
             safety=SafetyVerdict.OK,
             meta=GenerationMeta(
                 model="fake",
-                prompt_version="soften@v4",
+                prompt_version="soften@v5",
                 latency_ms=1,
                 attempts=1,
                 usage=TokenUsage(input=1, output=1),
@@ -160,7 +160,7 @@ async def test_runner_rule_metrics_offline() -> None:
         safety=SafetyVerdict.OK,
         meta=GenerationMeta(
             model="fake",
-            prompt_version="soften@v4",
+            prompt_version="soften@v5",
             latency_ms=1,
             attempts=1,
             usage=TokenUsage(input=1, output=1),
@@ -176,7 +176,7 @@ async def test_runner_rule_metrics_offline() -> None:
         safety=SafetyVerdict.OK,
         meta=GenerationMeta(
             model="fake",
-            prompt_version="soften@v4",
+            prompt_version="soften@v5",
             latency_ms=1,
             attempts=1,
             usage=TokenUsage(input=1, output=1),

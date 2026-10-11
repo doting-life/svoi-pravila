@@ -27,7 +27,8 @@ def is_appeal(event: UsageEvent) -> bool:
     if event.scenario is UsageScenario.SUGGEST_RULE:
         return False
     if event.event_kind is UsageEventKind.RESULT_CHOSEN:
-        return True
+        # Mini-app choice is bound to a generation that already counts as the appeal.
+        return event.surface is UsageSurface.INLINE
     return (
         event.event_kind is UsageEventKind.GENERATION
         and event.surface in _APPEAL_SURFACES
@@ -257,7 +258,12 @@ def _slice_totals(
             1 for event in generations if event.outcome is UsageOutcome.INVALID_OUTPUT
         ),
         unavailable=sum(1 for event in generations if event.outcome is UsageOutcome.UNAVAILABLE),
-        chosen=sum(1 for event in slice_events if event.event_kind is UsageEventKind.RESULT_CHOSEN),
+        chosen=sum(
+            1
+            for event in slice_events
+            if event.event_kind is UsageEventKind.RESULT_CHOSEN
+            and event.surface is UsageSurface.INLINE
+        ),
         limited_user_quota=sum(
             1
             for event in generations

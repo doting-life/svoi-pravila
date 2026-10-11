@@ -16,6 +16,7 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from svoi_pravila.adapters.cache.client import close_client, create_client
+from svoi_pravila.adapters.cache.compose_choice_tokens import ValkeyComposeChoiceTokens
 from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
 from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
 from svoi_pravila.adapters.cache.export_download import ValkeyExportDownloadStore
@@ -288,6 +289,7 @@ def _build_miniapp_mount(
             suggest_rule_from_decode=wire.decode.suggest_rule_from_decode,
             compose_generation=wire.compose_generation,
             record_choice=wire.record_choice,
+            compose_choice_tokens=ValkeyComposeChoiceTokens(ports.valkey, ports.pseudonymizer),
             prepared_results=wire.decode.prepared_results,
             rule_sources=wire.decode.rule_sources,
             pseudonymizer=ports.pseudonymizer,

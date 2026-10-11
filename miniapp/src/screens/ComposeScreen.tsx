@@ -13,11 +13,17 @@ import { ChevronDownIcon, ClipboardIcon } from "../components/icons";
 import { ScreenHeader } from "../components/ScreenHeader";
 import { Skeleton } from "../components/Skeleton";
 import { useContacts, type Contact } from "../hooks/useContacts";
+import { useMe } from "../hooks/useMe";
 import { ru } from "../localization/ru";
 import type { LimitKind } from "../navigation/stack";
+import { codePointLength } from "../rules/ruleText";
 import type { TelegramAdapter } from "../telegram/webapp";
 
-const COMPOSE_MAX = 4000;
+const FALLBACK_INCOMING_MAX = 4000;
+
+function sliceCodePoints(text: string, max: number): string {
+    return Array.from(text).slice(0, max).join("");
+}
 
 type ComposeIntent = components["schemas"]["ComposeRequest"]["intent"];
 type Firmness = components["schemas"]["ComposeVariantItem"]["firmness"];
@@ -53,6 +59,7 @@ type Phase =
           readonly kind: "result";
           readonly variants: EditableVariant[];
           readonly appliedRules: readonly { readonly index: number; readonly text: string }[];
+          readonly choiceToken: string;
       }
     | { readonly kind: "refused" }
     | { readonly kind: "error"; readonly message: string };
@@ -102,7 +109,10 @@ export function ComposeScreen({
     onCrisis,
 }: ComposeScreenProps) {
     const client = useApiClient();
+    const me = useMe();
     const contacts = useContacts();
+    const draftMax =
+        me.status === "success" ? me.data.incoming_text_max_chars : FALLBACK_INCOMING_MAX;
     const [intent, setIntent] = useState<ComposeIntent>("soften");
     const [contactId, setContactId] = useState<string | null>(activeContactId);
     const [draft, setDraft] = useState("");
@@ -119,7 +129,7 @@ export function ComposeScreen({
         setPasteHint(null);
         try {
             const clipboardText = await navigator.clipboard.readText();
-            setDraft(clipboardText.slice(0, COMPOSE_MAX));
+            setDraft(sliceCodePoints(clipboardText, draftMax));
         } catch {
             setPasteHint(ru.composePasteFailed);
         }
@@ -146,10 +156,11 @@ export function ComposeScreen({
 
     const submit = async () => {
         const trimmed = draft.trim();
-        if (trimmed.length === 0 || trimmed.length > COMPOSE_MAX) {
+        const trimmedPoints = codePointLength(trimmed);
+        if (trimmedPoints === 0 || trimmedPoints > draftMax) {
             setPhase({
                 kind: "error",
-                message: trimmed.length === 0 ? ru.composeErrorShort : ru.composeErrorLong,
+                message: trimmedPoints === 0 ? ru.composeErrorShort : ru.composeErrorLong,
             });
             return;
         }
@@ -188,11 +199,16 @@ export function ComposeScreen({
             setPhase({ kind: "refused" });
             return;
         }
+        if (data.choice_token == null || data.choice_token.length === 0) {
+            setPhase({ kind: "error", message: ru.composeErrorUnavailable });
+            return;
+        }
         telegram.hapticNotification("success");
         setPhase({
             kind: "result",
             variants: orderedVariants(data.variants),
             appliedRules: data.applied_rules,
+            choiceToken: data.choice_token,
         });
     };
 
@@ -223,7 +239,7 @@ export function ComposeScreen({
         }
     };
 
-    const copyAndReturn = async (text: string, firmness: Firmness) => {
+    const copyAndReturn = async (text: string, firmness: Firmness, choiceToken: string) => {
         if (busyChoice) {
             return;
         }
@@ -233,16 +249,14 @@ export function ComposeScreen({
         }
         setCopyHint(ru.composePasteHint);
         setBusyChoice(true);
-        const scenario = intent === "soften" ? "soften" : "help_say";
         const unwrapped = unwrapApiResult(
             await client.POST("/api/v1/compose/choice", {
-                body: { scenario, firmness },
+                body: { token: choiceToken, firmness },
             }),
         );
         setBusyChoice(false);
         if (unwrapped.error !== undefined) {
             telegram.hapticNotification("error");
-            return;
         }
         telegram.close();
     };
@@ -283,7 +297,7 @@ export function ComposeScreen({
                                     <TextArea
                                         label={ru.composeFirmness[variant.firmness]}
                                         value={variant.text}
-                                        maxLength={COMPOSE_MAX}
+                                        maxLength={1000}
                                         rows={4}
                                         large
                                         onChange={(next) => {
@@ -296,7 +310,11 @@ export function ComposeScreen({
                                                 busyChoice || variant.text.trim().length === 0
                                             }
                                             onClick={() => {
-                                                void copyAndReturn(variant.text, variant.firmness);
+                                                void copyAndReturn(
+                                                    variant.text,
+                                                    variant.firmness,
+                                                    phase.choiceToken,
+                                                );
                                             }}
                                         >
                                             {ru.composeCopyAndReturn}
@@ -372,7 +390,8 @@ export function ComposeScreen({
             <TextArea
                 label={ru.composeField}
                 value={draft}
-                maxLength={COMPOSE_MAX}
+                maxLength={draftMax}
+                countCodePoints
                 placeholder={ru.composePlaceholder}
                 rows={7}
                 large
@@ -388,7 +407,9 @@ export function ComposeScreen({
                         {ru.composePaste}
                     </button>
                 }
-                onChange={setDraft}
+                onChange={(next) => {
+                    setDraft(sliceCodePoints(next, draftMax));
+                }}
             />
 
             {pasteHint !== null ? (

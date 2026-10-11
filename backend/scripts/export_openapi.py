@@ -90,6 +90,7 @@ def _openapi_bindings() -> MiniappRouterBindings:
         suggest_rule_from_decode=cast(SuggestRuleFromDecode, _stub()),
         compose_generation=cast(ComposeGeneration, _stub()),
         record_choice=cast(RecordInlineChoice, _stub()),
+        compose_choice_tokens=cast(Any, _stub()),
         prepared_results=cast(PreparedResults, _stub()),
         rule_sources=cast(RuleSources, _stub()),
         pseudonymizer=cast(Pseudonymizer, _stub()),

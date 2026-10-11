@@ -560,7 +560,7 @@ export interface components {
         };
         /**
          * ComposeChoiceRequest
-         * @description POST /compose/choice — tone signal only (no text).
+         * @description POST /compose/choice — redeem choice_token + firmness (no scenario, no text).
          */
         ComposeChoiceRequest: {
             /**
@@ -568,11 +568,8 @@ export interface components {
              * @enum {string}
              */
             firmness: "gentle" | "balanced" | "firm";
-            /**
-             * Scenario
-             * @enum {string}
-             */
-            scenario: "soften" | "help_say";
+            /** Token */
+            token: string;
         };
         /**
          * ComposeChoiceResponse
@@ -602,11 +599,13 @@ export interface components {
         };
         /**
          * ComposeResponse
-         * @description POST /compose result (no prepared-result tokens).
+         * @description POST /compose result; choice_token binds a later /compose/choice (C0).
          */
         ComposeResponse: {
             /** Applied Rules */
             applied_rules: components["schemas"]["ComposeAppliedRuleItem"][];
+            /** Choice Token */
+            choice_token?: string | null;
             /** Lead */
             lead?: string | null;
             /** Resources */
@@ -836,6 +835,8 @@ export interface components {
             decode_remaining: number;
             /** Display Timezone */
             display_timezone: string;
+            /** Incoming Text Max Chars */
+            incoming_text_max_chars: number;
             /** Max Contacts */
             max_contacts: number;
             /** Max Open Rules */

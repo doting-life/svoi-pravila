@@ -171,7 +171,7 @@ async def test_compose_soften_happy_path_and_choice(
             safety=SafetyVerdict.OK,
             meta=GenerationMeta(
                 model="fake",
-                prompt_version="soften@v4",
+                prompt_version="soften@v5",
                 latency_ms=1,
                 attempts=1,
                 usage=TokenUsage(input=2, output=2),
@@ -196,15 +196,23 @@ async def test_compose_soften_happy_path_and_choice(
         assert body["safety"] == "ok"
         assert len(body["variants"]) == 3
         assert body["applied_rules"] == []
+        assert isinstance(body["choice_token"], str) and body["choice_token"]
         assert _CANARY not in response.text
 
         choice = await client.post(
             "/api/v1/compose/choice",
             headers=headers,
-            json={"scenario": "soften", "firmness": "gentle"},
+            json={"token": body["choice_token"], "firmness": "gentle"},
         )
         assert choice.status_code == 200
         assert choice.json() == {"outcome": "recorded"}
+        reused = await client.post(
+            "/api/v1/compose/choice",
+            headers=headers,
+            json={"token": body["choice_token"], "firmness": "gentle"},
+        )
+        assert reused.status_code == 422
+        assert reused.json()["code"] == MiniappErrorCode.VALIDATION_ERROR
 
     assert wired.soften_calls
     assert wired.soften_calls[0].draft == _CANARY
@@ -278,10 +286,17 @@ async def test_compose_choice_records_scenario(mini_world: AppWorld) -> None:
     app, _, bundle = _build_compose_app(mini_world)
     headers = _auth_header(_TG)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        generated = await client.post(
+            "/api/v1/compose",
+            headers=headers,
+            json={"draft": "нужно мягко отказать", "intent": "decline"},
+        )
+        assert generated.status_code == 200
+        token = generated.json()["choice_token"]
         response = await client.post(
             "/api/v1/compose/choice",
             headers=headers,
-            json={"scenario": "help_say", "firmness": "firm"},
+            json={"token": token, "firmness": "firm"},
         )
     assert response.status_code == 200
     choices = [e for e in bundle.sink.events if e.event_kind is UsageEventKind.RESULT_CHOSEN]
@@ -306,6 +321,7 @@ async def test_compose_crisis_includes_lead_and_resources(mini_world: AppWorld) 
     body = response.json()
     assert body["safety"] == "crisis"
     assert body["variants"] == []
+    assert body["choice_token"] is None
     assert isinstance(body["lead"], str) and body["lead"]
     assert isinstance(body["resources"], list) and body["resources"]
     assert gen.soften_calls == []
@@ -320,7 +336,7 @@ async def test_compose_maps_provider_errors(mini_world: AppWorld) -> None:
         usage=TokenUsage(),
         attempts=1,
         model="fake",
-        prompt_version="soften@v4",
+        prompt_version="soften@v5",
     )
     app, _, _ = _build_compose_app(mini_world, generator=unavailable)
     headers = _auth_header(_TG)
@@ -339,7 +355,7 @@ async def test_compose_maps_provider_errors(mini_world: AppWorld) -> None:
         usage=TokenUsage(),
         attempts=1,
         model="fake",
-        prompt_version="soften@v4",
+        prompt_version="soften@v5",
     )
     app, _, _ = _build_compose_app(mini_world, generator=invalid)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -393,7 +409,22 @@ async def test_compose_maps_defensive_bound_errors(mini_world: AppWorld) -> None
 
 
 @pytest.mark.unit
-async def test_compose_choice_maps_invalid_ref(mini_world: AppWorld) -> None:
+async def test_compose_choice_unknown_token(mini_world: AppWorld) -> None:
+    await mini_world.ensure_granted_user(_TG)
+    app, _, _ = _build_compose_app(mini_world)
+    headers = _auth_header(_TG)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/compose/choice",
+            headers=headers,
+            json={"token": "c_unknown", "firmness": "gentle"},
+        )
+    assert response.status_code == 422
+    assert response.json()["code"] == MiniappErrorCode.VALIDATION_ERROR
+
+
+@pytest.mark.unit
+async def test_compose_choice_maps_record_invalid_ref(mini_world: AppWorld) -> None:
     await mini_world.ensure_granted_user(_TG)
     auth = MiniappDeps(
         init_data_verifier=AiogramInitDataVerifier(
@@ -405,12 +436,20 @@ async def test_compose_choice_maps_invalid_ref(mini_world: AppWorld) -> None:
         get_onboarding_step=GetOnboardingStep(mini_world.uow_factory, mini_world.catalog),
     )
     decode_bundle = build_miniapp_decode_bundle(mini_world)
+    from tests.fakes.compose_choice_tokens import FakeComposeChoiceTokens
+
+    tokens = FakeComposeChoiceTokens()
+    real_pseudo = FakePseudonymizer().pseudonymize("analytics", str(_TG))
+    token = await tokens.issue(real_pseudo, UsageScenario.SOFTEN)
     bindings = build_test_miniapp_bindings(
         auth=auth,
         world=mini_world,
         decode_bundle=decode_bundle,
         reuse=make_inline_reuse(mini_world.clock),
-        overrides={"record_choice": _Boom(InvalidInlineResultRef())},
+        overrides={
+            "record_choice": _Boom(InvalidInlineResultRef()),
+            "compose_choice_tokens": tokens,
+        },
     )
     app = create_app(
         CheckReadiness(probes=(), timeout_seconds=1.0),
@@ -422,7 +461,7 @@ async def test_compose_choice_maps_invalid_ref(mini_world: AppWorld) -> None:
         response = await client.post(
             "/api/v1/compose/choice",
             headers=headers,
-            json={"scenario": "soften", "firmness": "gentle"},
+            json={"token": token, "firmness": "gentle"},
         )
     assert response.status_code == 422
     assert response.json()["code"] == MiniappErrorCode.VALIDATION_ERROR

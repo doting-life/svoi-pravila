@@ -46,6 +46,7 @@ from svoi_pravila.application.use_cases.resolve_invite import ResolveInvite
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.application.use_cases.serve_export_download import ServeExportDownload
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
+from tests.fakes.compose_choice_tokens import FakeComposeChoiceTokens
 from tests.fakes.export_download import FakeExportDownloadStore
 from tests.fakes.quota_budget import FakeLlmBudget, FakeQuotaGate
 from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
@@ -155,6 +156,7 @@ def build_test_miniapp_bindings(
                 pseudonymizer=decode_bundle.pseudonymizer,
             )
         ),
+        "compose_choice_tokens": FakeComposeChoiceTokens(),
         "prepared_results": decode_bundle.prepared_results,
         "rule_sources": decode_bundle.rule_sources,
         "pseudonymizer": decode_bundle.pseudonymizer,

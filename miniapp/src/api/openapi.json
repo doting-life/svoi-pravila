@@ -88,7 +88,7 @@
       },
       "ComposeChoiceRequest": {
         "additionalProperties": false,
-        "description": "POST /compose/choice — tone signal only (no text).",
+        "description": "POST /compose/choice — redeem choice_token + firmness (no scenario, no text).",
         "properties": {
           "firmness": {
             "enum": [
@@ -99,17 +99,15 @@
             "title": "Firmness",
             "type": "string"
           },
-          "scenario": {
-            "enum": [
-              "soften",
-              "help_say"
-            ],
-            "title": "Scenario",
+          "token": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Token",
             "type": "string"
           }
         },
         "required": [
-          "scenario",
+          "token",
           "firmness"
         ],
         "title": "ComposeChoiceRequest",
@@ -172,7 +170,7 @@
         "type": "object"
       },
       "ComposeResponse": {
-        "description": "POST /compose result (no prepared-result tokens).",
+        "description": "POST /compose result; choice_token binds a later /compose/choice (C0).",
         "properties": {
           "applied_rules": {
             "items": {
@@ -180,6 +178,17 @@
             },
             "title": "Applied Rules",
             "type": "array"
+          },
+          "choice_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Choice Token"
           },
           "lead": {
             "anyOf": [
@@ -663,6 +672,11 @@
             "title": "Display Timezone",
             "type": "string"
           },
+          "incoming_text_max_chars": {
+            "minimum": 1.0,
+            "title": "Incoming Text Max Chars",
+            "type": "integer"
+          },
           "max_contacts": {
             "minimum": 1.0,
             "title": "Max Contacts",
@@ -695,6 +709,7 @@
           "max_contacts",
           "max_open_rules",
           "rule_text_max_chars",
+          "incoming_text_max_chars",
           "display_timezone",
           "bot_username",
           "decode_remaining"

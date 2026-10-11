@@ -51,6 +51,7 @@ from svoi_pravila.api.miniapp.schemas import (
     SuggestionListResponse,
 )
 from svoi_pravila.application.errors import (
+    ComposeChoiceTokenInvalid,
     GenerationRefusedByProvider,
     GenerationUnavailable,
     IncomingTextTooLong,
@@ -61,7 +62,8 @@ from svoi_pravila.application.errors import (
 )
 from svoi_pravila.application.ports.bot_username import BotUsername
 from svoi_pravila.application.ports.clock import Clock
-from svoi_pravila.application.ports.generation import HelpSayIntent
+from svoi_pravila.application.ports.compose_choice_tokens import ComposeChoiceTokens
+from svoi_pravila.application.ports.generation import HelpSayIntent, SafetyVerdict
 from svoi_pravila.application.ports.prepared_results import PreparedResults
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.quota_gate import QuotaGate
@@ -162,13 +164,17 @@ from svoi_pravila.domain.enums import (
     QuotaClass,
     RelationshipKind,
     RuleCategory,
-    UsageScenario,
     UsageSurface,
 )
 from svoi_pravila.domain.ids import ContactId, RuleId, RuleSuggestionId, UserId
 from svoi_pravila.domain.product_day import product_day
 from svoi_pravila.domain.rules import MAX_OPEN_RULES_PER_SCOPE, PairScope, Rule
-from svoi_pravila.domain.text import RULE_TEXT_MAX_CHARS, ContactLabel, RuleText
+from svoi_pravila.domain.text import (
+    INCOMING_TEXT_MAX_CHARS,
+    RULE_TEXT_MAX_CHARS,
+    ContactLabel,
+    RuleText,
+)
 from svoi_pravila.domain.user import User
 from svoi_pravila.privacy import load_privacy_catalog
 
@@ -236,6 +242,7 @@ class MiniappRouterBindings:
     suggest_rule_from_decode: SuggestRuleFromDecode
     compose_generation: ComposeGeneration
     record_choice: RecordInlineChoice
+    compose_choice_tokens: ComposeChoiceTokens
     prepared_results: PreparedResults
     rule_sources: RuleSources
     pseudonymizer: Pseudonymizer
@@ -394,6 +401,12 @@ def _register_compose(
             raise MiniappHttpError(MiniappErrorCode.GENERATION_UNAVAILABLE, 503) from exc
         except (GenerationRefusedByProvider, InvalidGenerationOutput) as exc:
             raise MiniappHttpError(MiniappErrorCode.INVALID_OUTPUT, 502) from exc
+        choice_token: str | None = None
+        if result.safety is SafetyVerdict.OK:
+            analytics = bindings.pseudonymizer.pseudonymize(
+                "analytics", str(actor.telegram_user_id.value)
+            )
+            choice_token = await bindings.compose_choice_tokens.issue(analytics, result.scenario)
         payload: dict[str, Any] = {
             "safety": result.safety.value,
             "variants": [
@@ -402,8 +415,9 @@ def _register_compose(
             "applied_rules": [
                 {"index": rule.index, "text": rule.text} for rule in result.applied_rules
             ],
+            "choice_token": choice_token,
         }
-        if result.safety.value == "crisis":
+        if result.safety is SafetyVerdict.CRISIS:
             payload["lead"] = load_crisis_lead()
             payload["resources"] = list(load_support_resources())
         return ComposeResponse.model_validate(payload)
@@ -420,16 +434,20 @@ def _register_compose(
         actor: actor_dep,
     ) -> ComposeChoiceResponse:
         no_store(response)
+        analytics = bindings.pseudonymizer.pseudonymize(
+            "analytics", str(actor.telegram_user_id.value)
+        )
         try:
+            scenario = await bindings.compose_choice_tokens.redeem_once(analytics, body.token)
             await bindings.record_choice.execute(
                 RecordInlineChoiceCommand(
                     telegram_user_id=actor.telegram_user_id,
-                    scenario=UsageScenario(body.scenario),
+                    scenario=scenario,
                     firmness=Firmness(body.firmness),
                     surface=UsageSurface.MINIAPP,
                 )
             )
-        except InvalidInlineResultRef as exc:
+        except (ComposeChoiceTokenInvalid, InvalidInlineResultRef) as exc:
             raise MiniappHttpError(MiniappErrorCode.VALIDATION_ERROR, 422) from exc
         return ComposeChoiceResponse(outcome="recorded")
 
@@ -567,6 +585,7 @@ async def _build_me_response(
             "max_contacts": MAX_CONTACTS_PER_USER,
             "max_open_rules": MAX_OPEN_RULES_PER_SCOPE,
             "rule_text_max_chars": RULE_TEXT_MAX_CHARS,
+            "incoming_text_max_chars": INCOMING_TEXT_MAX_CHARS,
             "display_timezone": bindings.display_timezone,
             "bot_username": username,
             "decode_remaining": decode_remaining,

@@ -10,6 +10,8 @@ import structlog
 
 from svoi_pravila.adapters.llm.gigachat.schemas import (
     DecodeOut,
+    HelpSayOut,
+    SoftenOut,
     SuggestRuleOut,
     SuggestRuleVerdictOut,
     VariantOut,
@@ -124,7 +126,7 @@ def validate_variants(
     variants_raw: list[VariantOut],
     spec: VariantValidation,
 ) -> tuple[tuple[Variant, ...], tuple[int, ...], SafetyVerdict]:
-    """Validate variant list and safety against port invariants."""
+    """Validate decode-style variant list and safety against port invariants."""
 
     def fail(reason: InvalidOutputReason) -> InvalidGenerationOutput:
         return invalid(
@@ -177,6 +179,77 @@ def validate_variants(
         raise fail(InvalidOutputReason.FIRMNESS_SET)
 
     return tuple(variants), tuple(spec.applied), safety
+
+
+@dataclass(frozen=True, slots=True)
+class SlotValidation:
+    """Parameters for validating fixed gentle/balanced/firm slots."""
+
+    applied: list[int]
+    safety_raw: str
+    rule_count: int
+    usage: TokenUsage
+    attempts: int
+    model: str
+    prompt_version: str
+    operation: str
+
+
+def validate_firmness_slots(
+    gentle: str,
+    balanced: str,
+    firm: str,
+    spec: SlotValidation,
+) -> tuple[tuple[Variant, ...], tuple[int, ...], SafetyVerdict]:
+    """Validate three fixed slots; return ordered Variants or empty on non-ok safety."""
+
+    def fail(reason: InvalidOutputReason) -> InvalidGenerationOutput:
+        return invalid(
+            reason,
+            usage=spec.usage,
+            attempts=spec.attempts,
+            model=spec.model,
+            prompt_version=spec.prompt_version,
+        )
+
+    try:
+        safety = SafetyVerdict(spec.safety_raw)
+    except ValueError as exc:
+        raise fail(InvalidOutputReason.SCHEMA_VIOLATION) from exc
+
+    for idx in spec.applied:
+        if idx < 0 or idx >= spec.rule_count:
+            raise fail(InvalidOutputReason.RULE_INDEX_OUT_OF_RANGE)
+
+    slots = (gentle.strip(), balanced.strip(), firm.strip())
+    if safety is not SafetyVerdict.OK:
+        if any(slots):
+            logger.info(
+                "non_ok_payload_dropped",
+                operation=spec.operation,
+                verdict=safety.value,
+            )
+        return (), tuple(spec.applied), safety
+
+    firmnesses = (Firmness.GENTLE, Firmness.BALANCED, Firmness.FIRM)
+    texts: list[str] = []
+    for text in slots:
+        dirty = text_reason(text)
+        if dirty is not None:
+            raise fail(dirty)
+        texts.append(text)
+    if len(set(texts)) != MAX_VARIANTS:
+        raise fail(InvalidOutputReason.FIRMNESS_SET)
+    variants = tuple(
+        Variant(text=text, firmness=firmness)
+        for text, firmness in zip(texts, firmnesses, strict=True)
+    )
+    return variants, tuple(spec.applied), safety
+
+
+def slots_from_soften(parsed: SoftenOut | HelpSayOut) -> tuple[str, str, str]:
+    """Extract the three fixed text slots from SoftenOut or HelpSayOut."""
+    return parsed.gentle, parsed.balanced, parsed.firm
 
 
 def to_decode_result(parsed: DecodeOut, meta: GenerationMeta, *, rule_count: int) -> DecodeResult:

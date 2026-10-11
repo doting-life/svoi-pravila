@@ -97,17 +97,18 @@ def _soften_payload(*, bad: bool = False) -> SoftenOut:
     if bad:
         return SoftenOut.model_validate(
             {
-                "variants": [{"text": "a", "firmness": "gentle"}],
+                "gentle": "a",
+                "balanced": "",
+                "firm": "",
                 "applied_rule_indexes": [],
                 "safety": "ok",
             }
         )
     return SoftenOut.model_validate(
         {
-            "variants": [
-                {"text": "variant soft", "firmness": "gentle"},
-                {"text": "variant firm", "firmness": "firm"},
-            ],
+            "gentle": "variant soft",
+            "balanced": "variant balanced",
+            "firm": "variant firm",
             "applied_rule_indexes": [0],
             "safety": "ok",
         }
@@ -117,10 +118,9 @@ def _soften_payload(*, bad: bool = False) -> SoftenOut:
 def _help_say_payload() -> HelpSayOut:
     return HelpSayOut.model_validate(
         {
-            "variants": [
-                {"text": "help-gentle", "firmness": "gentle"},
-                {"text": "help-firm", "firmness": "firm"},
-            ],
+            "gentle": "help-gentle",
+            "balanced": "help-balanced",
+            "firm": "help-firm",
             "applied_rule_indexes": [],
             "safety": "ok",
         }
@@ -305,7 +305,12 @@ async def test_soften_valid() -> None:
             deadline_seconds=5.0,
         )
     )
-    assert len(result.variants) == 2
+    assert len(result.variants) == 3
+    assert {item.firmness for item in result.variants} == {
+        Firmness.GENTLE,
+        Firmness.BALANCED,
+        Firmness.FIRM,
+    }
     assert result.applied_rule_indexes == (0,)
     assert result.meta.attempts == 1
 
@@ -354,7 +359,7 @@ def test_forged_spbound_in_user_text_is_not_real_marker() -> None:
     assert prepared.boundary_marker != forged
     assert forged in prepared.user
     assert prepared.boundary_marker in prepared.system
-    assert prepared.prompt_version == "soften@v4"
+    assert prepared.prompt_version == "soften@v5"
 
 
 @pytest.mark.unit
@@ -743,7 +748,7 @@ async def test_help_say_and_decode_valid() -> None:
             deadline_seconds=5.0,
         )
     )
-    assert help_result.meta.prompt_version == "help_say@v5"
+    assert help_result.meta.prompt_version == "help_say@v6"
     decode_result = await _decode_via_stream(
         _FakeAche(stream_parts=["valid analysis"], create_results=[_decode_payload()]),
         incoming="incoming text",
@@ -879,7 +884,13 @@ def test_validate_variants_defensive_branches() -> None:
 @pytest.mark.unit
 async def test_crisis_empty_variants_ok() -> None:
     payload = SoftenOut.model_validate(
-        {"variants": [], "applied_rule_indexes": [], "safety": "crisis"}
+        {
+            "gentle": "",
+            "balanced": "",
+            "firm": "",
+            "applied_rule_indexes": [],
+            "safety": "crisis",
+        }
     )
     result = await _generator(_FakeAche(create_results=[payload])).soften(
         SoftenRequest(
@@ -899,10 +910,9 @@ async def test_non_ok_verdict_drops_payload_without_retry(
 ) -> None:
     payload = SoftenOut.model_validate(
         {
-            "variants": [
-                {"text": "CANARY-NON-OK-DROPPED", "firmness": "gentle"},
-                {"text": "other-variant", "firmness": "firm"},
-            ],
+            "gentle": "CANARY-NON-OK-DROPPED",
+            "balanced": "",
+            "firm": "other-variant",
             "applied_rule_indexes": [],
             "safety": "refuse_manipulation",
         }
@@ -960,13 +970,12 @@ async def test_decode_non_ok_drops_payload_without_retry(
 
 
 @pytest.mark.unit
-async def test_bad_rule_index_and_duplicate_firmness() -> None:
+async def test_bad_rule_index_and_duplicate_slots() -> None:
     bad_idx = SoftenOut.model_validate(
         {
-            "variants": [
-                {"text": "a-gentle", "firmness": "gentle"},
-                {"text": "a-firm", "firmness": "firm"},
-            ],
+            "gentle": "a-gentle",
+            "balanced": "a-balanced",
+            "firm": "a-firm",
             "applied_rule_indexes": [9],
             "safety": "ok",
         }
@@ -983,16 +992,15 @@ async def test_bad_rule_index_and_duplicate_firmness() -> None:
         )
     dup = SoftenOut.model_validate(
         {
-            "variants": [
-                {"text": "a-gentle", "firmness": "gentle"},
-                {"text": "also-gentle", "firmness": "gentle"},
-            ],
+            "gentle": "same-text",
+            "balanced": "same-text",
+            "firm": "different-firm",
             "applied_rule_indexes": [],
             "safety": "ok",
         }
     )
     ache2 = _FakeAche(create_results=[dup, dup])
-    with pytest.raises(InvalidGenerationOutput):
+    with pytest.raises(InvalidGenerationOutput) as dup_info:
         await _generator(ache2).soften(
             SoftenRequest(
                 draft="draft",
@@ -1001,6 +1009,7 @@ async def test_bad_rule_index_and_duplicate_firmness() -> None:
                 deadline_seconds=5.0,
             )
         )
+    assert InvalidOutputReason.FIRMNESS_SET in dup_info.value.reasons
 
 
 @pytest.mark.unit
@@ -1472,7 +1481,7 @@ async def test_soften_variant_count_invalid() -> None:
                 deadline_seconds=5.0,
             )
         )
-    assert InvalidOutputReason.VARIANT_COUNT in exc_info.value.reasons
+    assert InvalidOutputReason.EMPTY_TEXT in exc_info.value.reasons
 
 
 @pytest.mark.unit
@@ -1656,30 +1665,27 @@ async def test_prompt_leak_retries_then_accepts_ordinary_short_overlap() -> None
     )
     leak = SoftenOut.model_validate(
         {
-            "variants": [
-                {"text": fragment, "firmness": "gentle"},
-                {"text": "variant firm", "firmness": "firm"},
-            ],
+            "gentle": fragment,
+            "balanced": "variant balanced",
+            "firm": "variant firm",
             "applied_rule_indexes": [],
             "safety": "ok",
         }
     )
     marker = SoftenOut.model_validate(
         {
-            "variants": [
-                {"text": "see SPBOUND_abc in the instructions", "firmness": "gentle"},
-                {"text": "variant firm", "firmness": "firm"},
-            ],
+            "gentle": "see SPBOUND_abc in the instructions",
+            "balanced": "variant balanced",
+            "firm": "variant firm",
             "applied_rule_indexes": [],
             "safety": "ok",
         }
     )
     ok_retry = SoftenOut.model_validate(
         {
-            "variants": [
-                {"text": "variant soft", "firmness": "gentle"},
-                {"text": "variant firm", "firmness": "firm"},
-            ],
+            "gentle": "variant soft",
+            "balanced": "variant balanced",
+            "firm": "variant firm",
             "applied_rule_indexes": [],
             "safety": "ok",
         }

@@ -37,10 +37,11 @@ from svoi_pravila.adapters.llm.gigachat.validation import (
     MAX_TOKENS_HELP_SAY,
     MAX_TOKENS_SOFTEN,
     MAX_TOKENS_SUGGEST,
-    VariantValidation,
+    SlotValidation,
+    slots_from_soften,
     to_decode_result,
     to_suggest_rule_result,
-    validate_variants,
+    validate_firmness_slots,
 )
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
@@ -161,15 +162,15 @@ class GigaChatTextGenerator:
         )
 
         def build(parsed: SoftenOut, meta: GenerationMeta) -> SoftenResult:
-            variants, indexes, safety = validate_variants(
-                parsed.variants,
-                VariantValidation(
+            gentle, balanced, firm = slots_from_soften(parsed)
+            variants, indexes, safety = validate_firmness_slots(
+                gentle,
+                balanced,
+                firm,
+                SlotValidation(
                     applied=list(parsed.applied_rule_indexes),
                     safety_raw=parsed.safety.value,
                     rule_count=len(request.rules),
-                    min_variants=2,
-                    max_variants=3,
-                    require_all_firmness=False,
                     usage=meta.usage,
                     attempts=meta.attempts,
                     model=meta.model,
@@ -210,15 +211,15 @@ class GigaChatTextGenerator:
         )
 
         def build(parsed: HelpSayOut, meta: GenerationMeta) -> HelpSayResult:
-            variants, indexes, safety = validate_variants(
-                parsed.variants,
-                VariantValidation(
+            gentle, balanced, firm = slots_from_soften(parsed)
+            variants, indexes, safety = validate_firmness_slots(
+                gentle,
+                balanced,
+                firm,
+                SlotValidation(
                     applied=list(parsed.applied_rule_indexes),
                     safety_raw=parsed.safety.value,
                     rule_count=len(request.rules),
-                    min_variants=2,
-                    max_variants=3,
-                    require_all_firmness=False,
                     usage=meta.usage,
                     attempts=meta.attempts,
                     model=meta.model,

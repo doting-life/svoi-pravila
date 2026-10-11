@@ -238,6 +238,10 @@ class RuleSourceUnavailable(ApplicationError):
     """Rule-source token is missing, expired, reused, tampered, or bound to another user."""
 
 
+class ComposeChoiceTokenInvalid(ApplicationError):
+    """Compose choice token is unknown, reused, expired, or not bound to this user."""
+
+
 class InvalidGenerationOutput(ApplicationError):
     """Model output failed schema or content validation."""
 

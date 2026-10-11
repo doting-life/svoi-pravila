@@ -51,6 +51,22 @@ const borya: Contact = {
     created_at: "2026-10-01T12:00:00.000Z",
 };
 
+const meDone = {
+    onboarding_step: "done" as const,
+    consent_kind: null,
+    consent_version: null,
+    active_contact_id: "c1",
+    account_exists: true,
+    consents_revoked: false,
+    bot_username: "svoi_test_bot",
+    decode_remaining: 5,
+    max_contacts: 20,
+    max_open_rules: 50,
+    rule_text_max_chars: 500,
+    incoming_text_max_chars: 4000,
+    display_timezone: "Europe/Moscow",
+};
+
 const okVariants = {
     safety: "ok" as const,
     variants: [
@@ -59,6 +75,7 @@ const okVariants = {
         { firmness: "firm" as const, text: "твёрдый вариант" },
     ],
     applied_rules: [{ index: 0, text: "не перебивать" }],
+    choice_token: "c_test_token",
 };
 
 function composeFetch(
@@ -85,6 +102,9 @@ function renderCompose(
     const contacts = options.contacts ?? [anya];
     const withContacts: typeof fetch = (input, init) => {
         const url = requestUrl(input);
+        if (url.endsWith("/api/v1/me")) {
+            return Promise.resolve(jsonResponse(meDone));
+        }
         if (url.endsWith("/api/v1/contacts")) {
             return Promise.resolve(jsonResponse({ contacts }));
         }
@@ -170,6 +190,7 @@ describe("ComposeScreen", () => {
                 safety: "ok",
                 variants: [{ firmness: "gentle", text: "без правил" }],
                 applied_rules: [],
+                choice_token: "c_none",
             }),
         );
         renderCompose(fetchImpl, { activeContactId: null });
@@ -292,12 +313,12 @@ describe("ComposeScreen", () => {
         const choiceCall = fetchImpl.mock.calls.find(([req]) => isChoicePost(req));
         expect(choiceCall).toBeDefined();
         expect(await requestJson(choiceCall?.[0] as RequestInfo, choiceCall?.[1])).toEqual({
-            scenario: "help_say",
+            token: "c_test_token",
             firmness: "firm",
         });
     });
 
-    it("copy-and-return records soften scenario for soften intent", async () => {
+    it("copy-and-return sends choice token and firmness then closes", async () => {
         const fetchImpl = composeFetch((input) => {
             if (isChoicePost(input)) {
                 return jsonResponse({ outcome: "recorded" });
@@ -318,12 +339,12 @@ describe("ComposeScreen", () => {
         });
         const choiceCall = fetchImpl.mock.calls.find(([req]) => isChoicePost(req));
         expect(await requestJson(choiceCall?.[0] as RequestInfo, choiceCall?.[1])).toEqual({
-            scenario: "soften",
+            token: "c_test_token",
             firmness: "balanced",
         });
     });
 
-    it("does not close when choice recording fails", async () => {
+    it("closes after copy even when choice recording fails", async () => {
         const fetchImpl = composeFetch((input) => {
             if (isChoicePost(input)) {
                 return jsonResponse({ code: "validation_error", message: "bad" }, 422);
@@ -340,8 +361,8 @@ describe("ComposeScreen", () => {
         );
         await waitFor(() => {
             expect(telegram.hapticNotification).toHaveBeenCalledWith("error");
+            expect(telegram.close).toHaveBeenCalled();
         });
-        expect(telegram.close).not.toHaveBeenCalled();
     });
 
     it("does not call choice when copy-and-return copy fails", async () => {

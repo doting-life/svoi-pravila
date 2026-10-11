@@ -11,17 +11,17 @@ from svoi_pravila.application.errors import InvalidGenerationOutput
 
 @pytest.mark.unit
 def test_render_system_prompt_ok() -> None:
-    template, version = load_prompt("soften", "v4")
-    assert version == "soften@v4"
+    template, version = load_prompt("soften", "v5")
+    assert version == "soften@v5"
     rendered = render_system_prompt(template, boundary_marker="SPBOUND_ABC")
     assert "SPBOUND_ABC" in rendered
     assert "{{BOUNDARY_MARKER}}" not in rendered
 
 
 @pytest.mark.unit
-def test_render_help_say_v4_prompt() -> None:
-    template, version = load_prompt("help_say", "v5")
-    assert version == "help_say@v5"
+def test_render_help_say_v6_prompt() -> None:
+    template, version = load_prompt("help_say", "v6")
+    assert version == "help_say@v6"
     rendered = render_system_prompt(template, boundary_marker="SPBOUND_HELP")
     assert "SPBOUND_HELP" in rendered
     assert "{{BOUNDARY_MARKER}}" not in rendered

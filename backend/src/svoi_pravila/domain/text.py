@@ -18,6 +18,7 @@ _CRLF_RE = re.compile(r"\r\n|\r")
 _MULTI_BLANK_LINE_RE = re.compile(r"\n{3,}")
 
 RULE_TEXT_MAX_CHARS = 500
+INCOMING_TEXT_MAX_CHARS = 4000
 
 
 @dataclass(frozen=True, slots=True)

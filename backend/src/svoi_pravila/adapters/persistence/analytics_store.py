@@ -34,7 +34,10 @@ _APPEAL_TEMPLATE = """
 (
   __ALIAS__.scenario <> 'suggest_rule'
   AND (
-    __ALIAS__.event_kind = 'result_chosen'
+    (
+      __ALIAS__.event_kind = 'result_chosen'
+      AND __ALIAS__.surface = 'inline'
+    )
     OR (
       __ALIAS__.event_kind = 'generation'
       AND __ALIAS__.surface IN ('dm', 'miniapp')
@@ -538,7 +541,9 @@ inserted AS (
         COUNT(*) FILTER (
             WHERE e.event_kind = 'generation' AND e.outcome = 'unavailable'
         ),
-        COUNT(*) FILTER (WHERE e.event_kind = 'result_chosen'),
+        COUNT(*) FILTER (
+            WHERE e.event_kind = 'result_chosen' AND e.surface = 'inline'
+        ),
         COUNT(*) FILTER (
             WHERE e.event_kind = 'generation'
               AND e.outcome = 'limited'

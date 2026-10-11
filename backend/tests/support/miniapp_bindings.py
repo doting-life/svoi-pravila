@@ -44,6 +44,10 @@ from svoi_pravila.application.use_cases.record_inline_choice import (
     RecordInlineChoice,
     RecordInlineChoicePorts,
 )
+from svoi_pravila.application.use_cases.redeem_compose_handoff import (
+    RedeemComposeHandoff,
+    RedeemComposeHandoffPorts,
+)
 from svoi_pravila.application.use_cases.reject_pending_rule import RejectPendingRule
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.resolve_invite import ResolveInvite
@@ -52,6 +56,7 @@ from svoi_pravila.application.use_cases.serve_export_download import ServeExport
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from tests.fakes.compose_choice_tokens import FakeComposeChoiceTokens
 from tests.fakes.compose_handoffs import FakeComposeHandoffs
+from tests.fakes.compose_sessions import FakeComposeSessions
 from tests.fakes.export_download import FakeExportDownloadStore
 from tests.fakes.quota_budget import FakeLlmBudget, FakeQuotaGate
 from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
@@ -163,7 +168,18 @@ def build_test_miniapp_bindings(
             )
         ),
         "compose_choice_tokens": FakeComposeChoiceTokens(),
-        "compose_handoffs": FakeComposeHandoffs(),
+        "redeem_compose_handoff": RedeemComposeHandoff(
+            RedeemComposeHandoffPorts(
+                uow_factory=world.uow_factory,
+                catalog=world.catalog,
+                compose_handoffs=FakeComposeHandoffs(),
+                compose_sessions=FakeComposeSessions(),
+                usernames=FakeTelegramPublicUsername(),
+                rate_limiter=FakeRateLimiter(limit=120),
+                pseudonymizer=FakePseudonymizer(),
+                clock=world.clock,
+            )
+        ),
         "get_partner_username": GetPartnerUsername(
             GetPartnerUsernamePorts(
                 uow_factory=world.uow_factory,
@@ -182,3 +198,31 @@ def build_test_miniapp_bindings(
     if overrides:
         bindings_kwargs.update(overrides)
     return MiniappRouterBindings(**bindings_kwargs)
+
+
+def make_miniapp_auth(
+    world: Any,
+    *,
+    bot_token: str,
+    rate_limit: int = 120,
+    compose_sessions: FakeComposeSessions | None = None,
+) -> MiniappDeps:
+    """Build MiniappDeps for API tests against an AppWorld-like fixture."""
+    from pydantic import SecretStr
+
+    from svoi_pravila.adapters.channels.telegram.init_data import AiogramInitDataVerifier
+    from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
+    from svoi_pravila.application.use_cases.get_user_by_id import GetUserById
+    from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
+
+    return MiniappDeps(
+        init_data_verifier=AiogramInitDataVerifier(
+            SecretStr(bot_token), world.clock, max_age_seconds=3600
+        ),
+        rate_limiter=FakeRateLimiter(limit=rate_limit),
+        pseudonymizer=FakePseudonymizer(),
+        get_user_by_telegram_id=GetUserByTelegramId(world.uow_factory),
+        get_user_by_id=GetUserById(world.uow_factory),
+        get_onboarding_step=GetOnboardingStep(world.uow_factory, world.catalog),
+        compose_sessions=compose_sessions or FakeComposeSessions(),
+    )

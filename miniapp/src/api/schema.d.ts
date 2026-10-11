@@ -617,25 +617,48 @@ export interface components {
             outcome: "recorded";
         };
         /**
-         * ComposeHandoffRedeemRequest
-         * @description POST /compose/handoff/redeem — one-time opaque handoff reference.
+         * ComposeInlineContextResponse
+         * @description POST /compose/handoff/redeem — draft, partner, limits, and compose session.
          */
-        ComposeHandoffRedeemRequest: {
-            /** Token */
-            token: string;
+        ComposeInlineContextResponse: {
+            /** Draft */
+            draft: string;
+            limits: components["schemas"]["ComposeInlineLimits"];
+            partner: components["schemas"]["ComposeInlinePartner"] | null;
+            session: components["schemas"]["ComposeInlineSession"];
         };
         /**
-         * ComposeHandoffRedeemResponse
-         * @description Redeemed draft + contact; empty when missing/expired/reused (no error).
+         * ComposeInlineLimits
+         * @description Length limits for the inline compose editor.
          */
-        ComposeHandoffRedeemResponse: {
+        ComposeInlineLimits: {
+            /** Incoming Text Max Chars */
+            incoming_text_max_chars: number;
+        };
+        /**
+         * ComposeInlinePartner
+         * @description Partner bound into an inline compose session (label is C2; never logged).
+         */
+        ComposeInlinePartner: {
             /** Contact Id */
-            contact_id?: string | null;
+            contact_id: string;
+            /** Label */
+            label: string;
+            /** Username */
+            username?: string | null;
+        };
+        /**
+         * ComposeInlineSession
+         * @description Reusable compose session token and absolute expiry.
+         */
+        ComposeInlineSession: {
             /**
-             * Draft
-             * @default
+             * Expires At
+             * Format: date-time
              */
-            draft: string;
+            expires_at: string;
+            /** Token */
+            token: string;
         };
         /**
          * ComposeRequest
@@ -909,7 +932,7 @@ export interface components {
          * @description Stable C0 error codes returned to the mini-app client.
          * @enum {string}
          */
-        MiniappErrorCode: "unauthorized" | "init_data_invalid" | "init_data_expired" | "rate_limited" | "onboarding_required" | "consent_required" | "not_found" | "contact_limit" | "open_rule_limit" | "service_unavailable" | "contact_already_linked" | "contact_not_paired" | "invalid_transition" | "validation_error" | "body_too_large" | "text_too_short" | "text_too_long" | "rule_text_empty" | "rule_text_too_long" | "rule_text_invalid_chars" | "quota_exceeded" | "quota_exhausted" | "service_budget_exhausted" | "generation_unavailable" | "invalid_output" | "busy" | "invite_invalid" | "invite_expired" | "invite_own" | "consent_stale";
+        MiniappErrorCode: "unauthorized" | "init_data_invalid" | "init_data_expired" | "rate_limited" | "onboarding_required" | "consent_required" | "scope_insufficient" | "handoff_expired" | "compose_session_expired" | "not_found" | "contact_limit" | "open_rule_limit" | "service_unavailable" | "contact_already_linked" | "contact_not_paired" | "invalid_transition" | "validation_error" | "body_too_large" | "text_too_short" | "text_too_long" | "rule_text_empty" | "rule_text_too_long" | "rule_text_invalid_chars" | "quota_exceeded" | "quota_exhausted" | "service_budget_exhausted" | "generation_unavailable" | "invalid_output" | "busy" | "invite_invalid" | "invite_expired" | "invite_own" | "consent_stale";
         /**
          * PartnerUsernameResponse
          * @description GET /contacts/{id}/partner-username — request-scoped; never stored.
@@ -1314,11 +1337,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ComposeHandoffRedeemRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -1326,7 +1345,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ComposeHandoffRedeemResponse"];
+                    "application/json": components["schemas"]["ComposeInlineContextResponse"];
                 };
             };
             /** @description Unauthorized */

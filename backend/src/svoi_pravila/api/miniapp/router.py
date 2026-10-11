@@ -5,7 +5,8 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Request, Response, status
+import structlog
+from fastapi import APIRouter, Depends, Header, Request, Response, status
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from svoi_pravila.api.miniapp.decode_sse import DecodeStreamPorts, format_sse, iter_decode_sse
@@ -13,8 +14,11 @@ from svoi_pravila.api.miniapp.deps import (
     MiniappAuthContext,
     MiniappAuthenticator,
     MiniappDeps,
+    MiniappPrincipal,
+    enforce_compose_contact,
     invite_raw_token_from_start_param,
     no_store,
+    parse_handoff_authorization,
     parse_path_uuid,
 )
 from svoi_pravila.api.miniapp.errors import ErrorBody, LimitErrorBody, MiniappErrorCode
@@ -24,8 +28,10 @@ from svoi_pravila.api.miniapp.schemas import (
     AcceptSuggestionResponse,
     ComposeChoiceRequest,
     ComposeChoiceResponse,
-    ComposeHandoffRedeemRequest,
-    ComposeHandoffRedeemResponse,
+    ComposeInlineContextResponse,
+    ComposeInlineLimits,
+    ComposeInlinePartner,
+    ComposeInlineSession,
     ComposeRequest,
     ComposeResponse,
     ConfirmTrueRequest,
@@ -53,7 +59,6 @@ from svoi_pravila.api.miniapp.schemas import (
     SuggestionItem,
     SuggestionListResponse,
 )
-from svoi_pravila.application.compose_handoff import ComposeHandoffPayload
 from svoi_pravila.application.errors import (
     ComposeChoiceTokenInvalid,
     ComposeHandoffUnavailable,
@@ -64,11 +69,11 @@ from svoi_pravila.application.errors import (
     InvalidGenerationOutput,
     InvalidInlineResultRef,
     NotFound,
+    RateLimited,
 )
 from svoi_pravila.application.ports.bot_username import BotUsername
 from svoi_pravila.application.ports.clock import Clock
 from svoi_pravila.application.ports.compose_choice_tokens import ComposeChoiceTokens
-from svoi_pravila.application.ports.compose_handoffs import ComposeHandoffs
 from svoi_pravila.application.ports.generation import HelpSayIntent, SafetyVerdict
 from svoi_pravila.application.ports.prepared_results import PreparedResults
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
@@ -141,6 +146,10 @@ from svoi_pravila.application.use_cases.record_inline_choice import (
     RecordInlineChoice,
     RecordInlineChoiceCommand,
 )
+from svoi_pravila.application.use_cases.redeem_compose_handoff import (
+    RedeemComposeHandoff,
+    RedeemComposeHandoffCommand,
+)
 from svoi_pravila.application.use_cases.reject_pending_rule import (
     RejectPendingRule,
     RejectPendingRuleCommand,
@@ -187,6 +196,8 @@ from svoi_pravila.domain.text import (
 )
 from svoi_pravila.domain.user import User
 from svoi_pravila.privacy import load_privacy_catalog
+
+logger = structlog.get_logger(__name__)
 
 _SSE_HEADERS = {
     "Cache-Control": "no-store",
@@ -253,7 +264,7 @@ class MiniappRouterBindings:
     compose_generation: ComposeGeneration
     record_choice: RecordInlineChoice
     compose_choice_tokens: ComposeChoiceTokens
-    compose_handoffs: ComposeHandoffs
+    redeem_compose_handoff: RedeemComposeHandoff
     get_partner_username: GetPartnerUsername
     prepared_results: PreparedResults
     rule_sources: RuleSources
@@ -331,6 +342,7 @@ def build_miniapp_router(bindings: MiniappRouterBindings) -> APIRouter:
     authenticator = MiniappAuthenticator(bindings.auth)
     auth_dep = Annotated[MiniappAuthContext, Depends(authenticator.authenticate)]
     actor_dep = Annotated[User, Depends(authenticator.require_actor)]
+    compose_actor_dep = Annotated[MiniappPrincipal, Depends(authenticator.require_compose_actor)]
     router = APIRouter(prefix="/api/v1", tags=["miniapp"])
     _register_me(router, bindings, auth_dep, actor_dep)
     _register_invites(router, bindings, auth_dep, actor_dep)
@@ -339,7 +351,7 @@ def build_miniapp_router(bindings: MiniappRouterBindings) -> APIRouter:
     _register_rules(router, bindings, actor_dep)
     _register_suggestions(router, bindings, actor_dep)
     _register_decode(router, bindings, actor_dep)
-    _register_compose(router, bindings, actor_dep)
+    _register_compose(router, bindings, compose_actor_dep)
     if bindings.enable_test_routes:
         _register_test_routes(router)
     return router
@@ -375,9 +387,9 @@ _COMPOSE_INTENT_MAP: dict[str, HelpSayIntent | None] = {
 def _register_compose(
     router: APIRouter,
     bindings: MiniappRouterBindings,
-    actor_dep: Any,
+    compose_actor_dep: Any,
 ) -> None:
-    """Register compose JSON and choice routes."""
+    """Register compose JSON, choice, and handoff-redeem routes."""
 
     @router.post(
         "/compose",
@@ -388,12 +400,14 @@ def _register_compose(
     async def compose_variants(
         body: ComposeRequest,
         response: Response,
-        actor: actor_dep,
+        principal: compose_actor_dep,
     ) -> ComposeResponse:
         no_store(response)
+        actor = principal.user
         contact_id: ContactId | None = None
         if body.contact_id is not None:
             contact_id = ContactId(parse_path_uuid(body.contact_id))
+        enforce_compose_contact(principal, contact_id)
         intent = _COMPOSE_INTENT_MAP[body.intent]
         try:
             result = await bindings.compose_generation.execute(
@@ -443,9 +457,10 @@ def _register_compose(
     async def compose_choice(
         body: ComposeChoiceRequest,
         response: Response,
-        actor: actor_dep,
+        principal: compose_actor_dep,
     ) -> ComposeChoiceResponse:
         no_store(response)
+        actor = principal.user
         analytics = bindings.pseudonymizer.pseudonymize(
             "analytics", str(actor.telegram_user_id.value)
         )
@@ -466,27 +481,48 @@ def _register_compose(
     @router.post(
         "/compose/handoff/redeem",
         operation_id="redeemComposeHandoff",
-        response_model=ComposeHandoffRedeemResponse,
+        response_model=ComposeInlineContextResponse,
         responses=_ERROR_RESPONSES,
     )
     async def redeem_compose_handoff(
-        body: ComposeHandoffRedeemRequest,
         response: Response,
-        actor: actor_dep,
-    ) -> ComposeHandoffRedeemResponse:
+        authorization: Annotated[str | None, Header()] = None,
+    ) -> ComposeInlineContextResponse:
         no_store(response)
-        empty = ComposeHandoffRedeemResponse(draft="", contact_id=None)
-        pseudonym = bindings.pseudonymizer.pseudonymize(
-            "compose_handoff", str(actor.telegram_user_id.value)
+        return await _redeem_inline_context(bindings, authorization)
+
+
+async def _redeem_inline_context(
+    bindings: MiniappRouterBindings,
+    authorization: str | None,
+) -> ComposeInlineContextResponse:
+    """Burn handoff bearer token and return draft + compose session."""
+    token = parse_handoff_authorization(authorization)
+    try:
+        result = await bindings.redeem_compose_handoff.execute(
+            RedeemComposeHandoffCommand(token=token)
         )
-        try:
-            payload: ComposeHandoffPayload = await bindings.compose_handoffs.redeem_once(
-                pseudonym, body.token
-            )
-        except ComposeHandoffUnavailable:
-            return empty
-        contact_id = None if payload.contact_id is None else str(payload.contact_id)
-        return ComposeHandoffRedeemResponse(draft=payload.draft, contact_id=contact_id)
+    except ComposeHandoffUnavailable as exc:
+        raise MiniappHttpError(MiniappErrorCode.HANDOFF_EXPIRED, 401) from exc
+    except RateLimited as exc:
+        raise MiniappHttpError(MiniappErrorCode.RATE_LIMITED, 429) from exc
+    logger.info("compose_handoff_redeemed")
+    partner = None
+    if result.partner is not None:
+        partner = ComposeInlinePartner(
+            contact_id=str(result.partner.contact_id),
+            label=result.partner.label,
+            username=result.partner.username,
+        )
+    return ComposeInlineContextResponse(
+        draft=result.draft,
+        partner=partner,
+        limits=ComposeInlineLimits(incoming_text_max_chars=INCOMING_TEXT_MAX_CHARS),
+        session=ComposeInlineSession(
+            token=result.session_token,
+            expires_at=result.expires_at,
+        ),
+    )
 
 
 def _register_decode(

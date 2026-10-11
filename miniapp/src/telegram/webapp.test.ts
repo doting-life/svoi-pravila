@@ -1,10 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { applyColorScheme, createTelegramAdapter, hapticImpact, hapticSelection } from "./webapp";
+import {
+    applyColorScheme,
+    createTelegramAdapter,
+    hapticImpact,
+    hapticSelection,
+    resetTelegramAdapterGuardsForTests,
+} from "./webapp";
 
 function installMockWebApp(
     initData: string,
-    options: { startParam?: string; withDownloadFile?: boolean } = {},
+    options: { startParam?: string; withDownloadFile?: boolean; platform?: string } = {},
 ): {
     ready: ReturnType<typeof vi.fn>;
     expand: ReturnType<typeof vi.fn>;
@@ -38,6 +44,7 @@ function installMockWebApp(
         value: {
             WebApp: {
                 initData,
+                platform: options.platform ?? (initData ? "ios" : "unknown"),
                 initDataUnsafe:
                     options.startParam !== undefined
                         ? { start_param: options.startParam }
@@ -77,10 +84,21 @@ function installMockWebApp(
 }
 
 describe("createTelegramAdapter", () => {
+    it("detects inline_compose from platform and handoff query", () => {
+        window.history.replaceState(null, "", "/?view=compose&h=h_abc");
+        installMockWebApp("", { platform: "ios" });
+        const adapter = createTelegramAdapter();
+        expect(adapter.launch.kind).toBe("inline_compose");
+        expect(adapter.launch).toEqual({ kind: "inline_compose", handoffToken: "h_abc" });
+        adapter.ready();
+        adapter.expand();
+        window.history.replaceState(null, "", "/");
+    });
+
     it("reports outside Telegram when initData is empty", async () => {
         installMockWebApp("");
         const adapter = createTelegramAdapter();
-        expect(adapter.isInsideTelegram).toBe(false);
+        expect(adapter.launch.kind).toBe("outside");
         expect(adapter.initData).toBe("");
         adapter.ready();
         adapter.expand();
@@ -97,11 +115,34 @@ describe("createTelegramAdapter", () => {
         });
         const adapter = createTelegramAdapter();
         await expect(adapter.showConfirm("x")).resolves.toBe(false);
-        expect(adapter.onColorSchemeChanged(() => undefined)).toEqual(expect.any(Function));
+        const stopTheme = adapter.onColorSchemeChanged(() => undefined);
+        expect(stopTheme).toEqual(expect.any(Function));
+        stopTheme();
         adapter.BackButton.show();
         adapter.BackButton.hide();
+        adapter.BackButton.onClick(() => undefined)();
         adapter.hapticNotification("error");
         adapter.close();
+    });
+
+    it("treats missing location as empty search params", () => {
+        window.history.replaceState(null, "", "/?view=compose&h=h_loc");
+        installMockWebApp("", { platform: "ios" });
+        const saved = globalThis.location;
+        Object.defineProperty(globalThis, "location", {
+            configurable: true,
+            value: undefined,
+        });
+        try {
+            const adapter = createTelegramAdapter();
+            expect(adapter.launch).toEqual({ kind: "outside" });
+        } finally {
+            Object.defineProperty(globalThis, "location", {
+                configurable: true,
+                value: saved,
+            });
+            window.history.replaceState(null, "", "/");
+        }
     });
 
     it("handles BackButton without offClick cleanup targets", () => {
@@ -135,7 +176,7 @@ describe("createTelegramAdapter", () => {
     it("reads the colour scheme and calls ready/expand once inside Telegram", () => {
         const { ready, expand } = installMockWebApp("query_id=1&user=%7B%7D");
         const adapter = createTelegramAdapter();
-        expect(adapter.isInsideTelegram).toBe(true);
+        expect(adapter.launch.kind).toBe("identified");
         expect(adapter.colorScheme).toBe("dark");
 
         adapter.ready();
@@ -144,6 +185,47 @@ describe("createTelegramAdapter", () => {
         adapter.expand();
         expect(ready).toHaveBeenCalledTimes(1);
         expect(expand).toHaveBeenCalledTimes(1);
+    });
+
+    it("resets ready/expand guards for tests", () => {
+        const { ready, expand } = installMockWebApp("query_id=1");
+        const adapter = createTelegramAdapter();
+        adapter.ready();
+        adapter.expand();
+        expect(ready).toHaveBeenCalledTimes(1);
+        resetTelegramAdapterGuardsForTests();
+        adapter.ready();
+        adapter.expand();
+        expect(ready).toHaveBeenCalledTimes(2);
+        expect(expand).toHaveBeenCalledTimes(2);
+    });
+
+    it("falls back to light colour scheme when WebApp reports light", () => {
+        Object.defineProperty(window, "Telegram", {
+            configurable: true,
+            value: {
+                WebApp: {
+                    initData: "query_id=1",
+                    platform: "ios",
+                    colorScheme: "light",
+                    BackButton: {
+                        show: vi.fn(),
+                        hide: vi.fn(),
+                        onClick: vi.fn(),
+                        offClick: vi.fn(),
+                    },
+                    HapticFeedback: { notificationOccurred: vi.fn() },
+                    ready: vi.fn(),
+                    expand: vi.fn(),
+                    close: vi.fn(),
+                    showConfirm: vi.fn(),
+                    onEvent: vi.fn(),
+                    offEvent: vi.fn(),
+                },
+            },
+        });
+        const adapter = createTelegramAdapter();
+        expect(adapter.colorScheme).toBe("light");
     });
 
     it("reads startParam and downloadFile from WebApp", async () => {
@@ -340,12 +422,20 @@ describe("createTelegramAdapter", () => {
         const mocks = installMockWebApp("query_id=1");
         const adapter = createTelegramAdapter();
         const seen: string[] = [];
-        adapter.onColorSchemeChanged((scheme) => {
+        const stop = adapter.onColorSchemeChanged((scheme) => {
             seen.push(scheme);
         });
-        const handler = mocks.onEvent.mock.calls[0]?.[1] as (() => void) | undefined;
-        expect(handler).toEqual(expect.any(Function));
-        handler?.();
+        const themeCall = mocks.onEvent.mock.calls.find((call) => call[0] === "themeChanged");
+        expect(themeCall).toBeDefined();
+        const handler: unknown = themeCall?.[1];
+        expect(typeof handler).toBe("function");
+        if (typeof handler !== "function") {
+            throw new Error("missing themeChanged handler");
+        }
+        const themeChanged = handler as () => void;
+        themeChanged();
         expect(seen).toEqual(["dark"]);
+        stop();
+        expect(mocks.offEvent).toHaveBeenCalledWith("themeChanged", themeChanged);
     });
 });

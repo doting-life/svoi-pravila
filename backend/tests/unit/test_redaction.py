@@ -26,6 +26,14 @@ from svoi_pravila.observability.redaction import (
             {"event": "ok", "Authorization": REDACTED_PLACEHOLDER},
         ),
         (
+            {"event": "ok", "Authorization": "handoff h_secret"},
+            {"event": "ok", "Authorization": REDACTED_PLACEHOLDER},
+        ),
+        (
+            {"event": "ok", "Authorization": "compose cs_secret"},
+            {"event": "ok", "Authorization": REDACTED_PLACEHOLDER},
+        ),
+        (
             {"event": "ok", "nested": {"draft": "x", "count": 1}},
             {"event": "ok", "nested": {"draft": REDACTED_PLACEHOLDER, "count": 1}},
         ),

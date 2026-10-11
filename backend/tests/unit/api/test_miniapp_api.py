@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 from tests.fakes.clock import FakeClock
+from tests.fakes.compose_sessions import FakeComposeSessions
 from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.export_download import FakeExportDownloadStore
 from tests.fakes.ids import FakeIdGenerator
@@ -36,6 +37,7 @@ from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.confirm_age import ConfirmAge, ConfirmAgeCommand
 from svoi_pravila.application.use_cases.ensure_user import EnsureUser, EnsureUserCommand
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
+from svoi_pravila.application.use_cases.get_user_by_id import GetUserById
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.config import Environment
 from svoi_pravila.domain.access import AccessStatus
@@ -86,7 +88,9 @@ def _build_app(
         rate_limiter=FakeRateLimiter(limit=rate_limit),
         pseudonymizer=FakePseudonymizer(),
         get_user_by_telegram_id=GetUserByTelegramId(world.uow_factory),
+        get_user_by_id=GetUserById(world.uow_factory),
         get_onboarding_step=GetOnboardingStep(world.uow_factory, world.catalog),
+        compose_sessions=FakeComposeSessions(),
     )
     reuse = make_inline_reuse(world.clock)
     decode_bundle = build_miniapp_decode_bundle(world)
@@ -173,7 +177,9 @@ async def test_me_without_bot_username_unavailable(mini_world: AppWorld) -> None
         rate_limiter=FakeRateLimiter(limit=120),
         pseudonymizer=FakePseudonymizer(),
         get_user_by_telegram_id=GetUserByTelegramId(mini_world.uow_factory),
+        get_user_by_id=GetUserById(mini_world.uow_factory),
         get_onboarding_step=GetOnboardingStep(mini_world.uow_factory, mini_world.catalog),
+        compose_sessions=FakeComposeSessions(),
     )
     bindings = build_test_miniapp_bindings(
         auth=auth,
@@ -206,7 +212,9 @@ async def test_me_cache_unavailable_maps_to_service_unavailable(mini_world: AppW
         rate_limiter=FakeRateLimiter(limit=120),
         pseudonymizer=FakePseudonymizer(),
         get_user_by_telegram_id=GetUserByTelegramId(mini_world.uow_factory),
+        get_user_by_id=GetUserById(mini_world.uow_factory),
         get_onboarding_step=GetOnboardingStep(mini_world.uow_factory, mini_world.catalog),
+        compose_sessions=FakeComposeSessions(),
     )
     bindings = build_test_miniapp_bindings(
         auth=auth,

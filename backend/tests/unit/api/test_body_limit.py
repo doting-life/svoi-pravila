@@ -12,6 +12,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 from tests.fakes.clock import FakeClock
+from tests.fakes.compose_sessions import FakeComposeSessions
 from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
@@ -33,6 +34,7 @@ from svoi_pravila.application.errors import AccessNotGranted
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.create_contact import CreateContact
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
+from svoi_pravila.application.use_cases.get_user_by_id import GetUserById
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.config import Environment
 from svoi_pravila.domain.access import AccessStatus
@@ -89,7 +91,9 @@ def _app(world: AppWorld, *, create_contact: CreateContact | _CountingCreateCont
         rate_limiter=FakeRateLimiter(limit=120),
         pseudonymizer=FakePseudonymizer(),
         get_user_by_telegram_id=GetUserByTelegramId(world.uow_factory),
+        get_user_by_id=GetUserById(world.uow_factory),
         get_onboarding_step=GetOnboardingStep(world.uow_factory, world.catalog),
+        compose_sessions=FakeComposeSessions(),
     )
     reuse = make_inline_reuse(world.clock)
     decode_bundle = build_miniapp_decode_bundle(world)

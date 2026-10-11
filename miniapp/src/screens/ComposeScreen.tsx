@@ -1,7 +1,6 @@
 import { useState } from "react";
 
 import { useApiClient } from "../api/ApiContext";
-import type { ApiClient } from "../api/client";
 import { unwrapApiResult } from "../api/request";
 import type { components } from "../api/schema";
 import { Button } from "../components/Button";
@@ -22,8 +21,6 @@ import type { LimitKind } from "../navigation/stack";
 import { codePointLength } from "../rules/ruleText";
 import type { TelegramAdapter } from "../telegram/webapp";
 
-const FALLBACK_INCOMING_MAX = 4000;
-
 function sliceCodePoints(text: string, max: number): string {
     return Array.from(text).slice(0, max).join("");
 }
@@ -42,13 +39,30 @@ const INTENT_OPTIONS: readonly { readonly value: ComposeIntent; readonly label: 
 
 const FIRMNESS_ORDER: readonly Firmness[] = ["gentle", "balanced", "firm"];
 
-export type ComposeScreenProps = {
+export type FixedPartner = {
+    readonly contactId: string;
+    readonly label: string;
+    readonly username: string | null;
+};
+
+export type ComposePartnerProps =
+    | { readonly mode: "fixed"; readonly partner: FixedPartner | null }
+    | {
+          readonly mode: "selectable";
+          readonly contacts: ReturnType<typeof useContacts>;
+          readonly activeContactId: string | null;
+          readonly onActivated: (contactId: string) => void;
+      };
+
+export type ComposeEditorProps = {
     readonly telegram: TelegramAdapter;
-    readonly activeContactId: string | null;
-    readonly handoffToken?: string | null | undefined;
-    readonly onActivated: (contactId: string) => void;
+    readonly draftMax: number;
+    readonly initialDraft: string;
+    readonly initialContactId: string | null;
+    readonly partner: ComposePartnerProps;
     readonly onLimit: (kind: LimitKind, message: string | null) => void;
     readonly onCrisis: (lead: string | null, resources: readonly string[]) => void;
+    readonly onSessionExpired?: () => void;
 };
 
 type EditableVariant = {
@@ -90,6 +104,8 @@ function errorMessageForCode(code: string): string {
             return ru.composeErrorLong;
         case "invalid_output":
             return ru.composeErrorInvalid;
+        case "compose_session_expired":
+            return ru.composeInlineSessionExpired;
         default:
             return ru.composeErrorUnavailable;
     }
@@ -105,147 +121,51 @@ function orderedVariants(
     }));
 }
 
-export function ComposeScreen(props: ComposeScreenProps) {
-    const client = useApiClient();
-    const me = useMe();
-    const draftMax =
-        me.status === "success" ? me.data.incoming_text_max_chars : FALLBACK_INCOMING_MAX;
-    const handoffToken = props.handoffToken ?? null;
-    const needsHandoff = handoffToken != null && handoffToken !== "";
-    if (!needsHandoff) {
-        return (
-            <ComposeScreenBody
-                telegram={props.telegram}
-                activeContactId={props.activeContactId}
-                initialContactId={props.activeContactId}
-                initialDraft=""
-                draftMax={draftMax}
-                onActivated={props.onActivated}
-                onLimit={props.onLimit}
-                onCrisis={props.onCrisis}
-            />
-        );
-    }
-    return (
-        <ComposeHandoffGate
-            telegram={props.telegram}
-            activeContactId={props.activeContactId}
-            handoffToken={handoffToken}
-            draftMax={draftMax}
-            onActivated={props.onActivated}
-            onLimit={props.onLimit}
-            onCrisis={props.onCrisis}
-            client={client}
-        />
-    );
-}
-
-function ComposeHandoffGate({
+/** Presentational compose editor shared by full-app and inline launches. */
+export function ComposeEditor({
     telegram,
-    activeContactId,
-    handoffToken,
     draftMax,
-    onActivated,
-    onLimit,
-    onCrisis,
-    client,
-}: {
-    readonly telegram: TelegramAdapter;
-    readonly activeContactId: string | null;
-    readonly handoffToken: string;
-    readonly draftMax: number;
-    readonly onActivated: (contactId: string) => void;
-    readonly onLimit: (kind: LimitKind, message: string | null) => void;
-    readonly onCrisis: (lead: string | null, resources: readonly string[]) => void;
-    readonly client: ApiClient;
-}) {
-    const handoff = useAsyncResource(async () => {
-        return unwrapApiResult(
-            await client.POST("/api/v1/compose/handoff/redeem", {
-                body: { token: handoffToken },
-            }),
-        );
-    }, `handoff:${handoffToken}`);
-    if (handoff.status === "loading" || handoff.status === "error") {
-        if (handoff.status === "error") {
-            return (
-                <ComposeScreenBody
-                    key={`miss:${handoffToken}`}
-                    telegram={telegram}
-                    activeContactId={activeContactId}
-                    initialContactId={activeContactId}
-                    initialDraft=""
-                    draftMax={draftMax}
-                    onActivated={onActivated}
-                    onLimit={onLimit}
-                    onCrisis={onCrisis}
-                />
-            );
-        }
-        return (
-            <section className="screen" aria-labelledby="compose-title">
-                <ScreenHeader title={ru.composeTitle} titleId="compose-title" />
-                <div role="status">
-                    <span className="visually-hidden">{ru.loading}</span>
-                    <Skeleton shape="block" />
-                    <Skeleton shape="line" />
-                    <Skeleton shape="line" short />
-                </div>
-            </section>
-        );
-    }
-    return (
-        <ComposeScreenBody
-            key={`ok:${handoffToken}`}
-            telegram={telegram}
-            activeContactId={activeContactId}
-            initialContactId={handoff.data.contact_id ?? activeContactId}
-            initialDraft={sliceCodePoints(handoff.data.draft, draftMax)}
-            draftMax={draftMax}
-            onActivated={onActivated}
-            onLimit={onLimit}
-            onCrisis={onCrisis}
-        />
-    );
-}
-
-type ComposeScreenBodyProps = {
-    readonly telegram: TelegramAdapter;
-    readonly activeContactId: string | null;
-    readonly initialContactId: string | null;
-    readonly initialDraft: string;
-    readonly draftMax: number;
-    readonly onActivated: (contactId: string) => void;
-    readonly onLimit: (kind: LimitKind, message: string | null) => void;
-    readonly onCrisis: (lead: string | null, resources: readonly string[]) => void;
-};
-
-function ComposeScreenBody({
-    telegram,
-    activeContactId,
-    initialContactId,
     initialDraft,
-    draftMax,
-    onActivated,
+    initialContactId,
+    partner,
     onLimit,
     onCrisis,
-}: ComposeScreenBodyProps) {
+    onSessionExpired,
+}: ComposeEditorProps) {
     const client = useApiClient();
-    const contacts = useContacts();
+    const allowContactPicker = partner.mode === "selectable";
+    const fixedPartner = partner.mode === "fixed" ? partner.partner : null;
+    const contacts = partner.mode === "selectable" ? partner.contacts : null;
+    const activeContactId = partner.mode === "selectable" ? partner.activeContactId : null;
+    const onActivated = partner.mode === "selectable" ? partner.onActivated : null;
+    const showClose = partner.mode === "fixed";
     const [intent, setIntent] = useState<ComposeIntent>("soften");
-    const [contactId, setContactId] = useState<string | null>(initialContactId);
+    const [contactId, setContactId] = useState<string | null>(
+        fixedPartner?.contactId ?? initialContactId,
+    );
     const [draft, setDraft] = useState(initialDraft);
     const [phase, setPhase] = useState<Phase>({ kind: "idle" });
     const [pasteHint, setPasteHint] = useState<string | null>(null);
     const [copyHint, setCopyHint] = useState<string | null>(null);
     const [pickerOpen, setPickerOpen] = useState(false);
     const [busyChoice, setBusyChoice] = useState(false);
-    const contactList = contacts.status === "success" ? contacts.data : [];
+    const contactList = contacts !== null && contacts.status === "success" ? contacts.data : [];
     const selected = contactList.find((contact) => contact.id === contactId);
-    const pairedContactId = selected != null && selected.paired ? selected.id : null;
+    const displayLabel =
+        partner.mode === "fixed"
+            ? (fixedPartner?.label ?? null)
+            : selected !== undefined
+              ? selected.label
+              : null;
+    const pairedContactId =
+        partner.mode === "fixed"
+            ? (fixedPartner?.contactId ?? null)
+            : selected != null && selected.paired
+              ? selected.id
+              : null;
     const partnerUsernameResource = useAsyncResource(
         async () => {
-            if (pairedContactId == null) {
+            if (partner.mode === "fixed" || pairedContactId == null) {
                 return { data: { username: null as string | null } };
             }
             return unwrapApiResult(
@@ -254,14 +174,20 @@ function ComposeScreenBody({
                 }),
             );
         },
-        pairedContactId == null ? "partner:none" : `partner:${pairedContactId}`,
+        partner.mode === "fixed"
+            ? `partner:fixed:${fixedPartner?.contactId ?? "none"}`
+            : pairedContactId == null
+              ? "partner:none"
+              : `partner:${pairedContactId}`,
     );
     const partnerUsername =
-        pairedContactId == null
-            ? null
-            : partnerUsernameResource.status === "success"
-              ? (partnerUsernameResource.data.username ?? null)
-              : null;
+        partner.mode === "fixed"
+            ? (fixedPartner?.username ?? null)
+            : pairedContactId == null
+              ? null
+              : partnerUsernameResource.status === "success"
+                ? (partnerUsernameResource.data.username ?? null)
+                : null;
 
     const pasteFromClipboard = async () => {
         setPasteHint(null);
@@ -276,7 +202,7 @@ function ComposeScreenBody({
     const selectContact = async (contact: Contact) => {
         setPickerOpen(false);
         setContactId(contact.id);
-        if (contact.id === activeContactId) {
+        if (contacts == null || onActivated == null || contact.id === activeContactId) {
             return;
         }
         const result = await contacts.activateContact(contact.id);
@@ -315,15 +241,21 @@ function ComposeScreenBody({
         );
         if (unwrapped.error !== undefined || unwrapped.data === undefined) {
             telegram.hapticNotification("error");
-            const limitKind = limitKindForCode(unwrapped.error?.code);
+            const code = unwrapped.error?.code;
+            const limitKind = limitKindForCode(code);
             if (limitKind !== null) {
                 onLimit(limitKind, unwrapped.error?.message || null);
                 setPhase({ kind: "idle" });
                 return;
             }
+            if (code === "compose_session_expired" && onSessionExpired !== undefined) {
+                onSessionExpired();
+                setPhase({ kind: "idle" });
+                return;
+            }
             setPhase({
                 kind: "error",
-                message: errorMessageForCode(unwrapped.error?.code ?? "generation_unavailable"),
+                message: errorMessageForCode(code ?? "generation_unavailable"),
             });
             return;
         }
@@ -404,7 +336,7 @@ function ComposeScreenBody({
     };
 
     const sendAndReturn = async (text: string, firmness: Firmness, choiceToken: string) => {
-        if (busyChoice || partnerUsername == null || selected == null) {
+        if (busyChoice || partnerUsername == null || displayLabel == null) {
             return;
         }
         telegram.openTelegramLink(partnerSendUrl(partnerUsername, text));
@@ -456,7 +388,7 @@ function ComposeScreenBody({
                                         }}
                                     />
                                     <div className="variant__actions">
-                                        {partnerUsername != null && selected != null ? (
+                                        {partnerUsername != null && displayLabel != null ? (
                                             <Button
                                                 disabled={
                                                     busyChoice || variant.text.trim().length === 0
@@ -469,7 +401,7 @@ function ComposeScreenBody({
                                                     );
                                                 }}
                                             >
-                                                {ru.composeSend.replace("{label}", selected.label)}
+                                                {ru.composeSend.replace("{label}", displayLabel)}
                                             </Button>
                                         ) : null}
                                         <Button
@@ -541,21 +473,28 @@ function ComposeScreenBody({
                 onChange={setIntent}
             />
 
-            <button
-                type="button"
-                className="contact-chip"
-                onClick={() => {
-                    setPickerOpen(true);
-                }}
-            >
-                {selected !== undefined ? <Avatar name={selected.label} size="sm" /> : null}
-                <span>
-                    {selected !== undefined
-                        ? ru.composeFor.replace("{label}", selected.label)
-                        : ru.pickerNone}
-                </span>
-                <ChevronDownIcon size={18} />
-            </button>
+            {allowContactPicker ? (
+                <button
+                    type="button"
+                    className="contact-chip"
+                    onClick={() => {
+                        setPickerOpen(true);
+                    }}
+                >
+                    {selected !== undefined ? <Avatar name={selected.label} size="sm" /> : null}
+                    <span>
+                        {selected !== undefined
+                            ? ru.composeFor.replace("{label}", selected.label)
+                            : ru.pickerNone}
+                    </span>
+                    <ChevronDownIcon size={18} />
+                </button>
+            ) : displayLabel != null ? (
+                <div className="contact-chip contact-chip--static">
+                    <Avatar name={displayLabel} size="sm" />
+                    <span>{ru.composeFor.replace("{label}", displayLabel)}</span>
+                </div>
+            ) : null}
 
             <TextArea
                 label={ru.composeField}
@@ -600,8 +539,8 @@ function ComposeScreenBody({
 
             <div className="screen-footer">
                 <p className="hint-text">
-                    {selected !== undefined
-                        ? ru.composePrivacyNamed.replace("{name}", selected.label)
+                    {displayLabel != null
+                        ? ru.composePrivacyNamed.replace("{name}", displayLabel)
                         : ru.composePrivacy}
                 </p>
                 <Button
@@ -613,9 +552,21 @@ function ComposeScreenBody({
                 >
                     {ru.composeSubmit}
                 </Button>
+                {showClose ? (
+                    <Button
+                        variant="outline"
+                        size="lg"
+                        block
+                        onClick={() => {
+                            telegram.close();
+                        }}
+                    >
+                        {ru.composeInlineClose}
+                    </Button>
+                ) : null}
             </div>
 
-            {pickerOpen ? (
+            {pickerOpen && allowContactPicker ? (
                 <ContactPicker
                     contacts={contactList}
                     activeContactId={contactId}
@@ -633,5 +584,47 @@ function ComposeScreenBody({
                 />
             ) : null}
         </section>
+    );
+}
+
+export type ComposeScreenProps = {
+    readonly telegram: TelegramAdapter;
+    readonly activeContactId: string | null;
+    readonly onActivated: (contactId: string) => void;
+    readonly onLimit: (kind: LimitKind, message: string | null) => void;
+    readonly onCrisis: (lead: string | null, resources: readonly string[]) => void;
+};
+
+/** Full-app compose (FULL scope via ``tma`` credential). */
+export function ComposeScreen(props: ComposeScreenProps) {
+    const me = useMe();
+    const contacts = useContacts();
+    if (me.status === "loading" || me.status === "error") {
+        return (
+            <section className="screen" aria-labelledby="compose-title">
+                <ScreenHeader title={ru.composeTitle} titleId="compose-title" />
+                <div role="status">
+                    <span className="visually-hidden">{ru.loading}</span>
+                    <Skeleton shape="block" />
+                    <Skeleton shape="line" />
+                </div>
+            </section>
+        );
+    }
+    return (
+        <ComposeEditor
+            telegram={props.telegram}
+            draftMax={me.data.incoming_text_max_chars}
+            initialDraft=""
+            initialContactId={props.activeContactId}
+            partner={{
+                mode: "selectable",
+                contacts,
+                activeContactId: props.activeContactId,
+                onActivated: props.onActivated,
+            }}
+            onLimit={props.onLimit}
+            onCrisis={props.onCrisis}
+        />
     );
 }

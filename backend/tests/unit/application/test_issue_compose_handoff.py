@@ -17,7 +17,6 @@ from svoi_pravila.domain.enums import RelationshipKind
 from svoi_pravila.domain.ids import ContactId, TelegramUserId
 from svoi_pravila.domain.text import ContactLabel
 from tests.fakes.compose_handoffs import FakeComposeHandoffs
-from tests.fakes.rate_limit import FakePseudonymizer
 from tests.unit.application.conftest import AppWorld
 
 
@@ -27,7 +26,6 @@ def _uc(world: AppWorld, handoffs: FakeComposeHandoffs | None = None) -> IssueCo
             uow_factory=world.uow_factory,
             catalog=world.catalog,
             compose_handoffs=handoffs or FakeComposeHandoffs(),
-            pseudonymizer=FakePseudonymizer(),
         )
     )
 
@@ -50,12 +48,10 @@ async def test_issue_compose_handoff_with_and_without_contact(world: AppWorld) -
     _ = contact
     with_label = await uc.execute(IssueComposeHandoffCommand(TelegramUserId(50), "draft two"))
     assert with_label.contact_label == "Лиза"
-    payload = await handoffs.redeem_once(
-        FakePseudonymizer().pseudonymize("compose_handoff", "50"),
-        with_label.token,
-    )
+    payload = await handoffs.redeem_once(with_label.token)
     assert payload.draft == "draft two"
     assert payload.contact_id == contact.id
+    assert payload.user_id == user.id
 
 
 @pytest.mark.unit
@@ -85,9 +81,7 @@ async def test_issue_compose_handoff_stale_active_contact_cleared(world: AppWorl
         await uow.commit()
     result = await uc.execute(IssueComposeHandoffCommand(TelegramUserId(52), "stale"))
     assert result.contact_label is None
-    payload = await handoffs.redeem_once(
-        FakePseudonymizer().pseudonymize("compose_handoff", "52"),
-        result.token,
-    )
+    payload = await handoffs.redeem_once(result.token)
     assert payload.draft == "stale"
     assert payload.contact_id is None
+    assert payload.user_id == user.id

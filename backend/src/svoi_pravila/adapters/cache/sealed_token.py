@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import secrets
+from dataclasses import dataclass
 
 from redis.asyncio import Redis
 
@@ -15,7 +16,22 @@ MIN_ID_LEN = 8
 
 
 class SealedTokenUnavailableError(Exception):
-    """Token missing, malformed, tampered, or bound to a different user."""
+    """Token missing, malformed, tampered, or bound to a different principal."""
+
+
+@dataclass(frozen=True, slots=True)
+class UserBinding:
+    """User-bound AAD (prepared results, rule sources)."""
+
+    pseudonym: str
+
+
+@dataclass(frozen=True, slots=True)
+class BearerBinding:
+    """Bearer AAD: purpose and token id only."""
+
+
+type SealBinding = UserBinding | BearerBinding
 
 
 class SealedTokenCodec:
@@ -51,9 +67,13 @@ class SealedTokenCodec:
         return raw[: self.id_len], raw[self.id_len :]
 
 
-def seal_aad(*, aad_version: str, token_id: bytes, user_pseudonym: str) -> bytes:
-    """Build AAD binding purpose version, token id and user pseudonym."""
-    return f"{aad_version}:{token_id.hex()}:{user_pseudonym}".encode()
+def seal_aad(*, aad_version: str, token_id: bytes, binding: SealBinding) -> bytes:
+    """Build AAD from purpose version, token id, and binding kind."""
+    match binding:
+        case BearerBinding():
+            return f"{aad_version}:{token_id.hex()}".encode()
+        case UserBinding(pseudonym=pseudonym):
+            return f"{aad_version}:{token_id.hex()}:{pseudonym}".encode()
 
 
 def encrypt_plaintext(*, key: bytes, plaintext: bytes, aad: bytes) -> str:
@@ -89,19 +109,19 @@ class SealedValkeyStore:
     def _redis_key(self, token_id: bytes) -> str:
         return f"{self._key_prefix}:{token_id.hex()}"
 
-    async def store(self, user_pseudonym: str, plaintext: bytes) -> str:
-        """Encrypt ``plaintext`` and return the sealed token string."""
+    async def store(self, binding: SealBinding, plaintext: bytes) -> str:
+        """Encrypt ``plaintext`` under ``binding`` and return the sealed token string."""
         token_id, key, token = self._codec.mint()
         aad = seal_aad(
             aad_version=self._aad_version,
             token_id=token_id,
-            user_pseudonym=user_pseudonym,
+            binding=binding,
         )
         stored = encrypt_plaintext(key=key, plaintext=plaintext, aad=aad)
         await self._client.set(self._redis_key(token_id), stored, ex=self._ttl_seconds)
         return token
 
-    async def get(self, user_pseudonym: str, token: str) -> bytes:
+    async def get(self, binding: SealBinding, token: str) -> bytes:
         """Decrypt without deleting; miss/tamper → ``SealedTokenUnavailableError``."""
         try:
             token_id, key = self._codec.parse(token)
@@ -117,13 +137,13 @@ class SealedValkeyStore:
                 aad=seal_aad(
                     aad_version=self._aad_version,
                     token_id=token_id,
-                    user_pseudonym=user_pseudonym,
+                    binding=binding,
                 ),
             )
         except (ValueError, TypeError, DecryptionError) as exc:
             raise SealedTokenUnavailableError from exc
 
-    async def getdel(self, user_pseudonym: str, token: str) -> bytes:
+    async def getdel(self, binding: SealBinding, token: str) -> bytes:
         """Atomically fetch-and-delete ciphertext, then decrypt (single-use)."""
         try:
             token_id, key = self._codec.parse(token)
@@ -139,14 +159,14 @@ class SealedValkeyStore:
                 aad=seal_aad(
                     aad_version=self._aad_version,
                     token_id=token_id,
-                    user_pseudonym=user_pseudonym,
+                    binding=binding,
                 ),
             )
         except (ValueError, TypeError, DecryptionError) as exc:
             raise SealedTokenUnavailableError from exc
 
     async def delete(self, token: str) -> None:
-        """Drop ciphertext by token id (after a successful same-user redeem)."""
+        """Drop ciphertext by token id (after a successful redeem)."""
         try:
             token_id, _key = self._codec.parse(token)
         except (ValueError, TypeError) as exc:

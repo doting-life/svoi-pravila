@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 from tests.fakes.clock import FakeClock
+from tests.fakes.compose_sessions import FakeComposeSessions
 from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
@@ -34,6 +35,7 @@ from svoi_pravila.application.use_cases.get_partner_username import (
     GetPartnerUsername,
     GetPartnerUsernamePorts,
 )
+from svoi_pravila.application.use_cases.get_user_by_id import GetUserById
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.resolve_invite import ResolveInvite, ResolveInviteCommand
 from svoi_pravila.config import Environment
@@ -66,7 +68,9 @@ def _app(world: AppWorld, usernames: FakeTelegramPublicUsername) -> FastAPI:
         rate_limiter=FakeRateLimiter(limit=120),
         pseudonymizer=FakePseudonymizer(),
         get_user_by_telegram_id=GetUserByTelegramId(world.uow_factory),
+        get_user_by_id=GetUserById(world.uow_factory),
         get_onboarding_step=GetOnboardingStep(world.uow_factory, world.catalog),
+        compose_sessions=FakeComposeSessions(),
     )
     decode_bundle = build_miniapp_decode_bundle(world)
     bindings = build_test_miniapp_bindings(

@@ -29,6 +29,7 @@ import { DeleteConfirmScreen } from "./screens/DeleteConfirmScreen";
 import { DeletedScreen } from "./screens/DeletedScreen";
 import { GateScreen } from "./screens/GateScreen";
 import { HomeScreen } from "./screens/HomeScreen";
+import { InlineComposeApp } from "./screens/InlineComposeApp";
 import { InviteScreen } from "./screens/InviteScreen";
 import { LimitScreen } from "./screens/LimitScreen";
 import { OnboardingAgeScreen } from "./screens/OnboardingAgeScreen";
@@ -77,11 +78,6 @@ function MiniappShell({
         const stack: OverlayScreen[] = [];
         if (telegram.startParam?.startsWith("inv_") === true) {
             stack.push({ name: "invite" });
-        } else if (
-            typeof window !== "undefined" &&
-            new URLSearchParams(window.location.search).get("view") === "compose"
-        ) {
-            stack.push({ name: "compose" });
         }
         return createInitialNavigation(stack);
     });
@@ -92,12 +88,6 @@ function MiniappShell({
             return false;
         }
         return new URLSearchParams(window.location.search).get("view") === "pending";
-    });
-    const [composeHandoffToken] = useState(() => {
-        if (typeof window === "undefined") {
-            return null;
-        }
-        return new URLSearchParams(window.location.search).get("h");
     });
 
     useEffect(() => {
@@ -352,7 +342,6 @@ function MiniappShell({
                     <ComposeScreen
                         telegram={telegram}
                         activeContactId={activeContactId ?? null}
-                        handoffToken={composeHandoffToken}
                         onActivated={activateLocally}
                         onLimit={(kind, message) => {
                             setNav((current) =>
@@ -480,7 +469,7 @@ export function App({ adapter, fetchImpl }: AppProps) {
 
     useEffect(() => {
         syncTheme(telegram, telegram.colorScheme);
-        if (telegram.isInsideTelegram) {
+        if (telegram.launch.kind !== "outside") {
             telegram.ready();
             telegram.expand();
         }
@@ -494,9 +483,9 @@ export function App({ adapter, fetchImpl }: AppProps) {
         setSessionKey((current) => current + 1);
     };
 
-    return (
-        <div className="app-shell">
-            {!telegram.isInsideTelegram ? (
+    if (telegram.launch.kind === "outside") {
+        return (
+            <div className="app-shell">
                 <Page>
                     <section className="screen screen--centered" aria-labelledby="outside-title">
                         <EmptyState
@@ -506,12 +495,32 @@ export function App({ adapter, fetchImpl }: AppProps) {
                         />
                     </section>
                 </Page>
-            ) : accountDeleted ? (
+            </div>
+        );
+    }
+
+    if (telegram.launch.kind === "inline_compose") {
+        return (
+            <div className="app-shell">
+                <InlineComposeApp
+                    telegram={telegram}
+                    handoffToken={telegram.launch.handoffToken}
+                    {...(fetchImpl !== undefined ? { fetchImpl } : {})}
+                />
+            </div>
+        );
+    }
+
+    const credential = { scheme: "tma" as const, value: telegram.initData };
+
+    return (
+        <div className="app-shell">
+            {accountDeleted ? (
                 <Page>
                     <DeletedScreen telegram={telegram} />
                 </Page>
             ) : fetchImpl !== undefined ? (
-                <ApiProvider key={sessionKey} initData={telegram.initData} fetchImpl={fetchImpl}>
+                <ApiProvider key={sessionKey} credential={credential} fetchImpl={fetchImpl}>
                     <MiniappShell
                         telegram={telegram}
                         onAccountDeleted={onAccountDeleted}
@@ -519,7 +528,7 @@ export function App({ adapter, fetchImpl }: AppProps) {
                     />
                 </ApiProvider>
             ) : (
-                <ApiProvider key={sessionKey} initData={telegram.initData}>
+                <ApiProvider key={sessionKey} credential={credential}>
                     <MiniappShell telegram={telegram} onAccountDeleted={onAccountDeleted} />
                 </ApiProvider>
             )}

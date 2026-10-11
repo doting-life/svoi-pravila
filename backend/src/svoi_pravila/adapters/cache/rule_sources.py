@@ -8,6 +8,7 @@ from svoi_pravila.adapters.cache.sealed_token import (
     SealedTokenCodec,
     SealedTokenUnavailableError,
     SealedValkeyStore,
+    UserBinding,
 )
 from svoi_pravila.application.errors import RuleSourceUnavailable
 from svoi_pravila.application.rule_source import (
@@ -41,12 +42,14 @@ class ValkeyRuleSources:
 
     async def store(self, user_pseudonym: str, payload: RuleSourcePayload) -> str:
         """Encrypt ``payload`` and return a compact opaque redeem token."""
-        return await self._store.store(user_pseudonym, encode_rule_source_payload(payload))
+        return await self._store.store(
+            UserBinding(pseudonym=user_pseudonym), encode_rule_source_payload(payload)
+        )
 
     async def redeem_once(self, user_pseudonym: str, token: str) -> RuleSourcePayload:
         """Delete the Valkey record atomically, then decrypt for the owning user."""
         try:
-            plaintext = await self._store.getdel(user_pseudonym, token)
+            plaintext = await self._store.getdel(UserBinding(pseudonym=user_pseudonym), token)
         except SealedTokenUnavailableError as exc:
             raise RuleSourceUnavailable() from exc
         try:

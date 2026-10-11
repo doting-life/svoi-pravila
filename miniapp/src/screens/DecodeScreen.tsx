@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
-import { useApiClient } from "../api/ApiContext";
+import { useApiClient, useApiCredential } from "../api/ApiContext";
+import { authorizationHeader } from "../api/client";
 import { unwrapApiResult } from "../api/request";
 import { consumeDecodeSse, type DecodeCompletedPayload } from "../api/sse";
 import { Badge } from "../components/Badge";
@@ -99,6 +100,7 @@ export function DecodeScreen({
     fetchImpl = fetch,
 }: DecodeScreenProps) {
     const client = useApiClient();
+    const credential = useApiCredential();
     const contacts = useContacts();
     const [text, setText] = useState("");
     const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -139,7 +141,7 @@ export function DecodeScreen({
             const response = await fetchImpl("/api/v1/decode", {
                 method: "POST",
                 headers: {
-                    Authorization: `tma ${telegram.initData}`,
+                    Authorization: authorizationHeader(credential),
                     "Content-Type": "application/json",
                     Accept: "text/event-stream",
                 },

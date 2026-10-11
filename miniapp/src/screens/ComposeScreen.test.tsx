@@ -90,13 +90,12 @@ function composeFetch(
     return vi.fn(impl);
 }
 
-function renderCompose(
+async function renderCompose(
     fetchImpl: typeof fetch,
     options: {
         readonly activeContactId?: string | null;
         readonly contacts?: readonly Contact[];
         readonly activateStatus?: number;
-        readonly handoffToken?: string | null;
         readonly partnerUsername?: string | null;
     } = {},
 ) {
@@ -113,9 +112,6 @@ function renderCompose(
         if (url.includes("/partner-username")) {
             return Promise.resolve(jsonResponse({ username: options.partnerUsername ?? null }));
         }
-        if (url.includes("/compose/handoff/redeem")) {
-            return fetchImpl(input, init);
-        }
         if (url.endsWith("/activate")) {
             const status = options.activateStatus ?? 204;
             if (status === 204) {
@@ -127,25 +123,29 @@ function renderCompose(
         }
         return fetchImpl(input, init);
     };
-    const client = createApiClient({ initData: telegram.initData, fetch: withContacts });
+    const client = createApiClient({
+        credential: { scheme: "tma", value: telegram.initData },
+        fetch: withContacts,
+    });
     const handlers = {
         onLimit: vi.fn(),
         onCrisis: vi.fn(),
         onActivated: vi.fn(),
     };
     render(
-        <ApiProvider initData={telegram.initData} client={client}>
+        <ApiProvider credential={{ scheme: "tma", value: telegram.initData }} client={client}>
             <ComposeScreen
                 telegram={telegram}
                 activeContactId={
                     options.activeContactId === undefined ? "c1" : options.activeContactId
                 }
-                handoffToken={options.handoffToken}
                 {...handlers}
             />
         </ApiProvider>,
     );
-    return { telegram, fetchImpl: withContacts, ...handlers };
+    const result = { telegram, fetchImpl: withContacts, ...handlers };
+    await screen.findByRole("button", { name: ru.composeSubmit });
+    return result;
 }
 
 function isComposePost(input: RequestInfo | URL): boolean {
@@ -157,20 +157,21 @@ function isChoicePost(input: RequestInfo | URL): boolean {
     return requestUrl(input).includes("/api/v1/compose/choice");
 }
 
-function submitDraft(text: string): void {
-    fireEvent.change(screen.getByRole("textbox"), { target: { value: text } });
+async function submitDraft(text: string): Promise<void> {
+    const box = await screen.findByRole("textbox");
+    fireEvent.change(box, { target: { value: text } });
     fireEvent.click(screen.getByRole("button", { name: ru.composeSubmit }));
 }
 
 describe("ComposeScreen", () => {
     it("submits draft with intent and contact, shows editable variants and applied rules", async () => {
         const fetchImpl = composeFetch(() => jsonResponse(okVariants));
-        renderCompose(fetchImpl);
+        await renderCompose(fetchImpl);
         expect(
             await screen.findByText(ru.composeFor.replace("{label}", "Аня")),
         ).toBeInTheDocument();
         fireEvent.click(screen.getByRole("radio", { name: ru.composeIntents.decline }));
-        submitDraft("не могу прийти");
+        await submitDraft("не могу прийти");
         expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
         expect(screen.getByDisplayValue("ровный вариант")).toBeInTheDocument();
         expect(screen.getByDisplayValue("твёрдый вариант")).toBeInTheDocument();
@@ -202,9 +203,9 @@ describe("ComposeScreen", () => {
                 choice_token: "c_none",
             }),
         );
-        renderCompose(fetchImpl, { activeContactId: null });
+        await renderCompose(fetchImpl, { activeContactId: null });
         expect(await screen.findByText(ru.pickerNone)).toBeInTheDocument();
-        submitDraft("черновик без контакта");
+        await submitDraft("черновик без контакта");
         expect(await screen.findByDisplayValue("без правил")).toBeInTheDocument();
         const call = fetchImpl.mock.calls.find(([req]) => isComposePost(req));
         const body = (await requestJson(call?.[0] as RequestInfo, call?.[1])) as {
@@ -214,7 +215,7 @@ describe("ComposeScreen", () => {
     });
 
     it("picks none contact from the picker", async () => {
-        renderCompose(mockFetch([]));
+        await renderCompose(mockFetch([]));
         fireEvent.click(await screen.findByText(ru.composeFor.replace("{label}", "Аня")));
         const dialog = await screen.findByRole("dialog");
         fireEvent.click(within(dialog).getByRole("button", { name: ru.pickerNone }));
@@ -223,7 +224,7 @@ describe("ComposeScreen", () => {
     });
 
     it("activates another contact from the picker", async () => {
-        const { onActivated } = renderCompose(mockFetch([]), {
+        const { onActivated } = await renderCompose(mockFetch([]), {
             contacts: [anya, borya],
         });
         fireEvent.click(await screen.findByText(ru.composeFor.replace("{label}", "Аня")));
@@ -238,7 +239,7 @@ describe("ComposeScreen", () => {
     });
 
     it("skips activate when the already-active contact is chosen", async () => {
-        const { onActivated, telegram } = renderCompose(mockFetch([]));
+        const { onActivated, telegram } = await renderCompose(mockFetch([]));
         fireEvent.click(await screen.findByText(ru.composeFor.replace("{label}", "Аня")));
         const dialog = await screen.findByRole("dialog");
         fireEvent.click(within(dialog).getByRole("button", { name: /Аня/ }));
@@ -250,7 +251,7 @@ describe("ComposeScreen", () => {
     });
 
     it("reports activate failure with haptic error", async () => {
-        const { onActivated, telegram } = renderCompose(mockFetch([]), {
+        const { onActivated, telegram } = await renderCompose(mockFetch([]), {
             contacts: [anya, borya],
             activateStatus: 404,
         });
@@ -265,8 +266,8 @@ describe("ComposeScreen", () => {
 
     it("copies text only without choice or close", async () => {
         const fetchImpl = composeFetch(() => jsonResponse(okVariants));
-        const { telegram } = renderCompose(fetchImpl);
-        submitDraft("черновик");
+        const { telegram } = await renderCompose(fetchImpl);
+        await submitDraft("черновик");
         expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
         const cards = screen.getAllByRole("article");
         const gentle = cards[0];
@@ -284,9 +285,9 @@ describe("ComposeScreen", () => {
 
     it("skips paste hint when copy fails", async () => {
         const fetchImpl = composeFetch(() => jsonResponse(okVariants));
-        const { telegram } = renderCompose(fetchImpl);
+        const { telegram } = await renderCompose(fetchImpl);
         vi.mocked(telegram.copyText).mockResolvedValue(false);
-        submitDraft("черновик");
+        await submitDraft("черновик");
         expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
         const cards = screen.getAllByRole("article");
         fireEvent.click(
@@ -305,9 +306,9 @@ describe("ComposeScreen", () => {
             }
             return jsonResponse(okVariants);
         });
-        const { telegram } = renderCompose(fetchImpl);
+        const { telegram } = await renderCompose(fetchImpl);
         fireEvent.click(screen.getByRole("radio", { name: ru.composeIntents.set_boundary }));
-        submitDraft("граница");
+        await submitDraft("граница");
         expect(await screen.findByDisplayValue("твёрдый вариант")).toBeInTheDocument();
         const cards = screen.getAllByRole("article");
         const firm = cards[2];
@@ -334,8 +335,8 @@ describe("ComposeScreen", () => {
             }
             return jsonResponse(okVariants);
         });
-        const { telegram } = renderCompose(fetchImpl);
-        submitDraft("смягчить это");
+        const { telegram } = await renderCompose(fetchImpl);
+        await submitDraft("смягчить это");
         expect(await screen.findByDisplayValue("ровный вариант")).toBeInTheDocument();
         const cards = screen.getAllByRole("article");
         const balanced = cards[1];
@@ -360,8 +361,8 @@ describe("ComposeScreen", () => {
             }
             return jsonResponse(okVariants);
         });
-        const { telegram } = renderCompose(fetchImpl);
-        submitDraft("черновик");
+        const { telegram } = await renderCompose(fetchImpl);
+        await submitDraft("черновик");
         expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
         fireEvent.click(
             within(screen.getAllByRole("article")[0] as HTMLElement).getByRole("button", {
@@ -376,9 +377,9 @@ describe("ComposeScreen", () => {
 
     it("does not call choice when copy-and-return copy fails", async () => {
         const fetchImpl = composeFetch(() => jsonResponse(okVariants));
-        const { telegram } = renderCompose(fetchImpl);
+        const { telegram } = await renderCompose(fetchImpl);
         vi.mocked(telegram.copyText).mockResolvedValue(false);
-        submitDraft("черновик");
+        await submitDraft("черновик");
         expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
         fireEvent.click(
             within(screen.getAllByRole("article")[0] as HTMLElement).getByRole("button", {
@@ -400,8 +401,8 @@ describe("ComposeScreen", () => {
                 applied_rules: [],
             }),
         );
-        const { onCrisis } = renderCompose(fetchImpl);
-        submitDraft("кризисный текст");
+        const { onCrisis } = await renderCompose(fetchImpl);
+        await submitDraft("кризисный текст");
         await waitFor(() => {
             expect(onCrisis).toHaveBeenCalledWith(null, []);
         });
@@ -415,8 +416,8 @@ describe("ComposeScreen", () => {
                 applied_rules: [],
             }),
         );
-        renderCompose(fetchImpl);
-        submitDraft("манипуляция");
+        await renderCompose(fetchImpl);
+        await submitDraft("манипуляция");
         expect(await screen.findByText(ru.composeRefused)).toBeInTheDocument();
     });
 
@@ -431,8 +432,8 @@ describe("ComposeScreen", () => {
                 429,
             ),
         );
-        const first = renderCompose(fetchImpl);
-        submitDraft("текст для лимита");
+        const first = await renderCompose(fetchImpl);
+        await submitDraft("текст для лимита");
         await waitFor(() => {
             expect(first.onLimit).toHaveBeenCalledWith("quota", "quota");
         });
@@ -448,15 +449,15 @@ describe("ComposeScreen", () => {
                 503,
             ),
         );
-        const second = renderCompose(budgetFetch);
-        submitDraft("бюджет");
+        const second = await renderCompose(budgetFetch);
+        await submitDraft("бюджет");
         await waitFor(() => {
             expect(second.onLimit).toHaveBeenCalledWith("budget", "budget");
         });
     });
 
     it("maps catalog error codes and empty draft", async () => {
-        renderCompose(mockFetch([]));
+        await renderCompose(mockFetch([]));
         fireEvent.click(screen.getByRole("button", { name: ru.composeSubmit }));
         expect(await screen.findByText(ru.composeErrorShort)).toBeInTheDocument();
 
@@ -473,8 +474,8 @@ describe("ComposeScreen", () => {
             const fetchImpl = composeFetch(() =>
                 jsonResponse({ code: item.code, message: item.code }, 422),
             );
-            renderCompose(fetchImpl);
-            submitDraft("достаточно длинный черновик");
+            await renderCompose(fetchImpl);
+            await submitDraft("достаточно длинный черновик");
             expect(await screen.findByText(item.message)).toBeInTheDocument();
         }
     });
@@ -484,7 +485,7 @@ describe("ComposeScreen", () => {
             configurable: true,
             value: { readText: vi.fn(() => Promise.resolve("из буфера")) },
         });
-        renderCompose(mockFetch([]));
+        await renderCompose(mockFetch([]));
         fireEvent.click(screen.getByRole("button", { name: ru.composePaste }));
         await waitFor(() => {
             expect(screen.getByRole("textbox")).toHaveValue("из буфера");
@@ -496,7 +497,7 @@ describe("ComposeScreen", () => {
                 readText: vi.fn(() => Promise.reject(new Error("denied"))),
             },
         });
-        renderCompose(mockFetch([]));
+        await renderCompose(mockFetch([]));
         fireEvent.click(screen.getByRole("button", { name: ru.composePaste }));
         expect(await screen.findByText(ru.composePasteFailed)).toBeInTheDocument();
     });
@@ -509,33 +510,11 @@ describe("ComposeScreen", () => {
                     resolveCompose = resolve;
                 }),
         );
-        renderCompose(fetchImpl);
-        submitDraft("ждём");
+        await renderCompose(fetchImpl);
+        await submitDraft("ждём");
         expect(await screen.findByText(ru.loading)).toBeInTheDocument();
         resolveCompose?.(jsonResponse(okVariants));
         expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
-    });
-
-    it("prefills draft from handoff token and ignores miss silently", async () => {
-        const fetchImpl = vi.fn((input: RequestInfo | URL) => {
-            if (requestUrl(input).includes("/compose/handoff/redeem")) {
-                return Promise.resolve(jsonResponse({ draft: "из inline", contact_id: "c1" }));
-            }
-            return Promise.resolve(jsonResponse({ code: "not_found", message: "x" }, 404));
-        });
-        renderCompose(fetchImpl, { handoffToken: "h_token" });
-        expect(await screen.findByDisplayValue("из inline")).toBeInTheDocument();
-
-        cleanup();
-        const miss = vi.fn((input: RequestInfo | URL) => {
-            if (requestUrl(input).includes("/compose/handoff/redeem")) {
-                return Promise.resolve(jsonResponse({ draft: "", contact_id: null }));
-            }
-            return Promise.resolve(jsonResponse({ code: "not_found", message: "x" }, 404));
-        });
-        renderCompose(miss, { handoffToken: "h_gone" });
-        expect(await screen.findByRole("button", { name: ru.composeSubmit })).toBeInTheDocument();
-        expect(screen.getByRole("textbox")).toHaveValue("");
     });
 
     it("shows send button with username and opens edited text link", async () => {
@@ -546,14 +525,14 @@ describe("ComposeScreen", () => {
             }
             return jsonResponse(okVariants);
         });
-        const { telegram } = renderCompose(fetchImpl, {
+        const { telegram } = await renderCompose(fetchImpl, {
             contacts: [pairedAnya],
             partnerUsername: "anya_tg",
         });
         expect(
             await screen.findByText(ru.composeFor.replace("{label}", "Аня")),
         ).toBeInTheDocument();
-        submitDraft("черновик");
+        await submitDraft("черновик");
         expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
         const sendLabel = ru.composeSend.replace("{label}", "Аня");
         const card = screen.getAllByRole("article")[0] as HTMLElement;
@@ -575,8 +554,8 @@ describe("ComposeScreen", () => {
     it("hides send button when partner has no username", async () => {
         const pairedAnya: Contact = { ...anya, paired: true, pair_id: "p1" };
         const fetchImpl = composeFetch(() => jsonResponse(okVariants));
-        renderCompose(fetchImpl, { contacts: [pairedAnya], partnerUsername: null });
-        submitDraft("черновик");
+        await renderCompose(fetchImpl, { contacts: [pairedAnya], partnerUsername: null });
+        await submitDraft("черновик");
         expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
         expect(
             screen.queryByRole("button", { name: ru.composeSend.replace("{label}", "Аня") }),

@@ -243,7 +243,15 @@ class ComposeChoiceTokenInvalid(ApplicationError):
 
 
 class ComposeHandoffUnavailable(ApplicationError):
-    """Compose handoff token is missing, expired, reused, tampered, or bound to another user."""
+    """Compose handoff token is missing, expired, reused, or tampered."""
+
+
+class ComposeSessionUnavailable(ApplicationError):
+    """Compose session token is missing, expired, or tampered."""
+
+
+class RateLimited(ApplicationError):
+    """Caller exceeded the configured rate limit."""
 
 
 class InvalidGenerationOutput(ApplicationError):

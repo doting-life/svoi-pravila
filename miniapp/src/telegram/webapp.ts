@@ -12,11 +12,17 @@ export type TelegramBackButtonControls = {
 
 export type InlineQueryChatType = "users" | "bots" | "groups" | "channels";
 
+/** How the mini-app was opened (ADR-0013 amendment 1). */
+export type Launch =
+    | { readonly kind: "outside" }
+    | { readonly kind: "identified" }
+    | { readonly kind: "inline_compose"; readonly handoffToken: string };
+
 export type TelegramAdapter = {
     readonly initData: string;
     readonly startParam: string | null;
     readonly colorScheme: ColorScheme;
-    readonly isInsideTelegram: boolean;
+    readonly launch: Launch;
     readonly BackButton: TelegramBackButtonControls;
     ready: () => void;
     expand: () => void;
@@ -36,7 +42,34 @@ function readWebApp(): TelegramWebApp | undefined {
 }
 
 function readColorScheme(webApp: TelegramWebApp | undefined): ColorScheme {
-    return webApp?.colorScheme === "dark" ? "dark" : "light";
+    if (webApp !== undefined && webApp.colorScheme === "dark") {
+        return "dark";
+    }
+    return "light";
+}
+
+function readSearchParams(): URLSearchParams {
+    // jsdom / Node test harnesses can leave `location` unset; DOM typings always define it.
+    const loc = globalThis.location as Location | undefined;
+    if (loc === undefined) {
+        return new URLSearchParams();
+    }
+    return new URLSearchParams(loc.search);
+}
+
+function detectLaunch(webApp: TelegramWebApp | undefined, initData: string): Launch {
+    if (initData.length > 0) {
+        return { kind: "identified" };
+    }
+    const params = readSearchParams();
+    const view = params.get("view");
+    const handoff = params.get("h");
+    const platform = webApp?.platform;
+    const insideTelegram = platform !== undefined && platform !== "unknown";
+    if (insideTelegram && view === "compose" && handoff !== null && handoff.length > 0) {
+        return { kind: "inline_compose", handoffToken: handoff };
+    }
+    return { kind: "outside" };
 }
 
 let readyCalled = false;
@@ -75,7 +108,8 @@ function createBackButtonControls(webApp: TelegramWebApp | undefined): TelegramB
 export function createTelegramAdapter(): TelegramAdapter {
     const webApp = readWebApp();
     const initData = webApp?.initData ?? "";
-    const isInsideTelegram = initData.length > 0;
+    const launch = detectLaunch(webApp, initData);
+    const insideTelegram = launch.kind !== "outside";
     const rawStart = webApp?.initDataUnsafe?.start_param;
     const startParam = typeof rawStart === "string" && rawStart.length > 0 ? rawStart : null;
 
@@ -85,17 +119,17 @@ export function createTelegramAdapter(): TelegramAdapter {
         get colorScheme() {
             return readColorScheme(readWebApp());
         },
-        isInsideTelegram,
+        launch,
         BackButton: createBackButtonControls(webApp),
         ready: () => {
-            if (!isInsideTelegram || readyCalled) {
+            if (!insideTelegram || readyCalled) {
                 return;
             }
             webApp?.ready();
             readyCalled = true;
         },
         expand: () => {
-            if (!isInsideTelegram || expandCalled) {
+            if (!insideTelegram || expandCalled) {
                 return;
             }
             webApp?.expand();
@@ -163,13 +197,13 @@ export function createTelegramAdapter(): TelegramAdapter {
             if (current === undefined || typeof current.onEvent !== "function") {
                 return () => undefined;
             }
-            const handler = () => {
+            function themeChangedHandler(): void {
                 callback(readColorScheme(readWebApp()));
-            };
-            current.onEvent("themeChanged", handler);
+            }
+            current.onEvent("themeChanged", themeChangedHandler);
             return () => {
                 const latest = readWebApp();
-                latest?.offEvent?.("themeChanged", handler);
+                latest?.offEvent?.("themeChanged", themeChangedHandler);
             };
         },
     };

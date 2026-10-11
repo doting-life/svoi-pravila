@@ -51,7 +51,10 @@ function renderDecode(
         }
         return fetchImpl(input, init);
     };
-    const client = createApiClient({ initData: telegram.initData, fetch: withContacts });
+    const client = createApiClient({
+        credential: { scheme: "tma", value: telegram.initData },
+        fetch: withContacts,
+    });
     const handlers = {
         onEditSuggestion: vi.fn(),
         onLimit: vi.fn(),
@@ -60,7 +63,7 @@ function renderDecode(
         onActivated: vi.fn(),
     };
     render(
-        <ApiProvider initData={telegram.initData} client={client}>
+        <ApiProvider credential={{ scheme: "tma", value: telegram.initData }} client={client}>
             <DecodeScreen
                 telegram={telegram}
                 displayTimezone="Europe/Moscow"
@@ -196,9 +199,12 @@ describe("DecodeScreen", () => {
             return new Promise<Response>(() => undefined);
         }) as typeof fetch;
         const telegram = fakeAdapter();
-        const client = createApiClient({ initData: telegram.initData, fetch: fetchImpl });
+        const client = createApiClient({
+            credential: { scheme: "tma", value: telegram.initData },
+            fetch: fetchImpl,
+        });
         const view = render(
-            <ApiProvider initData={telegram.initData} client={client}>
+            <ApiProvider credential={{ scheme: "tma", value: telegram.initData }} client={client}>
                 <DecodeScreen
                     telegram={telegram}
                     displayTimezone="Europe/Moscow"

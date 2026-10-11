@@ -8,6 +8,7 @@ from svoi_pravila.adapters.cache.sealed_token import (
     SealedTokenCodec,
     SealedTokenUnavailableError,
     SealedValkeyStore,
+    UserBinding,
 )
 from svoi_pravila.application.errors import PreparedResultUnavailable
 from svoi_pravila.application.ports.prepared_results import PreparedVariant
@@ -40,14 +41,14 @@ class ValkeyPreparedResults:
     async def store(self, user_pseudonym: str, variant: PreparedVariant) -> str:
         """Encrypt ``variant`` under a random key and return a ``p_`` token."""
         plaintext = f"{variant.firmness.value}\n{variant.text}".encode()
-        return await self._store.store(user_pseudonym, plaintext)
+        return await self._store.store(UserBinding(pseudonym=user_pseudonym), plaintext)
 
     async def redeem(self, user_pseudonym: str, token: str) -> PreparedVariant:
         """Decrypt for the owning user; leave the ciphertext until delete/TTL."""
         if not is_prepared_ref(token):
             raise PreparedResultUnavailable()
         try:
-            plaintext = await self._store.get(user_pseudonym, token)
+            plaintext = await self._store.get(UserBinding(pseudonym=user_pseudonym), token)
         except SealedTokenUnavailableError as exc:
             raise PreparedResultUnavailable() from exc
         return _parse_plaintext(plaintext)

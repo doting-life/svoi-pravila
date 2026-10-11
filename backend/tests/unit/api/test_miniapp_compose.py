@@ -11,6 +11,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
 from tests.fakes.clock import FakeClock
+from tests.fakes.compose_sessions import FakeComposeSessions
 from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.ids import FakeIdGenerator
@@ -53,6 +54,7 @@ from svoi_pravila.application.use_cases.compose_generation import (
 )
 from svoi_pravila.application.use_cases.create_contact import CreateContact, CreateContactCommand
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
+from svoi_pravila.application.use_cases.get_user_by_id import GetUserById
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.config import Environment
 from svoi_pravila.domain.enums import (
@@ -96,7 +98,9 @@ def _build_compose_app(
         rate_limiter=FakeRateLimiter(limit=120),
         pseudonymizer=FakePseudonymizer(),
         get_user_by_telegram_id=GetUserByTelegramId(world.uow_factory),
+        get_user_by_id=GetUserById(world.uow_factory),
         get_onboarding_step=GetOnboardingStep(world.uow_factory, world.catalog),
+        compose_sessions=FakeComposeSessions(),
     )
     gen = generator or FakeTextGenerator()
     gate = quota_gate or FakeQuotaGate(limit=300)
@@ -378,7 +382,9 @@ async def test_compose_maps_defensive_bound_errors(mini_world: AppWorld) -> None
         rate_limiter=FakeRateLimiter(limit=120),
         pseudonymizer=FakePseudonymizer(),
         get_user_by_telegram_id=GetUserByTelegramId(mini_world.uow_factory),
+        get_user_by_id=GetUserById(mini_world.uow_factory),
         get_onboarding_step=GetOnboardingStep(mini_world.uow_factory, mini_world.catalog),
+        compose_sessions=FakeComposeSessions(),
     )
     decode_bundle = build_miniapp_decode_bundle(mini_world)
     headers = _auth_header(_TG)
@@ -433,7 +439,9 @@ async def test_compose_choice_maps_record_invalid_ref(mini_world: AppWorld) -> N
         rate_limiter=FakeRateLimiter(limit=120),
         pseudonymizer=FakePseudonymizer(),
         get_user_by_telegram_id=GetUserByTelegramId(mini_world.uow_factory),
+        get_user_by_id=GetUserById(mini_world.uow_factory),
         get_onboarding_step=GetOnboardingStep(mini_world.uow_factory, mini_world.catalog),
+        compose_sessions=FakeComposeSessions(),
     )
     decode_bundle = build_miniapp_decode_bundle(mini_world)
     from tests.fakes.compose_choice_tokens import FakeComposeChoiceTokens
@@ -465,70 +473,3 @@ async def test_compose_choice_maps_record_invalid_ref(mini_world: AppWorld) -> N
         )
     assert response.status_code == 422
     assert response.json()["code"] == MiniappErrorCode.VALIDATION_ERROR
-
-
-@pytest.mark.unit
-async def test_compose_handoff_redeem_once_and_empty_on_miss(mini_world: AppWorld) -> None:
-    from uuid import UUID
-
-    from tests.fakes.compose_handoffs import FakeComposeHandoffs
-
-    from svoi_pravila.application.compose_handoff import ComposeHandoffPayload
-    from svoi_pravila.domain.ids import ContactId
-
-    await mini_world.ensure_granted_user(_TG)
-    handoffs = FakeComposeHandoffs()
-    contact_id = ContactId(UUID("01900000-0000-7000-8000-000000000099"))
-    pseudo = FakePseudonymizer().pseudonymize("compose_handoff", str(_TG))
-    token = await handoffs.store(
-        pseudo,
-        ComposeHandoffPayload(draft="handoff-draft", contact_id=contact_id),
-    )
-    auth = MiniappDeps(
-        init_data_verifier=AiogramInitDataVerifier(
-            SecretStr(_TOKEN), mini_world.clock, max_age_seconds=3600
-        ),
-        rate_limiter=FakeRateLimiter(limit=120),
-        pseudonymizer=FakePseudonymizer(),
-        get_user_by_telegram_id=GetUserByTelegramId(mini_world.uow_factory),
-        get_onboarding_step=GetOnboardingStep(mini_world.uow_factory, mini_world.catalog),
-    )
-    decode_bundle = build_miniapp_decode_bundle(mini_world)
-    bindings = build_test_miniapp_bindings(
-        auth=auth,
-        world=mini_world,
-        decode_bundle=decode_bundle,
-        reuse=make_inline_reuse(mini_world.clock),
-        overrides={"compose_handoffs": handoffs},
-    )
-    app = create_app(
-        CheckReadiness(probes=(), timeout_seconds=1.0),
-        Environment.TEST,
-        AppLifecycleHooks(extra_routers=(build_miniapp_router(bindings),)),
-    )
-    headers = _auth_header(_TG)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        first = await client.post(
-            "/api/v1/compose/handoff/redeem",
-            headers=headers,
-            json={"token": token},
-        )
-        assert first.status_code == 200
-        assert first.json() == {
-            "draft": "handoff-draft",
-            "contact_id": str(contact_id),
-        }
-        second = await client.post(
-            "/api/v1/compose/handoff/redeem",
-            headers=headers,
-            json={"token": token},
-        )
-        assert second.status_code == 200
-        assert second.json() == {"draft": "", "contact_id": None}
-        missing = await client.post(
-            "/api/v1/compose/handoff/redeem",
-            headers=headers,
-            json={"token": "h_" + ("a" * 64)},
-        )
-        assert missing.status_code == 200
-        assert missing.json() == {"draft": "", "contact_id": None}

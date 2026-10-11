@@ -240,6 +240,11 @@ export const ru = {
     composeErrorShort: "Слишком короткий текст.",
     composeErrorLong: "Слишком длинный текст.",
     composeAgain: "Другой черновик",
+    composeInlineHandoffExpired: "Черновик устарел. Наберите текст в inline-режиме ещё раз.",
+    composeInlineSessionExpired: "Черновик устарел. Наберите текст в inline-режиме ещё раз.",
+    composeInlineOnboarding: "Сначала завершите настройку в приложении.",
+    composeInlineConsent: "Нужно подтвердить согласия.",
+    composeInlineClose: "Закрыть",
 
     limitTitleQuota: "На сегодня разборы закончились",
     limitTitleBudget: "Сервис временно перегружен",

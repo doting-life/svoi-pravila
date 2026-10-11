@@ -131,7 +131,6 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
                 uow_factory=uow,
                 catalog=catalog,
                 compose_handoffs=handoffs,
-                pseudonymizer=pseudonymizer,
             )
         ),
         prepared_results=chosen.prepared or FakePreparedResults(),

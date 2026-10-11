@@ -14,7 +14,7 @@ from svoi_pravila.application.compose_handoff import (
     is_compose_handoff_ref,
 )
 from svoi_pravila.application.errors import ComposeHandoffUnavailable
-from svoi_pravila.domain.ids import ContactId
+from svoi_pravila.domain.ids import ContactId, UserId
 
 
 class _MemoryRedis:
@@ -48,38 +48,33 @@ def _store() -> tuple[ValkeyComposeHandoffs, _MemoryRedis]:
 @pytest.mark.unit
 async def test_compose_handoff_roundtrip_single_use() -> None:
     store, memory = _store()
-    owner = "ab" * 32
+    user_id = UserId(UUID("01900000-0000-7000-8000-000000000010"))
     contact = ContactId(UUID("01900000-0000-7000-8000-000000000001"))
     token = await store.store(
-        owner,
-        ComposeHandoffPayload(draft="черновик", contact_id=contact),
+        ComposeHandoffPayload(user_id=user_id, draft="черновик", contact_id=contact),
     )
     assert is_compose_handoff_ref(token)
     assert "черновик" not in "".join(memory.data.values())
-    redeemed = await store.redeem_once(owner, token)
+    redeemed = await store.redeem_once(token)
     assert redeemed.draft == "черновик"
     assert redeemed.contact_id == contact
+    assert redeemed.user_id == user_id
     with pytest.raises(ComposeHandoffUnavailable):
-        await store.redeem_once(owner, token)
+        await store.redeem_once(token)
 
 
 @pytest.mark.unit
-async def test_compose_handoff_wrong_user_consumes_and_empty_contact() -> None:
+async def test_compose_handoff_tamper_and_empty_contact() -> None:
     store, _memory = _store()
-    owner = "ab" * 32
+    user_id = UserId(UUID("01900000-0000-7000-8000-000000000011"))
     token = await store.store(
-        owner,
-        ComposeHandoffPayload(draft="x", contact_id=None),
+        ComposeHandoffPayload(user_id=user_id, draft="x", contact_id=None),
     )
-    # GETDEL runs before AAD check, so a wrong-user redeem consumes the ciphertext.
     with pytest.raises(ComposeHandoffUnavailable):
-        await store.redeem_once("cd" * 32, token)
-    with pytest.raises(ComposeHandoffUnavailable):
-        await store.redeem_once(owner, token)
+        await store.redeem_once(token[:-1] + ("A" if token[-1] != "A" else "B"))
     empty_contact = await store.store(
-        owner,
-        ComposeHandoffPayload(draft="solo", contact_id=None),
+        ComposeHandoffPayload(user_id=user_id, draft="solo", contact_id=None),
     )
-    redeemed = await store.redeem_once(owner, empty_contact)
+    redeemed = await store.redeem_once(empty_contact)
     assert redeemed.contact_id is None
     assert redeemed.draft == "solo"

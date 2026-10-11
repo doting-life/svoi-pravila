@@ -7,7 +7,7 @@ export function fakeAdapter(overrides: Partial<TelegramAdapter> = {}): TelegramA
         initData: "query_id=1",
         startParam: null,
         colorScheme: "light",
-        isInsideTelegram: true,
+        launch: { kind: "identified" },
         BackButton: {
             show: vi.fn(),
             hide: vi.fn(),

@@ -30,6 +30,7 @@ from svoi_pravila.application.use_cases.accept_age_confirmation import (
 )
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
+from svoi_pravila.application.use_cases.get_user_by_id import GetUserById
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent, GrantConsentCommand
 from svoi_pravila.config import Environment, Settings
@@ -40,6 +41,7 @@ from svoi_pravila.domain.rule_suggestion import RuleSuggestion
 from svoi_pravila.domain.text import RuleText
 from tests.factories import make_settings
 from tests.fakes.clock import FakeClock
+from tests.fakes.compose_sessions import FakeComposeSessions
 from tests.fakes.export_download import FakeExportDownloadStore
 from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
@@ -122,7 +124,9 @@ def _build_app(world: _MiniappWorld) -> Any:
         ),
         pseudonymizer=HmacPseudonymizer(settings.pseudonym_pepper_bytes()),
         get_user_by_telegram_id=GetUserByTelegramId(uow_factory),
+        get_user_by_id=GetUserById(uow_factory),
         get_onboarding_step=GetOnboardingStep(uow_factory, catalog),
+        compose_sessions=FakeComposeSessions(),
     )
     pepper = HmacPseudonymizer(settings.pseudonym_pepper_bytes())
     reuse = make_inline_reuse(clock)

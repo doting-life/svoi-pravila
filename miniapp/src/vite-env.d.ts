@@ -32,6 +32,8 @@ interface TelegramWebApp {
     readonly initData: string;
     readonly initDataUnsafe?: TelegramWebAppInitDataUnsafe;
     readonly colorScheme: "light" | "dark";
+    /** Telegram client platform; ``unknown`` when opened outside Telegram. */
+    readonly platform?: string;
     readonly BackButton?: TelegramBackButton;
     readonly HapticFeedback?: TelegramHapticFeedback;
     ready: () => void;

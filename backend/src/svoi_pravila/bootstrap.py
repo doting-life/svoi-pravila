@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from svoi_pravila.adapters.cache.client import close_client, create_client
 from svoi_pravila.adapters.cache.compose_choice_tokens import ValkeyComposeChoiceTokens
 from svoi_pravila.adapters.cache.compose_handoffs import ValkeyComposeHandoffs
+from svoi_pravila.adapters.cache.compose_sessions import ValkeyComposeSessions
 from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
 from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
 from svoi_pravila.adapters.cache.export_download import ValkeyExportDownloadStore
@@ -72,6 +73,7 @@ from svoi_pravila.api.telegram_webhook import (
     TelegramWebhookBindings,
     build_telegram_webhook_router,
 )
+from svoi_pravila.application.compose_session import COMPOSE_SESSION_TTL_SECONDS
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.ports.inline_result_reuse import InlineResultReuse
 from svoi_pravila.application.ports.pair_notifier import PairNotifier
@@ -100,6 +102,7 @@ from svoi_pravila.application.use_cases.get_partner_username import (
     GetPartnerUsername,
     GetPartnerUsernamePorts,
 )
+from svoi_pravila.application.use_cases.get_user_by_id import GetUserById
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose, InlineComposePorts
@@ -117,6 +120,10 @@ from svoi_pravila.application.use_cases.propose_rule import ProposeRule
 from svoi_pravila.application.use_cases.record_inline_choice import (
     RecordInlineChoice,
     RecordInlineChoicePorts,
+)
+from svoi_pravila.application.use_cases.redeem_compose_handoff import (
+    RedeemComposeHandoff,
+    RedeemComposeHandoffPorts,
 )
 from svoi_pravila.application.use_cases.reject_pending_rule import RejectPendingRule
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
@@ -167,6 +174,7 @@ class _DecodeWire:
     suggest_rule_from_decode: SuggestRuleFromDecode
     prepared_results: ValkeyPreparedResults
     compose_handoffs: ValkeyComposeHandoffs
+    compose_sessions: ValkeyComposeSessions
     rule_sources: ValkeyRuleSources
 
 
@@ -205,21 +213,24 @@ def _build_miniapp_mount(
         raise RuntimeError(msg)
     export_my_data = ExportMyData(ports.uow_factory, ports.clock)
     export_downloads = ValkeyExportDownloadStore(ports.valkey)
+    miniapp_rate_limiter = ValkeyRateLimiter(
+        ports.valkey,
+        limit=settings.miniapp_requests_per_minute,
+        window_seconds=60,
+        key_prefix="miniapp:rl",
+    )
     auth = MiniappDeps(
         init_data_verifier=AiogramInitDataVerifier(
             bot_token,
             ports.clock,
             max_age_seconds=settings.miniapp_initdata_max_age_seconds,
         ),
-        rate_limiter=ValkeyRateLimiter(
-            ports.valkey,
-            limit=settings.miniapp_requests_per_minute,
-            window_seconds=60,
-            key_prefix="miniapp:rl",
-        ),
+        rate_limiter=miniapp_rate_limiter,
         pseudonymizer=ports.pseudonymizer,
         get_user_by_telegram_id=GetUserByTelegramId(ports.uow_factory),
+        get_user_by_id=GetUserById(ports.uow_factory),
         get_onboarding_step=GetOnboardingStep(ports.uow_factory, ports.catalog),
+        compose_sessions=wire.decode.compose_sessions,
     )
     return build_miniapp_router(
         MiniappRouterBindings(
@@ -301,7 +312,18 @@ def _build_miniapp_mount(
             compose_generation=wire.compose_generation,
             record_choice=wire.record_choice,
             compose_choice_tokens=ValkeyComposeChoiceTokens(ports.valkey, ports.pseudonymizer),
-            compose_handoffs=wire.decode.compose_handoffs,
+            redeem_compose_handoff=RedeemComposeHandoff(
+                RedeemComposeHandoffPorts(
+                    uow_factory=ports.uow_factory,
+                    catalog=ports.catalog,
+                    compose_handoffs=wire.decode.compose_handoffs,
+                    compose_sessions=wire.decode.compose_sessions,
+                    usernames=AiogramTelegramPublicUsername(wire.bot),
+                    rate_limiter=miniapp_rate_limiter,
+                    pseudonymizer=ports.pseudonymizer,
+                    clock=ports.clock,
+                )
+            ),
             get_partner_username=GetPartnerUsername(
                 GetPartnerUsernamePorts(
                     uow_factory=ports.uow_factory,
@@ -528,6 +550,10 @@ def create_application(settings: Settings) -> FastAPI:
             valkey,
             ttl_seconds=settings.prepared_result_ttl_seconds,
         ),
+        compose_sessions=ValkeyComposeSessions(
+            valkey,
+            ttl_seconds=COMPOSE_SESSION_TTL_SECONDS,
+        ),
         rule_sources=rule_sources,
     )
     compose_generation, record_choice = _wire_compose_stack(
@@ -601,7 +627,6 @@ def create_application(settings: Settings) -> FastAPI:
                     uow_factory=uow_factory,
                     catalog=catalog,
                     compose_handoffs=decode_wire.compose_handoffs,
-                    pseudonymizer=pseudonymizer,
                 )
             ),
             prepared_results=decode_wire.prepared_results,

@@ -282,19 +282,34 @@ class ComposeChoiceResponse(BaseModel):
     outcome: Literal["recorded"]
 
 
-class ComposeHandoffRedeemRequest(BaseModel):
-    """POST /compose/handoff/redeem — one-time opaque handoff reference."""
+class ComposeInlinePartner(BaseModel):
+    """Partner bound into an inline compose session (label is C2; never logged)."""
 
-    model_config = ConfigDict(extra="forbid")
+    contact_id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    username: str | None = None
+
+
+class ComposeInlineSession(BaseModel):
+    """Reusable compose session token and absolute expiry."""
 
     token: str = Field(min_length=1, max_length=200)
+    expires_at: datetime
 
 
-class ComposeHandoffRedeemResponse(BaseModel):
-    """Redeemed draft + contact; empty when missing/expired/reused (no error)."""
+class ComposeInlineLimits(BaseModel):
+    """Length limits for the inline compose editor."""
 
-    draft: str = ""
-    contact_id: str | None = None
+    incoming_text_max_chars: int = Field(ge=1)
+
+
+class ComposeInlineContextResponse(BaseModel):
+    """POST /compose/handoff/redeem — draft, partner, limits, and compose session."""
+
+    draft: str
+    partner: ComposeInlinePartner | None
+    limits: ComposeInlineLimits
+    session: ComposeInlineSession
 
 
 class PartnerUsernameResponse(BaseModel):

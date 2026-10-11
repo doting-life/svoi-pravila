@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { API_BASE_PATH, createApiClient, errorFromResponse } from "./client";
+import { API_BASE_PATH, createApiClient, errorFromResponse, redeemComposeHandoff } from "./client";
+import * as request from "./request";
 
 const meBody = {
     onboarding_step: "done",
@@ -33,7 +34,7 @@ describe("createApiClient", () => {
         });
 
         const client = createApiClient({
-            initData: "init-data-token",
+            credential: { scheme: "tma", value: "init-data-token" },
             fetch: fetchMock,
         });
 
@@ -59,7 +60,7 @@ describe("createApiClient", () => {
         );
         vi.stubGlobal("fetch", fetchMock);
 
-        const client = createApiClient({ initData: "init-data-token" });
+        const client = createApiClient({ credential: { scheme: "tma", value: "init-data-token" } });
         const result = await client.GET("/api/v1/me");
         expect(result.error).toBeUndefined();
         expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -82,5 +83,87 @@ describe("createApiClient", () => {
         expect(errorFromResponse(500).kind).toBe("server");
         expect(errorFromResponse(undefined).kind).toBe("network");
         expect(errorFromResponse(418).kind).toBe("unknown");
+    });
+
+    it("redeems handoff via typed client with handoff Authorization", async () => {
+        const body = {
+            draft: "d",
+            partner: null,
+            limits: { incoming_text_max_chars: 4000 },
+            session: { token: "cs_" + "a".repeat(64), expires_at: "2026-06-01T12:15:00Z" },
+        };
+        const fetchMock: typeof fetch = vi.fn((input: RequestInfo | URL) => {
+            const request = input instanceof Request ? input : new Request(String(input));
+            expect(new URL(request.url).pathname).toBe("/api/v1/compose/handoff/redeem");
+            expect(request.method).toBe("POST");
+            expect(request.headers.get("Authorization")).toBe("handoff h_tok");
+            return Promise.resolve(
+                new Response(JSON.stringify(body), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                }),
+            );
+        });
+        const result = await redeemComposeHandoff("h_tok", fetchMock);
+        expect("data" in result).toBe(true);
+        if ("data" in result) {
+            expect(result.data.draft).toBe("d");
+        }
+    });
+
+    it("maps redeem HTTP errors without casting body", async () => {
+        const fetchMock: typeof fetch = vi.fn(() =>
+            Promise.resolve(
+                new Response(JSON.stringify({ code: "handoff_expired", message: "gone" }), {
+                    status: 401,
+                    headers: { "Content-Type": "application/json" },
+                }),
+            ),
+        );
+        const result = await redeemComposeHandoff("h_bad", fetchMock);
+        expect("error" in result).toBe(true);
+        if ("error" in result) {
+            expect(result.error.code).toBe("handoff_expired");
+        }
+    });
+
+    it("attaches compose Authorization from credential", async () => {
+        const fetchMock: typeof fetch = vi.fn((input: RequestInfo | URL) => {
+            const request = input instanceof Request ? input : new Request(String(input));
+            expect(request.headers.get("Authorization")).toBe("compose cs_token");
+            return Promise.resolve(
+                new Response(JSON.stringify(meBody), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                }),
+            );
+        });
+        const client = createApiClient({
+            credential: { scheme: "compose", value: "cs_token" },
+            fetch: fetchMock,
+        });
+        await client.GET("/api/v1/me");
+        expect(fetchMock).toHaveBeenCalled();
+    });
+
+    it("maps redeem ok response without data to a network error", async () => {
+        const spy = vi.spyOn(request, "unwrapApiResult").mockReturnValueOnce({});
+        const fetchMock: typeof fetch = vi.fn(() =>
+            Promise.resolve(
+                new Response(JSON.stringify({}), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                }),
+            ),
+        );
+        try {
+            const result = await redeemComposeHandoff("h_empty", fetchMock);
+            expect("error" in result).toBe(true);
+            if ("error" in result) {
+                expect(result.error.kind).toBe("network");
+            }
+        } finally {
+            spy.mockRestore();
+        }
     });
 });

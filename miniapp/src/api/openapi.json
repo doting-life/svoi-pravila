@@ -128,27 +128,68 @@
         "title": "ComposeChoiceResponse",
         "type": "object"
       },
-      "ComposeHandoffRedeemRequest": {
-        "additionalProperties": false,
-        "description": "POST /compose/handoff/redeem — one-time opaque handoff reference.",
+      "ComposeInlineContextResponse": {
+        "description": "POST /compose/handoff/redeem — draft, partner, limits, and compose session.",
         "properties": {
-          "token": {
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Token",
+          "draft": {
+            "title": "Draft",
             "type": "string"
+          },
+          "limits": {
+            "$ref": "#/components/schemas/ComposeInlineLimits"
+          },
+          "partner": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComposeInlinePartner"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "session": {
+            "$ref": "#/components/schemas/ComposeInlineSession"
           }
         },
         "required": [
-          "token"
+          "draft",
+          "partner",
+          "limits",
+          "session"
         ],
-        "title": "ComposeHandoffRedeemRequest",
+        "title": "ComposeInlineContextResponse",
         "type": "object"
       },
-      "ComposeHandoffRedeemResponse": {
-        "description": "Redeemed draft + contact; empty when missing/expired/reused (no error).",
+      "ComposeInlineLimits": {
+        "description": "Length limits for the inline compose editor.",
+        "properties": {
+          "incoming_text_max_chars": {
+            "minimum": 1.0,
+            "title": "Incoming Text Max Chars",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "incoming_text_max_chars"
+        ],
+        "title": "ComposeInlineLimits",
+        "type": "object"
+      },
+      "ComposeInlinePartner": {
+        "description": "Partner bound into an inline compose session (label is C2; never logged).",
         "properties": {
           "contact_id": {
+            "minLength": 1,
+            "title": "Contact Id",
+            "type": "string"
+          },
+          "label": {
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "username": {
             "anyOf": [
               {
                 "type": "string"
@@ -157,15 +198,36 @@
                 "type": "null"
               }
             ],
-            "title": "Contact Id"
+            "title": "Username"
+          }
+        },
+        "required": [
+          "contact_id",
+          "label"
+        ],
+        "title": "ComposeInlinePartner",
+        "type": "object"
+      },
+      "ComposeInlineSession": {
+        "description": "Reusable compose session token and absolute expiry.",
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
           },
-          "draft": {
-            "default": "",
-            "title": "Draft",
+          "token": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Token",
             "type": "string"
           }
         },
-        "title": "ComposeHandoffRedeemResponse",
+        "required": [
+          "token",
+          "expires_at"
+        ],
+        "title": "ComposeInlineSession",
         "type": "object"
       },
       "ComposeRequest": {
@@ -766,6 +828,9 @@
           "rate_limited",
           "onboarding_required",
           "consent_required",
+          "scope_insufficient",
+          "handoff_expired",
+          "compose_session_expired",
           "not_found",
           "contact_limit",
           "open_rule_limit",
@@ -1503,22 +1568,12 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ComposeHandoffRedeemRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ComposeHandoffRedeemResponse"
+                  "$ref": "#/components/schemas/ComposeInlineContextResponse"
                 }
               }
             },

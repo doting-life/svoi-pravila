@@ -76,7 +76,7 @@ const specialDoc = { kind: "special_category", version: "1", text: "DOC_SPECIAL"
 
 describe("App", () => {
     it("renders the open-from-Telegram message outside Telegram", () => {
-        render(<App adapter={fakeAdapter({ isInsideTelegram: false, initData: "" })} />);
+        render(<App adapter={fakeAdapter({ launch: { kind: "outside" }, initData: "" })} />);
         expect(screen.getByRole("heading", { name: ru.openFromTelegram })).toBeInTheDocument();
     });
 
@@ -1352,17 +1352,74 @@ describe("App", () => {
         window.history.replaceState(null, "", "/");
     });
 
-    it("opens compose from ?view=compose with Telegram hash on boot", async () => {
+    it("does not open compose from ?view=compose&h= under identified launch", async () => {
         const telegramHash = "#tgWebAppData=stub&tgWebAppVersion=8.0";
-        window.history.replaceState(null, "", `/?view=compose${telegramHash}`);
+        window.history.replaceState(null, "", `/?view=compose&h=h_token${telegramHash}`);
         const fetchImpl = mockFetch([
             { path: "/api/v1/me", body: meDone },
             { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
         ]);
-        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        expect(await screen.findByRole("heading", { name: ru.composeTitle })).toBeInTheDocument();
+        render(
+            <App adapter={fakeAdapter({ launch: { kind: "identified" } })} fetchImpl={fetchImpl} />,
+        );
+        expect(await screen.findByRole("heading", { name: ru.homeTitle })).toBeInTheDocument();
+        expect(screen.queryByRole("heading", { name: ru.composeTitle })).not.toBeInTheDocument();
         expect(window.location.hash).toBe(telegramHash);
         window.history.replaceState(null, "", "/");
+    });
+
+    it("shows outside screen for empty initData without inline handoff even on ios platform", () => {
+        window.history.replaceState(null, "", "/");
+        render(<App adapter={fakeAdapter({ launch: { kind: "outside" }, initData: "" })} />);
+        expect(screen.getByRole("heading", { name: ru.openFromTelegram })).toBeInTheDocument();
+    });
+
+    it("opens inline compose launch with handoff redeem", async () => {
+        const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(String(input), init);
+            if (request.url.includes("/compose/handoff/redeem")) {
+                return Promise.resolve(
+                    jsonResponse({
+                        draft: "из inline",
+                        partner: {
+                            contact_id: "c1",
+                            label: "Аня",
+                            username: "anya",
+                        },
+                        limits: { incoming_text_max_chars: 4000 },
+                        session: {
+                            token: "cs_" + "a".repeat(64),
+                            expires_at: "2026-06-01T12:15:00Z",
+                        },
+                    }),
+                );
+            }
+            return Promise.resolve(jsonResponse({ code: "not_found", message: "x" }, 404));
+        });
+        render(
+            <App
+                adapter={fakeAdapter({
+                    launch: { kind: "inline_compose", handoffToken: "h_token" },
+                    initData: "",
+                })}
+                fetchImpl={fetchImpl}
+            />,
+        );
+        expect(await screen.findByDisplayValue("из inline")).toBeInTheDocument();
+        expect(fetchImpl).toHaveBeenCalled();
+        const call = vi.mocked(fetchImpl).mock.calls[0];
+        expect(call).toBeDefined();
+        if (call === undefined) {
+            return;
+        }
+        const [input, init] = call as [RequestInfo | URL, RequestInit?];
+        const auth =
+            input instanceof Request
+                ? input.headers.get("Authorization")
+                : new Headers(init?.headers).get("Authorization");
+        expect(auth).toBe("handoff h_token");
     });
 
     it("opens compose from the home entry", async () => {
@@ -1374,7 +1431,8 @@ describe("App", () => {
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
         fireEvent.click(await screen.findByRole("button", { name: new RegExp(ru.homeComposeCta) }));
-        expect(await screen.findByRole("heading", { name: ru.composeTitle })).toBeInTheDocument();
+        await screen.findByText(ru.composeLead);
+        expect(screen.getByRole("heading", { name: ru.composeTitle })).toBeInTheDocument();
     });
 
     it("creates a contact successfully", async () => {

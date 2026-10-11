@@ -12,6 +12,7 @@ from redis.asyncio import Redis
 from svoi_pravila.adapters.cache.rule_sources import ValkeyRuleSources
 from svoi_pravila.adapters.cache.sealed_token import (
     SealedTokenCodec,
+    UserBinding,
     encrypt_plaintext,
     seal_aad,
 )
@@ -126,7 +127,11 @@ async def test_rule_source_corrupt_ciphertext_and_payload() -> None:
     codec = SealedTokenCodec(id_len=RULE_SOURCE_ID_LEN, prefix="")
     token_id, aes_key = codec.parse(token2)
     redis_key = f"tg:rule_source:{token_id.hex()}"
-    aad = seal_aad(aad_version="rule_source:v1", token_id=token_id, user_pseudonym=owner)
+    aad = seal_aad(
+        aad_version="rule_source:v1",
+        token_id=token_id,
+        binding=UserBinding(pseudonym=owner),
+    )
     memory.data[redis_key] = encrypt_plaintext(key=aes_key, plaintext=b"not-a-uuid\ntext", aad=aad)
     with pytest.raises(RuleSourceUnavailable):
         await store.redeem_once(owner, token2)

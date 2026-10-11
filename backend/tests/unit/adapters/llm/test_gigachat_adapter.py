@@ -57,10 +57,12 @@ from svoi_pravila.adapters.llm.gigachat.validation import (
     MAX_TOKENS_SOFTEN,
     MAX_VARIANT_CHARS,
     MAX_VARIANTS,
+    SlotValidation,
     VariantValidation,
     last_reason,
     rules_text,
     untrusted_texts,
+    validate_firmness_slots,
     validate_variants,
 )
 from svoi_pravila.application.errors import (
@@ -913,6 +915,85 @@ async def test_response_error_and_close_client() -> None:
 
     await close_gigachat_client(cast(Any, _C()))
     assert closed == ["yes"]
+
+
+@pytest.mark.unit
+def test_validate_variants_index_count_and_duplicate_firmness() -> None:
+    usage = TokenUsage()
+    with pytest.raises(InvalidGenerationOutput) as bad_idx:
+        validate_variants(
+            [VariantOut(text="only", firmness=FirmnessOut.GENTLE)],
+            VariantValidation(
+                applied=[3],
+                safety_raw="ok",
+                rule_count=1,
+                min_variants=1,
+                max_variants=1,
+                require_all_firmness=False,
+                usage=usage,
+                attempts=1,
+                model="m",
+                prompt_version="p",
+                operation="decode",
+            ),
+        )
+    assert InvalidOutputReason.RULE_INDEX_OUT_OF_RANGE in bad_idx.value.reasons
+    with pytest.raises(InvalidGenerationOutput) as count:
+        validate_variants(
+            [VariantOut(text="only", firmness=FirmnessOut.GENTLE)],
+            VariantValidation(
+                applied=[],
+                safety_raw="ok",
+                rule_count=0,
+                min_variants=2,
+                max_variants=3,
+                require_all_firmness=False,
+                usage=usage,
+                attempts=1,
+                model="m",
+                prompt_version="p",
+                operation="decode",
+            ),
+        )
+    assert InvalidOutputReason.VARIANT_COUNT in count.value.reasons
+    with pytest.raises(InvalidGenerationOutput) as dup:
+        validate_variants(
+            [
+                VariantOut(text="a", firmness=FirmnessOut.GENTLE),
+                VariantOut(text="b", firmness=FirmnessOut.GENTLE),
+            ],
+            VariantValidation(
+                applied=[],
+                safety_raw="ok",
+                rule_count=0,
+                min_variants=2,
+                max_variants=2,
+                require_all_firmness=False,
+                usage=usage,
+                attempts=1,
+                model="m",
+                prompt_version="p",
+                operation="decode",
+            ),
+        )
+    assert InvalidOutputReason.FIRMNESS_SET in dup.value.reasons
+    with pytest.raises(InvalidGenerationOutput) as bad_safety:
+        validate_firmness_slots(
+            "g",
+            "b",
+            "f",
+            SlotValidation(
+                applied=[],
+                safety_raw="not-a-verdict",
+                rule_count=0,
+                usage=usage,
+                attempts=1,
+                model="m",
+                prompt_version="p",
+                operation="soften",
+            ),
+        )
+    assert InvalidOutputReason.SCHEMA_VIOLATION in bad_safety.value.reasons
 
 
 @pytest.mark.unit

@@ -24,6 +24,8 @@ from svoi_pravila.api.miniapp.schemas import (
     AcceptSuggestionResponse,
     ComposeChoiceRequest,
     ComposeChoiceResponse,
+    ComposeHandoffRedeemRequest,
+    ComposeHandoffRedeemResponse,
     ComposeRequest,
     ComposeResponse,
     ConfirmTrueRequest,
@@ -39,6 +41,7 @@ from svoi_pravila.api.miniapp.schemas import (
     InviteResolveResponse,
     InviteResponse,
     MeResponse,
+    PartnerUsernameResponse,
     PendingRuleItem,
     PendingRuleListResponse,
     PrivacyTextsResponse,
@@ -50,8 +53,10 @@ from svoi_pravila.api.miniapp.schemas import (
     SuggestionItem,
     SuggestionListResponse,
 )
+from svoi_pravila.application.compose_handoff import ComposeHandoffPayload
 from svoi_pravila.application.errors import (
     ComposeChoiceTokenInvalid,
+    ComposeHandoffUnavailable,
     GenerationRefusedByProvider,
     GenerationUnavailable,
     IncomingTextTooLong,
@@ -63,6 +68,7 @@ from svoi_pravila.application.errors import (
 from svoi_pravila.application.ports.bot_username import BotUsername
 from svoi_pravila.application.ports.clock import Clock
 from svoi_pravila.application.ports.compose_choice_tokens import ComposeChoiceTokens
+from svoi_pravila.application.ports.compose_handoffs import ComposeHandoffs
 from svoi_pravila.application.ports.generation import HelpSayIntent, SafetyVerdict
 from svoi_pravila.application.ports.prepared_results import PreparedResults
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
@@ -105,6 +111,10 @@ from svoi_pravila.application.use_cases.get_consent_document import (
     GetConsentDocumentQuery,
 )
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStepQuery
+from svoi_pravila.application.use_cases.get_partner_username import (
+    GetPartnerUsername,
+    GetPartnerUsernameCommand,
+)
 from svoi_pravila.application.use_cases.grant_consent import (
     GrantConsent,
     GrantConsentCommand,
@@ -243,6 +253,8 @@ class MiniappRouterBindings:
     compose_generation: ComposeGeneration
     record_choice: RecordInlineChoice
     compose_choice_tokens: ComposeChoiceTokens
+    compose_handoffs: ComposeHandoffs
+    get_partner_username: GetPartnerUsername
     prepared_results: PreparedResults
     rule_sources: RuleSources
     pseudonymizer: Pseudonymizer
@@ -450,6 +462,31 @@ def _register_compose(
         except (ComposeChoiceTokenInvalid, InvalidInlineResultRef) as exc:
             raise MiniappHttpError(MiniappErrorCode.VALIDATION_ERROR, 422) from exc
         return ComposeChoiceResponse(outcome="recorded")
+
+    @router.post(
+        "/compose/handoff/redeem",
+        operation_id="redeemComposeHandoff",
+        response_model=ComposeHandoffRedeemResponse,
+        responses=_ERROR_RESPONSES,
+    )
+    async def redeem_compose_handoff(
+        body: ComposeHandoffRedeemRequest,
+        response: Response,
+        actor: actor_dep,
+    ) -> ComposeHandoffRedeemResponse:
+        no_store(response)
+        empty = ComposeHandoffRedeemResponse(draft="", contact_id=None)
+        pseudonym = bindings.pseudonymizer.pseudonymize(
+            "compose_handoff", str(actor.telegram_user_id.value)
+        )
+        try:
+            payload: ComposeHandoffPayload = await bindings.compose_handoffs.redeem_once(
+                pseudonym, body.token
+            )
+        except ComposeHandoffUnavailable:
+            return empty
+        contact_id = None if payload.contact_id is None else str(payload.contact_id)
+        return ComposeHandoffRedeemResponse(draft=payload.draft, contact_id=contact_id)
 
 
 def _register_decode(
@@ -877,6 +914,24 @@ def _register_contacts(
             status_code=status.HTTP_204_NO_CONTENT,
             headers={"Cache-Control": "no-store"},
         )
+
+    @router.get(
+        "/contacts/{contact_id}/partner-username",
+        operation_id="getPartnerUsername",
+        response_model=PartnerUsernameResponse,
+        responses=_ERROR_RESPONSES,
+    )
+    async def get_partner_username(
+        contact_id: str,
+        response: Response,
+        actor: actor_dep,
+    ) -> PartnerUsernameResponse:
+        no_store(response)
+        cid = ContactId(parse_path_uuid(contact_id))
+        result = await bindings.get_partner_username.execute(
+            GetPartnerUsernameCommand(actor_id=actor.id, contact_id=cid)
+        )
+        return PartnerUsernameResponse(username=result.username)
 
     @router.post(
         "/contacts/{contact_id}/invite",

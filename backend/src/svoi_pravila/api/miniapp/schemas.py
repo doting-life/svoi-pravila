@@ -282,6 +282,27 @@ class ComposeChoiceResponse(BaseModel):
     outcome: Literal["recorded"]
 
 
+class ComposeHandoffRedeemRequest(BaseModel):
+    """POST /compose/handoff/redeem — one-time opaque handoff reference."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=1, max_length=200)
+
+
+class ComposeHandoffRedeemResponse(BaseModel):
+    """Redeemed draft + contact; empty when missing/expired/reused (no error)."""
+
+    draft: str = ""
+    contact_id: str | None = None
+
+
+class PartnerUsernameResponse(BaseModel):
+    """GET /contacts/{id}/partner-username — request-scoped; never stored."""
+
+    username: str | None = None
+
+
 class SuggestFromDecodeRequest(BaseModel):
     """POST /suggestions/from-decode — one-shot rule-source token."""
 

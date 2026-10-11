@@ -242,6 +242,10 @@ class ComposeChoiceTokenInvalid(ApplicationError):
     """Compose choice token is unknown, reused, expired, or not bound to this user."""
 
 
+class ComposeHandoffUnavailable(ApplicationError):
+    """Compose handoff token is missing, expired, reused, tampered, or bound to another user."""
+
+
 class InvalidGenerationOutput(ApplicationError):
     """Model output failed schema or content validation."""
 

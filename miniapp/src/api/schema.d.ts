@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/compose/handoff/redeem": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Redeem Compose Handoff */
+        post: operations["redeemComposeHandoff"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/consents/{kind}/document": {
         parameters: {
             query?: never;
@@ -135,6 +152,23 @@ export interface paths {
         put?: never;
         /** Leave Pair */
         post: operations["leavePair"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/contacts/{contact_id}/partner-username": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Partner Username */
+        get: operations["getPartnerUsername"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -583,6 +617,27 @@ export interface components {
             outcome: "recorded";
         };
         /**
+         * ComposeHandoffRedeemRequest
+         * @description POST /compose/handoff/redeem — one-time opaque handoff reference.
+         */
+        ComposeHandoffRedeemRequest: {
+            /** Token */
+            token: string;
+        };
+        /**
+         * ComposeHandoffRedeemResponse
+         * @description Redeemed draft + contact; empty when missing/expired/reused (no error).
+         */
+        ComposeHandoffRedeemResponse: {
+            /** Contact Id */
+            contact_id?: string | null;
+            /**
+             * Draft
+             * @default
+             */
+            draft: string;
+        };
+        /**
          * ComposeRequest
          * @description POST /compose — draft to soften or help-say (same text bound as inline).
          */
@@ -855,6 +910,14 @@ export interface components {
          * @enum {string}
          */
         MiniappErrorCode: "unauthorized" | "init_data_invalid" | "init_data_expired" | "rate_limited" | "onboarding_required" | "consent_required" | "not_found" | "contact_limit" | "open_rule_limit" | "service_unavailable" | "contact_already_linked" | "contact_not_paired" | "invalid_transition" | "validation_error" | "body_too_large" | "text_too_short" | "text_too_long" | "rule_text_empty" | "rule_text_too_long" | "rule_text_invalid_chars" | "quota_exceeded" | "quota_exhausted" | "service_budget_exhausted" | "generation_unavailable" | "invalid_output" | "busy" | "invite_invalid" | "invite_expired" | "invite_own" | "consent_stale";
+        /**
+         * PartnerUsernameResponse
+         * @description GET /contacts/{id}/partner-username — request-scoped; never stored.
+         */
+        PartnerUsernameResponse: {
+            /** Username */
+            username?: string | null;
+        };
         /**
          * PendingRuleItem
          * @description One rule awaiting the current user's decision.
@@ -1166,6 +1229,104 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ComposeChoiceResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
+                };
+            };
+        };
+    };
+    redeemComposeHandoff: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ComposeHandoffRedeemRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposeHandoffRedeemResponse"];
                 };
             };
             /** @description Unauthorized */
@@ -1843,6 +2004,102 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
+                };
+            };
+        };
+    };
+    getPartnerUsername: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                contact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PartnerUsernameResponse"];
+                };
             };
             /** @description Unauthorized */
             401: {

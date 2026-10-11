@@ -56,6 +56,7 @@ class InlineComposeResult:
     safety: SafetyVerdict
     applied_rules: tuple[AppliedRuleView, ...] = ()
     reuse: InlineReuseStatus | None = None
+    rule_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +113,7 @@ class InlineCompose:
                 safety=SafetyVerdict.CRISIS,
                 applied_rules=(),
                 reuse=None,
+                rule_count=len(rules),
             )
         reuse_material = InlineReuseKeyMaterial(
             user_key=user_key,
@@ -138,6 +140,7 @@ class InlineCompose:
             safety=resolution.value.safety,
             applied_rules=resolution.value.applied_rules,
             reuse=resolution.status,
+            rule_count=len(rules),
         )
 
     async def _load_context(

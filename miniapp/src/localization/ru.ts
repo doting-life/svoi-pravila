@@ -229,6 +229,7 @@ export const ru = {
     },
     composeCopy: "Копировать",
     composeCopyAndReturn: "Скопировать и вернуться в чат",
+    composeSend: "Отправить {label}",
     composePasteHint: "Вставьте скопированный текст в чат вручную.",
     composeAppliedRule: "Учтено правило: «{text}»",
     composeRefused: "С этим лучше не помогать. Могу помочь сказать это уважительно.",

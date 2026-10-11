@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from svoi_pravila.adapters.cache.client import close_client, create_client
 from svoi_pravila.adapters.cache.compose_choice_tokens import ValkeyComposeChoiceTokens
+from svoi_pravila.adapters.cache.compose_handoffs import ValkeyComposeHandoffs
 from svoi_pravila.adapters.cache.concurrency import ValkeyConcurrencyGuard
 from svoi_pravila.adapters.cache.deduplicator import ValkeyUpdateDeduplicator
 from svoi_pravila.adapters.cache.export_download import ValkeyExportDownloadStore
@@ -38,6 +39,7 @@ from svoi_pravila.adapters.channels.telegram.localization import (
     load_ru_strings,
 )
 from svoi_pravila.adapters.channels.telegram.pair_notifier import TelegramPairNotifier
+from svoi_pravila.adapters.channels.telegram.public_username import AiogramTelegramPublicUsername
 from svoi_pravila.adapters.channels.telegram.sleeper import AsyncioSleeper
 from svoi_pravila.adapters.consents import PackageConsentCatalog
 from svoi_pravila.adapters.llm.gigachat.adapter import GigaChatTextGenerator
@@ -94,9 +96,17 @@ from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggest
 from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocument
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
+from svoi_pravila.application.use_cases.get_partner_username import (
+    GetPartnerUsername,
+    GetPartnerUsernamePorts,
+)
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose, InlineComposePorts
+from svoi_pravila.application.use_cases.issue_compose_handoff import (
+    IssueComposeHandoff,
+    IssueComposeHandoffPorts,
+)
 from svoi_pravila.application.use_cases.issue_export_download import IssueExportDownload
 from svoi_pravila.application.use_cases.leave_pair import LeavePair
 from svoi_pravila.application.use_cases.list_contacts import ListContacts
@@ -156,6 +166,7 @@ class _DecodeWire:
     decode_incoming: DecodeIncoming
     suggest_rule_from_decode: SuggestRuleFromDecode
     prepared_results: ValkeyPreparedResults
+    compose_handoffs: ValkeyComposeHandoffs
     rule_sources: ValkeyRuleSources
 
 
@@ -290,6 +301,14 @@ def _build_miniapp_mount(
             compose_generation=wire.compose_generation,
             record_choice=wire.record_choice,
             compose_choice_tokens=ValkeyComposeChoiceTokens(ports.valkey, ports.pseudonymizer),
+            compose_handoffs=wire.decode.compose_handoffs,
+            get_partner_username=GetPartnerUsername(
+                GetPartnerUsernamePorts(
+                    uow_factory=ports.uow_factory,
+                    catalog=ports.catalog,
+                    usernames=AiogramTelegramPublicUsername(wire.bot),
+                )
+            ),
             prepared_results=wire.decode.prepared_results,
             rule_sources=wire.decode.rule_sources,
             pseudonymizer=ports.pseudonymizer,
@@ -505,6 +524,10 @@ def create_application(settings: Settings) -> FastAPI:
             )
         ),
         prepared_results=prepared_results,
+        compose_handoffs=ValkeyComposeHandoffs(
+            valkey,
+            ttl_seconds=settings.prepared_result_ttl_seconds,
+        ),
         rule_sources=rule_sources,
     )
     compose_generation, record_choice = _wire_compose_stack(
@@ -573,6 +596,14 @@ def create_application(settings: Settings) -> FastAPI:
             get_user_by_telegram_id=GetUserByTelegramId(uow_factory),
             inline_compose=inline_compose,
             record_inline_choice=record_choice,
+            issue_compose_handoff=IssueComposeHandoff(
+                IssueComposeHandoffPorts(
+                    uow_factory=uow_factory,
+                    catalog=catalog,
+                    compose_handoffs=decode_wire.compose_handoffs,
+                    pseudonymizer=pseudonymizer,
+                )
+            ),
             prepared_results=decode_wire.prepared_results,
             inline_queries=InlineQueryCoordinator(
                 AsyncioSleeper(),

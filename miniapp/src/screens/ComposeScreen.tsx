@@ -1,6 +1,7 @@
 import { useState } from "react";
 
 import { useApiClient } from "../api/ApiContext";
+import type { ApiClient } from "../api/client";
 import { unwrapApiResult } from "../api/request";
 import type { components } from "../api/schema";
 import { Button } from "../components/Button";
@@ -12,6 +13,8 @@ import { Avatar } from "../components/Avatar";
 import { ChevronDownIcon, ClipboardIcon } from "../components/icons";
 import { ScreenHeader } from "../components/ScreenHeader";
 import { Skeleton } from "../components/Skeleton";
+import { partnerSendUrl } from "../compose/partnerSendUrl";
+import { useAsyncResource } from "../hooks/useAsyncResource";
 import { useContacts, type Contact } from "../hooks/useContacts";
 import { useMe } from "../hooks/useMe";
 import { ru } from "../localization/ru";
@@ -42,6 +45,7 @@ const FIRMNESS_ORDER: readonly Firmness[] = ["gentle", "balanced", "firm"];
 export type ComposeScreenProps = {
     readonly telegram: TelegramAdapter;
     readonly activeContactId: string | null;
+    readonly handoffToken?: string | null | undefined;
     readonly onActivated: (contactId: string) => void;
     readonly onLimit: (kind: LimitKind, message: string | null) => void;
     readonly onCrisis: (lead: string | null, resources: readonly string[]) => void;
@@ -101,29 +105,163 @@ function orderedVariants(
     }));
 }
 
-export function ComposeScreen({
+export function ComposeScreen(props: ComposeScreenProps) {
+    const client = useApiClient();
+    const me = useMe();
+    const draftMax =
+        me.status === "success" ? me.data.incoming_text_max_chars : FALLBACK_INCOMING_MAX;
+    const handoffToken = props.handoffToken ?? null;
+    const needsHandoff = handoffToken != null && handoffToken !== "";
+    if (!needsHandoff) {
+        return (
+            <ComposeScreenBody
+                telegram={props.telegram}
+                activeContactId={props.activeContactId}
+                initialContactId={props.activeContactId}
+                initialDraft=""
+                draftMax={draftMax}
+                onActivated={props.onActivated}
+                onLimit={props.onLimit}
+                onCrisis={props.onCrisis}
+            />
+        );
+    }
+    return (
+        <ComposeHandoffGate
+            telegram={props.telegram}
+            activeContactId={props.activeContactId}
+            handoffToken={handoffToken}
+            draftMax={draftMax}
+            onActivated={props.onActivated}
+            onLimit={props.onLimit}
+            onCrisis={props.onCrisis}
+            client={client}
+        />
+    );
+}
+
+function ComposeHandoffGate({
     telegram,
     activeContactId,
+    handoffToken,
+    draftMax,
     onActivated,
     onLimit,
     onCrisis,
-}: ComposeScreenProps) {
+    client,
+}: {
+    readonly telegram: TelegramAdapter;
+    readonly activeContactId: string | null;
+    readonly handoffToken: string;
+    readonly draftMax: number;
+    readonly onActivated: (contactId: string) => void;
+    readonly onLimit: (kind: LimitKind, message: string | null) => void;
+    readonly onCrisis: (lead: string | null, resources: readonly string[]) => void;
+    readonly client: ApiClient;
+}) {
+    const handoff = useAsyncResource(async () => {
+        return unwrapApiResult(
+            await client.POST("/api/v1/compose/handoff/redeem", {
+                body: { token: handoffToken },
+            }),
+        );
+    }, `handoff:${handoffToken}`);
+    if (handoff.status === "loading" || handoff.status === "error") {
+        if (handoff.status === "error") {
+            return (
+                <ComposeScreenBody
+                    key={`miss:${handoffToken}`}
+                    telegram={telegram}
+                    activeContactId={activeContactId}
+                    initialContactId={activeContactId}
+                    initialDraft=""
+                    draftMax={draftMax}
+                    onActivated={onActivated}
+                    onLimit={onLimit}
+                    onCrisis={onCrisis}
+                />
+            );
+        }
+        return (
+            <section className="screen" aria-labelledby="compose-title">
+                <ScreenHeader title={ru.composeTitle} titleId="compose-title" />
+                <div role="status">
+                    <span className="visually-hidden">{ru.loading}</span>
+                    <Skeleton shape="block" />
+                    <Skeleton shape="line" />
+                    <Skeleton shape="line" short />
+                </div>
+            </section>
+        );
+    }
+    return (
+        <ComposeScreenBody
+            key={`ok:${handoffToken}`}
+            telegram={telegram}
+            activeContactId={activeContactId}
+            initialContactId={handoff.data.contact_id ?? activeContactId}
+            initialDraft={sliceCodePoints(handoff.data.draft, draftMax)}
+            draftMax={draftMax}
+            onActivated={onActivated}
+            onLimit={onLimit}
+            onCrisis={onCrisis}
+        />
+    );
+}
+
+type ComposeScreenBodyProps = {
+    readonly telegram: TelegramAdapter;
+    readonly activeContactId: string | null;
+    readonly initialContactId: string | null;
+    readonly initialDraft: string;
+    readonly draftMax: number;
+    readonly onActivated: (contactId: string) => void;
+    readonly onLimit: (kind: LimitKind, message: string | null) => void;
+    readonly onCrisis: (lead: string | null, resources: readonly string[]) => void;
+};
+
+function ComposeScreenBody({
+    telegram,
+    activeContactId,
+    initialContactId,
+    initialDraft,
+    draftMax,
+    onActivated,
+    onLimit,
+    onCrisis,
+}: ComposeScreenBodyProps) {
     const client = useApiClient();
-    const me = useMe();
     const contacts = useContacts();
-    const draftMax =
-        me.status === "success" ? me.data.incoming_text_max_chars : FALLBACK_INCOMING_MAX;
     const [intent, setIntent] = useState<ComposeIntent>("soften");
-    const [contactId, setContactId] = useState<string | null>(activeContactId);
-    const [draft, setDraft] = useState("");
+    const [contactId, setContactId] = useState<string | null>(initialContactId);
+    const [draft, setDraft] = useState(initialDraft);
     const [phase, setPhase] = useState<Phase>({ kind: "idle" });
     const [pasteHint, setPasteHint] = useState<string | null>(null);
     const [copyHint, setCopyHint] = useState<string | null>(null);
     const [pickerOpen, setPickerOpen] = useState(false);
     const [busyChoice, setBusyChoice] = useState(false);
-
     const contactList = contacts.status === "success" ? contacts.data : [];
     const selected = contactList.find((contact) => contact.id === contactId);
+    const pairedContactId = selected != null && selected.paired ? selected.id : null;
+    const partnerUsernameResource = useAsyncResource(
+        async () => {
+            if (pairedContactId == null) {
+                return { data: { username: null as string | null } };
+            }
+            return unwrapApiResult(
+                await client.GET("/api/v1/contacts/{contact_id}/partner-username", {
+                    params: { path: { contact_id: pairedContactId } },
+                }),
+            );
+        },
+        pairedContactId == null ? "partner:none" : `partner:${pairedContactId}`,
+    );
+    const partnerUsername =
+        pairedContactId == null
+            ? null
+            : partnerUsernameResource.status === "success"
+              ? (partnerUsernameResource.data.username ?? null)
+              : null;
 
     const pasteFromClipboard = async () => {
         setPasteHint(null);
@@ -239,15 +377,7 @@ export function ComposeScreen({
         }
     };
 
-    const copyAndReturn = async (text: string, firmness: Firmness, choiceToken: string) => {
-        if (busyChoice) {
-            return;
-        }
-        const ok = await copyText(text);
-        if (!ok) {
-            return;
-        }
-        setCopyHint(ru.composePasteHint);
+    const recordChoiceAndClose = async (firmness: Firmness, choiceToken: string) => {
         setBusyChoice(true);
         const unwrapped = unwrapApiResult(
             await client.POST("/api/v1/compose/choice", {
@@ -259,6 +389,27 @@ export function ComposeScreen({
             telegram.hapticNotification("error");
         }
         telegram.close();
+    };
+
+    const copyAndReturn = async (text: string, firmness: Firmness, choiceToken: string) => {
+        if (busyChoice) {
+            return;
+        }
+        const ok = await copyText(text);
+        if (!ok) {
+            return;
+        }
+        setCopyHint(ru.composePasteHint);
+        await recordChoiceAndClose(firmness, choiceToken);
+    };
+
+    const sendAndReturn = async (text: string, firmness: Firmness, choiceToken: string) => {
+        if (busyChoice || partnerUsername == null || selected == null) {
+            return;
+        }
+        telegram.openTelegramLink(partnerSendUrl(partnerUsername, text));
+        telegram.hapticNotification("success");
+        await recordChoiceAndClose(firmness, choiceToken);
     };
 
     const reset = () => {
@@ -305,7 +456,26 @@ export function ComposeScreen({
                                         }}
                                     />
                                     <div className="variant__actions">
+                                        {partnerUsername != null && selected != null ? (
+                                            <Button
+                                                disabled={
+                                                    busyChoice || variant.text.trim().length === 0
+                                                }
+                                                onClick={() => {
+                                                    void sendAndReturn(
+                                                        variant.text,
+                                                        variant.firmness,
+                                                        phase.choiceToken,
+                                                    );
+                                                }}
+                                            >
+                                                {ru.composeSend.replace("{label}", selected.label)}
+                                            </Button>
+                                        ) : null}
                                         <Button
+                                            variant={
+                                                partnerUsername != null ? "outline" : "primary"
+                                            }
                                             disabled={
                                                 busyChoice || variant.text.trim().length === 0
                                             }

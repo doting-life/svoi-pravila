@@ -17,6 +17,7 @@ from svoi_pravila.application.ports.update_deduplicator import UpdateDeduplicato
 from svoi_pravila.application.ports.welcome_throttle import WelcomeThrottle
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose
+from svoi_pravila.application.use_cases.issue_compose_handoff import IssueComposeHandoff
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoice
 
 
@@ -28,6 +29,7 @@ class TelegramDeps:
     get_user_by_telegram_id: GetUserByTelegramId
     inline_compose: InlineCompose
     record_inline_choice: RecordInlineChoice
+    issue_compose_handoff: IssueComposeHandoff
     prepared_results: PreparedResults
     inline_queries: InlineQueryCoordinator
     welcome_throttle: WelcomeThrottle

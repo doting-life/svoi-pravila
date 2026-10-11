@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from svoi_pravila.domain.text import RULE_TEXT_MAX_CHARS
 
@@ -25,19 +25,51 @@ class SafetyOut(StrEnum):
 
 
 class VariantOut(BaseModel):
+    """Decode-only variant item (array with firmness). Soften/help_say use slots."""
+
     text: str = Field(min_length=1, max_length=1000)
     firmness: FirmnessOut
 
 
 class SoftenOut(BaseModel):
-    variants: list[VariantOut] = Field(max_length=3)
+    """Fixed three-slot soften output when the request carries rules."""
+
+    gentle: str = Field(max_length=1000)
+    balanced: str = Field(max_length=1000)
+    firm: str = Field(max_length=1000)
     applied_rule_indexes: list[int]
     safety: SafetyOut
 
 
+class SoftenOutNoRules(BaseModel):
+    """Soften slots when the request has no rules (indexes omitted from the schema)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    gentle: str = Field(max_length=1000)
+    balanced: str = Field(max_length=1000)
+    firm: str = Field(max_length=1000)
+    safety: SafetyOut
+
+
 class HelpSayOut(BaseModel):
-    variants: list[VariantOut] = Field(max_length=3)
+    """Fixed three-slot help-say output when the request carries rules."""
+
+    gentle: str = Field(max_length=1000)
+    balanced: str = Field(max_length=1000)
+    firm: str = Field(max_length=1000)
     applied_rule_indexes: list[int]
+    safety: SafetyOut
+
+
+class HelpSayOutNoRules(BaseModel):
+    """Help-say slots when the request has no rules (indexes omitted from the schema)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    gentle: str = Field(max_length=1000)
+    balanced: str = Field(max_length=1000)
+    firm: str = Field(max_length=1000)
     safety: SafetyOut
 
 

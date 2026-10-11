@@ -28,7 +28,9 @@ from svoi_pravila.adapters.llm.gigachat.prepared import (
 from svoi_pravila.adapters.llm.gigachat.schemas import (
     DecodeOut,
     HelpSayOut,
+    HelpSayOutNoRules,
     SoftenOut,
+    SoftenOutNoRules,
     SuggestRuleOut,
 )
 from svoi_pravila.adapters.llm.gigachat.structured import StructuredCallParams, structured_call
@@ -37,10 +39,11 @@ from svoi_pravila.adapters.llm.gigachat.validation import (
     MAX_TOKENS_HELP_SAY,
     MAX_TOKENS_SOFTEN,
     MAX_TOKENS_SUGGEST,
-    VariantValidation,
+    SlotValidation,
+    slots_from_soften,
     to_decode_result,
     to_suggest_rule_result,
-    validate_variants,
+    validate_firmness_slots,
 )
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
@@ -160,16 +163,40 @@ class GigaChatTextGenerator:
             prompt_version=prepared.prompt_version,
         )
 
-        def build(parsed: SoftenOut, meta: GenerationMeta) -> SoftenResult:
-            variants, indexes, safety = validate_variants(
-                parsed.variants,
-                VariantValidation(
+        def build_with_rules(parsed: SoftenOut, meta: GenerationMeta) -> SoftenResult:
+            gentle, balanced, firm = slots_from_soften(parsed)
+            variants, indexes, safety = validate_firmness_slots(
+                gentle,
+                balanced,
+                firm,
+                SlotValidation(
                     applied=list(parsed.applied_rule_indexes),
                     safety_raw=parsed.safety.value,
                     rule_count=len(request.rules),
-                    min_variants=2,
-                    max_variants=3,
-                    require_all_firmness=False,
+                    usage=meta.usage,
+                    attempts=meta.attempts,
+                    model=meta.model,
+                    prompt_version=meta.prompt_version,
+                    operation="soften",
+                ),
+            )
+            return SoftenResult(
+                variants=variants,
+                applied_rule_indexes=indexes,
+                safety=safety,
+                meta=meta,
+            )
+
+        def build_no_rules(parsed: SoftenOutNoRules, meta: GenerationMeta) -> SoftenResult:
+            gentle, balanced, firm = slots_from_soften(parsed)
+            variants, indexes, safety = validate_firmness_slots(
+                gentle,
+                balanced,
+                firm,
+                SlotValidation(
+                    applied=[],
+                    safety_raw=parsed.safety.value,
+                    rule_count=0,
                     usage=meta.usage,
                     attempts=meta.attempts,
                     model=meta.model,
@@ -186,16 +213,29 @@ class GigaChatTextGenerator:
 
         try:
             async with asyncio.timeout_at(_deadline_at(request.deadline_seconds)):
+                if request.rules:
+                    return await structured_call(
+                        StructuredCallParams(
+                            client=self._client,
+                            operation="soften",
+                            model=self._settings.gigachat_model_soften,
+                            prepared=prepared,
+                            response_format=SoftenOut,
+                            max_tokens=MAX_TOKENS_SOFTEN,
+                        ),
+                        build_with_rules,
+                        state=state,
+                    )
                 return await structured_call(
                     StructuredCallParams(
                         client=self._client,
                         operation="soften",
                         model=self._settings.gigachat_model_soften,
                         prepared=prepared,
-                        response_format=SoftenOut,
+                        response_format=SoftenOutNoRules,
                         max_tokens=MAX_TOKENS_SOFTEN,
                     ),
-                    build,
+                    build_no_rules,
                     state=state,
                 )
         except TimeoutError:
@@ -209,16 +249,40 @@ class GigaChatTextGenerator:
             prompt_version=prepared.prompt_version,
         )
 
-        def build(parsed: HelpSayOut, meta: GenerationMeta) -> HelpSayResult:
-            variants, indexes, safety = validate_variants(
-                parsed.variants,
-                VariantValidation(
+        def build_with_rules(parsed: HelpSayOut, meta: GenerationMeta) -> HelpSayResult:
+            gentle, balanced, firm = slots_from_soften(parsed)
+            variants, indexes, safety = validate_firmness_slots(
+                gentle,
+                balanced,
+                firm,
+                SlotValidation(
                     applied=list(parsed.applied_rule_indexes),
                     safety_raw=parsed.safety.value,
                     rule_count=len(request.rules),
-                    min_variants=2,
-                    max_variants=3,
-                    require_all_firmness=False,
+                    usage=meta.usage,
+                    attempts=meta.attempts,
+                    model=meta.model,
+                    prompt_version=meta.prompt_version,
+                    operation="help_say",
+                ),
+            )
+            return HelpSayResult(
+                variants=variants,
+                applied_rule_indexes=indexes,
+                safety=safety,
+                meta=meta,
+            )
+
+        def build_no_rules(parsed: HelpSayOutNoRules, meta: GenerationMeta) -> HelpSayResult:
+            gentle, balanced, firm = slots_from_soften(parsed)
+            variants, indexes, safety = validate_firmness_slots(
+                gentle,
+                balanced,
+                firm,
+                SlotValidation(
+                    applied=[],
+                    safety_raw=parsed.safety.value,
+                    rule_count=0,
                     usage=meta.usage,
                     attempts=meta.attempts,
                     model=meta.model,
@@ -235,16 +299,29 @@ class GigaChatTextGenerator:
 
         try:
             async with asyncio.timeout_at(_deadline_at(request.deadline_seconds)):
+                if request.rules:
+                    return await structured_call(
+                        StructuredCallParams(
+                            client=self._client,
+                            operation="help_say",
+                            model=self._settings.gigachat_model_help_say,
+                            prepared=prepared,
+                            response_format=HelpSayOut,
+                            max_tokens=MAX_TOKENS_HELP_SAY,
+                        ),
+                        build_with_rules,
+                        state=state,
+                    )
                 return await structured_call(
                     StructuredCallParams(
                         client=self._client,
                         operation="help_say",
                         model=self._settings.gigachat_model_help_say,
                         prepared=prepared,
-                        response_format=HelpSayOut,
+                        response_format=HelpSayOutNoRules,
                         max_tokens=MAX_TOKENS_HELP_SAY,
                     ),
-                    build,
+                    build_no_rules,
                     state=state,
                 )
         except TimeoutError:

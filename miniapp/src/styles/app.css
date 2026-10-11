@@ -489,34 +489,44 @@ a:hover {
     white-space: nowrap;
 }
 
-.home-decode-row {
+.home-decode-row,
+.home-compose-row {
     display: flex;
     align-items: center;
     gap: 12px;
     width: 100%;
     padding: 14px 16px;
-    border: 1px solid var(--border);
+    border: 1px solid var(--line);
     border-radius: var(--radius-md);
     background: var(--accent-soft);
-    color: var(--fg);
+    color: var(--ink);
     text-align: left;
     cursor: pointer;
 }
 
-.home-decode-row__text {
+.home-decode-row__text,
+.home-compose-row__text {
     display: flex;
     flex-direction: column;
     gap: 2px;
     min-width: 0;
 }
 
-.home-decode-row__title {
+.home-decode-row__title,
+.home-compose-row__title {
     font-weight: 600;
 }
 
-.home-decode-row__cta {
+.home-decode-row__cta,
+.home-compose-row__cta {
     color: var(--accent);
     font-size: 14px;
+}
+
+.home-action-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
 }
 
 .tab-bar__badge {

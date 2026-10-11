@@ -1,4 +1,4 @@
-"""Record D-9 inline choice events and append tone signals (D-6)."""
+"""Record D-9 choice events and append tone signals (D-6)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from enum import StrEnum
 from svoi_pravila.application.errors import (
     AccessNotGranted,
     ConflictError,
+    InvalidInlineResultRef,
     UsageEventWriteFailed,
 )
 from svoi_pravila.application.inline_result_ref import parse_inline_result_ref
@@ -26,6 +27,7 @@ from svoi_pravila.domain.enums import (
     SuggestionSource,
     UsageEventKind,
     UsageOutcome,
+    UsageScenario,
     UsageSurface,
 )
 from svoi_pravila.domain.ids import RuleSuggestionId, TelegramUserId, UsageEventId
@@ -47,10 +49,17 @@ class ToneSignalOutcome(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class RecordInlineChoiceCommand:
-    """Input for RecordInlineChoice. Never includes query text."""
+    """Input for RecordInlineChoice. Never includes query text.
+
+    Provide either ``result_ref`` (Telegram inline) or both ``scenario`` and
+    ``firmness`` (mini-app compose). ``surface`` defaults to inline.
+    """
 
     telegram_user_id: TelegramUserId
-    result_ref: str
+    result_ref: str | None = None
+    scenario: UsageScenario | None = None
+    firmness: Firmness | None = None
+    surface: UsageSurface = UsageSurface.INLINE
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,8 +97,10 @@ class RecordInlineChoice:
         self._ports = ports
 
     async def execute(self, command: RecordInlineChoiceCommand) -> RecordInlineChoiceResult:
-        """Parse ``result_ref``, record the choice, then try the tone-signal path."""
-        scenario, firmness = parse_inline_result_ref(command.result_ref)
+        """Resolve scenario/firmness, record the choice, then try the tone-signal path."""
+        scenario, firmness = _resolve_tone(command)
+        if command.surface not in {UsageSurface.INLINE, UsageSurface.MINIAPP}:
+            raise InvalidInlineResultRef()
         analytics = self._ports.pseudonymizer.pseudonymize(
             _ANALYTICS_PURPOSE, str(command.telegram_user_id.value)
         )
@@ -98,7 +109,7 @@ class RecordInlineChoice:
             occurred_at=self._ports.clock.now().replace(microsecond=0),
             user_pseudonym=analytics,
             scenario=scenario,
-            surface=UsageSurface.INLINE,
+            surface=command.surface,
             outcome=UsageOutcome.OK,
             unavailable_kind=None,
             safety=None,
@@ -180,3 +191,11 @@ class RecordInlineChoice:
                         outcome = ToneSignalOutcome.SUGGESTION_CREATED
             await uow.commit()
             return RecordInlineChoiceResult(tone_outcome=outcome, suggestion_id=created_id)
+
+
+def _resolve_tone(command: RecordInlineChoiceCommand) -> tuple[UsageScenario, Firmness]:
+    if command.result_ref is not None:
+        return parse_inline_result_ref(command.result_ref)
+    if command.scenario is not None and command.firmness is not None:
+        return command.scenario, command.firmness
+    raise InvalidInlineResultRef()

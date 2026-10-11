@@ -32,8 +32,8 @@ KNOWN_MODELS: frozenset[str] = frozenset(
 
 KNOWN_PROMPT_VERSIONS: frozenset[str] = frozenset(
     {
-        "soften@v3",
-        "help_say@v4",
+        "soften@v5",
+        "help_say@v6",
         "decode@v3",
         "decode_analysis@v1",
         "suggest_rule@v1",

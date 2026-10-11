@@ -85,6 +85,7 @@ def _generation(
 def _chosen(
     *,
     scenario: UsageScenario = UsageScenario.DECODE,
+    surface: UsageSurface = UsageSurface.INLINE,
     occurred_at: datetime = _NOW,
     user_pseudonym: str = _PSEUDO,
     event_id: int = 1,
@@ -94,7 +95,7 @@ def _chosen(
         occurred_at=occurred_at,
         user_pseudonym=user_pseudonym,
         scenario=scenario,
-        surface=UsageSurface.INLINE,
+        surface=surface,
         outcome=UsageOutcome.OK,
         unavailable_kind=None,
         safety=None,
@@ -149,7 +150,7 @@ def _expected_appeal(
     if scenario is UsageScenario.SUGGEST_RULE:
         return False
     if kind is UsageEventKind.RESULT_CHOSEN:
-        return True
+        return surface is UsageSurface.INLINE
     return (
         kind is UsageEventKind.GENERATION
         and surface in {UsageSurface.DM, UsageSurface.MINIAPP}
@@ -175,8 +176,9 @@ def _generation_cases() -> list[tuple[UsageEventKind, UsageSurface, UsageOutcome
 
 def _chosen_cases() -> list[tuple[UsageEventKind, UsageSurface, UsageOutcome, UsageScenario]]:
     return [
-        (UsageEventKind.RESULT_CHOSEN, UsageSurface.INLINE, UsageOutcome.OK, scenario)
+        (UsageEventKind.RESULT_CHOSEN, surface, UsageOutcome.OK, scenario)
         for scenario in UsageScenario
+        for surface in (UsageSurface.INLINE, UsageSurface.MINIAPP)
     ]
 
 
@@ -192,7 +194,7 @@ def test_is_appeal_truth_table(
     scenario: UsageScenario,
 ) -> None:
     if kind is UsageEventKind.RESULT_CHOSEN:
-        event = _chosen(scenario=scenario)
+        event = _chosen(scenario=scenario, surface=surface)
     else:
         event = _generation(scenario=scenario, surface=surface, outcome=outcome)
     assert is_appeal(event) is _expected_appeal(kind, surface, outcome, scenario)

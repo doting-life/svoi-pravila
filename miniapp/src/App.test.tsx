@@ -19,6 +19,7 @@ const meDone = {
     max_contacts: 20,
     max_open_rules: 50,
     rule_text_max_chars: 500,
+    incoming_text_max_chars: 4000,
     display_timezone: "Europe/Moscow",
 };
 
@@ -1349,6 +1350,31 @@ describe("App", () => {
         });
         expect(window.location.hash).toBe(telegramHash);
         window.history.replaceState(null, "", "/");
+    });
+
+    it("opens compose from ?view=compose with Telegram hash on boot", async () => {
+        const telegramHash = "#tgWebAppData=stub&tgWebAppVersion=8.0";
+        window.history.replaceState(null, "", `/?view=compose${telegramHash}`);
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        expect(await screen.findByRole("heading", { name: ru.composeTitle })).toBeInTheDocument();
+        expect(window.location.hash).toBe(telegramHash);
+        window.history.replaceState(null, "", "/");
+    });
+
+    it("opens compose from the home entry", async () => {
+        const fetchImpl = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
+            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
+        ]);
+        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
+        fireEvent.click(await screen.findByRole("button", { name: new RegExp(ru.homeComposeCta) }));
+        expect(await screen.findByRole("heading", { name: ru.composeTitle })).toBeInTheDocument();
     });
 
     it("creates a contact successfully", async () => {

@@ -15,6 +15,10 @@ from svoi_pravila.adapters.channels.telegram.localization import (
 from svoi_pravila.adapters.system.tone_suggestion_catalog import StaticToneSuggestionCatalog
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.ports.welcome_throttle import WelcomeThrottle
+from svoi_pravila.application.use_cases.compose_generation import (
+    ComposeGeneration,
+    ComposeGenerationPorts,
+)
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose, InlineComposePorts
 from svoi_pravila.application.use_cases.record_inline_choice import (
@@ -73,8 +77,8 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
     tone_catalog = StaticToneSuggestionCatalog()
     llm_budget = FakeLlmBudget(exhausted=chosen.budget_exhausted)
     reuse = make_inline_reuse(clock, ttl_seconds=float(chosen.inline_cache_seconds))
-    compose = InlineCompose(
-        InlineComposePorts(
+    compose_generation = ComposeGeneration(
+        ComposeGenerationPorts(
             uow_factory=uow,
             catalog=catalog,
             generator=generator,
@@ -86,11 +90,18 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             ids=ids,
             pseudonymizer=pseudonymizer,
             crisis_screen=CrisisScreen.load_ru_v2(),
+            deadline_seconds=chosen.inline_deadline_seconds,
+            analytics_timezone="Europe/Moscow",
+        )
+    )
+    compose = InlineCompose(
+        InlineComposePorts(
+            uow_factory=uow,
+            catalog=catalog,
+            compose=compose_generation,
             reuse=reuse,
             min_chars=chosen.inline_min_chars,
-            deadline_seconds=chosen.inline_deadline_seconds,
             intent_prefixes=help_say_intent_prefixes(strings),
-            analytics_timezone="Europe/Moscow",
         )
     )
     return TelegramDeps(

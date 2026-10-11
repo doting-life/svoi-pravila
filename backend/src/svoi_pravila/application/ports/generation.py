@@ -9,10 +9,10 @@ from enum import StrEnum
 from typing import Protocol
 
 from svoi_pravila.domain.enums import Firmness, RelationshipKind, RuleCategory
-from svoi_pravila.domain.text import RuleText
+from svoi_pravila.domain.text import INCOMING_TEXT_MAX_CHARS, RuleText
 
 BOUNDED_TEXT_MIN = 1
-BOUNDED_TEXT_MAX = 4000
+BOUNDED_TEXT_MAX = INCOMING_TEXT_MAX_CHARS
 
 
 def _validate_bounded_text(name: str, value: str) -> None:
@@ -53,6 +53,7 @@ class RuleContext:
 class AppliedRuleView:
     """Rule context selected by validated ``applied_rule_indexes``."""
 
+    index: int
     category: RuleCategory
     text: str
     effective_since: datetime

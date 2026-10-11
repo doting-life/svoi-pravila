@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/api/v1/compose": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Compose Variants */
+        post: operations["composeVariants"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/compose/choice": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Compose Choice */
+        post: operations["composeChoice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/consents/{kind}/document": {
         parameters: {
             query?: never;
@@ -515,6 +549,89 @@ export interface components {
             suggestion_id: string;
         };
         /**
+         * ComposeAppliedRuleItem
+         * @description Rule the model reported as applied (index into the request context).
+         */
+        ComposeAppliedRuleItem: {
+            /** Index */
+            index: number;
+            /** Text */
+            text: string;
+        };
+        /**
+         * ComposeChoiceRequest
+         * @description POST /compose/choice — redeem choice_token + firmness (no scenario, no text).
+         */
+        ComposeChoiceRequest: {
+            /**
+             * Firmness
+             * @enum {string}
+             */
+            firmness: "gentle" | "balanced" | "firm";
+            /** Token */
+            token: string;
+        };
+        /**
+         * ComposeChoiceResponse
+         * @description POST /compose/choice acknowledgement.
+         */
+        ComposeChoiceResponse: {
+            /**
+             * Outcome
+             * @constant
+             */
+            outcome: "recorded";
+        };
+        /**
+         * ComposeRequest
+         * @description POST /compose — draft to soften or help-say (same text bound as inline).
+         */
+        ComposeRequest: {
+            /** Contact Id */
+            contact_id?: string | null;
+            /** Draft */
+            draft: string;
+            /**
+             * Intent
+             * @enum {string}
+             */
+            intent: "soften" | "decline" | "set_boundary" | "admit_fault" | "reconnect" | "other";
+        };
+        /**
+         * ComposeResponse
+         * @description POST /compose result; choice_token binds a later /compose/choice (C0).
+         */
+        ComposeResponse: {
+            /** Applied Rules */
+            applied_rules: components["schemas"]["ComposeAppliedRuleItem"][];
+            /** Choice Token */
+            choice_token?: string | null;
+            /** Lead */
+            lead?: string | null;
+            /** Resources */
+            resources?: string[] | null;
+            /**
+             * Safety
+             * @enum {string}
+             */
+            safety: "ok" | "crisis" | "refuse_manipulation";
+            /** Variants */
+            variants: components["schemas"]["ComposeVariantItem"][];
+        };
+        /**
+         * ComposeVariantItem
+         * @description One compose variant (C1 text; never persisted by the server).
+         */
+        ComposeVariantItem: {
+            /**
+             * Firmness
+             * @enum {string}
+             */
+            firmness: "gentle" | "balanced" | "firm";
+            /** Text */
+            text: string;
+        };
+        /**
          * ConfirmTrueRequest
          * @description Destructive confirmations: body must be exactly ``{"confirm": true}``.
          */
@@ -718,6 +835,8 @@ export interface components {
             decode_remaining: number;
             /** Display Timezone */
             display_timezone: string;
+            /** Incoming Text Max Chars */
+            incoming_text_max_chars: number;
             /** Max Contacts */
             max_contacts: number;
             /** Max Open Rules */
@@ -927,6 +1046,202 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    composeVariants: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ComposeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposeResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
+                };
+            };
+        };
+    };
+    composeChoice: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ComposeChoiceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ComposeChoiceResponse"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Content Too Large */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LimitErrorBody"];
+                };
+            };
+        };
+    };
     getConsentDocument: {
         parameters: {
             query?: never;

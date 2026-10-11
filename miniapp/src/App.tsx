@@ -18,10 +18,12 @@ import {
     replaceTop,
     selectRoot,
     type NavigationState,
+    type OverlayScreen,
 } from "./navigation/stack";
 import { AddRuleScreen } from "./screens/AddRuleScreen";
 import { ContactDetailScreen } from "./screens/ContactDetailScreen";
 import { CrisisScreen } from "./screens/CrisisScreen";
+import { ComposeScreen } from "./screens/ComposeScreen";
 import { DecodeScreen } from "./screens/DecodeScreen";
 import { DeleteConfirmScreen } from "./screens/DeleteConfirmScreen";
 import { DeletedScreen } from "./screens/DeletedScreen";
@@ -71,11 +73,18 @@ function MiniappShell({
 }) {
     const me = useMe();
     const pendingRules = usePendingRules();
-    const [nav, setNav] = useState<NavigationState>(() =>
-        createInitialNavigation(
-            telegram.startParam?.startsWith("inv_") === true ? [{ name: "invite" }] : [],
-        ),
-    );
+    const [nav, setNav] = useState<NavigationState>(() => {
+        const stack: OverlayScreen[] = [];
+        if (telegram.startParam?.startsWith("inv_") === true) {
+            stack.push({ name: "invite" });
+        } else if (
+            typeof window !== "undefined" &&
+            new URLSearchParams(window.location.search).get("view") === "compose"
+        ) {
+            stack.push({ name: "compose" });
+        }
+        return createInitialNavigation(stack);
+    });
     const [forceConsentGate, setForceConsentGate] = useState(false);
     const [local, setLocal] = useState<LocalOverrides | null>(null);
     const [focusPending] = useState(() => {
@@ -229,6 +238,9 @@ function MiniappShell({
                         onOpenDecode={() => {
                             push({ name: "decode" });
                         }}
+                        onOpenCompose={() => {
+                            push({ name: "compose" });
+                        }}
                         onOpenPeople={() => {
                             setNav(selectRoot("people"));
                         }}
@@ -315,6 +327,26 @@ function MiniappShell({
                                 initialText: text,
                             });
                         }}
+                        onLimit={(kind, message) => {
+                            setNav((current) =>
+                                replaceTop(current, { name: "limit", kind, message }),
+                            );
+                        }}
+                        onCrisis={(lead, resources) => {
+                            setNav((current) =>
+                                replaceTop(current, { name: "crisis", lead, resources }),
+                            );
+                        }}
+                    />
+                </Page>
+            );
+        case "compose":
+            return (
+                <Page>
+                    <ComposeScreen
+                        telegram={telegram}
+                        activeContactId={activeContactId ?? null}
+                        onActivated={activateLocally}
                         onLimit={(kind, message) => {
                             setNav((current) =>
                                 replaceTop(current, { name: "limit", kind, message }),

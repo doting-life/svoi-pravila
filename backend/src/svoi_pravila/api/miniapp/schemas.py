@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from svoi_pravila.domain.text import RULE_TEXT_MAX_CHARS
+from svoi_pravila.domain.text import INCOMING_TEXT_MAX_CHARS, RULE_TEXT_MAX_CHARS
 
 
 class MeResponse(BaseModel):
@@ -22,6 +22,7 @@ class MeResponse(BaseModel):
     max_contacts: int = Field(ge=1)
     max_open_rules: int = Field(ge=1)
     rule_text_max_chars: int = Field(ge=1)
+    incoming_text_max_chars: int = Field(ge=1)
     display_timezone: str = Field(min_length=1)
     bot_username: str = Field(min_length=1)
     decode_remaining: int = Field(ge=0)
@@ -219,6 +220,66 @@ class DecodeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(min_length=1, max_length=4000)
+
+
+ComposeIntent = Literal[
+    "soften",
+    "decline",
+    "set_boundary",
+    "admit_fault",
+    "reconnect",
+    "other",
+]
+
+
+class ComposeRequest(BaseModel):
+    """POST /compose — draft to soften or help-say (same text bound as inline)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    draft: str = Field(min_length=1, max_length=INCOMING_TEXT_MAX_CHARS)
+    intent: ComposeIntent
+    contact_id: str | None = None
+
+
+class ComposeVariantItem(BaseModel):
+    """One compose variant (C1 text; never persisted by the server)."""
+
+    text: str = Field(min_length=1, max_length=1000)
+    firmness: Literal["gentle", "balanced", "firm"]
+
+
+class ComposeAppliedRuleItem(BaseModel):
+    """Rule the model reported as applied (index into the request context)."""
+
+    index: int = Field(ge=0)
+    text: str = Field(min_length=1)
+
+
+class ComposeResponse(BaseModel):
+    """POST /compose result; choice_token binds a later /compose/choice (C0)."""
+
+    safety: Literal["ok", "crisis", "refuse_manipulation"]
+    variants: list[ComposeVariantItem]
+    applied_rules: list[ComposeAppliedRuleItem]
+    choice_token: str | None = None
+    lead: str | None = None
+    resources: list[str] | None = None
+
+
+class ComposeChoiceRequest(BaseModel):
+    """POST /compose/choice — redeem choice_token + firmness (no scenario, no text)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=1, max_length=200)
+    firmness: Literal["gentle", "balanced", "firm"]
+
+
+class ComposeChoiceResponse(BaseModel):
+    """POST /compose/choice acknowledgement."""
+
+    outcome: Literal["recorded"]
 
 
 class SuggestFromDecodeRequest(BaseModel):

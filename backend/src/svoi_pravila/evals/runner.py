@@ -34,6 +34,10 @@ from svoi_pravila.evals.cases import (
 )
 from svoi_pravila.evals.estimate import estimate_eval_case_tokens
 from svoi_pravila.evals.metrics import EvalRecord, format_metrics, leak_count
+from svoi_pravila.evals.rule_checks import (
+    variant_leaks_stems,
+    variants_comply_with_closing_ask,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +73,8 @@ def _screen_record(case: EvalCase) -> EvalRecord:
         reasons=(),
         billable_tokens=0,
         valid=True,
+        had_rules=case.has_rules(),
+        effect_pair=case.effect_pair,
     )
 
 
@@ -119,12 +125,31 @@ def _error_record(
         reasons=reasons,
         billable_tokens=billable,
         valid=False,
+        had_rules=case.has_rules(),
+        effect_pair=case.effect_pair,
     )
 
 
 def _emit_output(payload: dict[str, object], *, show_outputs: bool) -> None:
     if show_outputs:
         print(json.dumps(payload, ensure_ascii=False), file=sys.stderr)
+
+
+def _rule_fields(
+    case: EvalCase, *, variants: tuple[str, ...], verdict: str
+) -> tuple[bool | None, bool | None]:
+    """Return (rule_leak, rule_compliant) C0 flags for deterministic categories."""
+    rule_leak: bool | None = None
+    rule_compliant: bool | None = None
+    if case.category == "rule_leak" and verdict == "ok":
+        rule_leak = variant_leaks_stems(
+            draft=case.screen_text(),
+            variants=variants,
+            stop_stems=case.stop_stems,
+        )
+    if case.category == "rule_effect" and verdict == "ok":
+        rule_compliant = variants_comply_with_closing_ask(variants)
+    return rule_leak, rule_compliant
 
 
 async def run_eval_case(
@@ -139,19 +164,22 @@ async def run_eval_case(
     timed = with_deadline(case, deadline)
     if runtime.screen.hit(timed.screen_text()):
         return _screen_record(timed)
+    variants: tuple[str, ...] = ()
     try:
         if timed.operation == "soften" and timed.soften is not None:
             generated = await gen.soften(timed.soften)
+            variants = tuple(item.text for item in generated.variants)
             _emit_output(
-                {"id": timed.id, "variants": [item.text for item in generated.variants]},
+                {"id": timed.id, "variants": list(variants)},
                 show_outputs=show_outputs,
             )
             usage = generated.meta.usage
             verdict = generated.safety.value
         elif timed.operation == "help_say" and timed.help_say is not None:
             generated_h = await gen.help_say(timed.help_say)
+            variants = tuple(item.text for item in generated_h.variants)
             _emit_output(
-                {"id": timed.id, "variants": [item.text for item in generated_h.variants]},
+                {"id": timed.id, "variants": list(variants)},
                 show_outputs=show_outputs,
             )
             usage = generated_h.meta.usage
@@ -164,10 +192,11 @@ async def run_eval_case(
             if completed is None:
                 msg = "decode_stream produced no completed event"
                 raise RuntimeError(msg)
+            variants = tuple(item.text for item in completed.result.variants)
             _emit_output(
                 {
                     "id": timed.id,
-                    "variants": [item.text for item in completed.result.variants],
+                    "variants": list(variants),
                 },
                 show_outputs=show_outputs,
             )
@@ -178,6 +207,10 @@ async def run_eval_case(
             raise ValueError(msg)
     except (GenerationRefusedByProvider, InvalidGenerationOutput, GenerationUnavailable) as exc:
         return _error_record(timed, exc)
+    rule_leak, rule_compliant = _rule_fields(timed, variants=variants, verdict=verdict)
+    reasons: list[str] = []
+    if rule_leak is True:
+        reasons.append("rule_leak")
     return EvalRecord(
         case_id=timed.id,
         operation=timed.operation,
@@ -186,9 +219,13 @@ async def run_eval_case(
         outcome="ok",
         verdict=verdict,
         screen_hit=False,
-        reasons=(),
+        reasons=tuple(reasons),
         billable_tokens=usage.billable,
         valid=True,
+        rule_leak=rule_leak,
+        rule_compliant=rule_compliant,
+        had_rules=timed.has_rules(),
+        effect_pair=timed.effect_pair,
     )
 
 

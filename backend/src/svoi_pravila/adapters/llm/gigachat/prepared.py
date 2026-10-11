@@ -8,6 +8,10 @@ from svoi_pravila.adapters.llm.gigachat.boundaries import (
     allocate_boundary_marker,
     wrap_untrusted_payload,
 )
+from svoi_pravila.adapters.llm.gigachat.prompt_compose import (
+    compose_help_say_template,
+    compose_soften_template,
+)
 from svoi_pravila.adapters.llm.gigachat.validation import rules_text, untrusted_texts
 from svoi_pravila.adapters.llm.registry import load_prompt_template, render_system_prompt
 from svoi_pravila.application.ports.generation import (
@@ -33,7 +37,8 @@ def prepare_soften(request: SoftenRequest) -> PreparedMessages:
     marker = allocate_boundary_marker(
         untrusted_texts(request.draft, request.relationship.value, rules=request.rules)
     )
-    template, prompt_version = load_prompt_template("soften", "v3")
+    template = compose_soften_template(has_rules=bool(request.rules))
+    prompt_version = "soften@v5"
     system = render_system_prompt(template, boundary_marker=marker)
     user = wrap_untrusted_payload(
         marker,
@@ -58,7 +63,8 @@ def prepare_help_say(request: HelpSayRequest) -> PreparedMessages:
             rules=request.rules,
         )
     )
-    template, prompt_version = load_prompt_template("help_say", "v4")
+    template = compose_help_say_template(has_rules=bool(request.rules))
+    prompt_version = "help_say@v6"
     system = render_system_prompt(template, boundary_marker=marker)
     user = wrap_untrusted_payload(
         marker,

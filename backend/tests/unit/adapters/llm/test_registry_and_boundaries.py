@@ -5,29 +5,45 @@ from __future__ import annotations
 import pytest
 
 from svoi_pravila.adapters.llm.gigachat.boundaries import allocate_token
+from svoi_pravila.adapters.llm.gigachat.prompt_compose import (
+    compose_help_say_template,
+    compose_soften_template,
+)
 from svoi_pravila.adapters.llm.registry import load_prompt, render_system_prompt
 from svoi_pravila.application.errors import InvalidGenerationOutput
 
 
 @pytest.mark.unit
 def test_render_system_prompt_ok() -> None:
-    template, version = load_prompt("soften", "v3")
-    assert version == "soften@v3"
+    template = compose_soften_template(has_rules=True)
+    _, version = load_prompt("soften", "v5")
+    assert version == "soften@v5"
     rendered = render_system_prompt(template, boundary_marker="SPBOUND_ABC")
     assert "SPBOUND_ABC" in rendered
     assert "{{BOUNDARY_MARKER}}" not in rendered
 
 
 @pytest.mark.unit
-def test_render_help_say_v4_prompt() -> None:
-    template, version = load_prompt("help_say", "v4")
-    assert version == "help_say@v4"
+def test_render_help_say_v6_prompt() -> None:
+    template = compose_help_say_template(has_rules=True)
+    _, version = load_prompt("help_say", "v6")
+    assert version == "help_say@v6"
     rendered = render_system_prompt(template, boundary_marker="SPBOUND_HELP")
     assert "SPBOUND_HELP" in rendered
     assert "{{BOUNDARY_MARKER}}" not in rendered
     assert "refuse_manipulation" in template
     assert "прибью за такое" in template
     assert "насилие, суицид, самоповреждение" not in template
+    assert "applied_rule_indexes" in template
+
+
+@pytest.mark.unit
+def test_composed_no_rules_prompts_omit_indexes() -> None:
+    soften = compose_soften_template(has_rules=False)
+    assert "applied_rule_indexes" not in soften
+    help_say = compose_help_say_template(has_rules=False)
+    assert "applied_rule_indexes" not in help_say
+    assert "refuse_manipulation" in help_say
 
 
 @pytest.mark.unit

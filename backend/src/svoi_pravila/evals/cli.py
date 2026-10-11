@@ -18,7 +18,15 @@ from svoi_pravila.benchmarks.runner import (
     TokenBudgetExceededError,
 )
 from svoi_pravila.config import LlmToolSettings
-from svoi_pravila.evals.cases import OPERATIONS, EvalCase, RunOperation, filter_cases, load_cases
+from svoi_pravila.evals.cases import (
+    CATEGORIES,
+    OPERATIONS,
+    EvalCase,
+    EvalCategory,
+    RunOperation,
+    filter_cases,
+    load_cases,
+)
 from svoi_pravila.evals.estimate import largest_eval_call_estimate, plan_eval_calls
 from svoi_pravila.evals.metrics import EvalRecord, format_metrics
 from svoi_pravila.evals.runner import (
@@ -89,10 +97,15 @@ async def async_main(args: argparse.Namespace) -> int:
     """Run the safety eval and print/write C0 metrics."""
     settings = LlmToolSettings()
     screen = CrisisScreen.load_ru_v2()
+    categories: tuple[EvalCategory, ...] | None = None
+    selected_categories = getattr(args, "category", None)
+    if selected_categories:
+        categories = tuple(selected_categories)
     cases = filter_cases(
         load_cases(Path(args.data)),
         smoke=bool(args.smoke),
         case_ids=tuple(args.cases) if args.cases else None,
+        categories=categories,
     )
     operations = _parse_ops(args.ops)
     models = models_for_operations(settings, operations)
@@ -214,6 +227,13 @@ def main() -> None:
     )
     parser.add_argument("--smoke", action="store_true", help="Run only smoke:true cases")
     parser.add_argument("--cases", nargs="+", default=None, help="Restrict to these case ids")
+    parser.add_argument(
+        "--category",
+        nargs="+",
+        default=None,
+        choices=list(CATEGORIES),
+        help="Restrict to these eval categories",
+    )
     args = parser.parse_args()
     raise SystemExit(asyncio.run(async_main(args)))
 

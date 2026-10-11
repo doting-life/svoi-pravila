@@ -21,11 +21,16 @@ from svoi_pravila.application.use_cases.compose_generation import (
 )
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.application.use_cases.inline_compose import InlineCompose, InlineComposePorts
+from svoi_pravila.application.use_cases.issue_compose_handoff import (
+    IssueComposeHandoff,
+    IssueComposeHandoffPorts,
+)
 from svoi_pravila.application.use_cases.record_inline_choice import (
     RecordInlineChoice,
     RecordInlineChoicePorts,
 )
 from tests.fakes.clock import FakeClock
+from tests.fakes.compose_handoffs import FakeComposeHandoffs
 from tests.fakes.consent_catalog import FakeConsentCatalog
 from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.ids import FakeIdGenerator
@@ -53,6 +58,7 @@ class TelegramTestDeps:
     generator: FakeTextGenerator | None = None
     sink: RecordingUsageEventSink | FailingUsageEventSink | None = None
     prepared: FakePreparedResults | None = None
+    compose_handoffs: FakeComposeHandoffs | None = None
     sleeper: ImmediateSleeper | GateSleeper | None = None
     inline_min_chars: int = 8
     inline_deadline_seconds: float = 8.0
@@ -77,6 +83,7 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
     tone_catalog = StaticToneSuggestionCatalog()
     llm_budget = FakeLlmBudget(exhausted=chosen.budget_exhausted)
     reuse = make_inline_reuse(clock, ttl_seconds=float(chosen.inline_cache_seconds))
+    handoffs = chosen.compose_handoffs or FakeComposeHandoffs()
     compose_generation = ComposeGeneration(
         ComposeGenerationPorts(
             uow_factory=uow,
@@ -116,6 +123,14 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
                 tone_catalog=tone_catalog,
                 clock=clock,
                 ids=ids,
+                pseudonymizer=pseudonymizer,
+            )
+        ),
+        issue_compose_handoff=IssueComposeHandoff(
+            IssueComposeHandoffPorts(
+                uow_factory=uow,
+                catalog=catalog,
+                compose_handoffs=handoffs,
                 pseudonymizer=pseudonymizer,
             )
         ),

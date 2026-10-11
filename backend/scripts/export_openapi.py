@@ -91,6 +91,8 @@ def _openapi_bindings() -> MiniappRouterBindings:
         compose_generation=cast(ComposeGeneration, _stub()),
         record_choice=cast(RecordInlineChoice, _stub()),
         compose_choice_tokens=cast(Any, _stub()),
+        compose_handoffs=cast(Any, _stub()),
+        get_partner_username=cast(Any, _stub()),
         prepared_results=cast(PreparedResults, _stub()),
         rule_sources=cast(RuleSources, _stub()),
         pseudonymizer=cast(Pseudonymizer, _stub()),

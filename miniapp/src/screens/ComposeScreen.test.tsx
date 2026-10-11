@@ -96,6 +96,8 @@ function renderCompose(
         readonly activeContactId?: string | null;
         readonly contacts?: readonly Contact[];
         readonly activateStatus?: number;
+        readonly handoffToken?: string | null;
+        readonly partnerUsername?: string | null;
     } = {},
 ) {
     const telegram = fakeAdapter();
@@ -107,6 +109,12 @@ function renderCompose(
         }
         if (url.endsWith("/api/v1/contacts")) {
             return Promise.resolve(jsonResponse({ contacts }));
+        }
+        if (url.includes("/partner-username")) {
+            return Promise.resolve(jsonResponse({ username: options.partnerUsername ?? null }));
+        }
+        if (url.includes("/compose/handoff/redeem")) {
+            return fetchImpl(input, init);
         }
         if (url.endsWith("/activate")) {
             const status = options.activateStatus ?? 204;
@@ -132,11 +140,12 @@ function renderCompose(
                 activeContactId={
                     options.activeContactId === undefined ? "c1" : options.activeContactId
                 }
+                handoffToken={options.handoffToken}
                 {...handlers}
             />
         </ApiProvider>,
     );
-    return { telegram, ...handlers };
+    return { telegram, fetchImpl: withContacts, ...handlers };
 }
 
 function isComposePost(input: RequestInfo | URL): boolean {
@@ -505,5 +514,72 @@ describe("ComposeScreen", () => {
         expect(await screen.findByText(ru.loading)).toBeInTheDocument();
         resolveCompose?.(jsonResponse(okVariants));
         expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
+    });
+
+    it("prefills draft from handoff token and ignores miss silently", async () => {
+        const fetchImpl = vi.fn((input: RequestInfo | URL) => {
+            if (requestUrl(input).includes("/compose/handoff/redeem")) {
+                return Promise.resolve(jsonResponse({ draft: "из inline", contact_id: "c1" }));
+            }
+            return Promise.resolve(jsonResponse({ code: "not_found", message: "x" }, 404));
+        });
+        renderCompose(fetchImpl, { handoffToken: "h_token" });
+        expect(await screen.findByDisplayValue("из inline")).toBeInTheDocument();
+
+        cleanup();
+        const miss = vi.fn((input: RequestInfo | URL) => {
+            if (requestUrl(input).includes("/compose/handoff/redeem")) {
+                return Promise.resolve(jsonResponse({ draft: "", contact_id: null }));
+            }
+            return Promise.resolve(jsonResponse({ code: "not_found", message: "x" }, 404));
+        });
+        renderCompose(miss, { handoffToken: "h_gone" });
+        expect(await screen.findByRole("button", { name: ru.composeSubmit })).toBeInTheDocument();
+        expect(screen.getByRole("textbox")).toHaveValue("");
+    });
+
+    it("shows send button with username and opens edited text link", async () => {
+        const pairedAnya: Contact = { ...anya, paired: true, pair_id: "p1" };
+        const fetchImpl = composeFetch((input) => {
+            if (isChoicePost(input)) {
+                return jsonResponse({ outcome: "recorded" });
+            }
+            return jsonResponse(okVariants);
+        });
+        const { telegram } = renderCompose(fetchImpl, {
+            contacts: [pairedAnya],
+            partnerUsername: "anya_tg",
+        });
+        submitDraft("черновик");
+        expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
+        const sendLabel = ru.composeSend.replace("{label}", "Аня");
+        const card = screen.getAllByRole("article")[0] as HTMLElement;
+        expect(within(card).getByRole("button", { name: sendLabel })).toBeInTheDocument();
+        fireEvent.change(within(card).getByRole("textbox"), {
+            target: { value: "отредактировано 👋\nвторая" },
+        });
+        fireEvent.click(within(card).getByRole("button", { name: sendLabel }));
+        await waitFor(() => {
+            expect(telegram.openTelegramLink).toHaveBeenCalledWith(
+                `https://t.me/anya_tg?text=${encodeURIComponent("отредактировано 👋\nвторая")}`,
+            );
+            expect(telegram.close).toHaveBeenCalled();
+        });
+        const choiceCall = fetchImpl.mock.calls.find(([req]) => isChoicePost(req));
+        expect(choiceCall).toBeDefined();
+    });
+
+    it("hides send button when partner has no username", async () => {
+        const pairedAnya: Contact = { ...anya, paired: true, pair_id: "p1" };
+        const fetchImpl = composeFetch(() => jsonResponse(okVariants));
+        renderCompose(fetchImpl, { contacts: [pairedAnya], partnerUsername: null });
+        submitDraft("черновик");
+        expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
+        expect(
+            screen.queryByRole("button", { name: ru.composeSend.replace("{label}", "Аня") }),
+        ).not.toBeInTheDocument();
+        expect(
+            screen.getAllByRole("button", { name: ru.composeCopyAndReturn }).length,
+        ).toBeGreaterThan(0);
     });
 });

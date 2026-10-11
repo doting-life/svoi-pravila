@@ -93,6 +93,12 @@ function MiniappShell({
         }
         return new URLSearchParams(window.location.search).get("view") === "pending";
     });
+    const [composeHandoffToken] = useState(() => {
+        if (typeof window === "undefined") {
+            return null;
+        }
+        return new URLSearchParams(window.location.search).get("h");
+    });
 
     useEffect(() => {
         const showBack =
@@ -346,6 +352,7 @@ function MiniappShell({
                     <ComposeScreen
                         telegram={telegram}
                         activeContactId={activeContactId ?? null}
+                        handoffToken={composeHandoffToken}
                         onActivated={activateLocally}
                         onLimit={(kind, message) => {
                             setNav((current) =>

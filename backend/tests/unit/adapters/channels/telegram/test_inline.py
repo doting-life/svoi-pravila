@@ -73,6 +73,10 @@ from svoi_pravila.application.use_cases.inline_compose import (
     InlineComposeResult,
 )
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule, ProposeRuleCommand
+from svoi_pravila.application.use_cases.set_active_contact import (
+    SetActiveContact,
+    SetActiveContactCommand,
+)
 from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
 from svoi_pravila.domain.enums import (
     ConsentKind,
@@ -141,13 +145,20 @@ async def _grant(
 
 
 def _assert_web_app_button(
-    button: InlineQueryResultsButton | None, *, text: str, miniapp_url: str
+    button: InlineQueryResultsButton | None,
+    *,
+    text: str,
+    miniapp_url: str,
+    handoff: bool = False,
 ) -> None:
     assert button is not None
     assert button.text == text
     web_app = button.web_app
     assert web_app is not None
-    assert web_app.url == miniapp_url
+    if handoff:
+        assert web_app.url.startswith(f"{miniapp_url.rstrip('/')}/?view=compose&h=h_")
+    else:
+        assert web_app.url == miniapp_url
     assert button.start_parameter is None
 
 
@@ -193,7 +204,7 @@ async def test_inline_not_onboarded_gets_setup_button() -> None:
 
 
 @pytest.mark.unit
-async def test_inline_too_short_help_button() -> None:
+async def test_inline_too_short_compose_handoff_button() -> None:
     catalog = FakeConsentCatalog()
     uow = InMemoryUnitOfWorkFactory()
     deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog))
@@ -207,9 +218,52 @@ async def test_inline_too_short_help_button() -> None:
     assert answers[-1].results == []
     _assert_web_app_button(
         answers[-1].button,
-        text=deps.strings.inline_button_how_to,
+        text=deps.strings.inline_button_compose_without_contact,
         miniapp_url=deps.miniapp_url or "",
+        handoff=True,
     )
+
+
+@pytest.mark.unit
+async def test_inline_compose_button_shows_contact_label_not_logged(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
+    catalog = FakeConsentCatalog()
+    uow = InMemoryUnitOfWorkFactory()
+    ids = FakeIdGenerator()
+    clock = FakeClock()
+    label_marker = "LABEL_CANARY_ZX9"
+    draft_marker = "DRAFT_CANARY_QW7_enough"
+    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, ids=ids, clock=clock))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _grant(uow, catalog, 70, ids=ids, clock=clock)
+    async with uow() as unit:
+        user = await unit.users.get_by_telegram_id(TelegramUserId(70))
+        assert user is not None
+        owner_id = user.id
+    contact = (
+        await CreateContact(uow, catalog, ids, clock).execute(
+            CreateContactCommand(owner_id, ContactLabel(label_marker), RelationshipKind.FRIEND)
+        )
+    ).contact
+    await SetActiveContact(uow, catalog).execute(
+        SetActiveContactCommand(actor_id=owner_id, contact_id=contact.id)
+    )
+    await lifecycle.dispatcher.feed_update(bot, _inline(710, 70, draft_marker))
+    await _await_inline(deps)
+    answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
+    expected = deps.strings.inline_button_compose_with_contact.format(label=label_marker)
+    _assert_web_app_button(
+        answers[-1].button,
+        text=expected,
+        miniapp_url=deps.miniapp_url or "",
+        handoff=True,
+    )
+    blob = " ".join(str(v) for e in capture_log_events() for v in e.values())
+    assert label_marker not in blob
+    assert draft_marker not in blob
 
 
 @pytest.mark.unit
@@ -229,6 +283,12 @@ async def test_inline_compose_articles_and_choice() -> None:
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
     assert answers[-1].is_personal is True
     assert len(answers[-1].results) == 2
+    _assert_web_app_button(
+        answers[-1].button,
+        text=deps.strings.inline_button_compose_without_contact,
+        miniapp_url=deps.miniapp_url or "",
+        handoff=True,
+    )
     first = answers[-1].results[0]
     assert isinstance(first, InlineQueryResultArticle)
     content = first.input_message_content
@@ -880,7 +940,9 @@ async def test_inline_crisis_and_refuse_buttons() -> None:
 
 
 @pytest.mark.unit
-async def test_inline_description_prefixes_applied_rule_date() -> None:
+async def test_inline_description_prefixes_applied_rule_date(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
     uow = InMemoryUnitOfWorkFactory()
     catalog = FakeConsentCatalog()
     clock = FakeClock(start=datetime(2026, 10, 3, 12, tzinfo=UTC))
@@ -934,6 +996,9 @@ async def test_inline_description_prefixes_applied_rule_date() -> None:
     content = article.input_message_content
     assert isinstance(content, InputTextMessageContent)
     assert content.message_text == "variant body"
+    answered = [e for e in capture_log_events() if e.get("event") == "inline_answered"]
+    assert answered[-1]["rule_count"] == 1
+    assert answered[-1]["applied_count"] == 1
 
 
 @pytest.mark.unit
@@ -957,6 +1022,8 @@ async def test_inline_answered_log_on_ok(
     assert event["reuse"] == "miss"
     assert isinstance(event["answer_latency_ms"], int)
     assert event["answer_latency_ms"] >= 0
+    assert event["rule_count"] == 0
+    assert event["applied_count"] == 0
     assert "query" not in event
     assert "draft" not in event
 

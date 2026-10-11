@@ -28,6 +28,10 @@ from svoi_pravila.application.use_cases.delete_my_account import (
 from svoi_pravila.application.use_cases.dismiss_suggestion import DismissSuggestion
 from svoi_pravila.application.use_cases.export_my_data import ExportMyData
 from svoi_pravila.application.use_cases.get_consent_document import GetConsentDocument
+from svoi_pravila.application.use_cases.get_partner_username import (
+    GetPartnerUsername,
+    GetPartnerUsernamePorts,
+)
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent
 from svoi_pravila.application.use_cases.issue_export_download import IssueExportDownload
 from svoi_pravila.application.use_cases.leave_pair import LeavePair
@@ -47,9 +51,11 @@ from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllCons
 from svoi_pravila.application.use_cases.serve_export_download import ServeExportDownload
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from tests.fakes.compose_choice_tokens import FakeComposeChoiceTokens
+from tests.fakes.compose_handoffs import FakeComposeHandoffs
 from tests.fakes.export_download import FakeExportDownloadStore
 from tests.fakes.quota_budget import FakeLlmBudget, FakeQuotaGate
 from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
+from tests.fakes.telegram_public_username import FakeTelegramPublicUsername
 from tests.support.miniapp_decode import MiniappDecodeBundle
 
 
@@ -157,6 +163,14 @@ def build_test_miniapp_bindings(
             )
         ),
         "compose_choice_tokens": FakeComposeChoiceTokens(),
+        "compose_handoffs": FakeComposeHandoffs(),
+        "get_partner_username": GetPartnerUsername(
+            GetPartnerUsernamePorts(
+                uow_factory=world.uow_factory,
+                catalog=world.catalog,
+                usernames=FakeTelegramPublicUsername(),
+            )
+        ),
         "prepared_results": decode_bundle.prepared_results,
         "rule_sources": decode_bundle.rule_sources,
         "pseudonymizer": decode_bundle.pseudonymizer,

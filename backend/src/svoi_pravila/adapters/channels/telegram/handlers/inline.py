@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 from dataclasses import dataclass
 from enum import StrEnum
+from urllib.parse import urlencode
 
 import structlog
 from aiogram import Bot, Router
@@ -45,6 +46,7 @@ from svoi_pravila.application.use_cases.inline_compose import (
     InlineComposeCommand,
     InlineComposeResult,
 )
+from svoi_pravila.application.use_cases.issue_compose_handoff import IssueComposeHandoffCommand
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoiceCommand
 from svoi_pravila.domain.enums import UsageScenario
 from svoi_pravila.domain.ids import TelegramUserId
@@ -53,6 +55,7 @@ from svoi_pravila.limits.catalog import format_reset_hhmm
 
 _PREVIEW_MAX = 256
 _INLINE_TITLE_MAX = 64
+_BUTTON_TEXT_MAX = 64
 _LIMIT_CACHE_SECONDS = 10
 _PREPARED_PURPOSE = "prepared"
 
@@ -84,6 +87,8 @@ class _AnsweredLog:
     scenario: UsageScenario | None
     outcome: InlineAnsweredOutcome
     reuse: str
+    rule_count: int
+    applied_count: int
 
 
 def build_inline_router() -> Router:
@@ -167,9 +172,17 @@ async def _answer_compose_error(
     limit_error = _limit_error(error)
     if limit_error is not None:
         telegram_ok = await _answer_limit_message(query, bot, tg_deps, error=limit_error)
+    elif isinstance(error, (NotFound, AccessNotGranted)):
+        telegram_ok = await _answer_empty(query, bot, tg_deps, onboard=True)
     else:
-        onboard = isinstance(error, (NotFound, AccessNotGranted))
-        telegram_ok = await _answer_empty(query, bot, tg_deps, onboard=onboard)
+        button = await _compose_handoff_button(query, tg_deps)
+        telegram_ok = await _send_inline_answer(
+            bot,
+            inline_query_id=query.id,
+            results=[],
+            cache_time=tg_deps.inline_cache_seconds,
+            button=button,
+        )
     outcome = _error_outcome(error, telegram_ok=telegram_ok)
     _log_answered(
         _AnsweredLog(
@@ -178,6 +191,8 @@ async def _answer_compose_error(
             scenario=None,
             outcome=outcome,
             reuse=_reuse_from_error(error),
+            rule_count=0,
+            applied_count=0,
         )
     )
 
@@ -216,6 +231,7 @@ async def _answer_compose_result(
     result: InlineComposeResult,
 ) -> None:
     reuse = _reuse_label(result.reuse)
+    applied_count = len(result.applied_rules)
     if result.safety is SafetyVerdict.CRISIS:
         telegram_ok = await _answer_empty(
             query,
@@ -247,8 +263,15 @@ async def _answer_compose_result(
             result.variants,
             applied_rules=result.applied_rules,
         )
+        button = await _compose_handoff_button(query, tg_deps)
         if not articles:
-            telegram_ok = await _answer_empty(query, bot, tg_deps, onboard=False)
+            telegram_ok = await _send_inline_answer(
+                bot,
+                inline_query_id=query.id,
+                results=[],
+                cache_time=tg_deps.inline_cache_seconds,
+                button=button,
+            )
             outcome = (
                 InlineAnsweredOutcome.TELEGRAM_API
                 if not telegram_ok
@@ -260,6 +283,7 @@ async def _answer_compose_result(
                 inline_query_id=query.id,
                 results=articles,
                 cache_time=tg_deps.inline_cache_seconds,
+                button=button,
             )
             outcome = (
                 InlineAnsweredOutcome.TELEGRAM_API if not telegram_ok else InlineAnsweredOutcome.OK
@@ -271,6 +295,8 @@ async def _answer_compose_result(
             scenario=result.scenario,
             outcome=outcome,
             reuse=reuse,
+            rule_count=result.rule_count,
+            applied_count=applied_count,
         )
     )
 
@@ -302,6 +328,8 @@ def _log_answered(fields: _AnsweredLog) -> None:
         "outcome": fields.outcome.value,
         "reuse": fields.reuse,
         "answer_latency_ms": latency_ms,
+        "rule_count": fields.rule_count,
+        "applied_count": fields.applied_count,
     }
     if fields.scenario is not None:
         payload["scenario"] = fields.scenario.value
@@ -430,7 +458,7 @@ async def _answer_empty(
             if onboard
             else tg_deps.strings.inline_button_how_to
         )
-    button = _web_app_results_button(tg_deps, button_text)
+    button = _web_app_results_button(tg_deps.miniapp_url, button_text)
     return await _send_inline_answer(
         bot,
         inline_query_id=query.id,
@@ -440,11 +468,43 @@ async def _answer_empty(
     )
 
 
-def _web_app_results_button(
+async def _compose_handoff_button(
+    query: InlineQuery,
     tg_deps: TelegramDeps,
-    text: str,
 ) -> InlineQueryResultsButton:
-    return InlineQueryResultsButton(text=text, web_app=WebAppInfo(url=tg_deps.miniapp_url))
+    """Issue a one-time handoff and build the web_app results button (label not logged)."""
+    issued = await tg_deps.issue_compose_handoff.execute(
+        IssueComposeHandoffCommand(TelegramUserId(query.from_user.id), query.query)
+    )
+    if issued.contact_label is not None:
+        text = _button_text_with_label(
+            tg_deps.strings.inline_button_compose_with_contact,
+            issued.contact_label,
+        )
+    else:
+        text = tg_deps.strings.inline_button_compose_without_contact[:_BUTTON_TEXT_MAX]
+    url = _compose_handoff_url(tg_deps.miniapp_url, issued.token)
+    return _web_app_results_button(url, text)
+
+
+def _button_text_with_label(template: str, label: str) -> str:
+    """Format and clamp button text to Telegram's 64-char limit without logging label."""
+    text = template.format(label=label)
+    if len(text) <= _BUTTON_TEXT_MAX:
+        return text
+    overhead = len(template.format(label=""))
+    max_label = max(1, _BUTTON_TEXT_MAX - overhead)
+    return template.format(label=label[:max_label])[:_BUTTON_TEXT_MAX]
+
+
+def _compose_handoff_url(miniapp_url: str, token: str) -> str:
+    base = miniapp_url.rstrip("/")
+    query = urlencode({"view": "compose", "h": token})
+    return f"{base}/?{query}"
+
+
+def _web_app_results_button(url: str, text: str) -> InlineQueryResultsButton:
+    return InlineQueryResultsButton(text=text, web_app=WebAppInfo(url=url))
 
 
 async def _send_inline_answer(

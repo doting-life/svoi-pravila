@@ -550,15 +550,18 @@ describe("ComposeScreen", () => {
             contacts: [pairedAnya],
             partnerUsername: "anya_tg",
         });
+        expect(
+            await screen.findByText(ru.composeFor.replace("{label}", "Аня")),
+        ).toBeInTheDocument();
         submitDraft("черновик");
         expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
         const sendLabel = ru.composeSend.replace("{label}", "Аня");
         const card = screen.getAllByRole("article")[0] as HTMLElement;
-        expect(within(card).getByRole("button", { name: sendLabel })).toBeInTheDocument();
+        const sendButton = await within(card).findByRole("button", { name: sendLabel });
         fireEvent.change(within(card).getByRole("textbox"), {
             target: { value: "отредактировано 👋\nвторая" },
         });
-        fireEvent.click(within(card).getByRole("button", { name: sendLabel }));
+        fireEvent.click(sendButton);
         await waitFor(() => {
             expect(telegram.openTelegramLink).toHaveBeenCalledWith(
                 `https://t.me/anya_tg?text=${encodeURIComponent("отредактировано 👋\nвторая")}`,

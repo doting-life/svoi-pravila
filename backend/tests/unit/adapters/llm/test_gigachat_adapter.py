@@ -938,6 +938,25 @@ def test_validate_variants_index_count_and_duplicate_firmness() -> None:
             ),
         )
     assert InvalidOutputReason.RULE_INDEX_OUT_OF_RANGE in bad_idx.value.reasons
+    ok_variants, ok_indexes, ok_safety = validate_variants(
+        [VariantOut(text="only", firmness=FirmnessOut.GENTLE)],
+        VariantValidation(
+            applied=[0],
+            safety_raw="ok",
+            rule_count=1,
+            min_variants=1,
+            max_variants=1,
+            require_all_firmness=False,
+            usage=usage,
+            attempts=1,
+            model="m",
+            prompt_version="p",
+            operation="decode",
+        ),
+    )
+    assert ok_variants[0].firmness is Firmness.GENTLE
+    assert ok_indexes == (0,)
+    assert ok_safety.value == "ok"
     with pytest.raises(InvalidGenerationOutput) as count:
         validate_variants(
             [VariantOut(text="only", firmness=FirmnessOut.GENTLE)],

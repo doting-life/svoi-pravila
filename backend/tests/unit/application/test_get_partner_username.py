@@ -91,3 +91,39 @@ async def test_get_partner_username_unpaired_returns_none(world: AppWorld) -> No
                 contact_id=ContactId(UUID("01900000-0000-7000-8000-0000000000aa")),
             )
         )
+
+
+@pytest.mark.unit
+async def test_get_partner_username_missing_partner_user(world: AppWorld) -> None:
+    owner = await world.ensure_granted_user(84)
+    invitee = await world.ensure_granted_user(85)
+    contact = (
+        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+            CreateContactCommand(owner.id, ContactLabel("П"), RelationshipKind.PARTNER)
+        )
+    ).contact
+    created = await CreateInvite(
+        world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
+    ).execute(CreateInviteCommand(owner.id, contact.id))
+    resolved = await ResolveInvite(world.uow_factory, world.catalog, world.clock).execute(
+        ResolveInviteCommand(invitee.id, created.raw_token)
+    )
+    await AcceptInvite(
+        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
+    ).execute(
+        AcceptInviteCommand(
+            invitee.id,
+            resolved.invite_id,
+            ContactLabel("О"),
+            RelationshipKind.PARTNER,
+        )
+    )
+    async with world.uow_factory() as uow:
+        await uow.users.delete(invitee.id)
+        await uow.commit()
+    usernames = FakeTelegramPublicUsername(by_id={85: "gone"})
+    with pytest.raises(NotFound):
+        await _uc(world, usernames).execute(
+            GetPartnerUsernameCommand(actor_id=owner.id, contact_id=contact.id)
+        )
+    assert usernames.calls == []

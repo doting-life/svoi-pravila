@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 
 from svoi_pravila.application.errors import AccessNotGranted, NotFound
@@ -12,7 +14,7 @@ from svoi_pravila.application.use_cases.issue_compose_handoff import (
     IssueComposeHandoffPorts,
 )
 from svoi_pravila.domain.enums import RelationshipKind
-from svoi_pravila.domain.ids import TelegramUserId
+from svoi_pravila.domain.ids import ContactId, TelegramUserId
 from svoi_pravila.domain.text import ContactLabel
 from tests.fakes.compose_handoffs import FakeComposeHandoffs
 from tests.fakes.rate_limit import FakePseudonymizer
@@ -69,3 +71,23 @@ async def test_issue_compose_handoff_requires_access(world: AppWorld) -> None:
     await ConfirmAge(world.uow_factory, world.clock).execute(ConfirmAgeCommand(user.id))
     with pytest.raises(AccessNotGranted):
         await _uc(world).execute(IssueComposeHandoffCommand(TelegramUserId(51), "x"))
+
+
+@pytest.mark.unit
+async def test_issue_compose_handoff_stale_active_contact_cleared(world: AppWorld) -> None:
+    handoffs = FakeComposeHandoffs()
+    uc = _uc(world, handoffs)
+    user = await world.ensure_granted_user(52)
+    async with world.uow_factory() as uow:
+        stored = await uow.users.get(user.id)
+        assert stored is not None
+        await uow.users.update(stored.set_active_contact(ContactId(UUID(int=404))))
+        await uow.commit()
+    result = await uc.execute(IssueComposeHandoffCommand(TelegramUserId(52), "stale"))
+    assert result.contact_label is None
+    payload = await handoffs.redeem_once(
+        FakePseudonymizer().pseudonymize("compose_handoff", "52"),
+        result.token,
+    )
+    assert payload.draft == "stale"
+    assert payload.contact_id is None

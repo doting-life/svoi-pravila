@@ -1,0 +1,24 @@
+name: Proposal or question for the CTO
+description: An idea, an improvement or a question about the product or the code.
+title: "Proposal: "
+labels: ["proposal", "needs:cto"]
+body:
+  - type: markdown
+    attributes:
+      value: "Public repository: no names, logins, paths, domains, secrets or user data."
+  - type: textarea
+    id: what
+    attributes:
+      label: What and why
+      description: The problem or opportunity, and what you propose.
+    validations:
+      required: true
+  - type: textarea
+    id: where
+    attributes:
+      label: Where in the code (optional)
+      description: Files, modules, screens.
+  - type: textarea
+    id: options
+    attributes:
+      label: Options you see (optional)

@@ -1,0 +1,60 @@
+name: Task (CTO)
+description: A task for an executor. Written by the CTO; executors implement exactly this.
+title: "NNNN — "
+labels: ["task"]
+body:
+  - type: markdown
+    attributes:
+      value: "Public repository: no names, logins, paths, domains or secrets. Executors follow AGENTS.md."
+  - type: input
+    id: branch
+    attributes:
+      label: Branch
+      placeholder: task/NNNN-slug
+    validations:
+      required: true
+  - type: dropdown
+    id: executor
+    attributes:
+      label: Executor
+      options: ["cursor", "copilot", "any"]
+    validations:
+      required: true
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+    validations:
+      required: true
+  - type: textarea
+    id: read
+    attributes:
+      label: Read first (only these sections)
+    validations:
+      required: true
+  - type: textarea
+    id: requirements
+    attributes:
+      label: Requirements
+    validations:
+      required: true
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance
+    validations:
+      required: true
+  - type: textarea
+    id: live_budget
+    attributes:
+      label: Live budget
+      description: "0 = no live LLM calls. Otherwise: models, operations, cases, repeats, max billable tokens."
+      value: "0"
+    validations:
+      required: true

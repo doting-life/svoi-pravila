@@ -1,0 +1,10 @@
+# CTO-owned paths (ADR-0014). Executors never modify them; CI enforces this list.
+# One pattern per line; a trailing /** means the whole directory.
+AGENTS.md
+backend/AGENTS.md
+miniapp/AGENTS.md
+docs/maintainers/**
+.github/CODEOWNERS
+.github/ISSUE_TEMPLATE/**
+.github/pull_request_template.md
+.github/cto-owned-paths

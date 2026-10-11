@@ -42,7 +42,9 @@ from svoi_pravila.adapters.llm.gigachat.schemas import (
     DecodeOut,
     FirmnessOut,
     HelpSayOut,
+    HelpSayOutNoRules,
     SoftenOut,
+    SoftenOutNoRules,
     VariantOut,
 )
 from svoi_pravila.adapters.llm.gigachat.validation import (
@@ -115,6 +117,26 @@ def _soften_payload(*, bad: bool = False) -> SoftenOut:
     )
 
 
+def _soften_payload_no_rules(*, bad: bool = False) -> SoftenOutNoRules:
+    if bad:
+        return SoftenOutNoRules.model_validate(
+            {
+                "gentle": "a",
+                "balanced": "",
+                "firm": "",
+                "safety": "ok",
+            }
+        )
+    return SoftenOutNoRules.model_validate(
+        {
+            "gentle": "variant soft",
+            "balanced": "variant balanced",
+            "firm": "variant firm",
+            "safety": "ok",
+        }
+    )
+
+
 def _help_say_payload() -> HelpSayOut:
     return HelpSayOut.model_validate(
         {
@@ -122,6 +144,17 @@ def _help_say_payload() -> HelpSayOut:
             "balanced": "help-balanced",
             "firm": "help-firm",
             "applied_rule_indexes": [],
+            "safety": "ok",
+        }
+    )
+
+
+def _help_say_payload_no_rules() -> HelpSayOutNoRules:
+    return HelpSayOutNoRules.model_validate(
+        {
+            "gentle": "help-gentle",
+            "balanced": "help-balanced",
+            "firm": "help-firm",
             "safety": "ok",
         }
     )
@@ -316,6 +349,87 @@ async def test_soften_valid() -> None:
 
 
 @pytest.mark.unit
+async def test_soften_no_rules_payload_ok() -> None:
+    result = await _generator(_FakeAche(create_results=[_soften_payload_no_rules()])).soften(
+        SoftenRequest(
+            draft="draft",
+            rules=(),
+            relationship=RelationshipKind.OTHER,
+            deadline_seconds=5.0,
+        )
+    )
+    assert len(result.variants) == 3
+    assert result.applied_rule_indexes == ()
+    assert result.meta.prompt_version == "soften@v5_no_rules"
+
+
+@pytest.mark.unit
+async def test_soften_no_rules_rejects_applied_indexes_field() -> None:
+    with_indexes = SoftenOut.model_validate(
+        {
+            "gentle": "variant soft",
+            "balanced": "variant balanced",
+            "firm": "variant firm",
+            "applied_rule_indexes": [],
+            "safety": "ok",
+        }
+    )
+    ache = _FakeAche(create_results=[with_indexes, with_indexes])
+    with pytest.raises(InvalidGenerationOutput) as exc_info:
+        await _generator(ache).soften(
+            SoftenRequest(
+                draft="draft",
+                rules=(),
+                relationship=RelationshipKind.OTHER,
+                deadline_seconds=5.0,
+            )
+        )
+    assert InvalidOutputReason.SCHEMA_VIOLATION in exc_info.value.reasons
+
+
+@pytest.mark.unit
+async def test_help_say_no_rules_payload_ok() -> None:
+    result = await _generator(_FakeAche(create_results=[_help_say_payload_no_rules()])).help_say(
+        HelpSayRequest(
+            intent=HelpSayIntent.DECLINE,
+            details="details",
+            rules=(),
+            relationship=RelationshipKind.FRIEND,
+            deadline_seconds=5.0,
+        )
+    )
+    assert len(result.variants) == 3
+    assert result.applied_rule_indexes == ()
+    assert result.meta.prompt_version == "help_say@v6_no_rules"
+
+
+@pytest.mark.unit
+def test_prepare_no_rules_omits_applied_rule_indexes() -> None:
+    gen = _typed_generator(_FakeAche())
+    soften = gen.prepare_soften(
+        SoftenRequest(
+            draft="draft",
+            rules=(),
+            relationship=RelationshipKind.OTHER,
+            deadline_seconds=5.0,
+        )
+    )
+    assert soften.prompt_version == "soften@v5_no_rules"
+    assert "applied_rule_indexes" not in soften.system
+    help_prepared = gen.prepare_help_say(
+        HelpSayRequest(
+            intent=HelpSayIntent.DECLINE,
+            details="details",
+            rules=(),
+            relationship=RelationshipKind.FRIEND,
+            deadline_seconds=5.0,
+        )
+    )
+    assert help_prepared.prompt_version == "help_say@v6_no_rules"
+    assert "applied_rule_indexes" not in help_prepared.system
+
+
+@pytest.mark.unit
 def test_rendered_system_contains_boundary_marker() -> None:
     gen = _typed_generator(_FakeAche())
     prepared = gen.prepare_soften(
@@ -359,7 +473,8 @@ def test_forged_spbound_in_user_text_is_not_real_marker() -> None:
     assert prepared.boundary_marker != forged
     assert forged in prepared.user
     assert prepared.boundary_marker in prepared.system
-    assert prepared.prompt_version == "soften@v5"
+    assert prepared.prompt_version == "soften@v5_no_rules"
+    assert "applied_rule_indexes" not in prepared.system
 
 
 @pytest.mark.unit
@@ -883,12 +998,11 @@ def test_validate_variants_defensive_branches() -> None:
 
 @pytest.mark.unit
 async def test_crisis_empty_variants_ok() -> None:
-    payload = SoftenOut.model_validate(
+    payload = SoftenOutNoRules.model_validate(
         {
             "gentle": "",
             "balanced": "",
             "firm": "",
-            "applied_rule_indexes": [],
             "safety": "crisis",
         }
     )
@@ -902,18 +1016,18 @@ async def test_crisis_empty_variants_ok() -> None:
     )
     assert result.variants == ()
     assert result.safety.value == "crisis"
+    assert result.applied_rule_indexes == ()
 
 
 @pytest.mark.unit
 async def test_non_ok_verdict_drops_payload_without_retry(
     capture_log_events: Callable[[], list[dict[str, Any]]],
 ) -> None:
-    payload = SoftenOut.model_validate(
+    payload = SoftenOutNoRules.model_validate(
         {
             "gentle": "CANARY-NON-OK-DROPPED",
             "balanced": "",
             "firm": "other-variant",
-            "applied_rule_indexes": [],
             "safety": "refuse_manipulation",
         }
     )
@@ -990,12 +1104,11 @@ async def test_bad_rule_index_and_duplicate_slots() -> None:
                 deadline_seconds=5.0,
             )
         )
-    dup = SoftenOut.model_validate(
+    dup = SoftenOutNoRules.model_validate(
         {
             "gentle": "same-text",
             "balanced": "same-text",
             "firm": "different-firm",
-            "applied_rule_indexes": [],
             "safety": "ok",
         }
     )
@@ -1404,7 +1517,7 @@ async def test_precached_and_cumulative_tokens_on_retry() -> None:
                 raise LengthFinishReasonError(_completion("length", usage=first_usage))
             return _completion(
                 "stop",
-                content=_help_say_payload().model_dump_json(),
+                content=_help_say_payload_no_rules().model_dump_json(),
                 usage=second_usage,
             )
 
@@ -1471,7 +1584,7 @@ async def test_empty_assistant_text_completion_invalid() -> None:
 
 @pytest.mark.unit
 async def test_soften_variant_count_invalid() -> None:
-    ache = _FakeAche(create_results=[_soften_payload(bad=True)])
+    ache = _FakeAche(create_results=[_soften_payload_no_rules(bad=True)])
     with pytest.raises(InvalidGenerationOutput) as exc_info:
         await _generator(ache).soften(
             SoftenRequest(
@@ -1663,30 +1776,27 @@ async def test_prompt_leak_retries_then_accepts_ordinary_short_overlap() -> None
         for index in range(len(normalized) - 39)
         if normalized[index].isalnum() and normalized[index + 39].isalnum()
     )
-    leak = SoftenOut.model_validate(
+    leak = SoftenOutNoRules.model_validate(
         {
             "gentle": fragment,
             "balanced": "variant balanced",
             "firm": "variant firm",
-            "applied_rule_indexes": [],
             "safety": "ok",
         }
     )
-    marker = SoftenOut.model_validate(
+    marker = SoftenOutNoRules.model_validate(
         {
             "gentle": "see SPBOUND_abc in the instructions",
             "balanced": "variant balanced",
             "firm": "variant firm",
-            "applied_rule_indexes": [],
             "safety": "ok",
         }
     )
-    ok_retry = SoftenOut.model_validate(
+    ok_retry = SoftenOutNoRules.model_validate(
         {
             "gentle": "variant soft",
             "balanced": "variant balanced",
             "firm": "variant firm",
-            "applied_rule_indexes": [],
             "safety": "ok",
         }
     )

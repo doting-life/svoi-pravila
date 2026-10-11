@@ -11,7 +11,9 @@ import structlog
 from svoi_pravila.adapters.llm.gigachat.schemas import (
     DecodeOut,
     HelpSayOut,
+    HelpSayOutNoRules,
     SoftenOut,
+    SoftenOutNoRules,
     SuggestRuleOut,
     SuggestRuleVerdictOut,
     VariantOut,
@@ -247,8 +249,10 @@ def validate_firmness_slots(
     return variants, tuple(spec.applied), safety
 
 
-def slots_from_soften(parsed: SoftenOut | HelpSayOut) -> tuple[str, str, str]:
-    """Extract the three fixed text slots from SoftenOut or HelpSayOut."""
+def slots_from_soften(
+    parsed: SoftenOut | SoftenOutNoRules | HelpSayOut | HelpSayOutNoRules,
+) -> tuple[str, str, str]:
+    """Extract the three fixed text slots from a soften/help_say schema model."""
     return parsed.gentle, parsed.balanced, parsed.firm
 
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Annotated
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from svoi_pravila.domain.text import RULE_TEXT_MAX_CHARS
 
@@ -32,7 +32,7 @@ class VariantOut(BaseModel):
 
 
 class SoftenOut(BaseModel):
-    """Fixed three-slot soften output (no firmness field the model can repeat)."""
+    """Fixed three-slot soften output when the request carries rules."""
 
     gentle: str = Field(max_length=1000)
     balanced: str = Field(max_length=1000)
@@ -41,13 +41,35 @@ class SoftenOut(BaseModel):
     safety: SafetyOut
 
 
+class SoftenOutNoRules(BaseModel):
+    """Soften slots when the request has no rules (indexes omitted from the schema)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    gentle: str = Field(max_length=1000)
+    balanced: str = Field(max_length=1000)
+    firm: str = Field(max_length=1000)
+    safety: SafetyOut
+
+
 class HelpSayOut(BaseModel):
-    """Fixed three-slot help-say output (same shape as SoftenOut)."""
+    """Fixed three-slot help-say output when the request carries rules."""
 
     gentle: str = Field(max_length=1000)
     balanced: str = Field(max_length=1000)
     firm: str = Field(max_length=1000)
     applied_rule_indexes: list[int]
+    safety: SafetyOut
+
+
+class HelpSayOutNoRules(BaseModel):
+    """Help-say slots when the request has no rules (indexes omitted from the schema)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    gentle: str = Field(max_length=1000)
+    balanced: str = Field(max_length=1000)
+    firm: str = Field(max_length=1000)
     safety: SafetyOut
 
 

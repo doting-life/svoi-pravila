@@ -28,6 +28,18 @@ def test_render_help_say_v6_prompt() -> None:
     assert "refuse_manipulation" in template
     assert "прибью за такое" in template
     assert "насилие, суицид, самоповреждение" not in template
+    assert "applied_rule_indexes" in template
+
+
+@pytest.mark.unit
+def test_render_no_rules_prompts_omit_indexes() -> None:
+    soften, soften_version = load_prompt("soften", "v5_no_rules")
+    assert soften_version == "soften@v5_no_rules"
+    assert "applied_rule_indexes" not in soften
+    help_say, help_version = load_prompt("help_say", "v6_no_rules")
+    assert help_version == "help_say@v6_no_rules"
+    assert "applied_rule_indexes" not in help_say
+    assert "refuse_manipulation" in help_say
 
 
 @pytest.mark.unit

@@ -1383,11 +1383,6 @@ describe("App", () => {
                 return Promise.resolve(
                     jsonResponse({
                         draft: "из inline",
-                        partner: {
-                            contact_id: "c1",
-                            label: "Аня",
-                            username: "anya",
-                        },
                         limits: { incoming_text_max_chars: 4000 },
                         session: {
                             token: "cs_" + "a".repeat(64),

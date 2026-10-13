@@ -88,7 +88,6 @@ describe("createApiClient", () => {
     it("redeems handoff via typed client with handoff Authorization", async () => {
         const body = {
             draft: "d",
-            partner: null,
             limits: { incoming_text_max_chars: 4000 },
             session: { token: "cs_" + "a".repeat(64), expires_at: "2026-06-01T12:15:00Z" },
         };

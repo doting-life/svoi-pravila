@@ -11,12 +11,26 @@ from svoi_pravila.domain.enums import RelationshipKind, RewriteGoal
 
 @dataclass(frozen=True, slots=True)
 class RewriteCase:
-    """One draft run through ``rewrite`` (every kind comes back from a single call)."""
+    """One draft run through ``rewrite`` (every kind comes back from a single call).
+
+    ``check_expected`` lists the accepted corrected texts of the ``check`` variant; empty
+    means the case has no reference and ``check`` is not compared.
+    """
 
     id: str
     draft: str
     goal: RewriteGoal | None = None
     relationship: RelationshipKind = RelationshipKind.OTHER
+    check_expected: tuple[str, ...] = ()
+
+
+def _parse_check_expected(raw: object) -> tuple[str, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or not all(isinstance(item, str) and item.strip() for item in raw):
+        msg = "check_expected must be a list of non-empty strings"
+        raise TypeError(msg)
+    return tuple(raw)
 
 
 def parse_rewrite_case(raw: object) -> RewriteCase:
@@ -34,6 +48,7 @@ def parse_rewrite_case(raw: object) -> RewriteCase:
         draft=str(raw["draft"]),
         goal=None if goal_raw is None else RewriteGoal(str(goal_raw)),
         relationship=RelationshipKind(str(raw.get("relationship", "other"))),
+        check_expected=_parse_check_expected(raw.get("check_expected")),
     )
 
 

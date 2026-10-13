@@ -20,6 +20,7 @@ def _summary(result: RewriteEvalResult, spent_billable: int) -> list[str]:
     by_rule = Counter(
         rule for record in records for variant in record.variants for rule in variant.violations
     )
+    checks = [v.check_ok for r in records for v in r.variants if v.check_ok is not None]
     p50 = percentile(latencies, 50)
     p95 = percentile(latencies, 95)
     return [
@@ -27,6 +28,7 @@ def _summary(result: RewriteEvalResult, spent_billable: int) -> list[str]:
         "",
         f"- runs: {len(records)}",
         *(f"- {outcome.value}: {outcomes.get(outcome, 0)}" for outcome in RunOutcome),
+        f"- check_ok: {sum(checks)} / {len(checks)}",
         f"- latency p50 / p95 ms: {p50:.0f} / {p95:.0f}",
         f"- billable tokens: {spent_billable}",
         "",
@@ -50,21 +52,44 @@ def _refusals(records: list[RewriteRunRecord]) -> list[str]:
     ]
 
 
+def _invalid_diagnostics(records: list[RewriteRunRecord]) -> list[str]:
+    lines = [
+        "## Invalid output diagnostics",
+        "",
+        "| case | run | attempt | reason[:slot] | finish_reason |",
+        "|---|---:|---:|---|---|",
+    ]
+    for record in records:
+        lines.extend(
+            f"| {record.case_id} | {record.run_index} | {attempt} | {item.reason} "
+            f"| {item.finish_reason or 'none'} |"
+            for attempt, item in enumerate(record.diagnostics, start=1)
+        )
+    lines.append("")
+    return lines
+
+
+def _check_ok_cell(*, check_ok: bool | None) -> str:
+    if check_ok is None:
+        return ""
+    return "yes" if check_ok else "no"
+
+
 def _details(records: list[RewriteRunRecord]) -> list[str]:
     lines = [
         "## Case x kind",
         "",
-        "| case | run | outcome | kind | violations | latency ms | text |",
-        "|---|---:|---|---|---|---:|---|",
+        "| case | run | outcome | kind | violations | check_ok | latency ms | text |",
+        "|---|---:|---|---|---|---|---:|---|",
     ]
     for record in records:
         latency = "" if record.latency_ms is None else str(record.latency_ms)
         head = f"| {record.case_id} | {record.run_index} | {record.outcome.value} |"
         if not record.variants:
-            lines.append(f"{head} | | {latency} | |")
+            lines.append(f"{head} | | | {latency} | |")
         lines.extend(
             f"{head} {variant.kind.value} | {','.join(rule.value for rule in variant.violations)} "
-            f"| {latency} | {_cell(variant.text)} |"
+            f"| {_check_ok_cell(check_ok=variant.check_ok)} | {latency} | {_cell(variant.text)} |"
             for variant in record.variants
         )
     lines.append("")
@@ -82,6 +107,7 @@ def render_report(result: RewriteEvalResult, *, model: str, spent_billable: int)
         "",
         *_summary(result, spent_billable),
         *_refusals(result.records),
+        *_invalid_diagnostics(result.records),
         *_details(result.records),
     ]
     return "\n".join(lines)

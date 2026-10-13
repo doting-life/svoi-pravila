@@ -15,7 +15,7 @@ from svoi_pravila.benchmarks.runner import SpendTracker
 from svoi_pravila.config import LlmToolSettings
 from svoi_pravila.evals.rewrite_cases import RewriteCase, load_rewrite_cases, merge_cases
 from svoi_pravila.evals.rewrite_report import render_report
-from svoi_pravila.evals.rewrite_run import RewriteEvalParams, run_rewrite_eval
+from svoi_pravila.evals.rewrite_run import RewriteEvalParams, RunOutcome, run_rewrite_eval
 
 _DEFAULT_DATA = "/app/evals/data/interview_v1.jsonl"
 _ESTIMATE_HELP = (
@@ -91,8 +91,12 @@ async def async_main(args: argparse.Namespace) -> int:
         )
         await asyncio.to_thread(_write_report, Path(args.out), report)
         print(f"Report written. Spent billable tokens: {spend.spent_billable}")
-        violated = any(v.violations for r in result.records for v in r.variants)
-        return 1 if result.stop_reason is not None or violated else 0
+        failed = any(
+            r.outcome is not RunOutcome.OK
+            or any(v.violations or v.check_ok is False for v in r.variants)
+            for r in result.records
+        )
+        return 1 if result.stop_reason is not None or failed else 0
     finally:
         await close_gigachat_client(client)
 

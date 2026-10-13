@@ -236,9 +236,83 @@ async def test_report_lists_summary_refusals_and_details() -> None:
     assert "| b | 1 |" in report
     assert "| a | 0 |" in report
     assert "Сиди \\| дома и жди, пожалуйста" in report
-    assert "| b | 1 | refused | | |  | |" in report
+    assert "| b | 1 | refused | | | |  | |" in report
+    assert "- check_ok: 0 / 0" in report
     for rule in PolicyRule:
         assert f"| {rule.value} |" in report
+
+
+@pytest.mark.unit
+def test_interview_cases_carry_reference_corrections_for_check() -> None:
+    expected = {case.id: case.check_expected for case in load_rewrite_cases(_DATA)}
+    assert all(expected.values())
+    assert expected["i1"] == ("Сиди дома и жди",)
+    assert len(expected["i3"]) == 2
+    assert len(expected["i6"]) == 2
+    assert not any(text.endswith(".") for text in expected["i1"] + expected["i2"])
+
+
+@pytest.mark.unit
+def test_parse_check_expected_accepts_a_list_and_rejects_other_shapes() -> None:
+    parsed = parse_rewrite_case({"id": "a", "draft": "x", "check_expected": ["X", "Y"]})
+    assert parsed.check_expected == ("X", "Y")
+    assert parse_rewrite_case({"id": "a", "draft": "x"}).check_expected == ()
+    for bad in ("X", ["X", 1], [" "]):
+        with pytest.raises(TypeError, match="check_expected"):
+            parse_rewrite_case({"id": "a", "draft": "x", "check_expected": bad})
+
+
+@pytest.mark.unit
+async def test_run_compares_check_with_references_after_whitespace_normalization() -> None:
+    case = RewriteCase(id="c", draft="ну что ребята", check_expected=("Ну что, ребята",))
+
+    async def run(check_text: str) -> bool | None:
+        gen = FakeTextGenerator(
+            rewrite_result=_result(
+                Variant(text=check_text, kind=VariantKind.CHECK),
+                Variant(text="Ну что, ребята, как вы", kind=VariantKind.SOFTER),
+                Variant(text="Ну что, ребята", kind=VariantKind.FIRMER),
+            )
+        )
+        result = await run_rewrite_eval(gen, [case], _params(), SpendTracker())
+        by_kind = {variant.kind: variant for variant in result.records[0].variants}
+        assert by_kind[VariantKind.SOFTER].check_ok is None
+        assert by_kind[VariantKind.FIRMER].check_ok is None
+        return by_kind[VariantKind.CHECK].check_ok
+
+    assert await run("Ну  что,\nребята") is True
+    assert await run("ну что ребята") is False
+    no_reference = RewriteCase(id="n", draft="ну что ребята")
+    gen = FakeTextGenerator(
+        rewrite_result=_result(
+            Variant(text="ну что ребята", kind=VariantKind.CHECK),
+            Variant(text="Ну что, ребята, как вы", kind=VariantKind.SOFTER),
+            Variant(text="Ну что, ребята", kind=VariantKind.FIRMER),
+        )
+    )
+    result = await run_rewrite_eval(gen, [no_reference], _params(), SpendTracker())
+    assert result.records[0].variants[0].check_ok is None
+
+
+@pytest.mark.unit
+async def test_run_records_slot_and_finish_reason_of_invalid_attempts() -> None:
+    gen = FakeTextGenerator()
+    gen.rewrite_error = InvalidGenerationOutput(
+        (InvalidOutputReason.EMPTY_TEXT, InvalidOutputReason.EMPTY_TEXT),
+        usage=TokenUsage(output=3),
+        attempts=2,
+        model="m",
+        prompt_version="p",
+    ).with_diagnostics((VariantKind.SOFTER, VariantKind.CHECK), ("stop", None))
+    result = await run_rewrite_eval(gen, [_case("a")], _params(), SpendTracker())
+    (record,) = result.records
+    assert [(d.reason, d.finish_reason) for d in record.diagnostics] == [
+        ("empty_text:softer", "stop"),
+        ("empty_text:check", None),
+    ]
+    report = render_report(result, model="m", spent_billable=3)
+    assert "| a | 1 | 1 | empty_text:softer | stop |" in report
+    assert "| a | 1 | 2 | empty_text:check | none |" in report
 
 
 @pytest.mark.unit
@@ -359,6 +433,37 @@ async def test_cli_exit_code_is_one_for_violations_and_early_stops(
     data = _one_case(tmp_path)
     code = await async_main(_cli_args(data=data, max_tokens=1_000_000, out=str(tmp_path / "v.md")))
     assert code == 1
+    invalid = FakeTextGenerator()
+    invalid.rewrite_error = InvalidGenerationOutput(
+        (InvalidOutputReason.EMPTY_TEXT,),
+        usage=TokenUsage(output=1),
+        attempts=1,
+        model="m",
+        prompt_version="p",
+    )
+    _patch_client(monkeypatch, invalid)
+    assert (
+        await async_main(_cli_args(data=data, max_tokens=1_000_000, out=str(tmp_path / "i.md")))
+        == 1
+    )
+    wrong_check = FakeTextGenerator(
+        rewrite_result=_result(
+            Variant(text="Сиди дома и жди", kind=VariantKind.CHECK),
+            Variant(text="Пожалуйста, посиди дома", kind=VariantKind.SOFTER),
+            Variant(text="Жди дома", kind=VariantKind.FIRMER),
+        )
+    )
+    _patch_client(monkeypatch, wrong_check)
+    referenced = tmp_path / "ref.jsonl"
+    referenced.write_text(
+        json.dumps({"id": "r", "draft": _DRAFT, "check_expected": ["Сиди дома, жди"]}) + "\n"
+    )
+    assert (
+        await async_main(
+            _cli_args(data=str(referenced), max_tokens=1_000_000, out=str(tmp_path / "c.md"))
+        )
+        == 1
+    )
     limited = FakeTextGenerator()
     limited.rewrite_error = _unavailable(UnavailableKind.RATE_LIMITED)
     _patch_client(monkeypatch, limited)

@@ -107,23 +107,6 @@ export interface paths {
         patch: operations["renameContact"];
         trace?: never;
     };
-    "/api/v1/contacts/{contact_id}/activate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Activate Contact */
-        post: operations["activateContact"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/contacts/{contact_id}/invite": {
         parameters: {
             query?: never;
@@ -784,9 +767,11 @@ export interface components {
         };
         /**
          * DecodeRequest
-         * @description POST /decode — incoming text to decode (same limits as DM).
+         * @description POST /decode — incoming text to decode (same limits as DM), optional contact.
          */
         DecodeRequest: {
+            /** Contact Id */
+            contact_id?: string | null;
             /** Text */
             text: string;
         };
@@ -883,8 +868,6 @@ export interface components {
         MeResponse: {
             /** Account Exists */
             account_exists: boolean;
-            /** Active Contact Id */
-            active_contact_id?: string | null;
             /** Bot Username */
             bot_username: string;
             /** Consent Kind */
@@ -1719,100 +1702,6 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["ContactItem"];
                 };
-            };
-            /** @description Unauthorized */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Forbidden */
-            403: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Not Found */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Conflict */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Content Too Large */
-            413: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Unprocessable Content */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Too Many Requests */
-            429: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorBody"];
-                };
-            };
-            /** @description Service Unavailable */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LimitErrorBody"];
-                };
-            };
-        };
-    };
-    activateContact: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                contact_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
             /** @description Unauthorized */
             401: {

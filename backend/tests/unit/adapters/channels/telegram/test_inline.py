@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -37,7 +37,6 @@ from tests.fakes.usage_sink import RecordingUsageEventSink
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.factory import build_telegram_lifecycle
-from svoi_pravila.adapters.channels.telegram.handlers.inline import _button_text_with_label
 from svoi_pravila.adapters.channels.telegram.lifecycle import ALLOWED_UPDATES
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
@@ -219,25 +218,14 @@ async def test_inline_too_short_compose_handoff_button() -> None:
     assert answers[-1].results == []
     _assert_web_app_button(
         answers[-1].button,
-        text=deps.strings.inline_button_compose_without_contact,
+        text=deps.strings.inline_button_compose,
         miniapp_url=deps.miniapp_url or "",
         handoff=True,
     )
 
 
 @pytest.mark.unit
-def test_button_text_with_label_truncates_to_telegram_limit() -> None:
-    template = "Для: {label} · без подписи"
-    long_label = "я" * 80
-    text = _button_text_with_label(template, long_label)
-    assert len(text) <= 64
-    assert text.startswith("Для: ")
-    short = _button_text_with_label(template, "Лиза")
-    assert short == template.format(label="Лиза")
-
-
-@pytest.mark.unit
-async def test_inline_compose_button_shows_contact_label_not_logged(
+async def test_inline_ignores_active_contact_button_and_rules(
     capture_log_events: Callable[[], list[dict[str, Any]]],
 ) -> None:
     catalog = FakeConsentCatalog()
@@ -245,8 +233,12 @@ async def test_inline_compose_button_shows_contact_label_not_logged(
     ids = FakeIdGenerator()
     clock = FakeClock()
     label_marker = "LABEL_CANARY_ZX9"
+    rule_marker = "RULE_CANARY_KT4"
     draft_marker = "DRAFT_CANARY_QW7_enough"
-    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, ids=ids, clock=clock))
+    generator = FakeTextGenerator()
+    deps = make_telegram_deps(
+        TelegramTestDeps(uow=uow, catalog=catalog, ids=ids, clock=clock, generator=generator)
+    )
     session = FakeTelegramSession()
     bot = Bot(token="1:TEST", session=session)
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
@@ -260,26 +252,44 @@ async def test_inline_compose_button_shows_contact_label_not_logged(
             CreateContactCommand(owner_id, ContactLabel(label_marker), RelationshipKind.FRIEND)
         )
     ).contact
+    await ProposeRule(uow, catalog, ids, clock, FakePairNotifier()).execute(
+        ProposeRuleCommand(
+            owner_id,
+            contact.id,
+            RuleCategory.OTHER,
+            RuleText(rule_marker),
+            shared=False,
+        )
+    )
     await SetActiveContact(uow, catalog).execute(
         SetActiveContactCommand(actor_id=owner_id, contact_id=contact.id)
     )
     await lifecycle.dispatcher.feed_update(bot, _inline(710, 70, draft_marker))
     await _await_inline(deps)
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
-    expected = deps.strings.inline_button_compose_with_contact.format(label=label_marker)
+    assert deps.strings.inline_button_compose == "Без контакта"
     _assert_web_app_button(
         answers[-1].button,
-        text=expected,
+        text="Без контакта",
         miniapp_url=deps.miniapp_url or "",
         handoff=True,
     )
+    request = generator.soften_calls[0]
+    assert request.relationship is RelationshipKind.OTHER
+    assert request.rules == ()
+    answered = [e for e in capture_log_events() if e.get("event") == "inline_answered"]
+    assert answered[-1]["rule_count"] == 0
+    assert answered[-1]["applied_count"] == 0
     blob = " ".join(str(v) for e in capture_log_events() for v in e.values())
     assert label_marker not in blob
+    assert rule_marker not in blob
     assert draft_marker not in blob
 
 
 @pytest.mark.unit
-async def test_inline_compose_articles_and_choice() -> None:
+async def test_inline_compose_articles_and_choice(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
     catalog = FakeConsentCatalog()
     uow = InMemoryUnitOfWorkFactory()
     sink = RecordingUsageEventSink()
@@ -297,7 +307,7 @@ async def test_inline_compose_articles_and_choice() -> None:
     assert len(answers[-1].results) == 2
     _assert_web_app_button(
         answers[-1].button,
-        text=deps.strings.inline_button_compose_without_contact,
+        text=deps.strings.inline_button_compose,
         miniapp_url=deps.miniapp_url or "",
         handoff=True,
     )
@@ -313,6 +323,8 @@ async def test_inline_compose_articles_and_choice() -> None:
     chosen = [event for event in sink.events if event.event_kind is UsageEventKind.RESULT_CHOSEN]
     assert len(chosen) == 1
     assert chosen[0].variant_firmness is Firmness.GENTLE
+    tone = [e for e in capture_log_events() if e.get("event") == "tone_signal"]
+    assert [e["outcome"] for e in tone] == ["skipped_inline"]
 
 
 @pytest.mark.unit
@@ -949,68 +961,6 @@ async def test_inline_crisis_and_refuse_buttons() -> None:
         text=refuse_deps.strings.inline_button_why_no_variants,
         miniapp_url=refuse_deps.miniapp_url or "",
     )
-
-
-@pytest.mark.unit
-async def test_inline_description_prefixes_applied_rule_date(
-    capture_log_events: Callable[[], list[dict[str, Any]]],
-) -> None:
-    uow = InMemoryUnitOfWorkFactory()
-    catalog = FakeConsentCatalog()
-    clock = FakeClock(start=datetime(2026, 10, 3, 12, tzinfo=UTC))
-    ids = FakeIdGenerator()
-    generator = FakeTextGenerator(
-        soften_result=SoftenResult(
-            variants=(Variant(text="variant body", firmness=Firmness.GENTLE),),
-            applied_rule_indexes=(0,),
-            safety=SafetyVerdict.OK,
-            meta=GenerationMeta(
-                model="fake",
-                prompt_version="soften@v1",
-                latency_ms=1,
-                attempts=1,
-                usage=TokenUsage(),
-            ),
-        )
-    )
-    deps = make_telegram_deps(
-        TelegramTestDeps(uow=uow, catalog=catalog, clock=clock, ids=ids, generator=generator)
-    )
-    session = FakeTelegramSession()
-    bot = Bot(token="1:TEST", session=session)
-    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _grant(uow, catalog, 42, ids=ids, clock=clock)
-    user = None
-    async with uow() as unit:
-        user = await unit.users.get_by_telegram_id(TelegramUserId(42))
-    assert user is not None
-    contact = (
-        await CreateContact(uow, catalog, ids, clock).execute(
-            CreateContactCommand(user.id, ContactLabel("Sam"), RelationshipKind.FRIEND)
-        )
-    ).contact
-    await ProposeRule(uow, catalog, ids, clock, FakePairNotifier()).execute(
-        ProposeRuleCommand(
-            user.id,
-            contact.id,
-            RuleCategory.OTHER,
-            RuleText("не повышать голос"),
-            shared=False,
-        )
-    )
-    clock.advance(timedelta(days=1))
-    await lifecycle.dispatcher.feed_update(bot, _inline(7, 42, "long enough draft"))
-    await _await_inline(deps)
-    answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
-    article = answers[-1].results[0]
-    assert isinstance(article, InlineQueryResultArticle)
-    assert (article.description or "").startswith("С учётом правила от 3 октября")
-    content = article.input_message_content
-    assert isinstance(content, InputTextMessageContent)
-    assert content.message_text == "variant body"
-    answered = [e for e in capture_log_events() if e.get("event") == "inline_answered"]
-    assert answered[-1]["rule_count"] == 1
-    assert answered[-1]["applied_count"] == 1
 
 
 @pytest.mark.unit

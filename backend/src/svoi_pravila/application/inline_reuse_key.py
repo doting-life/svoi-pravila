@@ -5,8 +5,8 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
-from svoi_pravila.application.ports.generation import HelpSayIntent, RuleContext
-from svoi_pravila.domain.enums import RelationshipKind, UsageScenario
+from svoi_pravila.application.ports.generation import HelpSayIntent
+from svoi_pravila.domain.enums import UsageScenario
 
 _PERSON = b"inline-reuse"
 
@@ -19,8 +19,6 @@ class InlineReuseKeyMaterial:
     scenario: UsageScenario
     intent: HelpSayIntent | None
     draft: str
-    relationship: RelationshipKind
-    rules: tuple[RuleContext, ...]
 
 
 def _field(value: str) -> bytes:
@@ -35,11 +33,6 @@ def inline_reuse_key(material: InlineReuseKeyMaterial) -> str:
         _field(material.scenario.value),
         _field("" if material.intent is None else material.intent.value),
         _field(material.draft),
-        _field(material.relationship.value),
     ]
-    for rule in material.rules:
-        parts.append(_field(rule.category.value))
-        parts.append(_field(rule.text))
-        parts.append(_field(rule.effective_since.isoformat()))
     digest = hashlib.blake2b(b"".join(parts), person=_PERSON, digest_size=32)
     return digest.hexdigest()

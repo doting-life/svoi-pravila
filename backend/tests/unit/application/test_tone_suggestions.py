@@ -48,6 +48,7 @@ from svoi_pravila.domain.enums import (
     RuleStatus,
     SuggestionStatus,
     UsageScenario,
+    UsageSurface,
 )
 from svoi_pravila.domain.ids import ContactId, RuleSuggestionId, TelegramUserId
 from svoi_pravila.domain.rule_suggestion import ToneSignal
@@ -79,42 +80,42 @@ def _recorder(world: AppWorld, sink: RecordingUsageEventSink | None = None) -> R
     )
 
 
-async def _user_with_active_contact(
-    world: AppWorld, telegram_id: int = 501
-) -> tuple[User, Contact]:
+async def _user_with_contact(world: AppWorld, telegram_id: int = 501) -> tuple[User, Contact]:
     user = await world.ensure_granted_user(telegram_id)
     contact = (
         await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
             CreateContactCommand(user.id, ContactLabel("Мама"), RelationshipKind.FAMILY)
         )
     ).contact
-    user = (
-        await SetActiveContact(world.uow_factory, world.catalog).execute(
-            SetActiveContactCommand(user.id, contact.id)
-        )
-    ).user
     return user, contact
 
 
 async def _choose(
-    world: AppWorld, telegram_id: int, firmness: Firmness
+    world: AppWorld,
+    telegram_id: int,
+    firmness: Firmness,
+    contact_id: ContactId | None,
+    surface: UsageSurface = UsageSurface.MINIAPP,
 ) -> RecordInlineChoiceResult:
     return await _recorder(world).execute(
         RecordInlineChoiceCommand(
             TelegramUserId(telegram_id),
-            encode_inline_result_ref(UsageScenario.SOFTEN, firmness),
+            scenario=UsageScenario.SOFTEN,
+            firmness=firmness,
+            surface=surface,
+            contact_id=contact_id,
         )
     )
 
 
 @pytest.mark.unit
 async def test_threshold_crossing_creates_exactly_one_suggestion(world: AppWorld) -> None:
-    user, contact = await _user_with_active_contact(world, 510)
+    user, contact = await _user_with_contact(world, 510)
     for _ in range(4):
-        result = await _choose(world, 510, Firmness.GENTLE)
+        result = await _choose(world, 510, Firmness.GENTLE, contact.id)
         assert result.suggestion_id is None
         assert result.tone_outcome is ToneSignalOutcome.RECORDED
-    result = await _choose(world, 510, Firmness.GENTLE)
+    result = await _choose(world, 510, Firmness.GENTLE, contact.id)
     assert result.suggestion_id is not None
     assert result.tone_outcome is ToneSignalOutcome.SUGGESTION_CREATED
     listed = await ListSuggestions(world.uow_factory, world.catalog).execute(
@@ -127,10 +128,10 @@ async def test_threshold_crossing_creates_exactly_one_suggestion(world: AppWorld
 
 @pytest.mark.unit
 async def test_repeats_do_not_create_another_suggestion(world: AppWorld) -> None:
-    await _user_with_active_contact(world, 511)
+    _user, contact = await _user_with_contact(world, 511)
     for _ in range(5):
-        await _choose(world, 511, Firmness.BALANCED)
-    second = await _choose(world, 511, Firmness.BALANCED)
+        await _choose(world, 511, Firmness.BALANCED, contact.id)
+    second = await _choose(world, 511, Firmness.BALANCED, contact.id)
     assert second.suggestion_id is None
     assert second.tone_outcome is ToneSignalOutcome.RECORDED
     async with world.uow_factory() as uow:
@@ -142,11 +143,11 @@ async def test_repeats_do_not_create_another_suggestion(world: AppWorld) -> None
 
 @pytest.mark.unit
 async def test_pending_tone_does_not_freeze_signal_when_dominant_shifts(world: AppWorld) -> None:
-    user, contact = await _user_with_active_contact(world, 522)
+    user, contact = await _user_with_contact(world, 522)
     for _ in range(5):
-        await _choose(world, 522, Firmness.GENTLE)
+        await _choose(world, 522, Firmness.GENTLE, contact.id)
     for index in range(10):
-        result = await _choose(world, 522, Firmness.FIRM)
+        result = await _choose(world, 522, Firmness.FIRM, contact.id)
         assert result.suggestion_id is None
         assert result.tone_outcome is ToneSignalOutcome.RECORDED
         async with world.uow_factory() as uow:
@@ -162,7 +163,7 @@ async def test_pending_tone_does_not_freeze_signal_when_dominant_shifts(world: A
     await DismissSuggestion(world.uow_factory, world.catalog, world.clock).execute(
         DismissSuggestionCommand(user.id, listed.suggestions[0].id)
     )
-    created = await _choose(world, 522, Firmness.FIRM)
+    created = await _choose(world, 522, Firmness.FIRM, contact.id)
     assert created.tone_outcome is ToneSignalOutcome.SUGGESTION_CREATED
     assert created.suggestion_id is not None
     after = await ListSuggestions(world.uow_factory, world.catalog).execute(
@@ -174,9 +175,9 @@ async def test_pending_tone_does_not_freeze_signal_when_dominant_shifts(world: A
 
 @pytest.mark.unit
 async def test_dismissed_is_never_re_offered(world: AppWorld) -> None:
-    user, contact = await _user_with_active_contact(world, 512)
+    user, contact = await _user_with_contact(world, 512)
     for _ in range(5):
-        await _choose(world, 512, Firmness.FIRM)
+        await _choose(world, 512, Firmness.FIRM, contact.id)
     listed = await ListSuggestions(world.uow_factory, world.catalog).execute(
         ListSuggestionsCommand(user.id, contact.id)
     )
@@ -185,7 +186,7 @@ async def test_dismissed_is_never_re_offered(world: AppWorld) -> None:
         DismissSuggestionCommand(user.id, suggestion.id)
     )
     assert dismissed.outcome is DismissSuggestionOutcome.DISMISSED
-    again = await _choose(world, 512, Firmness.FIRM)
+    again = await _choose(world, 512, Firmness.FIRM, contact.id)
     assert again.suggestion_id is None
     listed_after = await ListSuggestions(world.uow_factory, world.catalog).execute(
         ListSuggestionsCommand(user.id, contact.id)
@@ -195,21 +196,18 @@ async def test_dismissed_is_never_re_offered(world: AppWorld) -> None:
 
 @pytest.mark.unit
 async def test_another_contact_is_independent(world: AppWorld) -> None:
-    user, first = await _user_with_active_contact(world, 513)
+    user, first = await _user_with_contact(world, 513)
     second = (
         await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
             CreateContactCommand(user.id, ContactLabel("Папа"), RelationshipKind.FAMILY)
         )
     ).contact
     for _ in range(5):
-        await _choose(world, 513, Firmness.GENTLE)
-    await SetActiveContact(world.uow_factory, world.catalog).execute(
-        SetActiveContactCommand(user.id, second.id)
-    )
+        await _choose(world, 513, Firmness.GENTLE, first.id)
     for _ in range(4):
-        result = await _choose(world, 513, Firmness.GENTLE)
+        result = await _choose(world, 513, Firmness.GENTLE, second.id)
         assert result.suggestion_id is None
-    result = await _choose(world, 513, Firmness.GENTLE)
+    result = await _choose(world, 513, Firmness.GENTLE, second.id)
     assert result.suggestion_id is not None
     listed_first = await ListSuggestions(world.uow_factory, world.catalog).execute(
         ListSuggestionsCommand(user.id, first.id)
@@ -222,23 +220,85 @@ async def test_another_contact_is_independent(world: AppWorld) -> None:
 
 
 @pytest.mark.unit
-async def test_no_active_contact_records_no_signal(world: AppWorld) -> None:
-    user = await world.ensure_granted_user(514)
-    result = await _choose(world, 514, Firmness.GENTLE)
+async def test_miniapp_without_contact_records_no_signal(world: AppWorld) -> None:
+    user, _contact = await _user_with_contact(world, 514)
+    result = await _choose(world, 514, Firmness.GENTLE, None)
     assert result.suggestion_id is None
     assert result.tone_outcome is ToneSignalOutcome.SKIPPED_NO_CONTACT
     async with world.uow_factory() as uow:
-        signals = await uow.tone_signals.list_for_user(user.id)
-        assert signals == []
+        assert await uow.tone_signals.list_for_user(user.id) == []
+
+
+@pytest.mark.unit
+async def test_inline_choice_never_records_signal_even_with_active_contact(
+    world: AppWorld,
+) -> None:
+    user, contact = await _user_with_contact(world, 523)
+    await SetActiveContact(world.uow_factory, world.catalog).execute(
+        SetActiveContactCommand(user.id, contact.id)
+    )
+    for _ in range(6):
+        result = await _choose(world, 523, Firmness.GENTLE, None, UsageSurface.INLINE)
+        assert result.tone_outcome is ToneSignalOutcome.SKIPPED_INLINE
+        assert result.suggestion_id is None
+    inline_ref = await _recorder(world).execute(
+        RecordInlineChoiceCommand(
+            TelegramUserId(523), encode_inline_result_ref(UsageScenario.SOFTEN, Firmness.GENTLE)
+        )
+    )
+    assert inline_ref.tone_outcome is ToneSignalOutcome.SKIPPED_INLINE
+    async with world.uow_factory() as uow:
+        assert await uow.tone_signals.list_for_user(user.id) == []
+        assert await uow.rule_suggestions.list_for_user(user.id) == []
+
+
+@pytest.mark.unit
+async def test_inline_choice_ignores_contact_id_even_if_provided(world: AppWorld) -> None:
+    user, contact = await _user_with_contact(world, 524)
+    result = await _choose(world, 524, Firmness.GENTLE, contact.id, UsageSurface.INLINE)
+    assert result.tone_outcome is ToneSignalOutcome.SKIPPED_INLINE
+    async with world.uow_factory() as uow:
+        assert await uow.tone_signals.list_for_user(user.id) == []
+
+
+@pytest.mark.unit
+async def test_signal_attributed_to_bound_contact_not_active_one(world: AppWorld) -> None:
+    user, bound = await _user_with_contact(world, 525)
+    active = (
+        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+            CreateContactCommand(user.id, ContactLabel("Папа"), RelationshipKind.FAMILY)
+        )
+    ).contact
+    await SetActiveContact(world.uow_factory, world.catalog).execute(
+        SetActiveContactCommand(user.id, active.id)
+    )
+    result = await _choose(world, 525, Firmness.FIRM, bound.id)
+    assert result.tone_outcome is ToneSignalOutcome.RECORDED
+    async with world.uow_factory() as uow:
+        assert await uow.tone_signals.get(user.id, bound.id) is not None
+        assert await uow.tone_signals.get(user.id, active.id) is None
+
+
+@pytest.mark.unit
+async def test_stranger_cannot_attribute_signal_to_foreign_contact(world: AppWorld) -> None:
+    owner, contact = await _user_with_contact(world, 526)
+    stranger = await world.ensure_granted_user(527)
+    stranger_result = await _choose(world, 527, Firmness.GENTLE, contact.id)
+    assert stranger_result.tone_outcome is ToneSignalOutcome.SKIPPED_NO_CONTACT
+    owner_result = await _choose(world, 526, Firmness.GENTLE, contact.id)
+    assert owner_result.tone_outcome is ToneSignalOutcome.RECORDED
+    async with world.uow_factory() as uow:
+        assert await uow.tone_signals.list_for_user(stranger.id) == []
+        assert len(await uow.tone_signals.list_for_user(owner.id)) == 1
 
 
 @pytest.mark.unit
 async def test_revoked_records_no_signal(world: AppWorld) -> None:
-    user, _contact = await _user_with_active_contact(world, 515)
+    user, contact = await _user_with_contact(world, 515)
     await RevokeAllConsents(world.uow_factory, world.clock, make_inline_reuse(world.clock)).execute(
         RevokeAllConsentsCommand(user.telegram_user_id)
     )
-    result = await _choose(world, 515, Firmness.GENTLE)
+    result = await _choose(world, 515, Firmness.GENTLE, contact.id)
     assert result.suggestion_id is None
     assert result.tone_outcome is ToneSignalOutcome.SKIPPED_NO_ACCESS
     async with world.uow_factory() as uow:
@@ -248,9 +308,9 @@ async def test_revoked_records_no_signal(world: AppWorld) -> None:
 
 @pytest.mark.unit
 async def test_accept_creates_active_rule(world: AppWorld) -> None:
-    user, contact = await _user_with_active_contact(world, 516)
+    user, contact = await _user_with_contact(world, 516)
     for _ in range(5):
-        await _choose(world, 516, Firmness.GENTLE)
+        await _choose(world, 516, Firmness.GENTLE, contact.id)
     listed = await ListSuggestions(world.uow_factory, world.catalog).execute(
         ListSuggestionsCommand(user.id, contact.id)
     )
@@ -266,7 +326,7 @@ async def test_accept_creates_active_rule(world: AppWorld) -> None:
 
 @pytest.mark.unit
 async def test_open_rule_limit_keeps_suggestion_pending(world: AppWorld) -> None:
-    user, contact = await _user_with_active_contact(world, 517)
+    user, contact = await _user_with_contact(world, 517)
     propose = ProposeRule(world.uow_factory, world.catalog, world.ids, world.clock, world.notifier)
     for index in range(MAX_OPEN_RULES_PER_SCOPE):
         await propose.execute(
@@ -279,7 +339,7 @@ async def test_open_rule_limit_keeps_suggestion_pending(world: AppWorld) -> None
             )
         )
     for _ in range(5):
-        await _choose(world, 517, Firmness.BALANCED)
+        await _choose(world, 517, Firmness.BALANCED, contact.id)
     listed = await ListSuggestions(world.uow_factory, world.catalog).execute(
         ListSuggestionsCommand(user.id, contact.id)
     )
@@ -296,9 +356,9 @@ async def test_open_rule_limit_keeps_suggestion_pending(world: AppWorld) -> None
 
 @pytest.mark.unit
 async def test_already_decided_is_typed_outcome(world: AppWorld) -> None:
-    user, contact = await _user_with_active_contact(world, 518)
+    user, contact = await _user_with_contact(world, 518)
     for _ in range(5):
-        await _choose(world, 518, Firmness.GENTLE)
+        await _choose(world, 518, Firmness.GENTLE, contact.id)
     listed = await ListSuggestions(world.uow_factory, world.catalog).execute(
         ListSuggestionsCommand(user.id, contact.id)
     )
@@ -318,7 +378,7 @@ async def test_already_decided_is_typed_outcome(world: AppWorld) -> None:
 
 @pytest.mark.unit
 async def test_list_and_decide_unknown_suggestion_not_found(world: AppWorld) -> None:
-    user, _contact = await _user_with_active_contact(world, 519)
+    user, _contact = await _user_with_contact(world, 519)
     stranger = await world.ensure_granted_user(520)
     with pytest.raises(NotFound):
         await ListSuggestions(world.uow_factory, world.catalog).execute(
@@ -338,17 +398,18 @@ async def test_list_and_decide_unknown_suggestion_not_found(world: AppWorld) -> 
 async def test_tone_signal_conflict_and_missing_contact_outcomes(
     world: AppWorld, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    user, _contact = await _user_with_active_contact(world, 521)
+    _user, contact = await _user_with_contact(world, 521)
     monkeypatch.setattr(InMemoryToneSignalRepository, "upsert", _boom_upsert)
-    result = await _choose(world, 521, Firmness.GENTLE)
+    result = await _choose(world, 521, Firmness.GENTLE, contact.id)
     assert result.suggestion_id is None
     assert result.tone_outcome is ToneSignalOutcome.SKIPPED_CONFLICT
 
-    async with world.uow_factory() as uow:
-        stored = await uow.users.get(user.id)
-        assert stored is not None
-        await uow.users.update(stored.set_active_contact(ContactId(UUID(int=404))))
-        await uow.commit()
-    result = await _choose(world, 521, Firmness.GENTLE)
+    result = await _choose(world, 521, Firmness.GENTLE, ContactId(UUID(int=404)))
     assert result.suggestion_id is None
+    assert result.tone_outcome is ToneSignalOutcome.SKIPPED_NO_CONTACT
+
+
+@pytest.mark.unit
+async def test_unknown_user_with_bound_contact_skips(world: AppWorld) -> None:
+    result = await _choose(world, 999, Firmness.GENTLE, ContactId(UUID(int=1)))
     assert result.tone_outcome is ToneSignalOutcome.SKIPPED_NO_CONTACT

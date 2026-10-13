@@ -318,7 +318,6 @@ def _build_miniapp_mount(
                     catalog=ports.catalog,
                     compose_handoffs=wire.decode.compose_handoffs,
                     compose_sessions=wire.decode.compose_sessions,
-                    usernames=AiogramTelegramPublicUsername(wire.bot),
                     rate_limiter=miniapp_rate_limiter,
                     pseudonymizer=ports.pseudonymizer,
                     clock=ports.clock,

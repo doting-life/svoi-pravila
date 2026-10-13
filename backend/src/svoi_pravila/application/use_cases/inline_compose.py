@@ -19,7 +19,6 @@ from svoi_pravila.application.ports.generation import (
     BOUNDED_TEXT_MAX,
     AppliedRuleView,
     HelpSayIntent,
-    RuleContext,
     SafetyVerdict,
     Variant,
 )
@@ -30,7 +29,6 @@ from svoi_pravila.application.ports.inline_result_reuse import (
 )
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.use_cases._access import require_access
-from svoi_pravila.application.use_cases._generation_context import load_active_contact_rule_context
 from svoi_pravila.application.use_cases.compose_generation import (
     ComposeGeneration,
     ComposeProduceMaterial,
@@ -56,7 +54,6 @@ class InlineComposeResult:
     safety: SafetyVerdict
     applied_rules: tuple[AppliedRuleView, ...] = ()
     reuse: InlineReuseStatus | None = None
-    rule_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,7 +77,7 @@ class InlineCompose:
     async def execute(self, command: InlineComposeCommand) -> InlineComposeResult:
         """Return variants or raise a typed error. Never streams."""
         user_key = str(command.telegram_user_id.value)
-        relationship, rules = await self._load_context(command.telegram_user_id)
+        await self._require_onboarded(command.telegram_user_id)
         normalized = normalize_inline_text(command.query)
         if len(normalized) > BOUNDED_TEXT_MAX:
             raise IncomingTextTooLong()
@@ -101,8 +98,8 @@ class InlineCompose:
             scenario=scenario,
             intent=intent,
             draft=draft,
-            relationship=relationship,
-            rules=rules,
+            relationship=RelationshipKind.OTHER,
+            rules=(),
             surface=UsageSurface.INLINE,
         )
         if self._ports.compose.is_crisis(draft):
@@ -113,15 +110,12 @@ class InlineCompose:
                 safety=SafetyVerdict.CRISIS,
                 applied_rules=(),
                 reuse=None,
-                rule_count=len(rules),
             )
         reuse_material = InlineReuseKeyMaterial(
             user_key=user_key,
             scenario=scenario,
             intent=intent,
             draft=draft,
-            relationship=relationship,
-            rules=rules,
         )
         key = inline_reuse_key(reuse_material)
 
@@ -140,18 +134,14 @@ class InlineCompose:
             safety=resolution.value.safety,
             applied_rules=resolution.value.applied_rules,
             reuse=resolution.status,
-            rule_count=len(rules),
         )
 
-    async def _load_context(
-        self, telegram_user_id: TelegramUserId
-    ) -> tuple[RelationshipKind, tuple[RuleContext, ...]]:
+    async def _require_onboarded(self, telegram_user_id: TelegramUserId) -> None:
         async with self._ports.uow_factory() as uow:
             user = await uow.users.get_by_telegram_id(telegram_user_id)
             if user is None:
                 raise NotFound()
             await require_access(uow, self._ports.catalog, user.id)
-            return await load_active_contact_rule_context(uow, user)
 
 
 def _match_prefix(

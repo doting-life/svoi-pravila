@@ -50,6 +50,7 @@ from svoi_pravila.domain.enums import (
     SuggestionSource,
     SuggestionStatus,
     UsageScenario,
+    UsageSurface,
 )
 from svoi_pravila.domain.ids import ContactId, RuleSuggestionId, TelegramUserId, UserId
 from svoi_pravila.domain.rule_suggestion import RuleSuggestion, ToneSignal
@@ -116,6 +117,35 @@ def _world(uow_factory: SqlAlchemyUnitOfWorkFactory) -> _ToneWorld:
     )
 
 
+def _miniapp_choice(
+    telegram_id: int, firmness: Firmness, contact_id: ContactId
+) -> RecordInlineChoiceCommand:
+    return RecordInlineChoiceCommand(
+        TelegramUserId(telegram_id),
+        scenario=UsageScenario.SOFTEN,
+        firmness=firmness,
+        surface=UsageSurface.MINIAPP,
+        contact_id=contact_id,
+    )
+
+
+@pytest.mark.integration
+async def test_inline_choice_writes_no_tone_signal_row(
+    uow_factory: SqlAlchemyUnitOfWorkFactory,
+) -> None:
+    world = _world(uow_factory)
+    user, contact_id = await world.granted_with_contact(9010)
+    choose = world.choose()
+    ref = encode_inline_result_ref(UsageScenario.SOFTEN, Firmness.GENTLE)
+    for _ in range(6):
+        result = await choose.execute(RecordInlineChoiceCommand(TelegramUserId(9010), ref))
+        assert result.tone_outcome is ToneSignalOutcome.SKIPPED_INLINE
+    async with uow_factory() as uow:
+        assert await uow.tone_signals.get(user.id, contact_id) is None
+        assert await uow.tone_signals.list_for_user(user.id) == []
+        assert await uow.rule_suggestions.list_for_user(user.id) == []
+
+
 @pytest.mark.integration
 async def test_tone_signal_does_not_freeze_while_pending(
     uow_factory: SqlAlchemyUnitOfWorkFactory,
@@ -123,11 +153,11 @@ async def test_tone_signal_does_not_freeze_while_pending(
     world = _world(uow_factory)
     user, contact_id = await world.granted_with_contact(9011)
     choose = world.choose()
-    ref_gentle = encode_inline_result_ref(UsageScenario.SOFTEN, Firmness.GENTLE)
-    ref_firm = encode_inline_result_ref(UsageScenario.SOFTEN, Firmness.FIRM)
+    gentle = _miniapp_choice(9011, Firmness.GENTLE, contact_id)
+    firm = _miniapp_choice(9011, Firmness.FIRM, contact_id)
 
     for _ in range(5):
-        result = await choose.execute(RecordInlineChoiceCommand(TelegramUserId(9011), ref_gentle))
+        result = await choose.execute(gentle)
     assert result.tone_outcome is ToneSignalOutcome.SUGGESTION_CREATED
     pending = await ListSuggestions(uow_factory, world.catalog).execute(
         ListSuggestionsCommand(user.id, contact_id)
@@ -136,7 +166,7 @@ async def test_tone_signal_does_not_freeze_while_pending(
     assert pending.suggestions[0].firmness is Firmness.GENTLE
 
     for index in range(10):
-        result = await choose.execute(RecordInlineChoiceCommand(TelegramUserId(9011), ref_firm))
+        result = await choose.execute(firm)
         assert result.suggestion_id is None
         assert result.tone_outcome is ToneSignalOutcome.RECORDED
         async with uow_factory() as uow:
@@ -148,7 +178,7 @@ async def test_tone_signal_does_not_freeze_while_pending(
     await DismissSuggestion(uow_factory, world.catalog, world.clock).execute(
         DismissSuggestionCommand(user.id, pending.suggestions[0].id)
     )
-    created = await choose.execute(RecordInlineChoiceCommand(TelegramUserId(9011), ref_firm))
+    created = await choose.execute(firm)
     assert created.tone_outcome is ToneSignalOutcome.SUGGESTION_CREATED
     assert created.suggestion_id is not None
     after = await ListSuggestions(uow_factory, world.catalog).execute(
@@ -179,11 +209,9 @@ async def test_concurrent_tone_signal_appends_keep_both_values(
             pseudonymizer=FakePseudonymizer(),
         )
     )
-    ref_gentle = encode_inline_result_ref(UsageScenario.SOFTEN, Firmness.GENTLE)
-    ref_firm = encode_inline_result_ref(UsageScenario.SOFTEN, Firmness.FIRM)
     await asyncio.gather(
-        choose_a.execute(RecordInlineChoiceCommand(TelegramUserId(9012), ref_gentle)),
-        choose_b.execute(RecordInlineChoiceCommand(TelegramUserId(9012), ref_firm)),
+        choose_a.execute(_miniapp_choice(9012, Firmness.GENTLE, contact_id)),
+        choose_b.execute(_miniapp_choice(9012, Firmness.FIRM, contact_id)),
     )
     async with uow_factory() as uow:
         signal = await uow.tone_signals.get(user.id, contact_id)

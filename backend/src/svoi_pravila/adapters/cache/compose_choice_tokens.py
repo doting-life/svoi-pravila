@@ -1,10 +1,11 @@
-"""Valkey single-use compose choice tokens (HMAC-bound; C0 payload only)."""
+"""Valkey single-use compose choice tokens (HMAC-bound; scenario and contact id only)."""
 
 from __future__ import annotations
 
 import base64
 import hmac
 import secrets
+from uuid import UUID
 
 from redis.asyncio import Redis
 
@@ -12,18 +13,21 @@ from svoi_pravila.application.errors import ComposeChoiceTokenInvalid
 from svoi_pravila.application.ports.compose_choice_tokens import (
     COMPOSE_CHOICE_FIRMNESS_SET,
     COMPOSE_CHOICE_TTL_SECONDS,
+    ComposeChoiceBinding,
 )
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.domain.enums import UsageScenario
+from svoi_pravila.domain.ids import ContactId
 
 _PURPOSE = "compose_choice"
 _PREFIX = "c_"
 _ID_LEN = 16
 _MAC_LEN = 32
+_FIELD_SEPARATOR = "|"
 
 
 class ValkeyComposeChoiceTokens:
-    """Opaque ``c_`` tokens: HMAC over user, scenario, firmness set; Valkey GETDEL."""
+    """Opaque ``c_`` tokens: HMAC over user, scenario, contact, firmness set; Valkey GETDEL."""
 
     def __init__(
         self,
@@ -44,9 +48,16 @@ class ValkeyComposeChoiceTokens:
     def _redis_key(self, token_id: bytes) -> str:
         return f"{self._key_prefix}:{token_id.hex()}"
 
-    def _mac_hex(self, token_id: bytes, user_pseudonym: str, scenario: UsageScenario) -> str:
+    def _mac_hex(
+        self,
+        token_id: bytes,
+        user_pseudonym: str,
+        binding: ComposeChoiceBinding,
+    ) -> str:
+        contact_raw = _contact_raw(binding.contact_id)
         value = (
-            f"{token_id.hex()}\0{user_pseudonym}\0{scenario.value}\0{COMPOSE_CHOICE_FIRMNESS_SET}"
+            f"{token_id.hex()}\0{user_pseudonym}\0{binding.scenario.value}\0{contact_raw}"
+            f"\0{COMPOSE_CHOICE_FIRMNESS_SET}"
         )
         return self._pseudonymizer.pseudonymize(_PURPOSE, value)
 
@@ -67,33 +78,52 @@ class ValkeyComposeChoiceTokens:
             raise ComposeChoiceTokenInvalid()
         return raw[:_ID_LEN], raw[_ID_LEN:]
 
-    async def issue(self, user_pseudonym: str, scenario: UsageScenario) -> str:
-        """Store scenario under a fresh id and return the opaque signed token."""
+    async def issue(
+        self,
+        user_pseudonym: str,
+        scenario: UsageScenario,
+        contact_id: ContactId | None,
+    ) -> str:
+        """Store scenario and contact under a fresh id and return the opaque signed token."""
         token_id = secrets.token_bytes(_ID_LEN)
-        mac_hex = self._mac_hex(token_id, user_pseudonym, scenario)
+        binding = ComposeChoiceBinding(scenario=scenario, contact_id=contact_id)
+        mac_hex = self._mac_hex(token_id, user_pseudonym, binding)
         await self._client.set(
             self._redis_key(token_id),
-            scenario.value,
+            f"{scenario.value}{_FIELD_SEPARATOR}{_contact_raw(contact_id)}",
             ex=self._ttl_seconds,
         )
         return self._encode(token_id, mac_hex)
 
-    async def redeem_once(self, user_pseudonym: str, token: str) -> UsageScenario:
-        """Consume the token for ``user_pseudonym`` and return its scenario."""
+    async def redeem_once(self, user_pseudonym: str, token: str) -> ComposeChoiceBinding:
+        """Consume the token for ``user_pseudonym`` and return its scenario and contact."""
         token_id, mac_bytes = self._decode(token)
         key = self._redis_key(token_id)
         stored = await self._client.get(key)
         if stored is None:
             raise ComposeChoiceTokenInvalid()
         raw = stored if isinstance(stored, str) else stored.decode("ascii")
-        try:
-            scenario = UsageScenario(raw)
-        except ValueError as exc:
-            raise ComposeChoiceTokenInvalid() from exc
-        expected = bytes.fromhex(self._mac_hex(token_id, user_pseudonym, scenario))
+        binding = _parse_binding(raw)
+        expected = bytes.fromhex(self._mac_hex(token_id, user_pseudonym, binding))
         if not hmac.compare_digest(mac_bytes, expected):
             raise ComposeChoiceTokenInvalid()
         deleted = await self._client.delete(key)
         if deleted == 0:
             raise ComposeChoiceTokenInvalid()
-        return scenario
+        return binding
+
+
+def _contact_raw(contact_id: ContactId | None) -> str:
+    return "" if contact_id is None else str(contact_id)
+
+
+def _parse_binding(raw: str) -> ComposeChoiceBinding:
+    scenario_raw, sep, contact_raw = raw.partition(_FIELD_SEPARATOR)
+    if not sep:
+        raise ComposeChoiceTokenInvalid()
+    try:
+        scenario = UsageScenario(scenario_raw)
+        contact_id = ContactId(UUID(contact_raw)) if contact_raw else None
+    except ValueError as exc:
+        raise ComposeChoiceTokenInvalid() from exc
+    return ComposeChoiceBinding(scenario=scenario, contact_id=contact_id)

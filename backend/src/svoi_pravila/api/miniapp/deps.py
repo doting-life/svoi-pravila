@@ -79,7 +79,6 @@ class MiniappPrincipal:
 
     user: User
     scope: MiniappScope
-    bound_contact_id: ContactId | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,11 +141,7 @@ async def _principal_from_compose(
         raise MiniappHttpError(MiniappErrorCode.COMPOSE_SESSION_EXPIRED, 401)
     await _rate_limit(deps, user.telegram_user_id)
     user = await _require_onboarded(deps, user)
-    return MiniappPrincipal(
-        user=user,
-        scope=MiniappScope.COMPOSE,
-        bound_contact_id=session.contact_id,
-    )
+    return MiniappPrincipal(user=user, scope=MiniappScope.COMPOSE)
 
 
 async def _authenticate_tma(deps: MiniappDeps, credential: TmaCredential) -> MiniappAuthContext:
@@ -234,12 +229,8 @@ def parse_handoff_authorization(authorization: str | None) -> str:
 
 
 def enforce_compose_contact(principal: MiniappPrincipal, contact_id: ContactId | None) -> None:
-    """Under COMPOSE, contact must be null or equal the bound contact; else 404."""
-    if principal.scope is MiniappScope.FULL:
-        return
-    if contact_id is None:
-        return
-    if principal.bound_contact_id is None or contact_id != principal.bound_contact_id:
+    """Under COMPOSE (inline session) no contact may be used; any contact gives 404."""
+    if principal.scope is MiniappScope.COMPOSE and contact_id is not None:
         raise MiniappHttpError(MiniappErrorCode.NOT_FOUND, 404)
 
 

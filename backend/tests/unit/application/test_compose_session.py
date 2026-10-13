@@ -12,18 +12,13 @@ from svoi_pravila.application.compose_session import (
     encode_compose_session_payload,
     is_compose_session_ref,
 )
-from svoi_pravila.domain.ids import ContactId, UserId
+from svoi_pravila.domain.ids import UserId
 
 
 @pytest.mark.unit
 def test_compose_session_round_trip() -> None:
-    user_id = UserId(UUID(int=9))
-    with_contact = ComposeSessionPayload(user_id=user_id, contact_id=ContactId(UUID(int=2)))
-    assert decode_compose_session_payload(encode_compose_session_payload(with_contact)) == (
-        with_contact
-    )
-    without = ComposeSessionPayload(user_id=user_id, contact_id=None)
-    assert decode_compose_session_payload(encode_compose_session_payload(without)) == without
+    payload = ComposeSessionPayload(user_id=UserId(UUID(int=9)))
+    assert decode_compose_session_payload(encode_compose_session_payload(payload)) == payload
 
 
 @pytest.mark.unit
@@ -34,10 +29,8 @@ def test_compose_session_ref_and_defects() -> None:
     with pytest.raises(ValueError):
         decode_compose_session_payload(b"\xff")
     with pytest.raises(ValueError):
-        decode_compose_session_payload(b"2\nid\n")
+        decode_compose_session_payload(b"1\n" + good_user)
     with pytest.raises(ValueError):
-        decode_compose_session_payload(b"1\nonly-user")
+        decode_compose_session_payload(b"2" + good_user)
     with pytest.raises(ValueError):
-        decode_compose_session_payload(b"1\nnot-a-uuid\n")
-    with pytest.raises(ValueError):
-        decode_compose_session_payload(b"1\n" + good_user + b"\nnot-a-uuid")
+        decode_compose_session_payload(b"2\nnot-a-uuid")

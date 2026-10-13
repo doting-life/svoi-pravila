@@ -55,7 +55,6 @@ from svoi_pravila.limits.catalog import format_reset_hhmm
 
 _PREVIEW_MAX = 256
 _INLINE_TITLE_MAX = 64
-_BUTTON_TEXT_MAX = 64
 _LIMIT_CACHE_SECONDS = 10
 _PREPARED_PURPOSE = "prepared"
 
@@ -295,7 +294,7 @@ async def _answer_compose_result(
             scenario=result.scenario,
             outcome=outcome,
             reuse=reuse,
-            rule_count=result.rule_count,
+            rule_count=0,
             applied_count=applied_count,
         )
     )
@@ -472,29 +471,13 @@ async def _compose_handoff_button(
     query: InlineQuery,
     tg_deps: TelegramDeps,
 ) -> InlineQueryResultsButton:
-    """Issue a one-time handoff and build the web_app results button (label not logged)."""
+    """Issue a one-time handoff and build the web_app results button (never a contact)."""
     issued = await tg_deps.issue_compose_handoff.execute(
         IssueComposeHandoffCommand(TelegramUserId(query.from_user.id), query.query)
     )
-    if issued.contact_label is not None:
-        text = _button_text_with_label(
-            tg_deps.strings.inline_button_compose_with_contact,
-            issued.contact_label,
-        )
-    else:
-        text = tg_deps.strings.inline_button_compose_without_contact[:_BUTTON_TEXT_MAX]
+    text = tg_deps.strings.inline_button_compose
     url = _compose_handoff_url(tg_deps.miniapp_url, issued.token)
     return _web_app_results_button(url, text)
-
-
-def _button_text_with_label(template: str, label: str) -> str:
-    """Format and clamp button text to Telegram's 64-char limit without logging label."""
-    text = template.format(label=label)
-    if len(text) <= _BUTTON_TEXT_MAX:
-        return text
-    overhead = len(template.format(label=""))
-    max_label = max(1, _BUTTON_TEXT_MAX - overhead)
-    return template.format(label=label[:max_label])[:_BUTTON_TEXT_MAX]
 
 
 def _compose_handoff_url(miniapp_url: str, token: str) -> str:

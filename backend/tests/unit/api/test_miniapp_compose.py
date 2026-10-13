@@ -224,6 +224,10 @@ async def test_compose_soften_happy_path_and_choice(
     choices = [e for e in bundle.sink.events if e.event_kind is UsageEventKind.RESULT_CHOSEN]
     assert generations[0].surface is UsageSurface.MINIAPP
     assert choices[0].surface is UsageSurface.MINIAPP
+    async with mini_world.uow_factory() as uow:
+        signal = await uow.tone_signals.get(user.id, contact.contact.id)
+    assert signal is not None
+    assert signal.values == (Firmness.GENTLE,)
     blob = str(capture_log_events())
     assert _CANARY not in blob
     assert "вариант мягко" not in blob
@@ -286,7 +290,7 @@ async def test_compose_quota_exhausted(mini_world: AppWorld) -> None:
 
 @pytest.mark.unit
 async def test_compose_choice_records_scenario(mini_world: AppWorld) -> None:
-    await mini_world.ensure_granted_user(_TG)
+    user = await mini_world.ensure_granted_user(_TG)
     app, _, bundle = _build_compose_app(mini_world)
     headers = _auth_header(_TG)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -308,6 +312,9 @@ async def test_compose_choice_records_scenario(mini_world: AppWorld) -> None:
     assert choices[0].scenario is UsageScenario.HELP_SAY
     assert choices[0].variant_firmness is Firmness.FIRM
     assert choices[0].surface is UsageSurface.MINIAPP
+    assert response.json() == {"outcome": "recorded"}
+    async with mini_world.uow_factory() as uow:
+        assert await uow.tone_signals.list_for_user(user.id) == []
 
 
 @pytest.mark.unit
@@ -448,7 +455,7 @@ async def test_compose_choice_maps_record_invalid_ref(mini_world: AppWorld) -> N
 
     tokens = FakeComposeChoiceTokens()
     real_pseudo = FakePseudonymizer().pseudonymize("analytics", str(_TG))
-    token = await tokens.issue(real_pseudo, UsageScenario.SOFTEN)
+    token = await tokens.issue(real_pseudo, UsageScenario.SOFTEN, None)
     bindings = build_test_miniapp_bindings(
         auth=auth,
         world=mini_world,

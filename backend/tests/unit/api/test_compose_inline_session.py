@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import sys
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -18,7 +19,6 @@ from tests.fakes.ids import FakeIdGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
 from tests.fakes.pair_notifier import FakePairNotifier
 from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
-from tests.fakes.telegram_public_username import FakeTelegramPublicUsername
 from tests.fakes.tokens import FakeTokenGenerator
 from tests.fakes.uow import InMemoryUnitOfWorkFactory
 from tests.support.init_data import build_webapp_init_data
@@ -34,29 +34,26 @@ from svoi_pravila.application.compose_session import (
     COMPOSE_SESSION_TTL_SECONDS,
     ComposeSessionPayload,
 )
-from svoi_pravila.application.use_cases.accept_invite import AcceptInvite, AcceptInviteCommand
 from svoi_pravila.application.use_cases.check_readiness import CheckReadiness
 from svoi_pravila.application.use_cases.create_contact import CreateContact, CreateContactCommand
-from svoi_pravila.application.use_cases.create_invite import CreateInvite, CreateInviteCommand
 from svoi_pravila.application.use_cases.redeem_compose_handoff import (
     RedeemComposeHandoff,
     RedeemComposeHandoffPorts,
 )
-from svoi_pravila.application.use_cases.resolve_invite import ResolveInvite, ResolveInviteCommand
 from svoi_pravila.application.use_cases.revoke_all_consents import (
     RevokeAllConsents,
     RevokeAllConsentsCommand,
 )
 from svoi_pravila.config import Environment
 from svoi_pravila.domain.enums import RelationshipKind
-from svoi_pravila.domain.ids import ContactId, TelegramUserId
+from svoi_pravila.domain.ids import TelegramUserId
 from svoi_pravila.domain.text import INCOMING_TEXT_MAX_CHARS, ContactLabel
 
 _TOKEN = "9:UNIT-MINIAPP"
 _NOW = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
 _TG = 40_026
-_TG_B = 40_027
 _TG_OTHER = 40_028
+_CANARY = "HANDOFF_CANARY_DRAFT_0031_UNIQUE"
 
 # Route auth classes (print membership in the matrix test for the report).
 PUBLIC_BY_DESIGN = frozenset(
@@ -93,13 +90,11 @@ def _build_app(
     *,
     handoffs: FakeComposeHandoffs | None = None,
     sessions: FakeComposeSessions | None = None,
-    usernames: FakeTelegramPublicUsername | None = None,
     enable_test_routes: bool = False,
     redeem_rate_limiter: FakeRateLimiter | None = None,
 ) -> tuple[Any, FakeComposeHandoffs, FakeComposeSessions]:
     handoffs = handoffs or FakeComposeHandoffs()
     sessions = sessions or FakeComposeSessions()
-    names = usernames or FakeTelegramPublicUsername()
     auth = make_miniapp_auth(world, bot_token=_TOKEN, compose_sessions=sessions)
     decode_bundle = build_miniapp_decode_bundle(world)
     redeem = RedeemComposeHandoff(
@@ -108,7 +103,6 @@ def _build_app(
             catalog=world.catalog,
             compose_handoffs=handoffs,
             compose_sessions=sessions,
-            usernames=names,
             rate_limiter=redeem_rate_limiter or FakeRateLimiter(limit=120),
             pseudonymizer=FakePseudonymizer(),
             clock=world.clock,
@@ -130,43 +124,14 @@ def _build_app(
     return app, handoffs, sessions
 
 
-async def _pair_contact(world: AppWorld) -> ContactId:
-    owner = await world.ensure_granted_user(_TG)
-    invitee = await world.ensure_granted_user(_TG_B)
-    contact = (
-        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
-            CreateContactCommand(owner.id, ContactLabel("Партнёр"), RelationshipKind.PARTNER)
-        )
-    ).contact
-    created = await CreateInvite(
-        world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
-    ).execute(CreateInviteCommand(owner.id, contact.id))
-    resolved = await ResolveInvite(world.uow_factory, world.catalog, world.clock).execute(
-        ResolveInviteCommand(invitee.id, created.raw_token)
-    )
-    await AcceptInvite(
-        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
-    ).execute(
-        AcceptInviteCommand(
-            invitee.id,
-            resolved.invite_id,
-            ContactLabel("Аня"),
-            RelationshipKind.PARTNER,
-        )
-    )
-    return contact.id
-
-
 @pytest.mark.unit
-async def test_compose_handoff_redeem_issues_session_single_use(mini_world: AppWorld) -> None:
+async def test_compose_handoff_redeem_issues_session_single_use(
+    mini_world: AppWorld,
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
     user = await mini_world.ensure_granted_user(_TG)
-    contact_id = await _pair_contact(mini_world)
-    app, handoffs, sessions = _build_app(
-        mini_world, usernames=FakeTelegramPublicUsername({_TG_B: "partner_b"})
-    )
-    token = await handoffs.store(
-        ComposeHandoffPayload(user_id=user.id, draft="handoff-draft", contact_id=contact_id)
-    )
+    app, handoffs, sessions = _build_app(mini_world)
+    token = await handoffs.store(ComposeHandoffPayload(user_id=user.id, draft=_CANARY))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         first = await client.post(
             "/api/v1/compose/handoff/redeem",
@@ -175,12 +140,8 @@ async def test_compose_handoff_redeem_issues_session_single_use(mini_world: AppW
         assert first.status_code == 200
         assert first.headers["cache-control"] == "no-store"
         body = first.json()
-        assert body["draft"] == "handoff-draft"
-        assert body["partner"] == {
-            "contact_id": str(contact_id),
-            "label": "Партнёр",
-            "username": "partner_b",
-        }
+        assert body["draft"] == _CANARY
+        assert "partner" not in body
         assert body["limits"] == {"incoming_text_max_chars": INCOMING_TEXT_MAX_CHARS}
         assert body["session"]["token"].startswith("cs_")
         expires = datetime.fromisoformat(body["session"]["expires_at"].replace("Z", "+00:00"))
@@ -193,10 +154,11 @@ async def test_compose_handoff_redeem_issues_session_single_use(mini_world: AppW
         )
         assert second.status_code == 401
         assert second.json()["code"] == MiniappErrorCode.HANDOFF_EXPIRED
+    assert _CANARY not in str(capture_log_events())
 
 
 @pytest.mark.unit
-async def test_compose_handoff_redeem_errors_and_partner_null(
+async def test_compose_handoff_redeem_errors(
     mini_world: AppWorld,
 ) -> None:
     user = await mini_world.ensure_granted_user(_TG)
@@ -209,9 +171,7 @@ async def test_compose_handoff_redeem_errors_and_partner_null(
         assert missing.status_code == 401
         assert missing.json()["code"] == MiniappErrorCode.HANDOFF_EXPIRED
 
-        deleted_user_token = await handoffs.store(
-            ComposeHandoffPayload(user_id=user.id, draft="x", contact_id=None)
-        )
+        deleted_user_token = await handoffs.store(ComposeHandoffPayload(user_id=user.id, draft="x"))
         async with mini_world.uow_factory() as uow:
             stored = await uow.users.get(user.id)
             assert stored is not None
@@ -225,29 +185,12 @@ async def test_compose_handoff_redeem_errors_and_partner_null(
         assert gone.json()["code"] == MiniappErrorCode.HANDOFF_EXPIRED
 
     user2 = await mini_world.ensure_granted_user(_TG)
-    contact = (
-        await CreateContact(
-            mini_world.uow_factory, mini_world.catalog, mini_world.ids, mini_world.clock
-        ).execute(CreateContactCommand(user2.id, ContactLabel("Solo"), RelationshipKind.FRIEND))
-    ).contact
-    unpaired_token = await handoffs.store(
-        ComposeHandoffPayload(user_id=user2.id, draft="solo", contact_id=contact.id)
-    )
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        unpaired = await client.post(
-            "/api/v1/compose/handoff/redeem",
-            headers={"Authorization": f"handoff {unpaired_token}"},
-        )
-        assert unpaired.status_code == 200
-        assert unpaired.json()["partner"] is None
-        assert unpaired.json()["draft"] == "solo"
-
     reuse = make_inline_reuse(mini_world.clock)
     await RevokeAllConsents(mini_world.uow_factory, mini_world.clock, reuse).execute(
         RevokeAllConsentsCommand(TelegramUserId(_TG))
     )
     consent_token = await handoffs.store(
-        ComposeHandoffPayload(user_id=user2.id, draft="need-consent", contact_id=None)
+        ComposeHandoffPayload(user_id=user2.id, draft="need-consent")
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         revoked = await client.post(
@@ -259,12 +202,16 @@ async def test_compose_handoff_redeem_errors_and_partner_null(
 
 
 @pytest.mark.unit
-async def test_compose_session_auth_ttl_tamper_and_contact_bound(
+async def test_compose_session_auth_and_no_contact_scope(
     mini_world: AppWorld,
 ) -> None:
     user = await mini_world.ensure_granted_user(_TG)
     other = await mini_world.ensure_granted_user(_TG_OTHER)
-    contact_id = await _pair_contact(mini_world)
+    own = (
+        await CreateContact(
+            mini_world.uow_factory, mini_world.catalog, mini_world.ids, mini_world.clock
+        ).execute(CreateContactCommand(user.id, ContactLabel("Свой"), RelationshipKind.FRIEND))
+    ).contact
     foreign = (
         await CreateContact(
             mini_world.uow_factory, mini_world.catalog, mini_world.ids, mini_world.clock
@@ -272,33 +219,25 @@ async def test_compose_session_auth_ttl_tamper_and_contact_bound(
     ).contact
     sessions = FakeComposeSessions()
     app, _handoffs, _ = _build_app(mini_world, sessions=sessions)
-    session_token = await sessions.store(
-        ComposeSessionPayload(user_id=user.id, contact_id=contact_id)
-    )
+    session_token = await sessions.store(ComposeSessionPayload(user_id=user.id))
     headers = {"Authorization": f"compose {session_token}"}
+    draft = "пожалуйста смягчи это сообщение немного"
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         ok = await client.post(
             "/api/v1/compose",
             headers=headers,
-            json={
-                "draft": "пожалуйста смягчи это сообщение немного",
-                "intent": "soften",
-                "contact_id": str(contact_id),
-            },
+            json={"draft": draft, "intent": "soften"},
         )
         assert ok.status_code == 200
 
-        foreign_contact = await client.post(
-            "/api/v1/compose",
-            headers=headers,
-            json={
-                "draft": "пожалуйста смягчи это сообщение немного",
-                "intent": "soften",
-                "contact_id": str(foreign.id),
-            },
-        )
-        assert foreign_contact.status_code == 404
-        assert foreign_contact.json()["code"] == MiniappErrorCode.NOT_FOUND
+        for contact_id in (own.id, foreign.id):
+            rejected = await client.post(
+                "/api/v1/compose",
+                headers=headers,
+                json={"draft": draft, "intent": "soften", "contact_id": str(contact_id)},
+            )
+            assert rejected.status_code == 404
+            assert rejected.json()["code"] == MiniappErrorCode.NOT_FOUND
 
         me = await client.get("/api/v1/me", headers=headers)
         assert me.status_code == 403
@@ -345,7 +284,7 @@ async def test_compose_scope_closed_by_default_openapi_matrix(mini_world: AppWor
     user = await mini_world.ensure_granted_user(_TG)
     sessions = FakeComposeSessions()
     app, _handoffs, _ = _build_app(mini_world, sessions=sessions, enable_test_routes=False)
-    session_token = await sessions.store(ComposeSessionPayload(user_id=user.id, contact_id=None))
+    session_token = await sessions.store(ComposeSessionPayload(user_id=user.id))
     headers = {"Authorization": f"compose {session_token}"}
     schema = app.openapi()
     paths: dict[str, Any] = schema["paths"]
@@ -415,7 +354,7 @@ async def test_compose_auth_schemes_and_handoff_header_edges(mini_world: AppWorl
     sessions = FakeComposeSessions()
     handoffs = FakeComposeHandoffs()
     app, _, _ = _build_app(mini_world, sessions=sessions, handoffs=handoffs)
-    session_token = await sessions.store(ComposeSessionPayload(user_id=user.id, contact_id=None))
+    session_token = await sessions.store(ComposeSessionPayload(user_id=user.id))
     tma_raw = build_webapp_init_data(_TOKEN, user_id=_TG, auth_date=int(_NOW.timestamp()))
     unknown_tma = build_webapp_init_data(_TOKEN, user_id=40_099, auth_date=int(_NOW.timestamp()))
     draft_body = {
@@ -480,9 +419,7 @@ async def test_compose_handoff_redeem_rate_limited(mini_world: AppWorld) -> None
     app, _, _ = _build_app(
         mini_world, handoffs=handoffs, redeem_rate_limiter=FakeRateLimiter(limit=0)
     )
-    token = await handoffs.store(
-        ComposeHandoffPayload(user_id=user.id, draft="rl", contact_id=None)
-    )
+    token = await handoffs.store(ComposeHandoffPayload(user_id=user.id, draft="rl"))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         limited = await client.post(
             "/api/v1/compose/handoff/redeem",

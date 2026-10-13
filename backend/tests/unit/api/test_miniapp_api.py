@@ -345,15 +345,14 @@ async def test_happy_path_contacts_rules_suggestions(
         assert renamed.status_code == 200
         assert renamed.json()["label"] == "Renamed"
 
-        activated = await client.post(
+        removed = await client.post(
             f"/api/v1/contacts/{contact_id}/activate",
             headers=headers,
         )
-        assert activated.status_code == 204
-        assert activated.headers["cache-control"] == "no-store"
+        assert removed.status_code in {404, 405}
 
         me2 = await client.get("/api/v1/me", headers=headers)
-        assert me2.json()["active_contact_id"] == contact_id
+        assert "active_contact_id" not in me2.json()
 
         rule = await client.post(
             f"/api/v1/contacts/{contact_id}/rules",
@@ -494,7 +493,6 @@ async def test_idor_matrix_returns_404(mini_world: AppWorld) -> None:
             ("GET", f"/api/v1/contacts/{contact_id}/rules", None),
             ("GET", f"/api/v1/contacts/{contact_id}/suggestions", None),
             ("PATCH", f"/api/v1/contacts/{contact_id}", {"label": "Hacked"}),
-            ("POST", f"/api/v1/contacts/{contact_id}/activate", None),
             ("POST", f"/api/v1/contacts/{contact_id}/invite", None),
             ("POST", f"/api/v1/contacts/{contact_id}/leave", {"confirm": True}),
             ("POST", f"/api/v1/contacts/{contact_id}/rules", {"category": "other", "text": "x"}),

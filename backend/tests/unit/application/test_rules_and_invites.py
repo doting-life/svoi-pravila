@@ -841,60 +841,6 @@ async def test_resolve_invite_requires_inviter_access(world: AppWorld) -> None:
 
 
 @pytest.mark.unit
-async def test_accept_invite_keeps_existing_active_contact(world: AppWorld) -> None:
-    inviter = await world.ensure_granted_user(68)
-    invitee = await world.ensure_granted_user(69)
-    existing = (
-        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
-            CreateContactCommand(invitee.id, ContactLabel("Prior"), RelationshipKind.FRIEND)
-        )
-    ).contact
-    contact = (
-        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
-            CreateContactCommand(inviter.id, ContactLabel("C"), RelationshipKind.FRIEND)
-        )
-    ).contact
-    created = await CreateInvite(
-        world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
-    ).execute(CreateInviteCommand(inviter.id, contact.id))
-    accepted = await AcceptInvite(
-        world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
-    ).execute(
-        AcceptInviteCommand(
-            invitee.id, created.invite.id, ContactLabel("I"), RelationshipKind.FRIEND
-        )
-    )
-    async with world.uow_factory() as uow:
-        invitee_user = await uow.users.get(invitee.id)
-        assert invitee_user is not None
-        assert invitee_user.active_contact_id == existing.id
-        assert accepted.invitee_contact.id != existing.id
-
-
-@pytest.mark.unit
-async def test_accept_invite_missing_user_after_mutations(world: AppWorld) -> None:
-    from tests.unit.application.test_contacts import _HideUserFactory
-
-    inviter = await world.ensure_granted_user(74)
-    invitee = await world.ensure_granted_user(75)
-    contact = (
-        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
-            CreateContactCommand(inviter.id, ContactLabel("C"), RelationshipKind.FRIEND)
-        )
-    ).contact
-    created = await CreateInvite(
-        world.uow_factory, world.catalog, world.ids, world.tokens, world.clock
-    ).execute(CreateInviteCommand(inviter.id, contact.id))
-    hiding = _HideUserFactory(world.uow_factory, invitee.id)
-    with pytest.raises(NotFound):
-        await AcceptInvite(hiding, world.catalog, world.ids, world.clock, world.notifier).execute(
-            AcceptInviteCommand(
-                invitee.id, created.invite.id, ContactLabel("I"), RelationshipKind.FRIEND
-            )
-        )
-
-
-@pytest.mark.unit
 async def test_approve_and_reject_require_pending_revision(world: AppWorld) -> None:
     inviter, invitee, contact, _accepted = await _pair_world(world)
     private = await ProposeRule(

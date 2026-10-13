@@ -39,8 +39,7 @@ from svoi_pravila.application.use_cases.decode_incoming import (
     DecodeIncomingCommand,
 )
 from svoi_pravila.domain.enums import UsageSurface
-from svoi_pravila.domain.ids import TelegramUserId
-from svoi_pravila.domain.user import User
+from svoi_pravila.domain.ids import ContactId, TelegramUserId
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,9 +118,9 @@ def _sse_error_for(exc: BaseException) -> str:
 async def iter_decode_sse(
     ports: DecodeStreamPorts,
     *,
-    actor: User,
     telegram_user_id: TelegramUserId,
     text: str,
+    contact_id: ContactId | None,
 ) -> AsyncGenerator[str]:
     """Yield SSE frames for a mini-app decode (surface ``miniapp``)."""
     agen = ports.decode_incoming.execute(
@@ -129,6 +128,7 @@ async def iter_decode_sse(
             telegram_user_id=telegram_user_id,
             incoming_text=text,
             surface=UsageSurface.MINIAPP,
+            contact_id=contact_id,
         )
     )
     mapped = tuple(error_type for error_type, _code in _MAPPED_DECODE_ERRORS)
@@ -167,7 +167,7 @@ async def iter_decode_sse(
                     telegram_user_id=telegram_user_id.value,
                     incoming_text=text,
                     completed=event,
-                    active_contact_id=actor.active_contact_id,
+                    contact_id=contact_id,
                 ),
             )
             yield format_sse(

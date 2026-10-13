@@ -30,7 +30,7 @@ def _uc(world: AppWorld, handoffs: FakeComposeHandoffs | None = None) -> IssueCo
 
 
 @pytest.mark.unit
-async def test_issue_compose_handoff_seals_draft_only(world: AppWorld) -> None:
+async def test_issue_compose_handoff_ignores_existing_contacts(world: AppWorld) -> None:
     handoffs = FakeComposeHandoffs()
     uc = _uc(world, handoffs)
     with pytest.raises(NotFound):
@@ -44,20 +44,15 @@ async def test_issue_compose_handoff_seals_draft_only(world: AppWorld) -> None:
 
 
 @pytest.mark.unit
-async def test_issue_compose_handoff_ignores_active_contact(world: AppWorld) -> None:
+async def test_issue_compose_handoff_seals_draft_only(
+    world: AppWorld,
+) -> None:
     handoffs = FakeComposeHandoffs()
     uc = _uc(world, handoffs)
     user = await world.ensure_granted_user(52)
-    contact = (
-        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
-            CreateContactCommand(user.id, ContactLabel("Лиза"), RelationshipKind.FRIEND)
-        )
-    ).contact
-    async with world.uow_factory() as uow:
-        stored = await uow.users.get(user.id)
-        assert stored is not None
-        await uow.users.update(stored.set_active_contact(contact.id))
-        await uow.commit()
+    await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+        CreateContactCommand(user.id, ContactLabel("Лиза"), RelationshipKind.FRIEND)
+    )
     result = await uc.execute(IssueComposeHandoffCommand(TelegramUserId(52), "draft two"))
     payload = await handoffs.redeem_once(result.token)
     assert payload == ComposeHandoffPayload(user_id=user.id, draft="draft two")

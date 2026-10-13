@@ -104,7 +104,6 @@ class _ToneWorld:
         async with self.uow_factory() as uow:
             user = await uow.users.get(accepted.user.id)
             assert user is not None
-            assert user.active_contact_id == created.contact.id
             return user, created.contact.id
 
 
@@ -229,7 +228,6 @@ async def test_suggestion_and_tone_repository_crud(
         telegram_user_id=TelegramUserId(9100),
         created_at=NOW,
         age_confirmed_at=NOW,
-        active_contact_id=None,
     )
     contact_id = ContactId(UUID(int=9101))
     contact = Contact(
@@ -304,7 +302,6 @@ async def test_suggestion_export_and_delete_clear_rows(
         telegram_user_id=TelegramUserId(9200),
         created_at=NOW,
         age_confirmed_at=NOW,
-        active_contact_id=None,
     )
     contact_id = ContactId(UUID(int=9201))
     contact = Contact(
@@ -377,7 +374,6 @@ async def test_concurrent_pending_decode_suggestions_conflict(
         telegram_user_id=TelegramUserId(9300),
         created_at=NOW,
         age_confirmed_at=NOW,
-        active_contact_id=None,
     )
     contact_id = ContactId(UUID(int=9301))
     contact = Contact(

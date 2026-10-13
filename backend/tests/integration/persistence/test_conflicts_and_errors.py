@@ -31,7 +31,6 @@ def _user(n: int, telegram: int | None = None, *, age_confirmed: bool = True) ->
         telegram_user_id=TelegramUserId(telegram if telegram is not None else 2000 + n),
         created_at=NOW,
         age_confirmed_at=NOW if age_confirmed else None,
-        active_contact_id=None,
     )
 
 

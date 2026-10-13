@@ -52,7 +52,6 @@ def _user(n: int) -> User:
         telegram_user_id=TelegramUserId(1000 + n),
         created_at=NOW,
         age_confirmed_at=NOW,
-        active_contact_id=None,
     )
 
 

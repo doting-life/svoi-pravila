@@ -31,7 +31,7 @@ class DecodeSealRequest:
     telegram_user_id: int
     incoming_text: str
     completed: DecodeCompleted
-    active_contact_id: ContactId | None
+    contact_id: ContactId | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,13 +85,13 @@ async def _store_rule_source_token(
 ) -> str | None:
     if request.completed.result.safety is not SafetyVerdict.OK:
         return None
-    if request.active_contact_id is None:
+    if request.contact_id is None:
         return None
     pseudonym = ports.pseudonymizer.pseudonymize(RULE_SOURCE_PURPOSE, str(request.telegram_user_id))
     return await ports.rule_sources.store(
         pseudonym,
         RuleSourcePayload(
-            contact_id=request.active_contact_id,
+            contact_id=request.contact_id,
             incoming_text=request.incoming_text,
         ),
     )

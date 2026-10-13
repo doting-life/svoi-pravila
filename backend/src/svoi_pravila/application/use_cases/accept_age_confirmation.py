@@ -61,7 +61,6 @@ class AcceptAgeConfirmation:
                 telegram_user_id=command.telegram_user_id,
                 created_at=now,
                 age_confirmed_at=None,
-                active_contact_id=None,
             ).confirm_age(now)
             try:
                 await uow.users.add(user)

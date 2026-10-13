@@ -30,7 +30,6 @@ def _user(*, age: bool) -> User:
         telegram_user_id=TelegramUserId(1),
         created_at=NOW,
         age_confirmed_at=NOW if age else None,
-        active_contact_id=None,
     )
 
 

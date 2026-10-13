@@ -44,13 +44,13 @@ from svoi_pravila.application.use_cases.record_inline_choice import (
 from svoi_pravila.domain.contact import Contact
 from svoi_pravila.domain.enums import (
     ConsentKind,
-    Firmness,
     RelationshipKind,
     RuleCategory,
     SuggestionSource,
     SuggestionStatus,
     UsageScenario,
     UsageSurface,
+    VariantKind,
 )
 from svoi_pravila.domain.ids import ContactId, RuleSuggestionId, TelegramUserId, UserId
 from svoi_pravila.domain.rule_suggestion import RuleSuggestion, ToneSignal
@@ -118,12 +118,12 @@ def _world(uow_factory: SqlAlchemyUnitOfWorkFactory) -> _ToneWorld:
 
 
 def _miniapp_choice(
-    telegram_id: int, firmness: Firmness, contact_id: ContactId
+    telegram_id: int, variant_kind: VariantKind, contact_id: ContactId
 ) -> RecordInlineChoiceCommand:
     return RecordInlineChoiceCommand(
         TelegramUserId(telegram_id),
-        scenario=UsageScenario.SOFTEN,
-        firmness=firmness,
+        scenario=UsageScenario.REWRITE,
+        kind=variant_kind,
         surface=UsageSurface.MINIAPP,
         contact_id=contact_id,
     )
@@ -136,7 +136,7 @@ async def test_inline_choice_writes_no_tone_signal_row(
     world = _world(uow_factory)
     user, contact_id = await world.granted_with_contact(9010)
     choose = world.choose()
-    ref = encode_inline_result_ref(UsageScenario.SOFTEN, Firmness.GENTLE)
+    ref = encode_inline_result_ref(UsageScenario.REWRITE, VariantKind.SOFTER)
     for _ in range(6):
         result = await choose.execute(RecordInlineChoiceCommand(TelegramUserId(9010), ref))
         assert result.tone_outcome is ToneSignalOutcome.SKIPPED_INLINE
@@ -153,8 +153,8 @@ async def test_tone_signal_does_not_freeze_while_pending(
     world = _world(uow_factory)
     user, contact_id = await world.granted_with_contact(9011)
     choose = world.choose()
-    gentle = _miniapp_choice(9011, Firmness.GENTLE, contact_id)
-    firm = _miniapp_choice(9011, Firmness.FIRM, contact_id)
+    gentle = _miniapp_choice(9011, VariantKind.SOFTER, contact_id)
+    firm = _miniapp_choice(9011, VariantKind.FIRMER, contact_id)
 
     for _ in range(5):
         result = await choose.execute(gentle)
@@ -163,7 +163,7 @@ async def test_tone_signal_does_not_freeze_while_pending(
         ListSuggestionsCommand(user.id, contact_id)
     )
     assert len(pending.suggestions) == 1
-    assert pending.suggestions[0].firmness is Firmness.GENTLE
+    assert pending.suggestions[0].variant_kind is VariantKind.SOFTER
 
     for index in range(10):
         result = await choose.execute(firm)
@@ -172,7 +172,7 @@ async def test_tone_signal_does_not_freeze_while_pending(
         async with uow_factory() as uow:
             signal = await uow.tone_signals.get(user.id, contact_id)
             assert signal is not None
-            assert signal.values[-1] is Firmness.FIRM
+            assert signal.values[-1] is VariantKind.FIRMER
             assert len(signal.values) == min(5 + index + 1, 10)
 
     await DismissSuggestion(uow_factory, world.catalog, world.clock).execute(
@@ -185,7 +185,7 @@ async def test_tone_signal_does_not_freeze_while_pending(
         ListSuggestionsCommand(user.id, contact_id)
     )
     assert len(after.suggestions) == 1
-    assert after.suggestions[0].firmness is Firmness.FIRM
+    assert after.suggestions[0].variant_kind is VariantKind.FIRMER
 
 
 @pytest.mark.integration
@@ -210,13 +210,13 @@ async def test_concurrent_tone_signal_appends_keep_both_values(
         )
     )
     await asyncio.gather(
-        choose_a.execute(_miniapp_choice(9012, Firmness.GENTLE, contact_id)),
-        choose_b.execute(_miniapp_choice(9012, Firmness.FIRM, contact_id)),
+        choose_a.execute(_miniapp_choice(9012, VariantKind.SOFTER, contact_id)),
+        choose_b.execute(_miniapp_choice(9012, VariantKind.FIRMER, contact_id)),
     )
     async with uow_factory() as uow:
         signal = await uow.tone_signals.get(user.id, contact_id)
         assert signal is not None
-        assert set(signal.values) == {Firmness.GENTLE, Firmness.FIRM}
+        assert set(signal.values) == {VariantKind.SOFTER, VariantKind.FIRMER}
         assert len(signal.values) == 2
 
 
@@ -246,7 +246,7 @@ async def test_suggestion_and_tone_repository_crud(
         contact_id=contact_id,
         category=RuleCategory.HOW_TO_ASK,
         text=RuleText("Говорить мягко, без резких формулировок"),
-        firmness=Firmness.GENTLE,
+        variant_kind=VariantKind.SOFTER,
         now=NOW,
     )
     async with uow_factory() as uow:
@@ -256,7 +256,7 @@ async def test_suggestion_and_tone_repository_crud(
         locked = await uow.tone_signals.lock_for_append(owner.id, contact_id)
         assert locked.values == ()
         await uow.tone_signals.upsert(
-            ToneSignal(user_id=owner.id, contact_id=contact_id, values=(Firmness.GENTLE,))
+            ToneSignal(user_id=owner.id, contact_id=contact_id, values=(VariantKind.SOFTER,))
         )
         await uow.rule_suggestions.add(suggestion)
         assert await uow.rule_suggestions.has_pending_for_source(
@@ -264,7 +264,7 @@ async def test_suggestion_and_tone_repository_crud(
         )
         assert await uow.rule_suggestions.get(suggestion.id) is not None
         assert (
-            await uow.rule_suggestions.get_tone(owner.id, contact_id, Firmness.GENTLE)
+            await uow.rule_suggestions.get_tone(owner.id, contact_id, VariantKind.SOFTER)
         ) is not None
         assert len(await uow.rule_suggestions.list_pending_for_contact(owner.id, contact_id)) == 1
         assert len(await uow.rule_suggestions.list_for_user(owner.id)) == 1
@@ -321,14 +321,14 @@ async def test_suggestion_export_and_delete_clear_rows(
         contact_id=contact_id,
         category=RuleCategory.HOW_TO_ASK,
         text=RuleText("Говорить спокойно и по делу"),
-        firmness=Firmness.BALANCED,
+        variant_kind=VariantKind.FIRMER,
         now=NOW,
     )
     async with uow_factory() as uow:
         await uow.users.add(owner)
         await uow.contacts.add(contact)
         await uow.tone_signals.upsert(
-            ToneSignal(user_id=owner.id, contact_id=contact_id, values=(Firmness.BALANCED,) * 5)
+            ToneSignal(user_id=owner.id, contact_id=contact_id, values=(VariantKind.SOFTER,) * 5)
         )
         await uow.rule_suggestions.add(suggestion)
         await uow.commit()
@@ -341,7 +341,7 @@ async def test_suggestion_export_and_delete_clear_rows(
     contacts = export.payload["контакты"]
     assert isinstance(contacts, list)
     assert contacts[0]["предложения"][0]["статус"] == SuggestionStatus.PENDING.value
-    assert contacts[0]["сигналы_тона"][0]["значения"] == [Firmness.BALANCED.value] * 5
+    assert contacts[0]["сигналы_тона"][0]["значения"] == [VariantKind.SOFTER.value] * 5
 
     await DeleteMyAccount(
         DeleteMyAccountPorts(
@@ -362,7 +362,7 @@ async def test_suggestion_export_and_delete_clear_rows(
         assert await uow.rule_suggestions.list_for_user(owner.id) == []
         assert await uow.tone_signals.list_for_user(owner.id) == []
         assert await uow.rule_suggestions.get(suggestion.id) is None
-        assert await uow.rule_suggestions.get_tone(owner.id, contact_id, Firmness.BALANCED) is None
+        assert await uow.rule_suggestions.get_tone(owner.id, contact_id, VariantKind.FIRMER) is None
         assert await uow.tone_signals.get(owner.id, contact_id) is None
         await uow.rule_suggestions.delete_for_user(owner.id)
         await uow.tone_signals.delete_for_user(owner.id)

@@ -355,7 +355,7 @@ class RuleSuggestionRow(Base):
     source: Mapped[str] = mapped_column(Text, nullable=False)
     category: Mapped[str] = mapped_column(Text, nullable=False)
     text_ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    firmness: Mapped[str | None] = mapped_column(Text, nullable=True)
+    variant_kind: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -375,13 +375,13 @@ class RuleSuggestionRow(Base):
             name="status",
         ),
         CheckConstraint(
-            "firmness IS NULL OR firmness IN ('gentle', 'balanced', 'firm')",
-            name="firmness",
+            "variant_kind IS NULL OR variant_kind IN ('softer', 'firmer')",
+            name="variant_kind",
         ),
         CheckConstraint(
-            "(source = 'tone' AND firmness IS NOT NULL) OR "
-            "(source = 'decode' AND firmness IS NULL)",
-            name="source_firmness",
+            "(source = 'tone' AND variant_kind IS NOT NULL) OR "
+            "(source = 'decode' AND variant_kind IS NULL)",
+            name="source_variant_kind",
         ),
         CheckConstraint(
             "(status = 'pending' AND decided_at IS NULL) OR "
@@ -389,10 +389,10 @@ class RuleSuggestionRow(Base):
             name="decided_shape",
         ),
         Index(
-            "uq_rule_suggestions_tone_user_contact_firmness",
+            "uq_rule_suggestions_tone_user_contact_variant_kind",
             "user_id",
             "contact_id",
-            "firmness",
+            "variant_kind",
             unique=True,
             postgresql_where=text("source = 'tone'"),
         ),
@@ -413,7 +413,7 @@ class RuleSuggestionRow(Base):
 
 
 class ToneSignalRow(Base):
-    """Persistence row for ``ToneSignal`` (C0 firmness values, no text)."""
+    """Persistence row for ``ToneSignal`` (C0 softer/firmer values, no text)."""
 
     __tablename__ = "tone_signals"
 
@@ -435,6 +435,9 @@ class ToneSignalRow(Base):
             name="window",
         ),
     )
+
+
+_SCENARIO_VALUES = "('decode', 'rewrite', 'suggest_rule')"
 
 
 class UsageEventRow(Base):
@@ -459,7 +462,7 @@ class UsageEventRow(Base):
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     billable_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     event_kind: Mapped[str] = mapped_column(Text(), nullable=False)
-    variant_firmness: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    variant_kind: Mapped[str | None] = mapped_column(Text(), nullable=True)
     limit_kind: Mapped[str | None] = mapped_column(Text(), nullable=True)
 
     __table_args__ = (
@@ -468,7 +471,7 @@ class UsageEventRow(Base):
             name="user_pseudonym_hex",
         ),
         CheckConstraint(
-            "scenario IN ('decode', 'soften', 'help_say', 'suggest_rule')",
+            f"scenario IN {_SCENARIO_VALUES}",
             name="usage_scenario",
         ),
         CheckConstraint(
@@ -484,8 +487,8 @@ class UsageEventRow(Base):
             name="usage_event_kind",
         ),
         CheckConstraint(
-            "variant_firmness IS NULL OR variant_firmness IN ('gentle', 'balanced', 'firm')",
-            name="usage_variant_firmness",
+            "variant_kind IS NULL OR variant_kind IN ('check', 'softer', 'firmer')",
+            name="usage_variant_kind",
         ),
         CheckConstraint(
             "limit_kind IS NULL OR limit_kind IN ('user_quota', 'global_budget')",
@@ -504,7 +507,7 @@ class UsageEventRow(Base):
             "event_kind = 'generation' AND outcome = 'screened' AND safety = 'crisis' "
             "AND model IS NULL AND prompt_version IS NULL AND attempts = 0 "
             "AND input_tokens = 0 AND output_tokens = 0 AND billable_tokens = 0 "
-            "AND ttfc_ms IS NULL AND unavailable_kind IS NULL AND variant_firmness IS NULL "
+            "AND ttfc_ms IS NULL AND unavailable_kind IS NULL AND variant_kind IS NULL "
             "AND limit_kind IS NULL"
             ") OR ("
             "event_kind = 'generation' AND outcome = 'limited' "
@@ -512,18 +515,18 @@ class UsageEventRow(Base):
             "AND safety IS NULL AND model IS NULL AND prompt_version IS NULL "
             "AND attempts = 0 AND input_tokens = 0 AND output_tokens = 0 "
             "AND billable_tokens = 0 AND ttfc_ms IS NULL AND unavailable_kind IS NULL "
-            "AND variant_firmness IS NULL"
+            "AND variant_kind IS NULL"
             ") OR ("
             "event_kind = 'generation' AND outcome NOT IN ('screened', 'limited') "
             "AND model IS NOT NULL AND model <> '' "
             "AND prompt_version IS NOT NULL AND prompt_version <> '' "
-            "AND attempts >= 1 AND variant_firmness IS NULL AND limit_kind IS NULL"
+            "AND attempts >= 1 AND variant_kind IS NULL AND limit_kind IS NULL"
             ") OR ("
             "event_kind = 'result_chosen' AND model IS NULL AND prompt_version IS NULL "
             "AND attempts = 0 AND latency_ms = 0 AND ttfc_ms IS NULL "
             "AND input_tokens = 0 AND output_tokens = 0 AND billable_tokens = 0 "
             "AND safety IS NULL AND unavailable_kind IS NULL AND outcome = 'ok' "
-            "AND variant_firmness IN ('gentle', 'balanced', 'firm') AND limit_kind IS NULL"
+            "AND variant_kind IN ('check', 'softer', 'firmer') AND limit_kind IS NULL"
             ")",
             name="usage_event_kind_shape",
         ),
@@ -540,7 +543,6 @@ class UsageEventRow(Base):
     )
 
 
-_SCENARIO_VALUES = "('decode', 'soften', 'help_say', 'suggest_rule')"
 _SURFACE_VALUES = "('dm', 'inline', 'miniapp')"
 _JOB_VALUES = "('daily_aggregates', 'cohorts', 'purge')"
 _JOB_STATUS_VALUES = "('running', 'succeeded', 'failed', 'skipped_locked')"

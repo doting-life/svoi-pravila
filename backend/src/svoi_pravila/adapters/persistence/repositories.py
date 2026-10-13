@@ -36,7 +36,6 @@ from svoi_pravila.domain.consent import Consent
 from svoi_pravila.domain.contact import Contact
 from svoi_pravila.domain.enums import (
     ConsentKind,
-    Firmness,
     LimitKind,
     RelationshipKind,
     RuleCategory,
@@ -47,6 +46,7 @@ from svoi_pravila.domain.enums import (
     UsageOutcome,
     UsageScenario,
     UsageSurface,
+    VariantKind,
 )
 from svoi_pravila.domain.ids import (
     ConsentId,
@@ -612,9 +612,7 @@ class SqlAlchemyUsageEventRepository:
             output_tokens=row.output_tokens,
             billable_tokens=row.billable_tokens,
             event_kind=UsageEventKind(row.event_kind),
-            variant_firmness=None
-            if row.variant_firmness is None
-            else Firmness(row.variant_firmness),
+            variant_kind=None if row.variant_kind is None else VariantKind(row.variant_kind),
             limit_kind=None if row.limit_kind is None else LimitKind(row.limit_kind),
         )
 
@@ -644,9 +642,7 @@ class SqlAlchemyUsageEventRepository:
             output_tokens=event.output_tokens,
             billable_tokens=event.billable_tokens,
             event_kind=event.event_kind.value,
-            variant_firmness=(
-                None if event.variant_firmness is None else event.variant_firmness.value
-            ),
+            variant_kind=None if event.variant_kind is None else event.variant_kind.value,
             limit_kind=None if event.limit_kind is None else event.limit_kind.value,
         )
         self._session.add(row)
@@ -712,7 +708,7 @@ class SqlAlchemyRuleSuggestionRepository:
             source=SuggestionSource(row.source),
             category=RuleCategory(row.category),
             text=RuleText(plaintext),
-            firmness=None if row.firmness is None else Firmness(row.firmness),
+            variant_kind=None if row.variant_kind is None else VariantKind(row.variant_kind),
             status=SuggestionStatus(row.status),
             created_at=row.created_at,
             decided_at=row.decided_at,
@@ -748,14 +744,14 @@ class SqlAlchemyRuleSuggestionRepository:
         self,
         user_id: UserId,
         contact_id: ContactId,
-        firmness: Firmness,
+        variant_kind: VariantKind,
     ) -> RuleSuggestion | None:
         result = await self._session.execute(
             select(RuleSuggestionRow).where(
                 RuleSuggestionRow.user_id == user_id,
                 RuleSuggestionRow.contact_id == contact_id,
                 RuleSuggestionRow.source == SuggestionSource.TONE.value,
-                RuleSuggestionRow.firmness == firmness.value,
+                RuleSuggestionRow.variant_kind == variant_kind.value,
             )
         )
         row = result.scalar_one_or_none()
@@ -790,7 +786,9 @@ class SqlAlchemyRuleSuggestionRepository:
             source=suggestion.source.value,
             category=suggestion.category.value,
             text_ciphertext=ciphertext,
-            firmness=None if suggestion.firmness is None else suggestion.firmness.value,
+            variant_kind=(
+                None if suggestion.variant_kind is None else suggestion.variant_kind.value
+            ),
             status=suggestion.status.value,
             created_at=suggestion.created_at,
             decided_at=suggestion.decided_at,
@@ -814,7 +812,7 @@ class SqlAlchemyRuleSuggestionRepository:
 
 
 class SqlAlchemyToneSignalRepository:
-    """Tone signal repository (C0 firmness values, no encryption)."""
+    """Tone signal repository (C0 softer/firmer values, no encryption)."""
 
     def __init__(self, session: AsyncSession, registry: RowRegistry) -> None:
         self._session = session
@@ -826,7 +824,7 @@ class SqlAlchemyToneSignalRepository:
         return ToneSignal(
             user_id=UserId(row.user_id),
             contact_id=ContactId(row.contact_id),
-            values=tuple(Firmness(v) for v in row.values),
+            values=tuple(VariantKind(v) for v in row.values),
         )
 
     async def get(

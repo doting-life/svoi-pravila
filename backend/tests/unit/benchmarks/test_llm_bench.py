@@ -21,8 +21,8 @@ from svoi_pravila.adapters.llm.gigachat.client import (
     close_gigachat_client,
     create_gigachat_client,
 )
-from svoi_pravila.adapters.llm.gigachat.prepared import prepare_soften
-from svoi_pravila.adapters.llm.gigachat.validation import MAX_TOKENS_SOFTEN
+from svoi_pravila.adapters.llm.gigachat.prepared import prepare_rewrite
+from svoi_pravila.adapters.llm.gigachat.validation import MAX_TOKENS_REWRITE
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
     GenerationUnavailable,
@@ -34,10 +34,8 @@ from svoi_pravila.application.ports.generation import (
     DecodeCompleted,
     DecodeEvent,
     DecodeRequest,
-    HelpSayIntent,
-    HelpSayRequest,
-    SoftenRequest,
-    SoftenResult,
+    RewriteRequest,
+    RewriteResult,
     TokenUsage,
 )
 from svoi_pravila.benchmarks.cases import (
@@ -93,7 +91,7 @@ from svoi_pravila.benchmarks.runner import (
     warmup,
 )
 from svoi_pravila.config import Settings
-from svoi_pravila.domain.enums import RelationshipKind
+from svoi_pravila.domain.enums import RelationshipKind, RewriteGoal
 
 _CHAT_URL_RE = r"https://api\.giga\.chat/.*/chat/completions"
 _FIXTURE_TOKEN = "fixture-access-token"
@@ -213,14 +211,13 @@ def test_parse_case_and_load_v2(tmp_path: Path) -> None:
     cases = load_cases(path)
     assert len(cases) >= 60
     ops = {c.operation for c in cases}
-    assert ops == {"soften", "help_say", "decode"}
+    assert ops == {"rewrite", "decode"}
+    assert any(c.rewrite is not None and c.rewrite.goal is not None for c in cases)
     assert all(c.expected_safety == "ok" for c in cases)
     rels = set()
     for case in cases:
-        if case.soften:
-            rels.add(case.soften.relationship)
-        if case.help_say:
-            rels.add(case.help_say.relationship)
+        if case.rewrite:
+            rels.add(case.rewrite.relationship)
         if case.decode:
             rels.add(case.decode.relationship)
     assert rels == set(RelationshipKind)
@@ -229,7 +226,7 @@ def test_parse_case_and_load_v2(tmp_path: Path) -> None:
             {"id": "x", "operation": "nope", "relationship": "friend", "expected_safety": "ok"}
         )
     with pytest.raises(ValueError, match="expected_safety"):
-        parse_case({"id": "x", "operation": "soften", "relationship": "friend", "draft": "x"})
+        parse_case({"id": "x", "operation": "rewrite", "relationship": "friend", "draft": "x"})
     empty = tmp_path / "empty.jsonl"
     empty.write_text("\n", encoding="utf-8")
     with pytest.raises(ValueError, match="empty"):
@@ -245,8 +242,8 @@ def test_aggregate_separates_quality_and_availability() -> None:
         CallRecord("refused", 40, "ok", 0, (), None, 0, 0),
         CallRecord("unavailable", 30, "ok", 0, (), "timeout", 0, 0),
     ]
-    row, reasons = aggregate_standard_row(records, operation="soften", model="GigaChat-2")
-    assert "soften" in row
+    row, reasons = aggregate_standard_row(records, operation="rewrite", model="GigaChat-2")
+    assert "rewrite" in row
     assert "ok:1/crisis:1/refuse_manipulation:0" in row
     assert "50" in row
     assert "33" in row or "timeout:20" in row
@@ -270,10 +267,10 @@ def test_format_report_incomplete() -> None:
 
 @pytest.mark.unit
 def test_parse_ops_default_and_subset() -> None:
-    assert _parse_ops(None) == ("soften", "help_say", "decode_stream")
-    assert _parse_ops(["decode_stream", "soften"]) == ("decode_stream", "soften")
-    assert _parse_ops(["help_say", "decode_stream", "help_say"]) == (
-        "help_say",
+    assert _parse_ops(None) == ("rewrite", "decode_stream")
+    assert _parse_ops(["decode_stream", "rewrite"]) == ("decode_stream", "rewrite")
+    assert _parse_ops(["rewrite", "decode_stream", "rewrite"]) == (
+        "rewrite",
         "decode_stream",
     )
     with pytest.raises(SystemExit):
@@ -285,8 +282,7 @@ def test_parse_ops_default_and_subset() -> None:
 @pytest.mark.unit
 def test_default_models_from_settings() -> None:
     settings = make_settings(
-        gigachat_model_soften="GigaChat-2-Pro",
-        gigachat_model_help_say="GigaChat-2-Pro",
+        gigachat_model_rewrite="GigaChat-2-Pro",
         gigachat_model_decode="GigaChat-2-Max",
     )
     assert default_models(settings) == ["GigaChat-2-Pro", "GigaChat-2-Max"]
@@ -295,26 +291,27 @@ def test_default_models_from_settings() -> None:
 @pytest.mark.unit
 async def test_run_case_ok_and_invalid_and_outputs_off() -> None:
     fake = FakeTextGenerator()
-    soften = BenchCase(
+    rewrite = BenchCase(
         id="s1",
-        operation="soften",
+        operation="rewrite",
         expected_safety="ok",
-        soften=SoftenRequest(
+        rewrite=RewriteRequest(
+            goal=None,
             draft="черновик",
             rules=(),
             relationship=RelationshipKind.FRIEND,
             deadline_seconds=1.0,
         ),
     )
-    rec = await run_case(fake, soften, _opts("soften", show_outputs=False))
+    rec = await run_case(fake, rewrite, _opts("rewrite", show_outputs=False))
     assert rec.outcome == "ok"
     assert rec.actual_safety == "ok"
     assert rec.output_line is None
-    rec_shown = await run_case(fake, soften, _opts("soften", show_outputs=True))
+    rec_shown = await run_case(fake, rewrite, _opts("rewrite", show_outputs=True))
     assert rec_shown.output_line is not None
 
     class Boom(FakeTextGenerator):
-        async def soften(self, request: SoftenRequest) -> SoftenResult:
+        async def rewrite(self, request: RewriteRequest) -> RewriteResult:
             raise InvalidGenerationOutput(
                 (InvalidOutputReason.VARIANT_COUNT,),
                 usage=TokenUsage(),
@@ -323,18 +320,19 @@ async def test_run_case_ok_and_invalid_and_outputs_off() -> None:
                 prompt_version="p",
             )
 
-    rec_bad = await run_case(Boom(), soften, _opts("soften"))
+    rec_bad = await run_case(Boom(), rewrite, _opts("rewrite"))
     assert rec_bad.outcome == "invalid_output"
     assert rec_bad.reasons == ("variant_count",)
 
 
 @pytest.mark.unit
 async def test_run_case_refused_and_unavailable() -> None:
-    soften = BenchCase(
+    rewrite = BenchCase(
         id="s1",
-        operation="soften",
+        operation="rewrite",
         expected_safety="ok",
-        soften=SoftenRequest(
+        rewrite=RewriteRequest(
+            goal=None,
             draft="черновик",
             rules=(),
             relationship=RelationshipKind.FRIEND,
@@ -343,7 +341,7 @@ async def test_run_case_refused_and_unavailable() -> None:
     )
 
     class Refuse(FakeTextGenerator):
-        async def soften(self, request: SoftenRequest) -> SoftenResult:
+        async def rewrite(self, request: RewriteRequest) -> RewriteResult:
             raise GenerationRefusedByProvider(
                 usage=TokenUsage(),
                 attempts=1,
@@ -352,7 +350,7 @@ async def test_run_case_refused_and_unavailable() -> None:
             )
 
     class Down(FakeTextGenerator):
-        async def soften(self, request: SoftenRequest) -> SoftenResult:
+        async def rewrite(self, request: RewriteRequest) -> RewriteResult:
             raise GenerationUnavailable(
                 UnavailableKind.TIMEOUT,
                 usage=TokenUsage(),
@@ -361,20 +359,21 @@ async def test_run_case_refused_and_unavailable() -> None:
                 prompt_version="p",
             )
 
-    refused = await run_case(Refuse(), soften, _opts("soften"))
+    refused = await run_case(Refuse(), rewrite, _opts("rewrite"))
     assert refused.outcome == "refused"
-    down = await run_case(Down(), soften, _opts("soften"))
+    down = await run_case(Down(), rewrite, _opts("rewrite"))
     assert down.outcome == "unavailable"
     assert down.unavailable_kind == "timeout"
 
 
 @pytest.mark.unit
 async def test_run_case_rate_limited_stops() -> None:
-    soften = BenchCase(
+    rewrite = BenchCase(
         id="s1",
-        operation="soften",
+        operation="rewrite",
         expected_safety="ok",
-        soften=SoftenRequest(
+        rewrite=RewriteRequest(
+            goal=None,
             draft="черновик",
             rules=(),
             relationship=RelationshipKind.FRIEND,
@@ -383,7 +382,7 @@ async def test_run_case_rate_limited_stops() -> None:
     )
 
     class Limited(FakeTextGenerator):
-        async def soften(self, request: SoftenRequest) -> SoftenResult:
+        async def rewrite(self, request: RewriteRequest) -> RewriteResult:
             raise GenerationUnavailable(
                 UnavailableKind.RATE_LIMITED,
                 usage=TokenUsage(),
@@ -401,8 +400,8 @@ async def test_run_case_rate_limited_stops() -> None:
     with pytest.raises(RateLimitedError) as exc_info:
         await run_case(
             Limited(),
-            soften,
-            _opts("soften", rate_limits=capture),
+            rewrite,
+            _opts("rewrite", rate_limits=capture),
         )
     assert exc_info.value.record.unavailable_kind == "rate_limited"
     assert exc_info.value.http_status == 429
@@ -414,11 +413,12 @@ async def test_run_case_rate_limited_stops() -> None:
 
 @pytest.mark.unit
 async def test_run_case_auth_stops() -> None:
-    soften = BenchCase(
+    rewrite = BenchCase(
         id="s1",
-        operation="soften",
+        operation="rewrite",
         expected_safety="ok",
-        soften=SoftenRequest(
+        rewrite=RewriteRequest(
+            goal=None,
             draft="черновик",
             rules=(),
             relationship=RelationshipKind.FRIEND,
@@ -427,7 +427,7 @@ async def test_run_case_auth_stops() -> None:
     )
 
     class AuthFail(FakeTextGenerator):
-        async def soften(self, request: SoftenRequest) -> SoftenResult:
+        async def rewrite(self, request: RewriteRequest) -> RewriteResult:
             raise GenerationUnavailable(
                 UnavailableKind.AUTH,
                 usage=TokenUsage(),
@@ -437,7 +437,7 @@ async def test_run_case_auth_stops() -> None:
             )
 
     with pytest.raises(AuthFailedError) as exc_info:
-        await run_case(AuthFail(), soften, _opts("soften"))
+        await run_case(AuthFail(), rewrite, _opts("rewrite"))
     assert exc_info.value.record.unavailable_kind == "auth"
 
 
@@ -562,9 +562,10 @@ async def test_async_main_list_models(
         lambda _path: [
             BenchCase(
                 id="s1",
-                operation="soften",
+                operation="rewrite",
                 expected_safety="ok",
-                soften=SoftenRequest(
+                rewrite=RewriteRequest(
+                    goal=None,
                     draft="черновик",
                     rules=(),
                     relationship=RelationshipKind.FRIEND,
@@ -585,13 +586,13 @@ def test_parse_case_rejects_invalid_shapes() -> None:
         parse_case([])
     with pytest.raises(ValueError, match="case id"):
         parse_case(
-            {"id": "", "operation": "soften", "relationship": "friend", "expected_safety": "ok"}
+            {"id": "", "operation": "rewrite", "relationship": "friend", "expected_safety": "ok"}
         )
     with pytest.raises(TypeError, match="rules must be a list"):
         parse_case(
             {
                 "id": "s",
-                "operation": "soften",
+                "operation": "rewrite",
                 "relationship": "friend",
                 "draft": "текст",
                 "expected_safety": "ok",
@@ -602,7 +603,7 @@ def test_parse_case_rejects_invalid_shapes() -> None:
         parse_case(
             {
                 "id": "s",
-                "operation": "soften",
+                "operation": "rewrite",
                 "relationship": "friend",
                 "draft": "текст",
                 "expected_safety": "ok",
@@ -616,18 +617,18 @@ def test_parse_case_null_rules_and_with_deadline_missing_decode() -> None:
     case = parse_case(
         {
             "id": "s-null-rules",
-            "operation": "soften",
+            "operation": "rewrite",
             "relationship": "friend",
             "draft": "текст",
             "expected_safety": "ok",
             "rules": None,
         }
     )
-    assert case.soften is not None
-    assert case.soften.rules == ()
+    assert case.rewrite is not None
+    assert case.rewrite.rules == ()
     timed = with_deadline(case, 9.0)
-    assert timed.soften is not None
-    assert timed.soften.deadline_seconds == 9.0
+    assert timed.rewrite is not None
+    assert timed.rewrite.deadline_seconds == 9.0
     broken = BenchCase(id="d-missing", operation="decode", expected_safety="ok")
     with pytest.raises(ValueError, match="decode case missing request"):
         with_deadline(broken, 1.0)
@@ -642,21 +643,21 @@ def test_load_cases_rejects_bad_json(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-async def test_run_case_help_say_and_decode_stream() -> None:
+async def test_run_case_goal_and_decode_stream() -> None:
     fake = FakeTextGenerator(stream_chunks=("анализ ",))
     help_case = BenchCase(
         id="h1",
-        operation="help_say",
+        operation="rewrite",
         expected_safety="ok",
-        help_say=HelpSayRequest(
-            intent=HelpSayIntent.DECLINE,
-            details="не могу прийти",
+        rewrite=RewriteRequest(
+            goal=RewriteGoal.DECLINE,
+            draft="не могу прийти",
             rules=(),
             relationship=RelationshipKind.WORK,
             deadline_seconds=1.0,
         ),
     )
-    help_rec = await run_case(fake, help_case, _opts("help_say", show_outputs=True))
+    help_rec = await run_case(fake, help_case, _opts("rewrite", show_outputs=True))
     assert help_rec.outcome == "ok"
     assert help_rec.output_line is not None
 
@@ -733,9 +734,10 @@ async def test_async_main_runs_models(
     cases = [
         BenchCase(
             id="s1",
-            operation="soften",
+            operation="rewrite",
             expected_safety="ok",
-            soften=SoftenRequest(
+            rewrite=RewriteRequest(
+                goal=None,
                 draft="черновик",
                 rules=(),
                 relationship=RelationshipKind.FRIEND,
@@ -744,11 +746,11 @@ async def test_async_main_runs_models(
         ),
         BenchCase(
             id="h1",
-            operation="help_say",
+            operation="rewrite",
             expected_safety="ok",
-            help_say=HelpSayRequest(
-                intent=HelpSayIntent.DECLINE,
-                details="детали",
+            rewrite=RewriteRequest(
+                goal=RewriteGoal.DECLINE,
+                draft="детали",
                 rules=(),
                 relationship=RelationshipKind.WORK,
                 deadline_seconds=1.0,
@@ -776,7 +778,7 @@ async def test_async_main_runs_models(
     code = await async_main(
         _cli_args(
             models=["GigaChat-2", "GigaChat-2"],
-            ops=["soften", "decode_stream"],
+            ops=["rewrite", "decode_stream"],
             out=str(out_path),
             record_fixtures=str(tmp_path / "fixtures"),
             show_outputs=True,
@@ -785,11 +787,11 @@ async def test_async_main_runs_models(
     assert code == 0
     out = capsys.readouterr().out
     assert "ok-p50" in out
-    assert "soften" in out
+    assert "rewrite" in out
     assert "decode_stream" in out
     assert "ttfc-p50" in out
     written = out_path.read_text(encoding="utf-8")
-    assert "soften" in written
+    assert "rewrite" in written
     assert "decode_stream" in written
 
 
@@ -807,7 +809,7 @@ async def test_async_main_rate_limited_incomplete(
         return None
 
     class LimitedGen(FakeTextGenerator):
-        async def soften(self, request: SoftenRequest) -> SoftenResult:
+        async def rewrite(self, request: RewriteRequest) -> RewriteResult:
             raise GenerationUnavailable(
                 UnavailableKind.RATE_LIMITED,
                 usage=TokenUsage(),
@@ -819,9 +821,10 @@ async def test_async_main_rate_limited_incomplete(
     cases = [
         BenchCase(
             id="s1",
-            operation="soften",
+            operation="rewrite",
             expected_safety="ok",
-            soften=SoftenRequest(
+            rewrite=RewriteRequest(
+                goal=None,
                 draft="черновик",
                 rules=(),
                 relationship=RelationshipKind.FRIEND,
@@ -842,7 +845,7 @@ async def test_async_main_rate_limited_incomplete(
     code = await async_main(
         _cli_args(
             models=["GigaChat-2"],
-            ops=["soften"],
+            ops=["rewrite"],
             out=str(out_path),
         )
     )
@@ -851,7 +854,7 @@ async def test_async_main_rate_limited_incomplete(
     assert "INCOMPLETE" in captured
     written = out_path.read_text(encoding="utf-8")
     assert "INCOMPLETE" in written
-    assert "soften" in written
+    assert "rewrite" in written
     assert "http_status:" not in written
 
 
@@ -869,7 +872,7 @@ async def test_async_main_auth_incomplete(
         return None
 
     class AuthGen(FakeTextGenerator):
-        async def soften(self, request: SoftenRequest) -> SoftenResult:
+        async def rewrite(self, request: RewriteRequest) -> RewriteResult:
             raise GenerationUnavailable(
                 UnavailableKind.AUTH,
                 usage=TokenUsage(),
@@ -881,9 +884,10 @@ async def test_async_main_auth_incomplete(
     cases = [
         BenchCase(
             id="s1",
-            operation="soften",
+            operation="rewrite",
             expected_safety="ok",
-            soften=SoftenRequest(
+            rewrite=RewriteRequest(
+                goal=None,
                 draft="черновик",
                 rules=(),
                 relationship=RelationshipKind.FRIEND,
@@ -904,7 +908,7 @@ async def test_async_main_auth_incomplete(
     code = await async_main(
         _cli_args(
             models=["GigaChat-2"],
-            ops=["soften"],
+            ops=["rewrite"],
             out=str(out_path),
         )
     )
@@ -913,7 +917,7 @@ async def test_async_main_auth_incomplete(
     assert "auth failed" in captured
     written = out_path.read_text(encoding="utf-8")
     assert "auth failed" in written
-    assert "soften" in written
+    assert "rewrite" in written
 
 
 @pytest.mark.unit
@@ -988,12 +992,13 @@ def test_gigachat_http_clients_rejects_non_httpx() -> None:
         gigachat_http_clients(bad)
 
 
-def _soften_case(case_id: str = "s1") -> BenchCase:
+def _rewrite_case(case_id: str = "s1") -> BenchCase:
     return BenchCase(
         id=case_id,
-        operation="soften",
+        operation="rewrite",
         expected_safety="ok",
-        soften=SoftenRequest(
+        rewrite=RewriteRequest(
+            goal=None,
             draft="черновик",
             rules=(),
             relationship=RelationshipKind.FRIEND,
@@ -1016,7 +1021,7 @@ async def test_run_case_missing_request_raises() -> None:
         ),
     )
     with pytest.raises(ValueError, match="missing request"):
-        await run_case(FakeTextGenerator(), case, _opts("soften"))
+        await run_case(FakeTextGenerator(), case, _opts("rewrite"))
 
 
 @pytest.mark.unit
@@ -1078,7 +1083,7 @@ async def test_warmup_skips_empty_ops_and_errors_when_none() -> None:
         fake,
         decode_only,
         BenchmarkParams(
-            operations=("soften", "decode_stream"),
+            operations=("rewrite", "decode_stream"),
             model="GigaChat-2",
             repeat=1,
             deadline=5.0,
@@ -1092,7 +1097,7 @@ async def test_warmup_skips_empty_ops_and_errors_when_none() -> None:
             fake,
             decode_only,
             BenchmarkParams(
-                operations=("soften", "help_say"),
+                operations=("rewrite",),
                 model="GigaChat-2",
                 repeat=1,
                 deadline=5.0,
@@ -1106,7 +1111,7 @@ async def test_warmup_skips_empty_ops_and_errors_when_none() -> None:
 async def test_run_benchmark_incremental_out_and_rate_limit(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    cases = [_soften_case("s1"), _soften_case("s2")]
+    cases = [_rewrite_case("s1"), _rewrite_case("s2")]
     out_path = tmp_path / "inc.md"
     writer = OutWriter(out_path)
     capture = _StickyRateLimitCapture()
@@ -1116,11 +1121,11 @@ async def test_run_benchmark_incremental_out_and_rate_limit(
     class Flaky(FakeTextGenerator):
         def __init__(self) -> None:
             super().__init__()
-            self._soften_hits = 0
+            self._rewrite_hits = 0
 
-        async def soften(self, request: SoftenRequest) -> SoftenResult:
-            self._soften_hits += 1
-            if self._soften_hits >= 2:
+        async def rewrite(self, request: RewriteRequest) -> RewriteResult:
+            self._rewrite_hits += 1
+            if self._rewrite_hits >= 2:
                 raise GenerationUnavailable(
                     UnavailableKind.RATE_LIMITED,
                     usage=TokenUsage(),
@@ -1128,10 +1133,10 @@ async def test_run_benchmark_incremental_out_and_rate_limit(
                     model="m",
                     prompt_version="p",
                 )
-            return await super().soften(request)
+            return await super().rewrite(request)
 
     params = BenchmarkParams(
-        operations=("soften", "help_say"),
+        operations=("rewrite", "decode_stream"),
         model="GigaChat-2",
         repeat=1,
         deadline=5.0,
@@ -1148,9 +1153,9 @@ async def test_run_benchmark_incremental_out_and_rate_limit(
     assert budget_error is None
     assert rate_error.http_status == 429
     written = out_path.read_text(encoding="utf-8")
-    assert "| soften |" in written
-    help_rows = [line for line in written.splitlines() if line.startswith("| help_say")]
-    assert help_rows == []
+    assert "| rewrite |" in written
+    decode_rows = [line for line in written.splitlines() if line.startswith("| decode_stream")]
+    assert decode_rows == []
     err = capsys.readouterr().err
     assert "s1" in err
 
@@ -1191,7 +1196,7 @@ async def test_run_benchmark_skips_ops_without_cases_and_prints_reasons(
         )
     ]
     params = BenchmarkParams(
-        operations=("soften", "decode_stream"),
+        operations=("rewrite", "decode_stream"),
         model="GigaChat-2",
         repeat=1,
         deadline=5.0,
@@ -1202,7 +1207,7 @@ async def test_run_benchmark_skips_ops_without_cases_and_prints_reasons(
     assert rate_error is None
     assert budget_error is None
     assert any("decode_stream" in row for row in rows)
-    assert not any(row.startswith("| soften |") for row in rows)
+    assert not any(row.startswith("| rewrite |") for row in rows)
     assert "reasons decode_stream" in capsys.readouterr().out
 
 
@@ -1225,8 +1230,8 @@ async def test_async_main_model_list_warning_continues(
         "svoi_pravila.benchmarks.llm.GigaChatTextGenerator",
         lambda _c, _s: FakeTextGenerator(),
     )
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: [_soften_case()])
-    code = await async_main(_cli_args(ops=["soften"]))
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: [_rewrite_case()])
+    code = await async_main(_cli_args(ops=["rewrite"]))
     assert code == 0
     assert "Warning: could not list models" in capsys.readouterr().out
 
@@ -1245,7 +1250,7 @@ async def test_async_main_list_models_maps_provider_error(
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", lambda _s: _Client())
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.close_gigachat_client", _close)
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: [_soften_case()])
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: [_rewrite_case()])
     with pytest.raises(GenerationUnavailable) as exc_info:
         await async_main(_cli_args(list_models=True))
     assert exc_info.value.kind == UnavailableKind.AUTH
@@ -1286,9 +1291,9 @@ def test_out_writer_header_once_and_none_path(tmp_path: Path) -> None:
 
 @pytest.mark.unit
 def test_phase_count_first_attempt_metric() -> None:
-    assert phase_count("soften") == 1
+    assert phase_count("rewrite") == 1
     assert phase_count("decode_stream") == 2
-    soften_ok = CallRecord("ok", 100, "ok", 1, (), None, 10, 5, billable_tokens=15)
+    rewrite_ok = CallRecord("ok", 100, "ok", 1, (), None, 10, 5, billable_tokens=15)
     stream_ok = CallRecord(
         "ok",
         300,
@@ -1317,7 +1322,7 @@ def test_phase_count_first_attempt_metric() -> None:
         phase_a_ms=100,
         phase_b_ms=200,
     )
-    soft_row, _ = aggregate_standard_row([soften_ok], operation="soften", model="GigaChat-2")
+    soft_row, _ = aggregate_standard_row([rewrite_ok], operation="rewrite", model="GigaChat-2")
     assert "100/100" in soft_row
     stream_row, _ = aggregate_row([stream_ok], operation="decode_stream", model="GigaChat-2")
     assert "100/100" in stream_row
@@ -1330,7 +1335,7 @@ def test_phase_count_first_attempt_metric() -> None:
 @pytest.mark.unit
 async def test_failed_calls_carry_usage_and_mean_attempts() -> None:
     class FailSoft(FakeTextGenerator):
-        async def soften(self, request: SoftenRequest) -> SoftenResult:
+        async def rewrite(self, request: RewriteRequest) -> RewriteResult:
             raise InvalidGenerationOutput(
                 (InvalidOutputReason.VARIANT_COUNT, InvalidOutputReason.VARIANT_COUNT),
                 usage=TokenUsage(input=11, output=7, precached=2),
@@ -1339,12 +1344,12 @@ async def test_failed_calls_carry_usage_and_mean_attempts() -> None:
                 prompt_version="p",
             )
 
-    rec = await run_case(FailSoft(), _soften_case(), _opts("soften"))
+    rec = await run_case(FailSoft(), _rewrite_case(), _opts("rewrite"))
     assert rec.outcome == "invalid_output"
     assert rec.attempts == 2
     assert rec.input_tokens == 11
     assert rec.billable_tokens == 18
-    row, reasons = aggregate_standard_row([rec], operation="soften", model="GigaChat-2")
+    row, reasons = aggregate_standard_row([rec], operation="rewrite", model="GigaChat-2")
     assert "2.00" in row
     assert reasons == {"variant_count": 2}
     assert "11/7" in row
@@ -1356,8 +1361,8 @@ def test_smoke_and_case_filters() -> None:
     smoke = filter_cases(cases, smoke=True)
     assert len(smoke) == 18
     assert all(c.smoke for c in smoke)
-    subset = filter_cases(cases, case_ids=("soften-1", "decode-1"))
-    assert {c.id for c in subset} == {"soften-1", "decode-1"}
+    subset = filter_cases(cases, case_ids=("rewrite-1", "decode-1"))
+    assert {c.id for c in subset} == {"rewrite-1", "decode-1"}
     with pytest.raises(ValueError, match="unknown case ids"):
         filter_cases(cases, case_ids=("nope",))
 
@@ -1365,7 +1370,7 @@ def test_smoke_and_case_filters() -> None:
 @pytest.mark.unit
 def test_plan_calls_and_estimates() -> None:
     cases = [
-        _soften_case("s1"),
+        _rewrite_case("s1"),
         BenchCase(
             id="d1",
             operation="decode",
@@ -1379,34 +1384,34 @@ def test_plan_calls_and_estimates() -> None:
         ),
         BenchCase(
             id="h1",
-            operation="help_say",
+            operation="rewrite",
             expected_safety="ok",
-            help_say=HelpSayRequest(
-                intent=HelpSayIntent.DECLINE,
-                details="детали",
+            rewrite=RewriteRequest(
+                goal=RewriteGoal.DECLINE,
+                draft="детали",
                 rules=(),
                 relationship=RelationshipKind.WORK,
                 deadline_seconds=1.0,
             ),
         ),
     ]
-    assert estimate_case_tokens(cases[0], "soften") > 0
+    assert estimate_case_tokens(cases[0], "rewrite") > 0
     assert estimate_case_tokens(cases[1], "decode_stream") > 0
-    assert estimate_case_tokens(cases[2], "help_say") > 0
+    assert estimate_case_tokens(cases[2], "rewrite") > 0
     plan = plan_calls(
         cases,
-        operations=("soften", "help_say", "decode_stream"),
+        operations=("rewrite", "decode_stream"),
         models=["GigaChat-3-Lightning"],
         repeat=1,
     )
-    assert len(plan) == 3
+    assert len(plan) == 2
     assert all(calls >= 2 for _m, _op, calls, _t in plan)
     assert chars_to_tokens("") == 0
     with pytest.raises(ValueError, match="missing request"):
-        estimate_case_tokens(_soften_case(), "decode_stream")
+        estimate_case_tokens(_rewrite_case(), "decode_stream")
     empty_plan = plan_calls(
-        [_soften_case()],
-        operations=("help_say",),
+        [_rewrite_case()],
+        operations=("decode_stream",),
         models=["GigaChat-2"],
         repeat=1,
     )
@@ -1455,15 +1460,15 @@ async def test_dry_run_makes_no_network(
 @pytest.mark.unit
 def test_max_tokens_required_for_live_run(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: [_soften_case()])
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: [_rewrite_case()])
     with pytest.raises(SystemExit, match="max-tokens"):
-        asyncio.run(async_main(_cli_args(max_tokens=None, models=["GigaChat-2"], ops=["soften"])))
+        asyncio.run(async_main(_cli_args(max_tokens=None, models=["GigaChat-2"], ops=["rewrite"])))
 
 
 @pytest.mark.unit
 async def test_token_budget_stops_before_call(tmp_path: Path) -> None:
     params = BenchmarkParams(
-        operations=("soften",),
+        operations=("rewrite",),
         model="GigaChat-2",
         repeat=1,
         deadline=5.0,
@@ -1474,7 +1479,7 @@ async def test_token_budget_stops_before_call(tmp_path: Path) -> None:
     spend = SpendTracker()
     _rows, incomplete, rate_error, budget_error = await run_benchmark(
         FakeTextGenerator(),
-        [_soften_case()],
+        [_rewrite_case()],
         params,
         BenchmarkRuntime(out, spend),
     )
@@ -1504,12 +1509,12 @@ async def test_async_main_budget_incomplete(
         "svoi_pravila.benchmarks.llm.GigaChatTextGenerator",
         lambda _c, _s: FakeTextGenerator(),
     )
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: [_soften_case()])
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: [_rewrite_case()])
     out_path = tmp_path / "budget.md"
     code = await async_main(
         _cli_args(
             models=["GigaChat-2"],
-            ops=["soften"],
+            ops=["rewrite"],
             out=str(out_path),
             max_tokens=1,
         )
@@ -1522,12 +1527,12 @@ async def test_async_main_budget_incomplete(
 
 @pytest.mark.unit
 def test_estimate_uses_validator_output_caps() -> None:
-    case = _soften_case()
-    assert case.soften is not None
-    prepared = prepare_soften(case.soften)
-    one = estimate_prepared_tokens(prepared.system, prepared.user, output_cap=MAX_TOKENS_SOFTEN)
-    assert estimate_case_tokens(case, "soften") == 2 * one
-    assert MAX_TOKENS_SOFTEN > 0
+    case = _rewrite_case()
+    assert case.rewrite is not None
+    prepared = prepare_rewrite(case.rewrite)
+    one = estimate_prepared_tokens(prepared.system, prepared.user, output_cap=MAX_TOKENS_REWRITE)
+    assert estimate_case_tokens(case, "rewrite") == 2 * one
+    assert MAX_TOKENS_REWRITE > 0
 
 
 @pytest.mark.unit
@@ -1613,7 +1618,7 @@ async def test_rate_limit_capture_feeds_incomplete_out(
 
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.LlmToolSettings", make_settings)
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", _client_factory)
-    monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: [_soften_case()])
+    monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: [_rewrite_case()])
     respx.post(url__regex=_CHAT_URL_RE).mock(
         return_value=httpx.Response(
             429,
@@ -1628,7 +1633,7 @@ async def test_rate_limit_capture_feeds_incomplete_out(
     code = await async_main(
         _cli_args(
             models=["GigaChat-2"],
-            ops=["soften"],
+            ops=["rewrite"],
             out=str(out_path),
         )
     )

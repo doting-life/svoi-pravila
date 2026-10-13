@@ -81,7 +81,7 @@ async def _seed(engine: AsyncEngine, now: datetime, events: int, days: int) -> N
                 "output_tokens": 1,
                 "billable_tokens": 2,
                 "event_kind": "generation",
-                "variant_firmness": None,
+                "variant_kind": None,
             }
         )
         event_id += 1
@@ -94,12 +94,12 @@ async def _seed(engine: AsyncEngine, now: datetime, events: int, days: int) -> N
                         "id, occurred_at, user_pseudonym, scenario, surface, outcome, "
                         "unavailable_kind, safety, model, prompt_version, latency_ms, ttfc_ms, "
                         "attempts, input_tokens, output_tokens, billable_tokens, event_kind, "
-                        "variant_firmness"
+                        "variant_kind"
                         ") VALUES ("
                         ":id, :occurred_at, :user_pseudonym, :scenario, :surface, :outcome, "
                         ":unavailable_kind, :safety, :model, :prompt_version, :latency_ms, "
                         ":ttfc_ms, :attempts, :input_tokens, :output_tokens, :billable_tokens, "
-                        ":event_kind, :variant_firmness"
+                        ":event_kind, :variant_kind"
                         ")"
                     ),
                     batch,

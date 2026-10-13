@@ -8,14 +8,14 @@ from tests.fakes.generation import FakeTextGenerator
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.ports.generation import (
     GenerationMeta,
+    RewriteResult,
     SafetyVerdict,
-    SoftenResult,
     TokenUsage,
     Variant,
 )
 from svoi_pravila.benchmarks.out_writer import OutWriter
 from svoi_pravila.benchmarks.runner import SpendTracker
-from svoi_pravila.domain.enums import Firmness
+from svoi_pravila.domain.enums import VariantKind
 from svoi_pravila.evals.cases import filter_cases, load_cases, parse_case
 from svoi_pravila.evals.metrics import (
     rule_effect_compliance_with,
@@ -82,7 +82,7 @@ async def test_runner_rule_metrics_offline() -> None:
     leak_case = parse_case(
         {
             "id": "offline-leak",
-            "operation": "soften",
+            "operation": "rewrite",
             "category": "rule_leak",
             "expected": "ok",
             "draft": "я тебя очень люблю",
@@ -99,7 +99,7 @@ async def test_runner_rule_metrics_offline() -> None:
     effect_with = parse_case(
         {
             "id": "offline-effect-with",
-            "operation": "soften",
+            "operation": "rewrite",
             "category": "rule_effect",
             "expected": "ok",
             "draft": "Мне нужно чтобы ты предупреждал",
@@ -116,7 +116,7 @@ async def test_runner_rule_metrics_offline() -> None:
     effect_without = parse_case(
         {
             "id": "offline-effect-without",
-            "operation": "soften",
+            "operation": "rewrite",
             "category": "rule_effect",
             "expected": "ok",
             "draft": "Мне нужно чтобы ты предупреждал",
@@ -124,16 +124,16 @@ async def test_runner_rule_metrics_offline() -> None:
         }
     )
     gen = FakeTextGenerator(
-        soften_result=SoftenResult(
+        rewrite_result=RewriteResult(
             variants=(
-                Variant(text="давай обсудим договор заранее", firmness=Firmness.GENTLE),
-                Variant(text="можешь сказать мягче?", firmness=Firmness.BALANCED),
+                Variant(text="давай обсудим договор заранее", kind=VariantKind.SOFTER),
+                Variant(text="можешь сказать мягче?", kind=VariantKind.FIRMER),
             ),
             applied_rule_indexes=(0,),
             safety=SafetyVerdict.OK,
             meta=GenerationMeta(
                 model="fake",
-                prompt_version="soften@v5",
+                prompt_version="rewrite@v1",
                 latency_ms=1,
                 attempts=1,
                 usage=TokenUsage(input=1, output=1),
@@ -149,34 +149,32 @@ async def test_runner_rule_metrics_offline() -> None:
     assert leak_rec.rule_leak is True
     assert rule_leak_count([leak_rec]) == 1
 
-    gen.soften_result = SoftenResult(
+    gen.rewrite_result = RewriteResult(
         variants=(
-            Variant(
-                text="Мне важно знать заранее. Можешь предупреждать?", firmness=Firmness.GENTLE
-            ),
-            Variant(text="Давай договоримся о предупреждениях.", firmness=Firmness.BALANCED),
+            Variant(text="Мне важно знать заранее. Можешь предупреждать?", kind=VariantKind.SOFTER),
+            Variant(text="Давай договоримся о предупреждениях.", kind=VariantKind.FIRMER),
         ),
         applied_rule_indexes=(0,),
         safety=SafetyVerdict.OK,
         meta=GenerationMeta(
             model="fake",
-            prompt_version="soften@v5",
+            prompt_version="rewrite@v1",
             latency_ms=1,
             attempts=1,
             usage=TokenUsage(input=1, output=1),
         ),
     )
     with_rec = await run_eval_case(gen, effect_with, runtime, deadline=1.0, show_outputs=False)
-    gen.soften_result = SoftenResult(
+    gen.rewrite_result = RewriteResult(
         variants=(
-            Variant(text="Мне важно знать заранее о планах.", firmness=Firmness.GENTLE),
-            Variant(text="Предупреждай меня если опаздываешь.", firmness=Firmness.BALANCED),
+            Variant(text="Мне важно знать заранее о планах.", kind=VariantKind.SOFTER),
+            Variant(text="Предупреждай меня если опаздываешь.", kind=VariantKind.FIRMER),
         ),
         applied_rule_indexes=(),
         safety=SafetyVerdict.OK,
         meta=GenerationMeta(
             model="fake",
-            prompt_version="soften@v5",
+            prompt_version="rewrite@v1",
             latency_ms=1,
             attempts=1,
             usage=TokenUsage(input=1, output=1),

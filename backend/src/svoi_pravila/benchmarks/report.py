@@ -47,12 +47,11 @@ def price_for(model: str) -> float:
 
 
 def default_models(settings: GigaChatRuntimeSettings) -> list[str]:
-    """Unique models from settings, soften then help_say then decode."""
+    """Unique models from settings, rewrite then decode."""
     return list(
         dict.fromkeys(
             [
-                settings.gigachat_model_soften,
-                settings.gigachat_model_help_say,
+                settings.gigachat_model_rewrite,
                 settings.gigachat_model_decode,
             ]
         )
@@ -124,7 +123,7 @@ def _token_cost(records: list[CallRecord], model: str) -> tuple[float, float, fl
 def aggregate_standard_row(
     records: list[CallRecord], *, operation: str, model: str
 ) -> tuple[str, dict[str, int]]:
-    """Return one markdown row for soften or help_say."""
+    """Return one markdown row for rewrite."""
     n = len(records)
     ok = [r for r in records if r.outcome == "ok"]
     ok_lat = [r.latency_ms for r in ok]
@@ -287,7 +286,7 @@ def aggregate_row(
 
 
 def standard_report_header() -> str:
-    """Markdown header for soften and help_say rows."""
+    """Markdown header for rewrite rows."""
     return (
         "| operation | model | n | ok-p50 | ok-p95 | all-p50 | "
         "schema% first/after | refuse% | unavail% by kind | safety ok/crisis/refuse | "

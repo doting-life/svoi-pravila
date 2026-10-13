@@ -166,8 +166,8 @@ async def run_eval_case(
         return _screen_record(timed)
     variants: tuple[str, ...] = ()
     try:
-        if timed.operation == "soften" and timed.soften is not None:
-            generated = await gen.soften(timed.soften)
+        if timed.operation == "rewrite" and timed.rewrite is not None:
+            generated = await gen.rewrite(timed.rewrite)
             variants = tuple(item.text for item in generated.variants)
             _emit_output(
                 {"id": timed.id, "variants": list(variants)},
@@ -175,15 +175,6 @@ async def run_eval_case(
             )
             usage = generated.meta.usage
             verdict = generated.safety.value
-        elif timed.operation == "help_say" and timed.help_say is not None:
-            generated_h = await gen.help_say(timed.help_say)
-            variants = tuple(item.text for item in generated_h.variants)
-            _emit_output(
-                {"id": timed.id, "variants": list(variants)},
-                show_outputs=show_outputs,
-            )
-            usage = generated_h.meta.usage
-            verdict = generated_h.safety.value
         elif timed.decode is not None:
             completed: DecodeCompleted | None = None
             async for event in gen.decode_stream(timed.decode):

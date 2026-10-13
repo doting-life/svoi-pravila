@@ -26,6 +26,7 @@ from svoi_pravila.application.ports.generation import (
     Variant,
 )
 from svoi_pravila.benchmarks.runner import SpendTracker
+from svoi_pravila.config import GigaChatRuntimeSettings
 from svoi_pravila.domain.enums import RelationshipKind, RewriteGoal, VariantKind
 from svoi_pravila.domain.variant_policy import PolicyRule
 from svoi_pravila.evals.rewrite_cases import (
@@ -37,7 +38,9 @@ from svoi_pravila.evals.rewrite_cases import (
 from svoi_pravila.evals.rewrite_cli import async_main, main
 from svoi_pravila.evals.rewrite_report import render_report
 from svoi_pravila.evals.rewrite_run import (
+    ModelEval,
     RewriteEvalParams,
+    RewriteEvalResult,
     RunOutcome,
     run_rewrite_eval,
 )
@@ -85,6 +88,7 @@ def _cli_args(**overrides: object) -> Namespace:
         "dry_run": False,
         "list_models": False,
         "max_tokens": None,
+        "model": None,
     }
     values.update(overrides)
     return Namespace(**values)
@@ -225,8 +229,8 @@ async def test_report_lists_summary_refusals_and_details() -> None:
     )
     refused = await run_rewrite_eval(gen, [_case("b")], _params(), spend)
     result.records.extend(refused.records)
-    report = render_report(result, model="fake-model", spent_billable=spend.spent_billable)
-    assert "- model: fake-model" in report
+    report = render_report([ModelEval("fake-model", result, spend.spent_billable)])
+    assert "## Model: fake-model" in report
     assert "- status: COMPLETE" in report
     assert "- runs: 3" in report
     assert "- ok: 2" in report
@@ -310,18 +314,17 @@ async def test_run_records_slot_and_finish_reason_of_invalid_attempts() -> None:
         ("empty_text:softer", "stop"),
         ("empty_text:check", None),
     ]
-    report = render_report(result, model="m", spent_billable=3)
+    report = render_report([ModelEval("m", result, 3)])
     assert "| a | 1 | 1 | empty_text:softer | stop |" in report
     assert "| a | 1 | 2 | empty_text:check | none |" in report
 
 
 @pytest.mark.unit
 def test_report_marks_incomplete_runs_with_the_reason() -> None:
-    from svoi_pravila.evals.rewrite_run import RewriteEvalResult
-
     report = render_report(
-        RewriteEvalResult(stop_reason="token_budget"), model="m", spent_billable=0
+        [ModelEval("m", RewriteEvalResult(stop_reason="token_budget"), 0)], not_run=("n", "o")
     )
+    assert "- not run: n, o" in report
     assert "- status: INCOMPLETE (token_budget)" in report
     assert "- latency p50 / p95 ms: 0 / 0" in report
 
@@ -341,10 +344,89 @@ async def test_cli_dry_run_prints_plan_and_makes_no_client(
     code = await async_main(_cli_args(dry_run=True, repeat=2, extra_cases=str(extra)))
     assert code == 0
     out = capsys.readouterr().out
+    assert "Models: GigaChat-2\n" in out
     assert "Cases: 7" in out
     assert "Total planned calls: 14" in out
     assert "Total worst-case billable tokens:" in out
     assert "Largest single-call worst-case estimate:" in out
+
+
+@pytest.mark.unit
+async def test_cli_dry_run_multiplies_the_plan_by_distinct_models(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("svoi_pravila.evals.rewrite_cli.LlmToolSettings", make_settings)
+    await async_main(_cli_args(dry_run=True, model=["A", "B", "A"]))
+    out = capsys.readouterr().out
+    assert "Models: A, B\n" in out
+    assert "Total planned calls: 12" in out
+
+
+@pytest.mark.unit
+async def test_cli_live_run_with_models_reports_each_and_stops_at_the_first_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ok = FakeTextGenerator(
+        rewrite_result=_result(
+            Variant(text="Сиди дома и жди", kind=VariantKind.CHECK),
+            Variant(text="Пожалуйста, посиди дома", kind=VariantKind.SOFTER),
+            Variant(text="Жди дома", kind=VariantKind.FIRMER),
+        )
+    )
+    limited = FakeTextGenerator()
+    limited.rewrite_error = _unavailable(UnavailableKind.RATE_LIMITED)
+    by_model = {"A": ok, "B": limited, "C": ok}
+    used: list[str] = []
+
+    def factory(_client: object, settings: GigaChatRuntimeSettings) -> FakeTextGenerator:
+        model = settings.gigachat_model_rewrite
+        used.append(model)
+        return by_model[model]
+
+    _patch_client(monkeypatch, ok)
+    monkeypatch.setattr("svoi_pravila.evals.rewrite_cli.GigaChatTextGenerator", factory)
+    report = tmp_path / "multi.md"
+    code = await async_main(
+        _cli_args(
+            data=_one_case(tmp_path),
+            max_tokens=1_000_000,
+            out=str(report),
+            model=["A", "B", "C"],
+        )
+    )
+    text = report.read_text(encoding="utf-8")
+    assert code == 1
+    assert used == ["A", "B"]
+    assert "| A | COMPLETE | 1 | 0 | 0 | 0 / 0 |" in text
+    assert "| B | INCOMPLETE (rate_limited) | 1 |" in text
+    assert "## Model: A" in text
+    assert "## Model: B" in text
+    assert "- not run: C" in text
+
+
+@pytest.mark.unit
+async def test_cli_without_model_uses_the_settings_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    gen = FakeTextGenerator(
+        rewrite_result=_result(
+            Variant(text="Сиди дома и жди", kind=VariantKind.CHECK),
+            Variant(text="Пожалуйста, посиди дома", kind=VariantKind.SOFTER),
+            Variant(text="Жди дома", kind=VariantKind.FIRMER),
+        )
+    )
+    used: list[str] = []
+
+    def factory(_client: object, settings: GigaChatRuntimeSettings) -> FakeTextGenerator:
+        used.append(settings.gigachat_model_rewrite)
+        return gen
+
+    _patch_client(monkeypatch, gen)
+    monkeypatch.setattr("svoi_pravila.evals.rewrite_cli.GigaChatTextGenerator", factory)
+    out = tmp_path / "one.md"
+    await async_main(_cli_args(data=_one_case(tmp_path), max_tokens=1_000_000, out=str(out)))
+    assert used == ["GigaChat-2"]
+    assert "## Model: GigaChat-2" in out.read_text(encoding="utf-8")
 
 
 @pytest.mark.unit
@@ -470,6 +552,29 @@ async def test_cli_exit_code_is_one_for_violations_and_early_stops(
     report = tmp_path / "limited.md"
     assert await async_main(_cli_args(data=data, max_tokens=1_000_000, out=str(report))) == 1
     assert "INCOMPLETE (rate_limited)" in report.read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+def test_main_accepts_repeatable_model(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("svoi_pravila.evals.rewrite_cli.LlmToolSettings", make_settings)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "svoi-pravila-eval-rewrite",
+            "--data",
+            str(_DATA),
+            "--dry-run",
+            "--model",
+            "A",
+            "--model",
+            "B",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        main()
+    assert "Models: A, B" in capsys.readouterr().out
 
 
 @pytest.mark.unit

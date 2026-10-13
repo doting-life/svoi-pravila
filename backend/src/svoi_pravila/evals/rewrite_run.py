@@ -83,6 +83,15 @@ class RewriteEvalResult:
     stop_reason: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ModelEval:
+    """One model's pass over the cases and the billable tokens it spent."""
+
+    model: str
+    result: RewriteEvalResult
+    spent_billable: int
+
+
 def _normalized(text: str) -> str:
     return " ".join(text.split())
 

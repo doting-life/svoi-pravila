@@ -15,7 +15,7 @@ from enum import StrEnum
 from svoi_pravila.domain.enums import VariantKind
 
 # Version of the stop-phrase and register lists below; bump on every list change.
-POLICY_VERSION = 1
+POLICY_VERSION = 2
 
 STOP_PHRASES: tuple[str, ...] = (
     "давай обсудим спокойно",
@@ -105,10 +105,28 @@ def check_variant_policy(draft: str, kind: VariantKind, text: str) -> tuple[Poli
     return tuple(violations)
 
 
+def _words(value: str) -> tuple[str, ...]:
+    """Words of ``value``, casefolded, with the yo letter written as ye."""
+    return tuple(_WORD_RE.findall(value.casefold().replace("\u0451", "\u0435")))
+
+
+def _contains_sequence(haystack: tuple[str, ...], needle: tuple[str, ...]) -> bool:
+    width = len(needle)
+    return any(
+        haystack[start : start + width] == needle for start in range(len(haystack) - width + 1)
+    )
+
+
 def _has_new_stop_phrase(draft: str, text: str) -> bool:
-    draft_folded = draft.casefold()
-    text_folded = text.casefold()
-    return any(phrase in text_folded and phrase not in draft_folded for phrase in STOP_PHRASES)
+    draft_words = _words(draft)
+    text_words = _words(text)
+    for phrase in STOP_PHRASES:
+        phrase_words = _words(phrase)
+        if _contains_sequence(text_words, phrase_words) and not _contains_sequence(
+            draft_words, phrase_words
+        ):
+            return True
+    return False
 
 
 def _too_long(draft: str, kind: VariantKind, text: str) -> bool:

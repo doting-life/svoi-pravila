@@ -33,6 +33,41 @@ def test_stop_phrase_already_in_draft_is_allowed() -> None:
 
 
 @pytest.mark.unit
+def test_stop_phrase_matches_ye_spelling_of_yo() -> None:
+    draft = "Ты опять опоздал"
+    text = "Ты опять опоздал. Давай вместе разберемся."
+    assert PolicyRule.STOP_PHRASE in _rules(draft, VariantKind.SOFTER, text)
+
+
+@pytest.mark.unit
+def test_stop_phrase_matches_without_its_comma() -> None:
+    draft = "Ты опять опоздал"
+    text = "Я понимаю что ты занят."
+    assert PolicyRule.STOP_PHRASE in _rules(draft, VariantKind.SOFTER, text)
+
+
+@pytest.mark.unit
+def test_stop_phrase_split_by_punctuation_is_reported() -> None:
+    draft = "Ты опять опоздал"
+    text = "Давай вместе... разберёмся!"
+    assert PolicyRule.STOP_PHRASE in _rules(draft, VariantKind.SOFTER, text)
+
+
+@pytest.mark.unit
+def test_stop_phrase_words_must_be_contiguous() -> None:
+    draft = "Ты опять опоздал"
+    text = "Давай вместе всё разберёмся."
+    assert PolicyRule.STOP_PHRASE not in _rules(draft, VariantKind.SOFTER, text)
+
+
+@pytest.mark.unit
+def test_stop_phrase_in_draft_with_other_spelling_is_allowed() -> None:
+    draft = "Давай вместе разберёмся с этим"
+    text = "Давай вместе разберемся с этим."
+    assert _rules(draft, VariantKind.CHECK, text) == ()
+
+
+@pytest.mark.unit
 def test_violation_is_a_value_without_text() -> None:
     assert PolicyViolation(PolicyRule.LENGTH) == PolicyViolation(PolicyRule.LENGTH)
 

@@ -229,7 +229,7 @@ function MiniappShell({
                                 intro.markSeen();
                                 push({
                                     name: "compose",
-                                    mode: "soften",
+                                    mode: "check",
                                     draft: ru.introExampleDraft,
                                     contactId: null,
                                     title: ru.introExampleTitle,
@@ -242,7 +242,6 @@ function MiniappShell({
             return (
                 <Page tabs={tabs}>
                     <HomeScreen
-                        botUsername={data.bot_username}
                         textMax={data.incoming_text_max_chars}
                         onSubmit={({ mode, draft, contactId }) => {
                             if (mode === "decode") {

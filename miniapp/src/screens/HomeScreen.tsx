@@ -1,11 +1,10 @@
 import { useState } from "react";
 
-import { Avatar } from "../components/Avatar";
 import { Button } from "../components/Button";
-import { Card } from "../components/Card";
+import { ContactChip } from "../components/ContactChip";
 import { ContactPicker } from "../components/ContactPicker";
 import { TextArea } from "../components/Field";
-import { ChevronDownIcon, ClipboardIcon, KeyboardIcon } from "../components/icons";
+import { ClipboardIcon } from "../components/icons";
 import { hapticSelection, readClipboardText } from "../telegram/webapp";
 import { useContacts } from "../hooks/useContacts";
 import { ru } from "../localization/ru";
@@ -20,7 +19,6 @@ export type HomeSubmission = {
 };
 
 export type HomeScreenProps = {
-    readonly botUsername: string;
     readonly textMax: number;
     readonly onSubmit: (submission: HomeSubmission) => void;
 };
@@ -43,7 +41,7 @@ function sliceCodePoints(text: string, max: number): string {
  * Home: pick what to do with a message, optionally for a contact, and type the text.
  * Mode, contact and text are local to this screen and are never persisted.
  */
-export function HomeScreen({ botUsername, textMax, onSubmit }: HomeScreenProps) {
+export function HomeScreen({ textMax, onSubmit }: HomeScreenProps) {
     const contacts = useContacts();
     const [mode, setMode] = useState<HomeMode>("check");
     const [contactId, setContactId] = useState<string | null>(null);
@@ -93,21 +91,12 @@ export function HomeScreen({ botUsername, textMax, onSubmit }: HomeScreenProps) 
                 ))}
             </div>
 
-            <button
-                type="button"
-                className="contact-chip"
+            <ContactChip
+                label={selected !== undefined ? selected.label : null}
                 onClick={() => {
                     setPickerOpen(true);
                 }}
-            >
-                {selected !== undefined ? <Avatar name={selected.label} size="sm" /> : null}
-                <span>
-                    {selected !== undefined
-                        ? ru.homeForWhom.replace("{label}", selected.label)
-                        : ru.homeForWhomNone}
-                </span>
-                <ChevronDownIcon size={18} />
-            </button>
+            />
 
             <TextArea
                 label={decoding ? ru.homeIncomingLabel : ru.homeDraftLabel}
@@ -148,26 +137,12 @@ export function HomeScreen({ botUsername, textMax, onSubmit }: HomeScreenProps) 
                 {decoding ? ru.homeSubmitDecode : ru.homeSubmitVariants}
             </Button>
 
-            <Card tone="dashed">
-                <div className="note">
-                    <KeyboardIcon size={22} />
-                    <div className="stack stack--tight">
-                        <span className="hint-title">{ru.homeInlineHintTitle}</span>
-                        <span className="hint-text">
-                            {ru.homeInlineHintBefore}
-                            <b>@{botUsername}</b>
-                            {ru.homeInlineHintAfter}
-                        </span>
-                    </div>
-                </div>
-            </Card>
-
             {pickerOpen ? (
                 <ContactPicker
                     contacts={list}
                     selectedContactId={contactId}
                     noneOption={{
-                        label: ru.pickerNone,
+                        label: ru.contactNoneItem,
                         selected: contactId === null,
                         onSelect: () => {
                             setPickerOpen(false);

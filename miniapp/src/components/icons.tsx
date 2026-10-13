@@ -110,13 +110,6 @@ export const InfoIcon = createIcon(
     </>,
 );
 
-export const KeyboardIcon = createIcon(
-    <>
-        <rect x="3" y="6" width="18" height="12" rx="3" />
-        <path d="M7 10h.01M11 10h.01M15 10h.01M8 14h8" />
-    </>,
-);
-
 export const HeartIcon = createIcon(
     <path d="M12 21s-7-4.5-9-9.5C1.6 7.6 4 4 7.5 4c2 0 3.5 1.1 4.5 2.6C13 5.1 14.5 4 16.5 4 20 4 22.4 7.6 21 11.5 19 16.5 12 21 12 21z" />,
 );

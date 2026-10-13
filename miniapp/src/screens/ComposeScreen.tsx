@@ -8,8 +8,9 @@ import { Card } from "../components/Card";
 import { ChipGroup } from "../components/ChipGroup";
 import { ContactPicker } from "../components/ContactPicker";
 import { TextArea } from "../components/Field";
-import { Avatar } from "../components/Avatar";
-import { ChevronDownIcon, ClipboardIcon } from "../components/icons";
+import { ContactChip } from "../components/ContactChip";
+import { ClipboardIcon } from "../components/icons";
+import { QuoteCard } from "../components/QuoteCard";
 import { ScreenHeader } from "../components/ScreenHeader";
 import { Skeleton } from "../components/Skeleton";
 import { partnerSendUrl } from "../compose/partnerSendUrl";
@@ -72,6 +73,7 @@ type Phase =
           readonly appliedRules: readonly { readonly index: number; readonly text: string }[];
           readonly choiceToken: string;
           readonly goal: ComposeGoal | null;
+          readonly sourceDraft: string;
       }
     | { readonly kind: "refused" }
     | { readonly kind: "error"; readonly message: string };
@@ -252,6 +254,7 @@ export function ComposeEditor({
             appliedRules: data.applied_rules,
             choiceToken: data.choice_token,
             goal,
+            sourceDraft: trimmed,
         });
     };
 
@@ -368,6 +371,10 @@ export function ComposeEditor({
             <section className="screen" aria-labelledby="compose-title">
                 <ScreenHeader title={screenTitle} titleId="compose-title" />
 
+                {allowContactPicker ? (
+                    <QuoteCard label={ru.composeYourDraft} text={phase.sourceDraft} />
+                ) : null}
+
                 {showGoals ? goalChips : null}
                 {showGoals && goal !== phase.goal ? (
                     <Button
@@ -480,21 +487,12 @@ export function ComposeEditor({
             {showGoals ? goalChips : null}
 
             {allowContactPicker ? (
-                <button
-                    type="button"
-                    className="contact-chip"
+                <ContactChip
+                    label={selected !== undefined ? selected.label : null}
                     onClick={() => {
                         setPickerOpen(true);
                     }}
-                >
-                    {selected !== undefined ? <Avatar name={selected.label} size="sm" /> : null}
-                    <span>
-                        {selected !== undefined
-                            ? ru.composeFor.replace("{label}", selected.label)
-                            : ru.pickerNone}
-                    </span>
-                    <ChevronDownIcon size={18} />
-                </button>
+                />
             ) : null}
 
             <TextArea
@@ -572,7 +570,7 @@ export function ComposeEditor({
                     contacts={contactList}
                     selectedContactId={contactId}
                     noneOption={{
-                        label: ru.pickerNone,
+                        label: ru.contactNoneItem,
                         selected: contactId === null,
                         onSelect: selectNone,
                     }}

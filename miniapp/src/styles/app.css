@@ -549,6 +549,11 @@ a:hover {
     font-weight: 600;
 }
 
+.avatar--empty {
+    background: var(--sunken);
+    color: var(--ink-3);
+}
+
 .avatar--sm {
     width: 32px;
     height: 32px;
@@ -1291,7 +1296,19 @@ a:hover {
     background: var(--sunken);
 }
 
+.contact-chip {
+    max-width: 100%;
+}
+
+.contact-chip__label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .contact-chip > svg {
+    flex: none;
     color: var(--ink-3);
 }
 

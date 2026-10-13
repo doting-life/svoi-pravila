@@ -9,6 +9,7 @@ import { Button } from "../components/Button";
 import { Card } from "../components/Card";
 import { ContactPicker } from "../components/ContactPicker";
 import { TextArea } from "../components/Field";
+import { QuoteCard } from "../components/QuoteCard";
 import { Avatar } from "../components/Avatar";
 import { ChevronDownIcon, ClipboardIcon } from "../components/icons";
 import { ScreenHeader } from "../components/ScreenHeader";
@@ -346,10 +347,7 @@ export function DecodeScreen({
             <section className="screen" aria-labelledby="decode-title">
                 <ScreenHeader title={ru.decodeTitle} titleId="decode-title" />
 
-                <Card className="quote" tone="sunken">
-                    <span className="quote__label">{ru.decodeIncoming}</span>
-                    <p className="quote__text">{text.trim()}</p>
-                </Card>
+                <QuoteCard label={ru.decodeIncoming} text={text.trim()} />
 
                 <section className="section" aria-labelledby="decode-analysis-title">
                     <h2 id="decode-analysis-title" className="section-title">
@@ -595,7 +593,7 @@ export function DecodeScreen({
                     contacts={contactList}
                     selectedContactId={contactId}
                     noneOption={{
-                        label: ru.pickerNone,
+                        label: ru.contactNoneItem,
                         selected: contactId === null,
                         onSelect: () => {
                             selectContact(null);

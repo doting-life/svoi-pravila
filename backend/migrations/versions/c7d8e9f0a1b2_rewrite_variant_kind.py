@@ -136,8 +136,9 @@ def upgrade() -> None:
     )
 
     # analytics_daily_scenario: slices of the two old scenarios cannot be merged
-    # exactly (distinct users, percentiles); the daily job recomputes them from
-    # usage_events.
+    # exactly (distinct users, percentiles). The test-period soften/help_say daily
+    # slices are dropped and are not recomputed: the daily job only computes days
+    # after the last computed one, so those past days stay without a rewrite slice.
     op.drop_constraint(
         op.f("ck_analytics_daily_scenario_usage_scenario"),
         "analytics_daily_scenario",

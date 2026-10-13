@@ -20,7 +20,6 @@ from aiogram.types import (
     WebAppInfo,
 )
 
-from svoi_pravila.adapters.channels.telegram.dates import format_display_date
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.localization import firmness_label
 from svoi_pravila.application.errors import (
@@ -39,7 +38,7 @@ from svoi_pravila.application.errors import (
 )
 from svoi_pravila.application.inline_result_ref import encode_inline_result_ref
 from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
-from svoi_pravila.application.ports.generation import AppliedRuleView, SafetyVerdict, Variant
+from svoi_pravila.application.ports.generation import SafetyVerdict, Variant
 from svoi_pravila.application.ports.monotonic import MonotonicClock
 from svoi_pravila.application.prepared_ref import is_prepared_ref
 from svoi_pravila.application.use_cases.inline_compose import (
@@ -230,7 +229,6 @@ async def _answer_compose_result(
     result: InlineComposeResult,
 ) -> None:
     reuse = _reuse_label(result.reuse)
-    applied_count = len(result.applied_rules)
     if result.safety is SafetyVerdict.CRISIS:
         telegram_ok = await _answer_empty(
             query,
@@ -260,7 +258,6 @@ async def _answer_compose_result(
             tg_deps,
             result.scenario,
             result.variants,
-            applied_rules=result.applied_rules,
         )
         button = await _compose_handoff_button(query, tg_deps)
         if not articles:
@@ -295,7 +292,7 @@ async def _answer_compose_result(
             outcome=outcome,
             reuse=reuse,
             rule_count=0,
-            applied_count=applied_count,
+            applied_count=0,
         )
     )
 
@@ -359,26 +356,16 @@ def _articles(
     tg_deps: TelegramDeps,
     scenario: UsageScenario,
     variants: tuple[Variant, ...],
-    applied_rules: tuple[AppliedRuleView, ...] = (),
 ) -> list[InlineQueryResultUnion]:
     articles: list[InlineQueryResultUnion] = []
-    prefix = ""
-    if applied_rules:
-        date = format_display_date(
-            applied_rules[0].effective_since,
-            tg_deps.clock.now(),
-            tg_deps.display_timezone,
-        )
-        prefix = tg_deps.strings.inline_rule_cited_prefix.format(date=date)
     for variant in variants:
         if not variant.text:
             continue
-        description = variant.text if not prefix else f"{prefix} {variant.text}"
         articles.append(
             InlineQueryResultArticle(
                 id=encode_inline_result_ref(scenario, variant.firmness),
                 title=firmness_label(tg_deps.strings, variant.firmness),
-                description=_preview(description),
+                description=_preview(variant.text),
                 input_message_content=InputTextMessageContent(
                     message_text=variant.text,
                     parse_mode=None,

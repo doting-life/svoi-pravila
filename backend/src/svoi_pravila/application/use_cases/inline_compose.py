@@ -17,7 +17,6 @@ from svoi_pravila.application.inline_text import normalize_inline_text
 from svoi_pravila.application.ports.consent_catalog import ConsentCatalog
 from svoi_pravila.application.ports.generation import (
     BOUNDED_TEXT_MAX,
-    AppliedRuleView,
     HelpSayIntent,
     SafetyVerdict,
     Variant,
@@ -52,7 +51,6 @@ class InlineComposeResult:
     scenario: UsageScenario
     variants: tuple[Variant, ...]
     safety: SafetyVerdict
-    applied_rules: tuple[AppliedRuleView, ...] = ()
     reuse: InlineReuseStatus | None = None
 
 
@@ -108,7 +106,6 @@ class InlineCompose:
                 scenario=scenario,
                 variants=(),
                 safety=SafetyVerdict.CRISIS,
-                applied_rules=(),
                 reuse=None,
             )
         reuse_material = InlineReuseKeyMaterial(
@@ -132,7 +129,6 @@ class InlineCompose:
             scenario=resolution.value.scenario,
             variants=resolution.value.variants,
             safety=resolution.value.safety,
-            applied_rules=resolution.value.applied_rules,
             reuse=resolution.status,
         )
 

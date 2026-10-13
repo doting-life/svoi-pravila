@@ -635,7 +635,6 @@ def create_application(settings: Settings) -> FastAPI:
             ),
             welcome_throttle=ValkeyWelcomeThrottle(valkey),
             bot_username=bot_username,
-            clock=clock,
             display_timezone=ZoneInfo(settings.display_timezone),
             deduplicator=ValkeyUpdateDeduplicator(
                 valkey,

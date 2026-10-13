@@ -488,7 +488,6 @@ async def test_inline_compose_crisis_screen_skips_quota_and_generator(world: App
     )
     assert result.safety is SafetyVerdict.CRISIS
     assert result.reuse is None
-    assert result.applied_rules == ()
     assert result.variants == ()
     assert result.scenario is UsageScenario.SOFTEN
     assert generator.soften_calls == []
@@ -618,11 +617,10 @@ async def test_inline_compose_ignores_active_contact_and_rules_soften(world: App
         )
     )
     use_case, sink, _reuse = _ports(world, _Fakes(generator=generator))
-    result = await use_case.execute(InlineComposeCommand(TelegramUserId(130), "long enough"))
+    await use_case.execute(InlineComposeCommand(TelegramUserId(130), "long enough"))
     request = generator.soften_calls[0]
     assert request.relationship is RelationshipKind.OTHER
     assert request.rules == ()
-    assert result.applied_rules == ()
     assert isinstance(sink, RecordingUsageEventSink)
     assert "не повышать голос" not in str(sink.events[0])
 
@@ -911,7 +909,6 @@ async def test_compose_generation_execute_crisis_before_quota(world: AppWorld) -
     )
     assert result.safety is SafetyVerdict.CRISIS
     assert result.variants == ()
-    assert result.applied_rules == ()
     assert generator.soften_calls == []
     assert quota_gate.reserve_count() == 0
     assert isinstance(sink, RecordingUsageEventSink)

@@ -140,7 +140,6 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
         ),
         welcome_throttle=chosen.welcome or FakeWelcomeThrottle(),
         bot_username=BotUsernameCache(username=chosen.bot_username),
-        clock=clock,
         display_timezone=ZoneInfo("Europe/Moscow"),
         deduplicator=FakeUpdateDeduplicator(),
         rate_limiter=FakeRateLimiter(limit=chosen.rate_limit),

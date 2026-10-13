@@ -40,7 +40,7 @@ KNOWN_MODELS: frozenset[str] = frozenset(
 
 KNOWN_PROMPT_VERSIONS: frozenset[str] = frozenset(
     {
-        "rewrite@v1",
+        "rewrite@v2",
         "decode@v4",
         "decode_analysis@v1",
         "suggest_rule@v1",

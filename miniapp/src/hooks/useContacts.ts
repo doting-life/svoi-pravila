@@ -20,7 +20,6 @@ export function useContacts(): ResourceState<readonly Contact[]> & {
         contactId: string,
         label: string,
     ) => Promise<{ data?: Contact; error?: ApiError }>;
-    activateContact: (contactId: string) => Promise<{ error?: ApiError }>;
     inviteContact: (contactId: string) => Promise<{ data?: InviteResult; error?: ApiError }>;
     leavePair: (contactId: string) => Promise<{ error?: ApiError }>;
 } {
@@ -62,20 +61,6 @@ export function useContacts(): ResourceState<readonly Contact[]> & {
         [client, refetch],
     );
 
-    const activateContact = useCallback(
-        async (contactId: string) => {
-            const result = await client.POST("/api/v1/contacts/{contact_id}/activate", {
-                params: { path: { contact_id: contactId } },
-            });
-            const unwrapped = unwrapEmptyResult(result);
-            if (unwrapped.error === undefined) {
-                refetch();
-            }
-            return unwrapped;
-        },
-        [client, refetch],
-    );
-
     const inviteContact = useCallback(
         async (contactId: string) => {
             const result = await client.POST("/api/v1/contacts/{contact_id}/invite", {
@@ -106,7 +91,6 @@ export function useContacts(): ResourceState<readonly Contact[]> & {
         refetch,
         createContact,
         renameContact,
-        activateContact,
         inviteContact,
         leavePair,
     };

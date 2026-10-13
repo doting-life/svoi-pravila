@@ -45,7 +45,6 @@ from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.resolve_invite import ResolveInvite
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.application.use_cases.serve_export_download import ServeExportDownload
-from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from svoi_pravila.application.use_cases.suggest_rule_from_decode import SuggestRuleFromDecode
 from svoi_pravila.config import Environment
 
@@ -61,7 +60,6 @@ def _openapi_bindings() -> MiniappRouterBindings:
         list_contacts=cast(ListContacts, _stub()),
         create_contact=cast(CreateContact, _stub()),
         rename_contact=cast(RenameContact, _stub()),
-        set_active_contact=cast(SetActiveContact, _stub()),
         create_invite=cast(CreateInvite, _stub()),
         leave_pair=cast(LeavePair, _stub()),
         list_rules=cast(ListRules, _stub()),

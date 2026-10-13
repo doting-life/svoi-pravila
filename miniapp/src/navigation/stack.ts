@@ -4,6 +4,8 @@ export const ROOT_TABS: readonly RootTab[] = ["home", "people", "privacy"];
 
 export type LimitKind = "quota" | "budget";
 
+export type ComposeMode = "check" | "soften";
+
 export type OverlayScreen =
     | {
           readonly name: "contactDetail";
@@ -20,8 +22,18 @@ export type OverlayScreen =
           readonly initialCategory?: string;
           readonly initialText?: string;
       }
-    | { readonly name: "decode" }
-    | { readonly name: "compose" }
+    | {
+          readonly name: "decode";
+          readonly draft: string;
+          readonly contactId: string | null;
+      }
+    | {
+          readonly name: "compose";
+          readonly mode: ComposeMode;
+          readonly draft: string;
+          readonly contactId: string | null;
+          readonly title?: string;
+      }
     | { readonly name: "limit"; readonly kind: LimitKind; readonly message: string | null }
     | { readonly name: "deleteConfirm" }
     | { readonly name: "invite" }
@@ -38,8 +50,11 @@ export type NavigationState = {
     readonly stack: readonly OverlayScreen[];
 };
 
-export function createInitialNavigation(stack: readonly OverlayScreen[] = []): NavigationState {
-    return { root: "home", stack };
+export function createInitialNavigation(
+    stack: readonly OverlayScreen[] = [],
+    root: RootTab = "home",
+): NavigationState {
+    return { root, stack };
 }
 
 export function currentScreen(state: NavigationState): Screen {

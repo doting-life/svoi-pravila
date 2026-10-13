@@ -48,8 +48,17 @@ describe("navigation stack", () => {
         expect(currentScreen(popScreen(state))).toEqual({ name: "home" });
     });
 
+    it("can start on another root tab", () => {
+        const state = createInitialNavigation([], "people");
+        expect(currentScreen(state)).toEqual({ name: "people" });
+    });
+
     it("switches root tabs and clears the overlay stack", () => {
-        const opened = pushScreen(createInitialNavigation(), { name: "decode" });
+        const opened = pushScreen(createInitialNavigation(), {
+            name: "decode",
+            draft: "",
+            contactId: null,
+        });
         expect(canGoBack(opened)).toBe(true);
         const people = selectRoot("people");
         expect(currentScreen(people)).toEqual({ name: "people" });
@@ -61,14 +70,24 @@ describe("navigation stack", () => {
     });
 
     it("pushes and pops the compose overlay", () => {
-        const opened = pushScreen(createInitialNavigation(), { name: "compose" });
-        expect(currentScreen(opened)).toEqual({ name: "compose" });
+        const compose = {
+            name: "compose",
+            mode: "soften",
+            draft: "Черновик",
+            contactId: null,
+        } as const;
+        const opened = pushScreen(createInitialNavigation(), compose);
+        expect(currentScreen(opened)).toEqual(compose);
         expect(canGoBack(opened)).toBe(true);
         expect(currentScreen(popScreen(opened))).toEqual({ name: "home" });
     });
 
     it("replaces the top overlay in place", () => {
-        let state = pushScreen(createInitialNavigation(), { name: "decode" });
+        let state = pushScreen(createInitialNavigation(), {
+            name: "decode",
+            draft: "",
+            contactId: null,
+        });
         state = replaceTop(state, { name: "limit", kind: "quota", message: null });
         expect(state.stack).toEqual([{ name: "limit", kind: "quota", message: null }]);
         state = replaceTop(state, { name: "crisis", lead: null, resources: [] });
@@ -77,6 +96,6 @@ describe("navigation stack", () => {
 
     it("ignores replaceTop on an empty stack", () => {
         const state = createInitialNavigation();
-        expect(replaceTop(state, { name: "decode" })).toBe(state);
+        expect(replaceTop(state, { name: "invite" })).toBe(state);
     });
 });

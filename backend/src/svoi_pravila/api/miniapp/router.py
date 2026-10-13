@@ -166,10 +166,6 @@ from svoi_pravila.application.use_cases.serve_export_download import (
     ServeExportDownload,
     ServeExportDownloadCommand,
 )
-from svoi_pravila.application.use_cases.set_active_contact import (
-    SetActiveContact,
-    SetActiveContactCommand,
-)
 from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
     SuggestRuleFromDecode,
     SuggestRuleFromDecodeCommand,
@@ -234,7 +230,6 @@ class MiniappRouterBindings:
     list_contacts: ListContacts
     create_contact: CreateContact
     rename_contact: RenameContact
-    set_active_contact: SetActiveContact
     create_invite: CreateInvite
     leave_pair: LeavePair
     list_rules: ListRules
@@ -538,11 +533,14 @@ def _register_decode(
             pseudonymizer=bindings.pseudonymizer,
         )
         _ = request  # ASGI cancels ``frames`` on client disconnect (no orphan tasks).
+        contact_id: ContactId | None = None
+        if body.contact_id is not None:
+            contact_id = ContactId(parse_path_uuid(body.contact_id))
         agen = iter_decode_sse(
             stream_ports,
-            actor=actor,
             telegram_user_id=actor.telegram_user_id,
             text=body.text,
+            contact_id=contact_id,
         )
         # Peek the first frame so quota/budget errors become HTTP JSON before SSE opens.
         try:
@@ -617,11 +615,6 @@ async def _build_me_response(
         GetOnboardingStepQuery(telegram_user_id=auth.telegram_user_id)
     )
     step = step_result.step
-    active = (
-        str(auth.user.active_contact_id)
-        if auth.user is not None and auth.user.active_contact_id is not None
-        else None
-    )
     username = bindings.bot_username.username
     if username is None or not username:
         raise MiniappHttpError(MiniappErrorCode.SERVICE_UNAVAILABLE, 503)
@@ -635,7 +628,6 @@ async def _build_me_response(
             "onboarding_step": step.kind.value,
             "consent_kind": (step.consent_kind.value if step.consent_kind is not None else None),
             "consent_version": step.consent_version,
-            "active_contact_id": active,
             "account_exists": auth.user is not None,
             "consents_revoked": step_result.consents_revoked,
             "max_contacts": MAX_CONTACTS_PER_USER,
@@ -912,27 +904,6 @@ def _register_contacts(
             )
         )
         return _contact_item(result.contact)
-
-    @router.post(
-        "/contacts/{contact_id}/activate",
-        operation_id="activateContact",
-        status_code=status.HTTP_204_NO_CONTENT,
-        responses=_ERROR_RESPONSES,
-    )
-    async def activate_contact(
-        contact_id: str,
-        response: Response,
-        actor: actor_dep,
-    ) -> Response:
-        no_store(response)
-        cid = ContactId(parse_path_uuid(contact_id))
-        await bindings.set_active_contact.execute(
-            SetActiveContactCommand(actor_id=actor.id, contact_id=cid)
-        )
-        return Response(
-            status_code=status.HTTP_204_NO_CONTENT,
-            headers={"Cache-Control": "no-store"},
-        )
 
     @router.get(
         "/contacts/{contact_id}/partner-username",

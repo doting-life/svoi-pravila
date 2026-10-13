@@ -51,17 +51,6 @@ class UserRow(Base):
     age_confirmed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    active_contact_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid(as_uuid=True),
-        ForeignKey(
-            "contacts.id",
-            ondelete="SET NULL",
-            deferrable=True,
-            initially="DEFERRED",
-            use_alter=True,
-        ),
-        nullable=True,
-    )
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     __table_args__ = (UniqueConstraint("telegram_user_id", name="uq_users_telegram_user_id"),)

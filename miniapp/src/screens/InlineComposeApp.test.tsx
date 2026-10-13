@@ -120,6 +120,7 @@ describe("InlineComposeApp", () => {
         await screen.findByDisplayValue("черновик из inline");
         fireEvent.click(screen.getByRole("button", { name: ru.composeSubmit }));
         await screen.findByDisplayValue("мягкий");
+        expect(screen.queryByText(ru.composeYourDraft)).not.toBeInTheDocument();
         expect(captured.body).toBeDefined();
         expect(captured.body?.["contact_id"] ?? null).toBeNull();
         expect(

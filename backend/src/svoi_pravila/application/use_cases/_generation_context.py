@@ -30,11 +30,3 @@ async def load_contact_rule_context(
         )
         for view in views
     )
-
-
-async def load_active_contact_rule_context(
-    uow: UnitOfWork,
-    user: User,
-) -> tuple[RelationshipKind, tuple[RuleContext, ...]]:
-    """Return OTHER/no rules when no active contact, else owned contact context."""
-    return await load_contact_rule_context(uow, user, user.active_contact_id)

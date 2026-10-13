@@ -44,7 +44,6 @@ from svoi_pravila.application.use_cases.list_rules import ListRules
 from svoi_pravila.application.use_cases.list_suggestions import ListSuggestions
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule
 from svoi_pravila.application.use_cases.rename_contact import RenameContact
-from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from svoi_pravila.config import Environment
 from svoi_pravila.domain.access import AccessStatus
 from svoi_pravila.domain.enums import ConsentKind, RuleCategory, VariantKind
@@ -85,7 +84,6 @@ def _app_with_bindings(
     list_contacts: ListContacts | _Boom | None = None,
     create_contact: CreateContact | _Boom | None = None,
     rename_contact: RenameContact | _Boom | None = None,
-    set_active_contact: SetActiveContact | _Boom | None = None,
     list_rules: ListRules | _Boom | None = None,
     propose_rule: ProposeRule | _Boom | None = None,
     archive_rule: ArchiveRule | _Boom | None = None,
@@ -113,8 +111,6 @@ def _app_with_bindings(
         overrides["create_contact"] = create_contact
     if rename_contact is not None:
         overrides["rename_contact"] = rename_contact
-    if set_active_contact is not None:
-        overrides["set_active_contact"] = set_active_contact
     if list_rules is not None:
         overrides["list_rules"] = list_rules
     if propose_rule is not None:
@@ -162,7 +158,6 @@ async def test_access_not_granted_mapped_on_each_mutating_route(world: AppWorld)
         list_contacts=boom,
         create_contact=boom,
         rename_contact=boom,
-        set_active_contact=boom,
         list_rules=boom,
         propose_rule=boom,
         archive_rule=boom,
@@ -177,7 +172,6 @@ async def test_access_not_granted_mapped_on_each_mutating_route(world: AppWorld)
         ("GET", "/api/v1/contacts", None),
         ("POST", "/api/v1/contacts", {"label": "x", "relationship": "friend"}),
         ("PATCH", f"/api/v1/contacts/{cid}", {"label": "y"}),
-        ("POST", f"/api/v1/contacts/{cid}/activate", None),
         ("GET", f"/api/v1/contacts/{cid}/rules", None),
         ("POST", f"/api/v1/contacts/{cid}/rules", {"category": "other", "text": "z"}),
         ("POST", f"/api/v1/rules/{rid}/archive", None),

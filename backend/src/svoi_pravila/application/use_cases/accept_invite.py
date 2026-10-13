@@ -103,11 +103,6 @@ class AcceptInvite:
             await uow.contacts.update(linked_inviter)
             await uow.contacts.add(invitee_contact)
             await uow.invites.update(accepted)
-            invitee = await uow.users.get(command.actor_id)
-            if invitee is None:
-                raise NotFound()
-            if invitee.active_contact_id is None:
-                await uow.users.update(invitee.set_active_contact(invitee_contact.id))
             inviter_id = invite.inviter_id
             inviter_contact_id = invite.contact_id
             await uow.commit()

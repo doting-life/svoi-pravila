@@ -244,7 +244,6 @@ async def test_miniapp_api_happy_path_idor_privacy(
             ("GET", f"/api/v1/contacts/{contact_id}/rules", None),
             ("GET", f"/api/v1/contacts/{contact_id}/suggestions", None),
             ("PATCH", f"/api/v1/contacts/{contact_id}", {"label": "Stolen"}),
-            ("POST", f"/api/v1/contacts/{contact_id}/activate", None),
             ("POST", f"/api/v1/contacts/{contact_id}/invite", None),
             ("POST", f"/api/v1/contacts/{contact_id}/leave", {"confirm": True}),
             ("POST", f"/api/v1/contacts/{contact_id}/rules", {"category": "other", "text": "x"}),

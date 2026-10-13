@@ -65,10 +65,6 @@ from svoi_pravila.application.use_cases.revoke_all_consents import (
     RevokeAllConsents,
     RevokeAllConsentsCommand,
 )
-from svoi_pravila.application.use_cases.set_active_contact import (
-    SetActiveContact,
-    SetActiveContactCommand,
-)
 from svoi_pravila.domain.enums import (
     LimitKind,
     RelationshipKind,
@@ -499,7 +495,7 @@ async def test_inline_threat_and_hyperbole_still_calls_generator(
     assert sink.events[0].outcome is not UsageOutcome.SCREENED
 
 
-async def _user_with_active_contact_and_rule(world: AppWorld, telegram_id: int) -> None:
+async def _user_with_contact_and_rule(world: AppWorld, telegram_id: int) -> None:
     user = await world.ensure_granted_user(telegram_id)
     contact = (
         await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
@@ -517,14 +513,11 @@ async def _user_with_active_contact_and_rule(world: AppWorld, telegram_id: int) 
             shared=False,
         )
     )
-    await SetActiveContact(world.uow_factory, world.catalog).execute(
-        SetActiveContactCommand(user.id, contact.id)
-    )
 
 
 @pytest.mark.unit
-async def test_inline_compose_ignores_active_contact_and_rules(world: AppWorld) -> None:
-    await _user_with_active_contact_and_rule(world, 130)
+async def test_inline_compose_ignores_contacts_and_rules(world: AppWorld) -> None:
+    await _user_with_contact_and_rule(world, 130)
     generator = FakeTextGenerator(
         rewrite_result=RewriteResult(
             variants=(Variant(text="a", kind=VariantKind.SOFTER),),
@@ -617,9 +610,6 @@ async def test_inline_compose_reuse_key_ignores_contact_state(world: AppWorld) -
             RuleText("не повышать голос"),
             shared=False,
         )
-    )
-    await SetActiveContact(world.uow_factory, world.catalog).execute(
-        SetActiveContactCommand(user.id, contact.id)
     )
     after_contact = await use_case.execute(
         InlineComposeCommand(TelegramUserId(140), "long enough draft")

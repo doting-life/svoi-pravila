@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass
 from datetime import date, timedelta
+from uuid import UUID
 
 import pytest
 
@@ -52,10 +53,6 @@ from svoi_pravila.application.use_cases.get_effective_rules import (
     GetEffectiveRulesCommand,
 )
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule, ProposeRuleCommand
-from svoi_pravila.application.use_cases.set_active_contact import (
-    SetActiveContact,
-    SetActiveContactCommand,
-)
 from svoi_pravila.domain.enums import (
     LimitKind,
     RelationshipKind,
@@ -65,7 +62,7 @@ from svoi_pravila.domain.enums import (
     UsageSurface,
     VariantKind,
 )
-from svoi_pravila.domain.ids import TelegramUserId
+from svoi_pravila.domain.ids import ContactId, TelegramUserId
 from svoi_pravila.domain.rules import RuleRevision
 from svoi_pravila.domain.text import ContactLabel, RuleText
 from svoi_pravila.domain.usage import UsageEvent
@@ -118,11 +115,21 @@ def _ports(
     return use_case, recording, concurrency
 
 
-async def _drain(use_case: DecodeIncoming, telegram_id: int, text: str) -> list[object]:
+async def _drain(
+    use_case: DecodeIncoming,
+    telegram_id: int,
+    text: str,
+    contact_id: ContactId | None = None,
+) -> list[object]:
     return [
         event
         async for event in use_case.execute(
-            DecodeIncomingCommand(TelegramUserId(telegram_id), text, surface=UsageSurface.DM)
+            DecodeIncomingCommand(
+                TelegramUserId(telegram_id),
+                text,
+                surface=UsageSurface.DM,
+                contact_id=contact_id,
+            )
         )
     ]
 
@@ -155,7 +162,7 @@ async def test_decode_requires_access(world: AppWorld) -> None:
 
 
 @pytest.mark.unit
-async def test_decode_without_active_contact_uses_other_and_empty_rules(
+async def test_decode_without_contact_uses_other_and_empty_rules(
     world: AppWorld,
 ) -> None:
     user = await world.ensure_granted_user(100)
@@ -178,6 +185,29 @@ async def test_decode_without_active_contact_uses_other_and_empty_rules(
     assert all(ch in "0123456789abcdef" for ch in event.user_pseudonym)
     assert len(guard.release_calls) == 1
     assert guard.acquire_calls[0][1] == 50
+
+
+@pytest.mark.unit
+async def test_decode_rejects_foreign_and_unknown_contact_without_provider_call(
+    world: AppWorld,
+) -> None:
+    owner = await world.ensure_granted_user(106)
+    await world.ensure_granted_user(107)
+    contact = (
+        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
+            CreateContactCommand(owner.id, ContactLabel("Sam"), RelationshipKind.FRIEND)
+        )
+    ).contact
+    generator = FakeTextGenerator()
+    use_case, sink, guard = _ports(world, _DecodeFakes(generator=generator))
+    with pytest.raises(NotFound):
+        await _drain(use_case, 107, "incoming", contact.id)
+    with pytest.raises(NotFound):
+        await _drain(use_case, 106, "incoming", ContactId(UUID(int=9999)))
+    assert generator.decode_stream_calls == []
+    assert isinstance(sink, RecordingUsageEventSink)
+    assert sink.events == []
+    assert guard.acquire_calls == []
 
 
 @pytest.mark.unit
@@ -209,16 +239,13 @@ async def test_decode_busy_and_quota(world: AppWorld) -> None:
 
 
 @pytest.mark.unit
-async def test_decode_active_rules_and_error_outcomes(world: AppWorld) -> None:
+async def test_decode_with_contact_rules_and_error_outcomes(world: AppWorld) -> None:
     user = await world.ensure_granted_user(102)
     contact = (
         await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
             CreateContactCommand(user.id, ContactLabel("Sam"), RelationshipKind.FRIEND)
         )
     ).contact
-    await SetActiveContact(world.uow_factory, world.catalog).execute(
-        SetActiveContactCommand(user.id, contact.id)
-    )
     await ProposeRule(
         world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
     ).execute(
@@ -232,7 +259,7 @@ async def test_decode_active_rules_and_error_outcomes(world: AppWorld) -> None:
     )
     generator = FakeTextGenerator(stream_chunks=())
     use_case, sink, _g = _ports(world, _DecodeFakes(generator=generator))
-    events = await _drain(use_case, 102, "please decode")
+    events = await _drain(use_case, 102, "please decode", contact.id)
     assert isinstance(events[0], DecodeCompleted)
     request = generator.decode_stream_calls[0]
     assert request.relationship is RelationshipKind.FRIEND
@@ -356,9 +383,6 @@ async def test_decode_pair_scope_and_skipped_rules(
             RelationshipKind.PARTNER,
         )
     )
-    await SetActiveContact(world.uow_factory, world.catalog).execute(
-        SetActiveContactCommand(inviter.id, contact.id)
-    )
     await ProposeRule(
         world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
     ).execute(
@@ -383,7 +407,7 @@ async def test_decode_pair_scope_and_skipped_rules(
     )
     generator = FakeTextGenerator()
     use_case, _sink, _g = _ports(world, _DecodeFakes(generator=generator))
-    await _drain(use_case, 200, "incoming")
+    await _drain(use_case, 200, "incoming", contact.id)
     texts = [item.text for item in generator.decode_stream_calls[0].rules]
     assert texts == ["private active"]
 
@@ -391,7 +415,7 @@ async def test_decode_pair_scope_and_skipped_rules(
         "svoi_pravila.domain.rules.Rule.effective_revision",
         property(lambda self: None),
     )
-    await _drain(use_case, 200, "incoming")
+    await _drain(use_case, 200, "incoming", contact.id)
     assert generator.decode_stream_calls[-1].rules == ()
 
     pending = RuleRevision(
@@ -406,7 +430,7 @@ async def test_decode_pair_scope_and_skipped_rules(
         "svoi_pravila.domain.rules.Rule.effective_revision",
         property(lambda self: pending),
     )
-    await _drain(use_case, 200, "incoming")
+    await _drain(use_case, 200, "incoming", contact.id)
     assert generator.decode_stream_calls[-1].rules == ()
 
 
@@ -432,9 +456,6 @@ async def test_decode_and_get_effective_rules_share_rule_set(world: AppWorld) ->
             RelationshipKind.PARTNER,
         )
     )
-    await SetActiveContact(world.uow_factory, world.catalog).execute(
-        SetActiveContactCommand(inviter.id, contact.id)
-    )
     owned = await ProposeRule(
         world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
     ).execute(
@@ -459,7 +480,7 @@ async def test_decode_and_get_effective_rules_share_rule_set(world: AppWorld) ->
     )
     generator = FakeTextGenerator()
     use_case, _sink, _g = _ports(world, _DecodeFakes(generator=generator))
-    await _drain(use_case, 210, "incoming")
+    await _drain(use_case, 210, "incoming", contact.id)
     effective = await GetEffectiveRules(world.uow_factory, world.catalog).execute(
         GetEffectiveRulesCommand(inviter.id, contact.id)
     )
@@ -820,7 +841,7 @@ async def test_decode_maps_applied_rule_indexes(world: AppWorld) -> None:
         )
     )
     use_case, sink, _g = _ports(world, _DecodeFakes(generator=generator))
-    events = await _drain(use_case, 220, "incoming please")
+    events = await _drain(use_case, 220, "incoming please", contact.id)
     completed = events[-1]
     assert isinstance(completed, DecodeCompleted)
     assert tuple(view.text for view in completed.applied_rules) == (

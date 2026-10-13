@@ -51,22 +51,6 @@ const borya: Contact = {
     created_at: "2026-10-01T12:00:00.000Z",
 };
 
-const meDone = {
-    onboarding_step: "done" as const,
-    consent_kind: null,
-    consent_version: null,
-    active_contact_id: "c1",
-    account_exists: true,
-    consents_revoked: false,
-    bot_username: "svoi_test_bot",
-    decode_remaining: 5,
-    max_contacts: 20,
-    max_open_rules: 50,
-    rule_text_max_chars: 500,
-    incoming_text_max_chars: 4000,
-    display_timezone: "Europe/Moscow",
-};
-
 const okVariants = {
     safety: "ok" as const,
     variants: [
@@ -93,9 +77,11 @@ function composeFetch(
 async function renderCompose(
     fetchImpl: typeof fetch,
     options: {
-        readonly activeContactId?: string | null;
+        readonly mode?: "check" | "soften";
+        readonly title?: string;
+        readonly draft?: string;
+        readonly contactId?: string | null;
         readonly contacts?: readonly Contact[];
-        readonly activateStatus?: number;
         readonly partnerUsername?: string | null;
     } = {},
 ) {
@@ -103,23 +89,11 @@ async function renderCompose(
     const contacts = options.contacts ?? [anya];
     const withContacts: typeof fetch = (input, init) => {
         const url = requestUrl(input);
-        if (url.endsWith("/api/v1/me")) {
-            return Promise.resolve(jsonResponse(meDone));
-        }
         if (url.endsWith("/api/v1/contacts")) {
             return Promise.resolve(jsonResponse({ contacts }));
         }
         if (url.includes("/partner-username")) {
             return Promise.resolve(jsonResponse({ username: options.partnerUsername ?? null }));
-        }
-        if (url.endsWith("/activate")) {
-            const status = options.activateStatus ?? 204;
-            if (status === 204) {
-                return Promise.resolve(jsonResponse(null, 204));
-            }
-            return Promise.resolve(
-                jsonResponse({ code: "not_found", message: "activate failed" }, status),
-            );
         }
         return fetchImpl(input, init);
     };
@@ -130,21 +104,24 @@ async function renderCompose(
     const handlers = {
         onLimit: vi.fn(),
         onCrisis: vi.fn(),
-        onActivated: vi.fn(),
     };
     render(
         <ApiProvider credential={{ scheme: "tma", value: telegram.initData }} client={client}>
             <ComposeScreen
                 telegram={telegram}
-                activeContactId={
-                    options.activeContactId === undefined ? "c1" : options.activeContactId
-                }
+                mode={options.mode ?? "check"}
+                {...(options.title !== undefined ? { title: options.title } : {})}
+                draft={options.draft ?? ""}
+                contactId={options.contactId === undefined ? "c1" : options.contactId}
+                draftMax={4000}
                 {...handlers}
             />
         </ApiProvider>,
     );
     const result = { telegram, fetchImpl: withContacts, ...handlers };
-    await screen.findByRole("button", { name: ru.composeSubmit });
+    if ((options.draft ?? "") === "") {
+        await screen.findByRole("button", { name: ru.composeSubmit });
+    }
     return result;
 }
 
@@ -166,9 +143,9 @@ async function submitDraft(text: string): Promise<void> {
 describe("ComposeScreen", () => {
     it("submits draft with goal and contact, shows editable variants and applied rules", async () => {
         const fetchImpl = composeFetch(() => jsonResponse(okVariants));
-        await renderCompose(fetchImpl);
+        await renderCompose(fetchImpl, { mode: "soften" });
         expect(
-            await screen.findByText(ru.composeFor.replace("{label}", "Аня")),
+            await screen.findByText(ru.contactChipFor.replace("{label}", "Аня")),
         ).toBeInTheDocument();
         fireEvent.click(screen.getByRole("radio", { name: ru.composeGoals.decline }));
         await submitDraft("не могу прийти");
@@ -196,7 +173,7 @@ describe("ComposeScreen", () => {
 
     it("sends null goal by default and after the chosen goal is cleared", async () => {
         const fetchImpl = composeFetch(() => jsonResponse(okVariants));
-        await renderCompose(fetchImpl);
+        await renderCompose(fetchImpl, { mode: "soften" });
         const decline = await screen.findByRole("radio", { name: ru.composeGoals.decline });
         expect(decline).not.toBeChecked();
         fireEvent.click(decline);
@@ -222,8 +199,8 @@ describe("ComposeScreen", () => {
                 choice_token: "c_none",
             }),
         );
-        await renderCompose(fetchImpl, { activeContactId: null });
-        expect(await screen.findByText(ru.pickerNone)).toBeInTheDocument();
+        await renderCompose(fetchImpl, { contactId: null });
+        expect(await screen.findByText(ru.contactChipNone)).toBeInTheDocument();
         await submitDraft("черновик без контакта");
         expect(await screen.findByDisplayValue("без правил")).toBeInTheDocument();
         const call = fetchImpl.mock.calls.find(([req]) => isComposePost(req));
@@ -235,52 +212,78 @@ describe("ComposeScreen", () => {
 
     it("picks none contact from the picker", async () => {
         await renderCompose(mockFetch([]));
-        fireEvent.click(await screen.findByText(ru.composeFor.replace("{label}", "Аня")));
+        fireEvent.click(await screen.findByText(ru.contactChipFor.replace("{label}", "Аня")));
         const dialog = await screen.findByRole("dialog");
-        fireEvent.click(within(dialog).getByRole("button", { name: ru.pickerNone }));
-        expect(screen.getByText(ru.pickerNone)).toBeInTheDocument();
+        fireEvent.click(within(dialog).getByRole("button", { name: ru.contactNoneItem }));
+        expect(screen.getByText(ru.contactChipNone)).toBeInTheDocument();
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
-    it("activates another contact from the picker", async () => {
-        const { onActivated } = await renderCompose(mockFetch([]), {
-            contacts: [anya, borya],
+    it("shows the submitted draft above the variants in check and soften modes", async () => {
+        for (const mode of ["check", "soften"] as const) {
+            const fetchImpl = composeFetch(() => jsonResponse(okVariants));
+            await renderCompose(fetchImpl, { mode });
+            await submitDraft("  мой исходный текст  ");
+            expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
+            const block = screen.getByText(ru.composeYourDraft).closest(".quote");
+            expect(block).not.toBeNull();
+            expect(
+                within(block as HTMLElement).getByText("мой исходный текст"),
+            ).toBeInTheDocument();
+            cleanup();
+        }
+    });
+
+    it("keeps the draft block on the example screen with the check order and no goals", async () => {
+        const fetchImpl = composeFetch(() => jsonResponse(okVariants));
+        await renderCompose(fetchImpl, {
+            mode: "check",
+            title: ru.introExampleTitle,
+            draft: ru.introExampleDraft,
         });
-        fireEvent.click(await screen.findByText(ru.composeFor.replace("{label}", "Аня")));
+        expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: ru.introExampleTitle })).toBeInTheDocument();
+        expect(screen.getByText(ru.composeYourDraft)).toBeInTheDocument();
+        expect(screen.getByText(ru.introExampleDraft)).toBeInTheDocument();
+        expect(screen.queryByText(ru.composeGoalLegend)).not.toBeInTheDocument();
+    });
+
+    it("shows an initial and truncates a long name in the chip", async () => {
+        const long = { ...anya, label: "Очень длинное имя контакта для проверки обрезки" };
+        await renderCompose(mockFetch([]), { contacts: [long] });
+        const chip = await screen.findByRole("button", {
+            name: ru.contactChipFor.replace("{label}", long.label),
+        });
+        expect(chip.querySelector(".contact-chip__label")).toHaveTextContent(long.label);
+        expect(chip.querySelector(".avatar")).toHaveTextContent("О");
+    });
+
+    it("shows a dash avatar in the chip without a contact", async () => {
+        await renderCompose(mockFetch([]), { contactId: null });
+        const chip = await screen.findByRole("button", { name: ru.contactChipNone });
+        expect(chip.querySelector(".avatar--empty")).toHaveTextContent("–");
+    });
+
+    it("selects another contact from the picker as local state only", async () => {
+        const fetchImpl = composeFetch(() => jsonResponse(okVariants));
+        await renderCompose(fetchImpl, { contacts: [anya, borya] });
+        fireEvent.click(await screen.findByText(ru.contactChipFor.replace("{label}", "Аня")));
         const dialog = await screen.findByRole("dialog");
         fireEvent.click(within(dialog).getByRole("button", { name: /Боря/ }));
-        await waitFor(() => {
-            expect(onActivated).toHaveBeenCalledWith("c2");
-        });
         expect(
-            await screen.findByText(ru.composeFor.replace("{label}", "Боря")),
+            await screen.findByText(ru.contactChipFor.replace("{label}", "Боря")),
         ).toBeInTheDocument();
-    });
-
-    it("skips activate when the already-active contact is chosen", async () => {
-        const { onActivated, telegram } = await renderCompose(mockFetch([]));
-        fireEvent.click(await screen.findByText(ru.composeFor.replace("{label}", "Аня")));
-        const dialog = await screen.findByRole("dialog");
-        fireEvent.click(within(dialog).getByRole("button", { name: /Аня/ }));
-        await waitFor(() => {
-            expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+        await submitDraft("черновик");
+        expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
+        const call = fetchImpl.mock.calls.find(([req]) => isComposePost(req));
+        expect(await requestJson(call?.[0] as RequestInfo, call?.[1])).toEqual({
+            draft: "черновик",
+            goal: null,
+            contact_id: "c2",
         });
-        expect(onActivated).not.toHaveBeenCalled();
-        expect(telegram.hapticNotification).not.toHaveBeenCalledWith("error");
-    });
-
-    it("reports activate failure with haptic error", async () => {
-        const { onActivated, telegram } = await renderCompose(mockFetch([]), {
-            contacts: [anya, borya],
-            activateStatus: 404,
-        });
-        fireEvent.click(await screen.findByText(ru.composeFor.replace("{label}", "Аня")));
-        const dialog = await screen.findByRole("dialog");
-        fireEvent.click(within(dialog).getByRole("button", { name: /Боря/ }));
-        await waitFor(() => {
-            expect(telegram.hapticNotification).toHaveBeenCalledWith("error");
-        });
-        expect(onActivated).not.toHaveBeenCalled();
+        expect(fetchImpl.mock.calls.every(([req]) => !requestUrl(req).includes("/activate"))).toBe(
+            true,
+        );
     });
 
     it("copies text only without choice or close", async () => {
@@ -325,12 +328,12 @@ describe("ComposeScreen", () => {
             }
             return jsonResponse(okVariants);
         });
-        const { telegram } = await renderCompose(fetchImpl);
+        const { telegram } = await renderCompose(fetchImpl, { mode: "soften" });
         fireEvent.click(screen.getByRole("radio", { name: ru.composeGoals.set_boundary }));
         await submitDraft("граница");
         expect(await screen.findByDisplayValue("твёрдый вариант")).toBeInTheDocument();
         const cards = screen.getAllByRole("article");
-        const firm = cards[2];
+        const firm = cards[1];
         expect(firm).toBeDefined();
         fireEvent.click(
             within(firm as HTMLElement).getByRole("button", { name: ru.composeCopyAndReturn }),
@@ -549,7 +552,7 @@ describe("ComposeScreen", () => {
             partnerUsername: "anya_tg",
         });
         expect(
-            await screen.findByText(ru.composeFor.replace("{label}", "Аня")),
+            await screen.findByText(ru.contactChipFor.replace("{label}", "Аня")),
         ).toBeInTheDocument();
         await submitDraft("черновик");
         expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
@@ -582,5 +585,90 @@ describe("ComposeScreen", () => {
         expect(
             screen.getAllByRole("button", { name: ru.composeCopyAndReturn }).length,
         ).toBeGreaterThan(0);
+    });
+    it("opens the variants straight away when a draft is provided", async () => {
+        const fetchImpl = composeFetch(() => jsonResponse(okVariants));
+        await renderCompose(fetchImpl, { draft: "Ты опять опоздал", contactId: "c1" });
+        expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
+        const calls = fetchImpl.mock.calls.filter(([req]) => isComposePost(req));
+        expect(calls).toHaveLength(1);
+        expect(await requestJson(calls[0]?.[0] as RequestInfo, calls[0]?.[1])).toEqual({
+            draft: "Ты опять опоздал",
+            goal: null,
+            contact_id: "c1",
+        });
+    });
+
+    it("sends no contact when opened without one", async () => {
+        const fetchImpl = composeFetch(() => jsonResponse(okVariants));
+        await renderCompose(fetchImpl, { draft: "Привет", contactId: null, mode: "soften" });
+        expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
+        const call = fetchImpl.mock.calls.find(([req]) => isComposePost(req));
+        expect(await requestJson(call?.[0] as RequestInfo, call?.[1])).toEqual({
+            draft: "Привет",
+            goal: null,
+            contact_id: null,
+        });
+    });
+
+    it("orders variants check-first in check mode and softer-first in soften mode", async () => {
+        const fetchImpl = composeFetch(() => jsonResponse(okVariants));
+        await renderCompose(fetchImpl, { draft: "текст", mode: "check" });
+        await screen.findByDisplayValue("мягкий вариант");
+        expect(
+            screen.getAllByRole("article").map((card) => within(card).getByRole("textbox")),
+        ).toHaveLength(3);
+        expect(
+            screen.getAllByRole("textbox").map((box) => (box as HTMLTextAreaElement).value),
+        ).toEqual(["исправленный вариант", "мягкий вариант", "твёрдый вариант"]);
+        expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(ru.composeTitleCheck);
+        expect(screen.queryByRole("radio", { name: ru.composeGoals.decline })).toBeNull();
+        cleanup();
+
+        await renderCompose(fetchImpl, { draft: "текст", mode: "soften" });
+        await screen.findByDisplayValue("мягкий вариант");
+        expect(
+            screen.getAllByRole("textbox").map((box) => (box as HTMLTextAreaElement).value),
+        ).toEqual(["мягкий вариант", "твёрдый вариант", "исправленный вариант"]);
+        expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(ru.composeTitle);
+    });
+
+    it("uses the given title", async () => {
+        const fetchImpl = composeFetch(() => jsonResponse(okVariants));
+        await renderCompose(fetchImpl, { draft: "текст", mode: "soften", title: "Пример" });
+        await screen.findByDisplayValue("мягкий вариант");
+        expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Пример");
+    });
+
+    it("regenerates with the chosen goal only after the goal changes", async () => {
+        const fetchImpl = composeFetch(() => jsonResponse(okVariants));
+        await renderCompose(fetchImpl, { draft: "текст", mode: "soften" });
+        await screen.findByDisplayValue("мягкий вариант");
+        expect(
+            screen.getAllByRole("radio").every((radio) => !(radio as HTMLInputElement).checked),
+        ).toBe(true);
+        expect(screen.queryByRole("button", { name: ru.composeRegenerate })).toBeNull();
+
+        fireEvent.click(screen.getByRole("radio", { name: ru.composeGoals.reconnect }));
+        fireEvent.click(screen.getByRole("button", { name: ru.composeRegenerate }));
+        await waitFor(() => {
+            expect(fetchImpl.mock.calls.filter(([req]) => isComposePost(req))).toHaveLength(2);
+        });
+        const second = fetchImpl.mock.calls.filter(([req]) => isComposePost(req))[1];
+        expect(await requestJson(second?.[0] as RequestInfo, second?.[1])).toEqual({
+            draft: "текст",
+            goal: "reconnect",
+            contact_id: "c1",
+        });
+        await waitFor(() => {
+            expect(screen.queryByRole("button", { name: ru.composeRegenerate })).toBeNull();
+        });
+    });
+
+    it("shows the error and the form when the provided draft is too long", async () => {
+        const fetchImpl = composeFetch(() => jsonResponse(okVariants));
+        await renderCompose(fetchImpl, { draft: "я".repeat(4001) });
+        expect(await screen.findByText(ru.composeErrorLong)).toBeInTheDocument();
+        expect(fetchImpl.mock.calls.some(([req]) => isComposePost(req))).toBe(false);
     });
 });

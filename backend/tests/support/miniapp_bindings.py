@@ -53,7 +53,6 @@ from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.resolve_invite import ResolveInvite
 from svoi_pravila.application.use_cases.revoke_all_consents import RevokeAllConsents
 from svoi_pravila.application.use_cases.serve_export_download import ServeExportDownload
-from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from tests.fakes.compose_choice_tokens import FakeComposeChoiceTokens
 from tests.fakes.compose_handoffs import FakeComposeHandoffs
 from tests.fakes.compose_sessions import FakeComposeSessions
@@ -94,7 +93,6 @@ def build_test_miniapp_bindings(
         "list_contacts": ListContacts(world.uow_factory, world.catalog),
         "create_contact": CreateContact(world.uow_factory, world.catalog, world.ids, world.clock),
         "rename_contact": RenameContact(world.uow_factory, world.catalog),
-        "set_active_contact": SetActiveContact(world.uow_factory, world.catalog),
         "create_invite": CreateInvite(
             world.uow_factory, world.catalog, world.ids, tokens, world.clock
         ),

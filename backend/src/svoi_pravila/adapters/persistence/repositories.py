@@ -88,9 +88,6 @@ class SqlAlchemyUserRepository:
             telegram_user_id=TelegramUserId(row.telegram_user_id),
             created_at=row.created_at,
             age_confirmed_at=row.age_confirmed_at,
-            active_contact_id=ContactId(row.active_contact_id)
-            if row.active_contact_id is not None
-            else None,
         )
 
     async def get(self, user_id: UserId) -> User | None:
@@ -116,13 +113,11 @@ class SqlAlchemyUserRepository:
             telegram_user_id=user.telegram_user_id.value,
             created_at=user.created_at,
             age_confirmed_at=user.age_confirmed_at,
-            active_contact_id=user.active_contact_id,
             version=1,
         )
         self._session.add(row)
         self._registry.register(UserRow, user.id, row)
-        # Flush user before user_keys so INSERT order respects the FK
-        # (users ↔ contacts cycle can otherwise confuse the unit of work sorter).
+        # Flush user before user_keys so INSERT order respects the FK.
         await flush_or_raise(self._session)
         await self._keys.create_user_dek(user.id, created_at=user.created_at)
         await flush_or_raise(self._session)
@@ -131,7 +126,6 @@ class SqlAlchemyUserRepository:
         row = self._registry.require(UserRow, user.id)
         row.telegram_user_id = user.telegram_user_id.value
         row.age_confirmed_at = user.age_confirmed_at
-        row.active_contact_id = user.active_contact_id
         await flush_or_raise(self._session)
 
     async def delete(self, user_id: UserId) -> None:

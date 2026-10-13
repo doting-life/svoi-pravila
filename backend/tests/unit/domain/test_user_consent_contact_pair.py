@@ -37,7 +37,6 @@ def test_user_confirm_age_idempotent() -> None:
         telegram_user_id=TelegramUserId(10),
         created_at=NOW,
         age_confirmed_at=None,
-        active_contact_id=None,
     )
     later = NOW + timedelta(hours=1)
     first = user.confirm_age(NOW)
@@ -52,7 +51,6 @@ def test_user_confirm_age_idempotent() -> None:
             telegram_user_id=TelegramUserId(11),
             created_at=NOW,
             age_confirmed_at=NOW - timedelta(days=1),
-            active_contact_id=None,
         )
 
 
@@ -64,7 +62,6 @@ def test_rejects_naive_and_non_utc() -> None:
             telegram_user_id=TelegramUserId(1),
             created_at=datetime(2026, 1, 1),
             age_confirmed_at=None,
-            active_contact_id=None,
         )
     tz = timezone(timedelta(hours=3))
     with pytest.raises(InvalidTimestampError):
@@ -73,7 +70,6 @@ def test_rejects_naive_and_non_utc() -> None:
             telegram_user_id=TelegramUserId(1),
             created_at=datetime(2026, 1, 1, tzinfo=tz),
             age_confirmed_at=None,
-            active_contact_id=None,
         )
 
 
@@ -213,19 +209,3 @@ def test_invite_accept_and_invariants() -> None:
             accepted_by=inviter,
             accepted_at=NOW + timedelta(hours=1),
         )
-
-
-@pytest.mark.unit
-def test_user_clear_active_contact() -> None:
-    user = User(
-        id=UserId(UUID(int=1)),
-        telegram_user_id=TelegramUserId(10),
-        created_at=NOW,
-        age_confirmed_at=NOW,
-        active_contact_id=ContactId(UUID(int=5)),
-    )
-    cleared = user.clear_active_contact()
-    assert cleared.active_contact_id is None
-    assert user.set_active_contact(ContactId(UUID(int=6))).active_contact_id == ContactId(
-        UUID(int=6)
-    )

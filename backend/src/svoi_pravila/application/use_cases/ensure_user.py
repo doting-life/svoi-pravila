@@ -50,7 +50,6 @@ class EnsureUser:
                 telegram_user_id=command.telegram_user_id,
                 created_at=self._clock.now(),
                 age_confirmed_at=None,
-                active_contact_id=None,
             )
             try:
                 await uow.users.add(user)

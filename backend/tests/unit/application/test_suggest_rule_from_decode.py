@@ -33,10 +33,6 @@ from svoi_pravila.application.ports.generation import (
 from svoi_pravila.application.ports.unit_of_work import UnitOfWork
 from svoi_pravila.application.rule_source import RuleSourcePayload
 from svoi_pravila.application.use_cases.create_contact import CreateContact, CreateContactCommand
-from svoi_pravila.application.use_cases.set_active_contact import (
-    SetActiveContact,
-    SetActiveContactCommand,
-)
 from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
     RULE_SOURCE_PURPOSE,
     SuggestRuleFromDecode,
@@ -64,7 +60,7 @@ from tests.fakes.usage_sink import FailingUsageEventSink, RecordingUsageEventSin
 from tests.unit.application.conftest import AppWorld
 
 
-async def _active_contact(
+async def _user_and_contact(
     world: AppWorld, telegram_id: int = 901
 ) -> tuple[TelegramUserId, Contact]:
     user = await world.ensure_granted_user(telegram_id)
@@ -73,9 +69,6 @@ async def _active_contact(
             CreateContactCommand(user.id, ContactLabel("Мама"), RelationshipKind.FAMILY)
         )
     ).contact
-    await SetActiveContact(world.uow_factory, world.catalog).execute(
-        SetActiveContactCommand(user.id, contact.id)
-    )
     return TelegramUserId(telegram_id), contact
 
 
@@ -106,7 +99,7 @@ def _ports(
 
 @pytest.mark.unit
 async def test_suggest_rule_ok_creates_decode_suggestion(world: AppWorld) -> None:
-    tg, contact = await _active_contact(world, 901)
+    tg, contact = await _user_and_contact(world, 901)
     sources = FakeRuleSources()
     sink = RecordingUsageEventSink()
     token = await sources.store(
@@ -126,7 +119,7 @@ async def test_suggest_rule_ok_creates_decode_suggestion(world: AppWorld) -> Non
 
 @pytest.mark.unit
 async def test_suggest_rule_none_unavailable_quota(world: AppWorld) -> None:
-    tg, contact = await _active_contact(world, 902)
+    tg, contact = await _user_and_contact(world, 902)
     sources = FakeRuleSources()
     pseudo = FakePseudonymizer().pseudonymize(RULE_SOURCE_PURPOSE, str(tg.value))
     token = await sources.store(
@@ -167,7 +160,7 @@ async def test_suggest_rule_none_unavailable_quota(world: AppWorld) -> None:
 
 @pytest.mark.unit
 async def test_suggest_rule_cancel_after_provider_charges_estimate(world: AppWorld) -> None:
-    tg, contact = await _active_contact(world, 921)
+    tg, contact = await _user_and_contact(world, 921)
     sources = FakeRuleSources()
     incoming = "cancel after suggest starts"
     token = await sources.store(
@@ -191,7 +184,7 @@ async def test_suggest_rule_cancel_after_provider_charges_estimate(world: AppWor
 
 @pytest.mark.unit
 async def test_suggest_rule_valkey_fail_closed(world: AppWorld) -> None:
-    tg, contact = await _active_contact(world, 920)
+    tg, contact = await _user_and_contact(world, 920)
     sources = FakeRuleSources()
     pseudo = FakePseudonymizer().pseudonymize(RULE_SOURCE_PURPOSE, str(tg.value))
     unavailable = CacheUnavailable(CacheErrorKind.SERVER)
@@ -229,7 +222,7 @@ async def test_suggest_rule_valkey_fail_closed(world: AppWorld) -> None:
 
 @pytest.mark.unit
 async def test_suggest_rule_pending_exists_and_crisis(world: AppWorld) -> None:
-    tg, contact = await _active_contact(world, 903)
+    tg, contact = await _user_and_contact(world, 903)
     user = await world.ensure_granted_user(903)
     sources = FakeRuleSources()
     pseudo = FakePseudonymizer().pseudonymize(RULE_SOURCE_PURPOSE, str(tg.value))
@@ -271,7 +264,7 @@ async def test_suggest_rule_privacy_canary_absent_from_logs(
     world: AppWorld,
     capture_log_events: Callable[[], list[dict[str, Any]]],
 ) -> None:
-    tg, contact = await _active_contact(world, 904)
+    tg, contact = await _user_and_contact(world, 904)
     marker = "CANARY_SUGGEST_INCOMING_ZZZ"
     sources = FakeRuleSources()
     token = await sources.store(
@@ -294,7 +287,7 @@ async def test_suggest_rule_not_found_paths(world: AppWorld) -> None:
             SuggestRuleFromDecodeCommand(TelegramUserId(999001), "missing", surface=UsageSurface.DM)
         )
 
-    tg, contact = await _active_contact(world, 905)
+    tg, contact = await _user_and_contact(world, 905)
     user = await world.ensure_granted_user(905)
     pseudo = FakePseudonymizer().pseudonymize(RULE_SOURCE_PURPOSE, str(tg.value))
     foreign = ContactId(UUID(int=404))
@@ -365,7 +358,7 @@ async def test_suggest_rule_not_found_paths(world: AppWorld) -> None:
 
 @pytest.mark.unit
 async def test_suggest_rule_generation_errors_and_sink_fail(world: AppWorld) -> None:
-    tg, contact = await _active_contact(world, 906)
+    tg, contact = await _user_and_contact(world, 906)
     sources = FakeRuleSources()
     pseudo = FakePseudonymizer().pseudonymize(RULE_SOURCE_PURPOSE, str(tg.value))
 
@@ -483,7 +476,7 @@ async def test_suggest_rule_generation_errors_and_sink_fail(world: AppWorld) -> 
 
 @pytest.mark.unit
 async def test_suggest_rule_conflict_on_add_returns_pending_exists(world: AppWorld) -> None:
-    tg, contact = await _active_contact(world, 907)
+    tg, contact = await _user_and_contact(world, 907)
     user = await world.ensure_granted_user(907)
     sources = FakeRuleSources()
     pseudo = FakePseudonymizer().pseudonymize(RULE_SOURCE_PURPOSE, str(tg.value))
@@ -587,7 +580,7 @@ async def test_suggest_rule_conflict_on_add_returns_pending_exists(world: AppWor
 
 @pytest.mark.unit
 async def test_suggest_rule_conflict_without_pending_raises_not_found(world: AppWorld) -> None:
-    tg, contact = await _active_contact(world, 908)
+    tg, contact = await _user_and_contact(world, 908)
     sources = FakeRuleSources()
     pseudo = FakePseudonymizer().pseudonymize(RULE_SOURCE_PURPOSE, str(tg.value))
     token = await sources.store(

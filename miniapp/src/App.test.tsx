@@ -11,7 +11,6 @@ const meDone = {
     onboarding_step: "done",
     consent_kind: null,
     consent_version: null,
-    active_contact_id: "c1",
     account_exists: true,
     consents_revoked: false,
     bot_username: "svoi_test_bot",
@@ -69,6 +68,52 @@ function click(name: RegExp | string) {
 async function openPeople() {
     fireEvent.click(await screen.findByRole("button", { name: ru.tabPeople }));
     await screen.findByRole("heading", { name: ru.contactsTitle });
+}
+
+async function chooseHomeContact(label: RegExp) {
+    fireEvent.click(await screen.findByRole("button", { name: ru.contactChipNone }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: label }));
+}
+
+async function submitFromHome(
+    mode: "check" | "soften" | "decode",
+    text: string,
+    contactLabel?: RegExp,
+) {
+    const title = {
+        check: ru.homeModeCheck,
+        soften: ru.homeModeSoften,
+        decode: ru.homeModeDecode,
+    }[mode];
+    fireEvent.click(await screen.findByRole("radio", { name: new RegExp(title) }));
+    if (contactLabel !== undefined) {
+        await chooseHomeContact(contactLabel);
+    }
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: text } });
+    fireEvent.click(
+        screen.getByRole("button", {
+            name: mode === "decode" ? ru.homeSubmitDecode : ru.homeSubmitVariants,
+        }),
+    );
+}
+
+type RecordedRequest = { readonly path: string; readonly body: unknown };
+
+function recordRequests(base: typeof fetch, log: RecordedRequest[]): typeof fetch {
+    return async (input, init) => {
+        const isRequest = input instanceof Request;
+        const url = new URL(isRequest ? input.url : String(input), "http://localhost");
+        const text = isRequest
+            ? await input.clone().text()
+            : typeof init?.body === "string"
+              ? init.body
+              : "";
+        log.push({
+            path: url.pathname,
+            body: text.length === 0 ? null : (JSON.parse(text) as unknown),
+        });
+        return base(input, init);
+    };
 }
 
 const personalDoc = { kind: "personal_data", version: "1", text: "DOC_PERSONAL" };
@@ -277,7 +322,7 @@ describe("App", () => {
         fireEvent.click(screen.getByLabelText(ru.consentKinds.special_category));
         expect(accept).toBeEnabled();
         fireEvent.click(accept);
-        expect(await screen.findByText("Аня")).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: ru.homeTitle })).toBeInTheDocument();
         const grants = vi
             .mocked(fetchImpl)
             .mock.calls.filter(
@@ -372,7 +417,7 @@ describe("App", () => {
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
         expect(await screen.findByText(ru.inviteTitle)).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: ru.inviteLater }));
-        expect(await screen.findByText("Аня")).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: ru.homeTitle })).toBeInTheDocument();
     });
 
     it("shows accept errors on invite screen", async () => {
@@ -414,7 +459,7 @@ describe("App", () => {
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
         expect(await screen.findByText(ru.inviteInvalid)).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: ru.continue }));
-        expect(await screen.findByText("Аня")).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: ru.homeTitle })).toBeInTheDocument();
     });
 
     it("maps invite expired and own errors", async () => {
@@ -766,7 +811,6 @@ describe("App", () => {
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
         await openPeople();
         expect(await screen.findByText("Аня")).toBeInTheDocument();
-        expect(screen.getByText(new RegExp(ru.contactsActiveBadge))).toBeInTheDocument();
         click(/Аня/);
         expect(await screen.findByRole("heading", { name: "Аня" })).toBeInTheDocument();
         expect(screen.getByText(ru.relationships.partner)).toBeInTheDocument();
@@ -775,6 +819,7 @@ describe("App", () => {
         expect(screen.getByText(new RegExp(ru.ruleProposed))).toBeInTheDocument();
         expect(screen.getByText("извиняться спокойно")).toBeInTheDocument();
         expect(adapter.BackButton.show).toHaveBeenCalled();
+        expect(screen.queryByRole("button", { name: /активн/i })).not.toBeInTheDocument();
     });
 
     it("supports back navigation via BackButton", async () => {
@@ -871,12 +916,9 @@ describe("App", () => {
         expect(await screen.findByText(ru.contactsLimit)).toBeInTheDocument();
     });
 
-    it("renames and activates a contact", async () => {
+    it("renames a contact and never calls activate", async () => {
         const fetchImpl = mockFetch([
-            {
-                path: "/api/v1/me",
-                body: { ...meDone, active_contact_id: null },
-            },
+            { path: "/api/v1/me", body: meDone },
             { path: "/api/v1/contacts", body: { contacts: [contact] } },
             { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
             { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
@@ -885,7 +927,6 @@ describe("App", () => {
                 path: "/api/v1/contacts/c1",
                 body: { ...contact, label: "Анна" },
             },
-            { method: "POST", path: "/api/v1/contacts/c1/activate", body: null, status: 204 },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
         await openPeople();
@@ -903,28 +944,20 @@ describe("App", () => {
                 }),
             ).toBe(true);
         });
+        expect(await screen.findByRole("heading", { name: "Анна" })).toBeInTheDocument();
         expect(
-            await screen.findByRole("button", { name: ru.contactsMakeActive }),
-        ).toBeInTheDocument();
-        click(ru.contactsMakeActive);
-        await waitFor(() => {
-            expect(
-                vi.mocked(fetchImpl).mock.calls.some((call) => {
-                    const request = call[0];
-                    const url = request instanceof Request ? request.url : "";
-                    return url.includes("/activate");
-                }),
-            ).toBe(true);
-        });
+            vi.mocked(fetchImpl).mock.calls.some((call) => {
+                const request = call[0];
+                const url = request instanceof Request ? request.url : "";
+                return url.includes("/activate");
+            }),
+        ).toBe(false);
     });
 
-    it("handles rename/activate errors and cancels the modal", async () => {
+    it("handles rename and create errors and cancels the modal", async () => {
         const adapter = fakeAdapter();
         const fetchImpl = mockFetch([
-            {
-                path: "/api/v1/me",
-                body: { ...meDone, active_contact_id: null },
-            },
+            { path: "/api/v1/me", body: meDone },
             { path: "/api/v1/contacts", body: { contacts: [contact] } },
             { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
             { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
@@ -933,12 +966,6 @@ describe("App", () => {
                 path: "/api/v1/contacts/c1",
                 status: 500,
                 body: { code: "not_found", message: "rename failed" },
-            },
-            {
-                method: "POST",
-                path: "/api/v1/contacts/c1/activate",
-                status: 500,
-                body: { code: "not_found", message: "activate failed" },
             },
             {
                 method: "POST",
@@ -972,10 +999,7 @@ describe("App", () => {
             expect(vi.mocked(adapter.hapticNotification).mock.calls.length).toBeGreaterThan(1);
         });
         fireEvent.click(within(dialog).getByRole("button", { name: ru.cancel }));
-        click(ru.contactsMakeActive);
-        await waitFor(() => {
-            expect(vi.mocked(adapter.hapticNotification).mock.calls.length).toBeGreaterThan(2);
-        });
+        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
     it("maps generic add-rule errors", async () => {
@@ -1195,7 +1219,7 @@ describe("App", () => {
         ).toBeInTheDocument();
     });
 
-    it("shows home pending block, rules preview, and people badge", async () => {
+    it("shows the pending block at the top of People with the tab badge", async () => {
         const pendingItem = {
             id: "r-pending",
             contact_id: "c1",
@@ -1219,19 +1243,18 @@ describe("App", () => {
             },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        expect(await screen.findByText(ru.homePendingTitle)).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: ru.homeTitle })).toBeInTheDocument();
+        expect(screen.queryByText(ru.pendingTitle)).not.toBeInTheDocument();
+        await openPeople();
+        expect(await screen.findByText(ru.pendingTitle)).toBeInTheDocument();
         expect(screen.getByText(/общее/)).toBeInTheDocument();
-        expect(
-            await screen.findByText(ru.homeRulesSoloTitle.replace("{label}", "Аня")),
-        ).toBeInTheDocument();
-        expect(await screen.findByText("не повышать голос")).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: ru.tabPeople }));
         expect(screen.getByRole("button", { name: ru.tabPeople })).toHaveAttribute(
             "title",
             `${ru.tabPeople}: 1`,
         );
-        expect(screen.getByText("1")).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: ru.tabHome }));
+        const block = screen.getByTestId("people-pending");
+        const list = await screen.findByRole("list");
+        expect(block.compareDocumentPosition(list) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
         fireEvent.click(await screen.findByRole("button", { name: ru.ruleApprove }));
         await waitFor(() => {
             expect(
@@ -1244,7 +1267,7 @@ describe("App", () => {
         });
     });
 
-    it("rejects a pending rule from home", async () => {
+    it("rejects a pending rule from People", async () => {
         const pendingItem = {
             id: "r-pending",
             contact_id: "c1",
@@ -1268,7 +1291,8 @@ describe("App", () => {
             },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        expect(await screen.findByTestId("home-pending")).toBeInTheDocument();
+        await openPeople();
+        expect(await screen.findByTestId("people-pending")).toBeInTheDocument();
         fireEvent.click(await screen.findByRole("button", { name: ru.ruleReject }));
         await waitFor(() => {
             expect(
@@ -1312,13 +1336,14 @@ describe("App", () => {
             },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        expect(await screen.findByTestId("home-pending")).toBeInTheDocument();
+        await openPeople();
+        expect(await screen.findByTestId("people-pending")).toBeInTheDocument();
         fireEvent.click(await screen.findByRole("button", { name: ru.ruleApprove }));
         fireEvent.click(await screen.findByRole("button", { name: ru.ruleReject }));
-        expect(await screen.findByTestId("home-pending")).toBeInTheDocument();
+        expect(await screen.findByTestId("people-pending")).toBeInTheDocument();
     });
 
-    it("focuses pending from ?view=pending with Telegram hash on boot", async () => {
+    it("lands on the pending block of People from ?view=pending with Telegram hash on boot", async () => {
         const telegramHash = "#tgWebAppData=stub&tgWebAppVersion=8.0";
         window.history.replaceState(null, "", `/?view=pending${telegramHash}`);
         const pendingItem = {
@@ -1344,7 +1369,8 @@ describe("App", () => {
             value: scrollIntoView,
         });
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        expect(await screen.findByTestId("home-pending")).toBeInTheDocument();
+        expect(await screen.findByRole("heading", { name: ru.contactsTitle })).toBeInTheDocument();
+        expect(await screen.findByTestId("people-pending")).toBeInTheDocument();
         await waitFor(() => {
             expect(scrollIntoView).toHaveBeenCalled();
         });
@@ -1425,9 +1451,8 @@ describe("App", () => {
             { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        fireEvent.click(await screen.findByRole("button", { name: new RegExp(ru.homeComposeCta) }));
-        await screen.findByText(ru.composeLead);
-        expect(screen.getByRole("heading", { name: ru.composeTitle })).toBeInTheDocument();
+        await submitFromHome("soften", "черновик");
+        expect(await screen.findByRole("heading", { name: ru.composeTitle })).toBeInTheDocument();
     });
 
     it("creates a contact successfully", async () => {
@@ -1781,10 +1806,7 @@ describe("App", () => {
             return base(input, init);
         };
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        fireEvent.click(await screen.findByRole("button", { name: new RegExp(ru.homeDecodeCta) }));
-        expect(await screen.findByRole("heading", { name: ru.decodeTitle })).toBeInTheDocument();
-        fireEvent.change(screen.getByRole("textbox"), { target: { value: "входящее" } });
-        fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
+        await submitFromHome("decode", "входящее", /Аня/);
         expect(await screen.findByText("разбор")).toBeInTheDocument();
         fireEvent.click(await screen.findByRole("button", { name: ru.decodeMakeRule }));
         expect(await screen.findByText("извиняться спокойно")).toBeInTheDocument();
@@ -2029,168 +2051,272 @@ function sseFetch(base: typeof fetch, sse: string, init: ResponseInit = {}): typ
 describe("Home and navigation", () => {
     const boris = { ...contact, id: "c2", label: "Боря", relationship: "friend" };
 
-    it("greets the user, shows the active contact and the inline hint", async () => {
-        const fetchImpl = mockFetch([
-            { path: "/api/v1/me", body: meDone },
-            { path: "/api/v1/contacts", body: { contacts: [contact] } },
-            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [suggestion] } },
-            {
-                method: "POST",
-                path: "/api/v1/suggestions/s1/accept",
-                body: { outcome: "accepted", suggestion_id: "s1", rule_id: "r1" },
-            },
-            {
-                method: "POST",
-                path: "/api/v1/suggestions/s1/dismiss",
-                body: { outcome: "dismissed", suggestion_id: "s1" },
-            },
-        ]);
-        const adapter = fakeAdapter();
-        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
-        expect(await screen.findByRole("heading", { name: ru.homeTitle })).toBeInTheDocument();
-        expect(
-            await screen.findByText(ru.relationships.partner.toLowerCase(), { exact: false }),
-        ).toBeInTheDocument();
-        expect(screen.getByText("@svoi_test_bot")).toBeInTheDocument();
-        expect(screen.getByRole("navigation", { name: ru.tabsLabel })).toBeInTheDocument();
-        expect(await screen.findByText(new RegExp(suggestion.text))).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: ru.suggestionAccept }));
-        await waitFor(() => {
-            expect(adapter.hapticNotification).toHaveBeenCalledWith("success");
-        });
-    });
-
-    it("dismisses the latest suggestion and reports a failed dismissal", async () => {
-        const adapter = fakeAdapter();
-        const fetchImpl = mockFetch([
-            { path: "/api/v1/me", body: meDone },
-            { path: "/api/v1/contacts", body: { contacts: [contact] } },
-            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [suggestion] } },
-        ]);
-        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
-        fireEvent.click(await screen.findByRole("button", { name: ru.suggestionDismiss }));
-        await waitFor(() => {
-            expect(adapter.hapticNotification).toHaveBeenCalledWith("error");
-        });
-    });
-
-    it("switches the active contact from the picker without a reload", async () => {
-        const fetchImpl = mockFetch([
+    function homeFetch() {
+        return mockFetch([
             { path: "/api/v1/me", body: meDone },
             { path: "/api/v1/contacts", body: { contacts: [contact, boris] } },
+            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
             { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
-            { path: "/api/v1/contacts/c2/suggestions", body: { suggestions: [] } },
-            { method: "POST", path: "/api/v1/contacts/c2/activate", status: 204, body: null },
         ]);
-        const adapter = fakeAdapter();
-        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
-        fireEvent.click(await screen.findByRole("button", { name: ru.homeChange }));
-        const dialog = screen.getByRole("dialog", { name: ru.pickerTitle });
-        fireEvent.click(within(dialog).getByRole("button", { name: /Аня/ }));
-        expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    }
 
-        fireEvent.click(screen.getByRole("button", { name: ru.homeChange }));
-        fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /Боря/ }));
-        expect(await screen.findByText("Боря")).toBeInTheDocument();
-        expect(adapter.hapticNotification).toHaveBeenCalledWith("success");
+    it("shows three modes, the contact chip and the draft field, without the old inline hint", async () => {
+        render(<App adapter={fakeAdapter()} fetchImpl={homeFetch()} />);
+        expect(await screen.findByRole("heading", { name: ru.homeTitle })).toBeInTheDocument();
+        const modes = screen.getAllByRole("radio");
+        expect(modes).toHaveLength(3);
+        expect(screen.getByRole("radio", { name: new RegExp(ru.homeModeCheck) })).toBeChecked();
         expect(
-            vi.mocked(fetchImpl).mock.calls.filter((call) => {
-                const request = call[0];
-                return request instanceof Request && new URL(request.url).pathname === "/api/v1/me";
-            }),
-        ).toHaveLength(1);
-        fireEvent.click(screen.getByRole("button", { name: ru.homeChange }));
+            screen.getByRole("radio", { name: new RegExp(ru.homeModeSoften) }),
+        ).toBeInTheDocument();
+        expect(
+            screen.getByRole("radio", { name: new RegExp(ru.homeModeDecode) }),
+        ).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: ru.contactChipNone })).toBeInTheDocument();
+        expect(screen.getByLabelText(ru.homeDraftLabel)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: ru.homeSubmitVariants })).toBeDisabled();
+        expect(
+            screen.queryByText(ru.introInlineHintBefore, { exact: false }),
+        ).not.toBeInTheDocument();
+        expect(screen.queryByText("@svoi_test_bot")).not.toBeInTheDocument();
+        expect(screen.getByRole("navigation", { name: ru.tabsLabel })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: ru.tabHome })).toHaveAttribute(
+            "aria-current",
+            "page",
+        );
+    });
+
+    it("switches the field label for the decode mode", async () => {
+        render(<App adapter={fakeAdapter()} fetchImpl={homeFetch()} />);
+        fireEvent.click(await screen.findByRole("radio", { name: new RegExp(ru.homeModeDecode) }));
+        expect(screen.getByLabelText(ru.homeIncomingLabel)).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: ru.homeSubmitDecode })).toBeInTheDocument();
+    });
+
+    it("opens the check variants screen and sends no contact without one", async () => {
+        const log: RecordedRequest[] = [];
+        render(<App adapter={fakeAdapter()} fetchImpl={recordRequests(homeFetch(), log)} />);
+        await submitFromHome("check", "  черновик  ");
+        expect(
+            await screen.findByRole("heading", { name: ru.composeTitleCheck }),
+        ).toBeInTheDocument();
+        expect(screen.queryByRole("navigation", { name: ru.tabsLabel })).not.toBeInTheDocument();
+        await waitFor(() => {
+            expect(log.filter((entry) => entry.path === "/api/v1/compose")).toHaveLength(1);
+        });
+        const compose = log.find((entry) => entry.path === "/api/v1/compose");
+        expect(compose?.body).toMatchObject({ draft: "черновик", contact_id: null });
+    });
+
+    it("opens the soften variants screen with the chosen contact", async () => {
+        const log: RecordedRequest[] = [];
+        render(<App adapter={fakeAdapter()} fetchImpl={recordRequests(homeFetch(), log)} />);
+        await submitFromHome("soften", "черновик", /Боря/);
+        expect(await screen.findByRole("heading", { name: ru.composeTitle })).toBeInTheDocument();
+        await waitFor(() => {
+            expect(log.filter((entry) => entry.path === "/api/v1/compose")).toHaveLength(1);
+        });
+        expect(log.find((entry) => entry.path === "/api/v1/compose")?.body).toMatchObject({
+            draft: "черновик",
+            contact_id: "c2",
+        });
+    });
+
+    it("sends contact_id in decode when a contact is chosen and null otherwise", async () => {
+        const withContact: RecordedRequest[] = [];
+        const first = render(
+            <App adapter={fakeAdapter()} fetchImpl={recordRequests(homeFetch(), withContact)} />,
+        );
+        await submitFromHome("decode", "входящее", /Аня/);
+        await waitFor(() => {
+            expect(withContact.some((entry) => entry.path === "/api/v1/decode")).toBe(true);
+        });
+        expect(withContact.find((entry) => entry.path === "/api/v1/decode")?.body).toMatchObject({
+            text: "входящее",
+            contact_id: "c1",
+        });
+        first.unmount();
+
+        const without: RecordedRequest[] = [];
+        render(<App adapter={fakeAdapter()} fetchImpl={recordRequests(homeFetch(), without)} />);
+        await submitFromHome("decode", "входящее");
+        await waitFor(() => {
+            expect(without.some((entry) => entry.path === "/api/v1/decode")).toBe(true);
+        });
+        expect(without.find((entry) => entry.path === "/api/v1/decode")?.body).toMatchObject({
+            text: "входящее",
+            contact_id: null,
+        });
+    });
+
+    it("does not keep the chosen contact after the app is reopened", async () => {
+        const first = render(<App adapter={fakeAdapter()} fetchImpl={homeFetch()} />);
+        await chooseHomeContact(/Аня/);
+        expect(
+            screen.getByRole("button", { name: ru.contactChipFor.replace("{label}", "Аня") }),
+        ).toBeInTheDocument();
+        first.unmount();
+        render(<App adapter={fakeAdapter()} fetchImpl={homeFetch()} />);
+        expect(await screen.findByRole("button", { name: ru.contactChipNone })).toBeInTheDocument();
+    });
+
+    it("returns to no contact from the picker", async () => {
+        render(<App adapter={fakeAdapter()} fetchImpl={homeFetch()} />);
+        await chooseHomeContact(/Аня/);
+        fireEvent.click(
+            screen.getByRole("button", { name: ru.contactChipFor.replace("{label}", "Аня") }),
+        );
+        fireEvent.click(
+            within(screen.getByRole("dialog")).getByRole("button", { name: ru.contactNoneItem }),
+        );
+        expect(screen.getByRole("button", { name: ru.contactChipNone })).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.contactChipNone }));
         fireEvent.click(
             within(screen.getByRole("dialog")).getByRole("button", { name: ru.cancel }),
         );
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
-    it("reports a failed activation from the picker", async () => {
-        const fetchImpl = mockFetch([
-            { path: "/api/v1/me", body: meDone },
-            { path: "/api/v1/contacts", body: { contacts: [contact, boris] } },
-            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
-            {
-                method: "POST",
-                path: "/api/v1/contacts/c2/activate",
-                status: 500,
-                body: { code: "not_found", message: "no" },
-            },
-        ]);
-        const adapter = fakeAdapter();
-        render(<App adapter={adapter} fetchImpl={fetchImpl} />);
-        fireEvent.click(await screen.findByRole("button", { name: ru.homeChange }));
-        fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /Боря/ }));
-        await waitFor(() => {
-            expect(adapter.hapticNotification).toHaveBeenCalledWith("error");
+    it("pastes the clipboard into the draft and ignores an unreadable clipboard", async () => {
+        const readText = vi.fn(() => Promise.resolve("из буфера"));
+        Object.defineProperty(navigator, "clipboard", {
+            value: { readText },
+            configurable: true,
         });
-    });
-
-    it("asks to choose a contact when none is active", async () => {
-        const fetchImpl = mockFetch([
-            { path: "/api/v1/me", body: { ...meDone, active_contact_id: null } },
-            { path: "/api/v1/contacts", body: { contacts: [contact] } },
-        ]);
-        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        expect(await screen.findByText(ru.homeNoActiveTitle)).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: ru.homeChoose }));
-        expect(screen.getByRole("dialog", { name: ru.pickerTitle })).toBeInTheDocument();
-    });
-
-    it("sends a user without contacts to the People tab", async () => {
-        const fetchImpl = mockFetch([
-            { path: "/api/v1/me", body: { ...meDone, active_contact_id: null } },
-            { path: "/api/v1/contacts", body: { contacts: [] } },
-        ]);
-        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        expect(await screen.findByText(ru.homeNoContactTitle)).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: ru.contactsAdd }));
-        expect(await screen.findByRole("heading", { name: ru.contactsTitle })).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: ru.tabPeople })).toHaveAttribute(
-            "aria-current",
-            "page",
-        );
-    });
-
-    it("shows a retryable error when the Home contacts fail to load", async () => {
-        let calls = 0;
-        const fetchImpl = vi.fn((input: RequestInfo | URL) => {
-            const request = input instanceof Request ? input : new Request(String(input));
-            const path = new URL(request.url).pathname;
-            if (path === "/api/v1/me") {
-                return Promise.resolve(jsonResponse(meDone));
-            }
-            if (path === "/api/v1/privacy/texts") {
-                return Promise.resolve(jsonResponse(privacyTexts));
-            }
-            if (path === "/api/v1/rules/pending") {
-                return Promise.resolve(jsonResponse({ items: [] }));
-            }
-            calls += 1;
-            return Promise.resolve(
-                calls === 1
-                    ? jsonResponse({ code: "not_found", message: "home boom" }, 500)
-                    : jsonResponse({ contacts: [] }),
-            );
-        }) as typeof fetch;
-        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        expect(await screen.findByText("home boom")).toBeInTheDocument();
-        click(ru.retry);
-        expect(await screen.findByText(ru.homeNoContactTitle)).toBeInTheDocument();
+        render(<App adapter={fakeAdapter()} fetchImpl={homeFetch()} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.homePaste }));
+        await waitFor(() => {
+            expect(screen.getByLabelText(ru.homeDraftLabel)).toHaveValue("из буфера");
+        });
+        readText.mockImplementation(() => Promise.reject(new Error("denied")));
+        fireEvent.change(screen.getByLabelText(ru.homeDraftLabel), { target: { value: "своё" } });
+        fireEvent.click(screen.getByRole("button", { name: ru.homePaste }));
+        await waitFor(() => {
+            expect(readText).toHaveBeenCalledTimes(2);
+        });
+        expect(screen.getByLabelText(ru.homeDraftLabel)).toHaveValue("своё");
     });
 
     it("keeps the tab bar on root screens only", async () => {
-        const fetchImpl = mockFetch([
-            { path: "/api/v1/me", body: meDone },
-            { path: "/api/v1/contacts", body: { contacts: [contact] } },
-            { path: "/api/v1/contacts/c1/rules", body: { rules: [] } },
-            { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
-        ]);
-        render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        fireEvent.click(await screen.findByRole("button", { name: new RegExp(ru.homeDecodeCta) }));
+        render(<App adapter={fakeAdapter()} fetchImpl={homeFetch()} />);
+        await submitFromHome("decode", "текст");
         expect(await screen.findByRole("heading", { name: ru.decodeTitle })).toBeInTheDocument();
         expect(screen.queryByRole("navigation", { name: ru.tabsLabel })).not.toBeInTheDocument();
+    });
+});
+
+describe("Onboarding intro", () => {
+    function storage(value: string | Error) {
+        const getItem = vi.fn(() =>
+            value instanceof Error ? Promise.reject(value) : Promise.resolve(value),
+        );
+        const setItem = vi.fn(() => Promise.resolve(true));
+        return { getItem, setItem };
+    }
+
+    function introFetch() {
+        return mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+        ]);
+    }
+
+    it("is not shown without CloudStorage", async () => {
+        render(<App adapter={fakeAdapter()} fetchImpl={introFetch()} />);
+        expect(await screen.findByRole("heading", { name: ru.homeTitle })).toBeInTheDocument();
+        expect(screen.queryByRole("heading", { name: ru.introTitle })).not.toBeInTheDocument();
+    });
+
+    it("is shown when the flag is unset, with the owner copy and the bot hint", async () => {
+        const cloud = storage("");
+        render(<App adapter={fakeAdapter({ cloudStorage: cloud })} fetchImpl={introFetch()} />);
+        expect(await screen.findByRole("heading", { name: ru.introTitle })).toBeInTheDocument();
+        expect(screen.getByText(ru.introSubtitle)).toBeInTheDocument();
+        for (const step of ru.introSteps) {
+            expect(screen.getByText(step.title)).toBeInTheDocument();
+            expect(screen.getByText(step.caption)).toBeInTheDocument();
+        }
+        expect(screen.getByText("svoi_test_bot", { exact: false })).toBeInTheDocument();
+        expect(cloud.getItem).toHaveBeenCalledWith("intro_seen");
+        expect(cloud.setItem).not.toHaveBeenCalled();
+    });
+
+    it("is not shown when the flag is already set", async () => {
+        const cloud = storage("1");
+        render(<App adapter={fakeAdapter({ cloudStorage: cloud })} fetchImpl={introFetch()} />);
+        expect(await screen.findByRole("heading", { name: ru.homeTitle })).toBeInTheDocument();
+        expect(screen.queryByRole("heading", { name: ru.introTitle })).not.toBeInTheDocument();
+    });
+
+    it("is treated as seen when the storage read fails", async () => {
+        const cloud = storage(new Error("unavailable"));
+        render(<App adapter={fakeAdapter({ cloudStorage: cloud })} fetchImpl={introFetch()} />);
+        expect(await screen.findByRole("heading", { name: ru.homeTitle })).toBeInTheDocument();
+        expect(screen.queryByRole("heading", { name: ru.introTitle })).not.toBeInTheDocument();
+    });
+
+    it("writes the flag and opens Home when skipped", async () => {
+        const cloud = storage("");
+        render(<App adapter={fakeAdapter({ cloudStorage: cloud })} fetchImpl={introFetch()} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.introSkip }));
+        expect(await screen.findByRole("heading", { name: ru.homeTitle })).toBeInTheDocument();
+        expect(cloud.setItem).toHaveBeenCalledWith("intro_seen", "1");
+    });
+
+    it("writes the flag and opens Home when closed", async () => {
+        const cloud = storage("");
+        render(<App adapter={fakeAdapter({ cloudStorage: cloud })} fetchImpl={introFetch()} />);
+        fireEvent.click(await screen.findByRole("button", { name: ru.introClose }));
+        expect(await screen.findByRole("heading", { name: ru.homeTitle })).toBeInTheDocument();
+        expect(cloud.setItem).toHaveBeenCalledWith("intro_seen", "1");
+    });
+
+    it("runs the example in check mode with the draft block and no goals", async () => {
+        const cloud = storage("");
+        const log: RecordedRequest[] = [];
+        const base = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            {
+                method: "POST",
+                path: "/api/v1/compose",
+                body: {
+                    safety: "ok",
+                    applied_rules: [],
+                    choice_token: "choice",
+                    variants: [
+                        { kind: "softer", text: "мягкий" },
+                        { kind: "firmer", text: "твёрже" },
+                        { kind: "check", text: "проверенный" },
+                    ],
+                },
+            },
+        ]);
+        render(
+            <App
+                adapter={fakeAdapter({ cloudStorage: cloud })}
+                fetchImpl={recordRequests(base, log)}
+            />,
+        );
+        fireEvent.click(await screen.findByRole("button", { name: ru.introTryExample }));
+        expect(
+            await screen.findByRole("heading", { name: ru.introExampleTitle }),
+        ).toBeInTheDocument();
+        expect(cloud.setItem).toHaveBeenCalledWith("intro_seen", "1");
+        expect(await screen.findByDisplayValue("проверенный")).toBeInTheDocument();
+        const quote = screen.getByText(ru.composeYourDraft).closest(".quote");
+        expect(quote).toHaveTextContent(ru.introExampleDraft);
+        const [first] = screen.getAllByRole("article");
+        expect(first).toHaveTextContent(ru.variantKinds.check);
+        expect(screen.queryByText(ru.composeGoalLegend)).not.toBeInTheDocument();
+        const composeCalls = log.filter((entry) => entry.path === "/api/v1/compose");
+        expect(composeCalls).toHaveLength(1);
+        expect(composeCalls[0]?.body).toEqual({
+            draft: ru.introExampleDraft,
+            goal: null,
+            contact_id: null,
+        });
+        expect(log.some((entry) => entry.path.includes("activate"))).toBe(false);
     });
 });
 
@@ -2207,9 +2333,7 @@ describe("Decode limits and crisis", () => {
     async function startDecode(fetchImpl: typeof fetch) {
         const adapter = fakeAdapter();
         render(<App adapter={adapter} fetchImpl={fetchImpl} />);
-        fireEvent.click(await screen.findByRole("button", { name: new RegExp(ru.homeDecodeCta) }));
-        fireEvent.change(await screen.findByRole("textbox"), { target: { value: "входящее" } });
-        fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
+        await submitFromHome("decode", "входящее");
         return adapter;
     }
 
@@ -2275,10 +2399,7 @@ describe("Decode limits and crisis", () => {
         const base = decodeBase();
         const fetchImpl = sseFetch(base, completed);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        fireEvent.click(await screen.findByRole("button", { name: new RegExp(ru.homeDecodeCta) }));
-        expect(await screen.findByText(decodeRemainingLabel(5))).toBeInTheDocument();
-        fireEvent.change(screen.getByRole("textbox"), { target: { value: "входящее" } });
-        fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
+        await submitFromHome("decode", "входящее");
         expect(await screen.findByText("вариант")).toBeInTheDocument();
         fireEvent.click(screen.getByRole("button", { name: ru.decodeAgain }));
         expect(await screen.findByText(decodeRemainingLabel(4))).toBeInTheDocument();
@@ -2290,11 +2411,9 @@ describe("Decode limits and crisis", () => {
             { path: "/api/v1/me", body: meDone },
             { path: "/api/v1/contacts", body: { contacts: [contact, boris] } },
             { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
-            { method: "POST", path: "/api/v1/contacts/c2/activate", status: 204, body: null },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        fireEvent.click(await screen.findByRole("button", { name: new RegExp(ru.homeDecodeCta) }));
-        fireEvent.change(await screen.findByRole("textbox"), { target: { value: "не потерять" } });
+        await submitFromHome("decode", "не потерять", /Аня/);
         fireEvent.click(
             await screen.findByRole("button", { name: ru.decodeFrom.replace("{name}", "Аня") }),
         );

@@ -20,13 +20,11 @@ export type ContactDetailScreenProps = {
     readonly label: string;
     readonly relationship: string;
     readonly paired: boolean;
-    readonly activeContactId: string | null | undefined;
     readonly displayTimezone: string;
     readonly telegram: TelegramAdapter;
     readonly onAddRule: () => void;
     readonly onPairingChanged: (paired: boolean) => void;
     readonly onRenamed: (label: string) => void;
-    readonly onActivated: (contactId: string) => void;
 };
 
 type RuleActions = {
@@ -151,13 +149,11 @@ export function ContactDetailScreen({
     label,
     relationship,
     paired,
-    activeContactId,
     displayTimezone,
     telegram,
     onAddRule,
     onPairingChanged,
     onRenamed,
-    onActivated,
 }: ContactDetailScreenProps) {
     const suggestions = useSuggestions(contactId);
     const rules = useRules(contactId);
@@ -167,8 +163,6 @@ export function ContactDetailScreen({
     const [inviteBusy, setInviteBusy] = useState(false);
     const [copyHint, setCopyHint] = useState(false);
     const [renaming, setRenaming] = useState(false);
-    const [activateBusy, setActivateBusy] = useState(false);
-    const isActive = contactId === activeContactId;
 
     const settle = (error: unknown): boolean => {
         telegram.hapticNotification(error === undefined ? "success" : "error");
@@ -259,18 +253,6 @@ export function ContactDetailScreen({
         return {};
     };
 
-    const activate = async () => {
-        setActivateBusy(true);
-        const result = await contacts.activateContact(contactId);
-        setActivateBusy(false);
-        if (result.error !== undefined) {
-            telegram.hapticNotification("error");
-            return;
-        }
-        telegram.hapticNotification("success");
-        onActivated(contactId);
-    };
-
     const loading = suggestions.status === "loading" || rules.status === "loading";
     const error =
         suggestions.status === "error"
@@ -324,21 +306,6 @@ export function ContactDetailScreen({
                     <PencilIcon size={20} />
                 </Button>
             </header>
-
-            {!isActive ? (
-                <div className="detail-actions">
-                    <Button
-                        variant="ghost"
-                        tone="accent"
-                        disabled={activateBusy}
-                        onClick={() => {
-                            void activate();
-                        }}
-                    >
-                        {ru.contactsMakeActive}
-                    </Button>
-                </div>
-            ) : null}
 
             {loading ? <LoadingView /> : null}
             {error !== undefined ? (

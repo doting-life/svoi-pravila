@@ -13,6 +13,7 @@ export function fakeAdapter(overrides: Partial<TelegramAdapter> = {}): TelegramA
             hide: vi.fn(),
             onClick: () => () => undefined,
         },
+        cloudStorage: null,
         ready: vi.fn(),
         expand: vi.fn(),
         close: vi.fn(),

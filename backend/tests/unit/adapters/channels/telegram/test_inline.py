@@ -72,10 +72,6 @@ from svoi_pravila.application.use_cases.inline_compose import (
     InlineComposeResult,
 )
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule, ProposeRuleCommand
-from svoi_pravila.application.use_cases.set_active_contact import (
-    SetActiveContact,
-    SetActiveContactCommand,
-)
 from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
 from svoi_pravila.domain.enums import (
     ConsentKind,
@@ -224,7 +220,7 @@ async def test_inline_too_short_compose_handoff_button() -> None:
 
 
 @pytest.mark.unit
-async def test_inline_ignores_active_contact_button_and_rules(
+async def test_inline_ignores_contacts_button_and_rules(
     capture_log_events: Callable[[], list[dict[str, Any]]],
 ) -> None:
     catalog = FakeConsentCatalog()
@@ -259,9 +255,6 @@ async def test_inline_ignores_active_contact_button_and_rules(
             RuleText(rule_marker),
             shared=False,
         )
-    )
-    await SetActiveContact(uow, catalog).execute(
-        SetActiveContactCommand(actor_id=owner_id, contact_id=contact.id)
     )
     await lifecycle.dispatcher.feed_update(bot, _inline(710, 70, draft_marker))
     await _await_inline(deps)

@@ -36,10 +36,6 @@ from svoi_pravila.application.use_cases.revoke_all_consents import (
     RevokeAllConsents,
     RevokeAllConsentsCommand,
 )
-from svoi_pravila.application.use_cases.set_active_contact import (
-    SetActiveContact,
-    SetActiveContactCommand,
-)
 from svoi_pravila.domain.contact import Contact
 from svoi_pravila.domain.enums import (
     RelationshipKind,
@@ -242,13 +238,10 @@ async def test_miniapp_without_contact_records_no_signal(world: AppWorld) -> Non
 
 
 @pytest.mark.unit
-async def test_inline_choice_never_records_signal_even_with_active_contact(
+async def test_inline_choice_never_records_signal_even_with_contact(
     world: AppWorld,
 ) -> None:
-    user, contact = await _user_with_contact(world, 523)
-    await SetActiveContact(world.uow_factory, world.catalog).execute(
-        SetActiveContactCommand(user.id, contact.id)
-    )
+    user, _contact = await _user_with_contact(world, 523)
     for _ in range(6):
         result = await _choose(world, 523, VariantKind.SOFTER, None, UsageSurface.INLINE)
         assert result.tone_outcome is ToneSignalOutcome.SKIPPED_INLINE
@@ -274,21 +267,18 @@ async def test_inline_choice_ignores_contact_id_even_if_provided(world: AppWorld
 
 
 @pytest.mark.unit
-async def test_signal_attributed_to_bound_contact_not_active_one(world: AppWorld) -> None:
+async def test_signal_attributed_to_bound_contact_only(world: AppWorld) -> None:
     user, bound = await _user_with_contact(world, 525)
-    active = (
+    other = (
         await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
             CreateContactCommand(user.id, ContactLabel("Папа"), RelationshipKind.FAMILY)
         )
     ).contact
-    await SetActiveContact(world.uow_factory, world.catalog).execute(
-        SetActiveContactCommand(user.id, active.id)
-    )
     result = await _choose(world, 525, VariantKind.FIRMER, bound.id)
     assert result.tone_outcome is ToneSignalOutcome.RECORDED
     async with world.uow_factory() as uow:
         assert await uow.tone_signals.get(user.id, bound.id) is not None
-        assert await uow.tone_signals.get(user.id, active.id) is None
+        assert await uow.tone_signals.get(user.id, other.id) is None
 
 
 @pytest.mark.unit

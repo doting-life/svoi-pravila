@@ -16,7 +16,6 @@ class MeResponse(BaseModel):
     onboarding_step: Literal["age", "consent", "done"]
     consent_kind: Literal["personal_data", "special_category"] | None = None
     consent_version: str | None = None
-    active_contact_id: str | None = None
     account_exists: bool
     consents_revoked: bool
     max_contacts: int = Field(ge=1)
@@ -215,11 +214,12 @@ class DismissSuggestionResponse(BaseModel):
 
 
 class DecodeRequest(BaseModel):
-    """POST /decode — incoming text to decode (same limits as DM)."""
+    """POST /decode — incoming text to decode (same limits as DM), optional contact."""
 
     model_config = ConfigDict(extra="forbid")
 
     text: str = Field(min_length=1, max_length=4000)
+    contact_id: str | None = None
 
 
 ComposeGoal = Literal["decline", "set_boundary", "admit_fault", "reconnect"]

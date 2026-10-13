@@ -77,8 +77,6 @@ class DeleteMyAccount:
                     pair=pair,
                     now=now,
                 )
-            if user.active_contact_id is not None:
-                await uow.users.update(user.clear_active_contact())
             await uow.rule_suggestions.delete_for_user(user.id)
             await uow.tone_signals.delete_for_user(user.id)
             for invite in await uow.invites.list_involving(user.id):

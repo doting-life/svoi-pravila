@@ -49,12 +49,12 @@ const meDone = {
     onboarding_step: "done",
     consent_kind: null,
     consent_version: null,
-    active_contact_id: "c1",
     account_exists: true,
     consents_revoked: false,
     max_contacts: 20,
     max_open_rules: 50,
     rule_text_max_chars: 500,
+    incoming_text_max_chars: 4000,
     display_timezone: "Europe/Moscow",
     bot_username: "svoi_test_bot",
     decode_remaining: 5,
@@ -143,68 +143,83 @@ const privacyTexts = {
     },
 };
 
-async function installTelegram(page, scheme) {
+async function installTelegram(page, scheme, options = {}) {
     await page.route("https://telegram.org/**", (route) => route.abort());
-    await page.addInitScript((colorScheme) => {
-        const theme =
-            colorScheme === "dark"
-                ? {
-                      bg_color: "#17212b",
-                      text_color: "#f5f5f5",
-                      hint_color: "#708499",
-                      button_color: "#2aabee",
-                      button_text_color: "#ffffff",
-                      secondary_bg_color: "#232e3c",
-                      link_color: "#62b0e8",
-                      destructive_text_color: "#e53935",
-                  }
-                : {
-                      bg_color: "#ffffff",
-                      text_color: "#1a1a1a",
-                      hint_color: "#6b6b6b",
-                      button_color: "#2481cc",
-                      button_text_color: "#ffffff",
-                      secondary_bg_color: "#f4f4f5",
-                      link_color: "#2481cc",
-                      destructive_text_color: "#d32f2f",
-                  };
-        Object.defineProperty(window, "Telegram", {
-            configurable: true,
-            value: {
-                WebApp: {
-                    initData: "query_id=shot",
-                    initDataUnsafe: {},
-                    colorScheme,
-                    themeParams: theme,
-                    BackButton: {
-                        show() {},
-                        hide() {},
-                        onClick() {},
-                        offClick() {},
+    await page.addInitScript(
+        ({ colorScheme, introUnseen }) => {
+            const theme =
+                colorScheme === "dark"
+                    ? {
+                          bg_color: "#17212b",
+                          text_color: "#f5f5f5",
+                          hint_color: "#708499",
+                          button_color: "#2aabee",
+                          button_text_color: "#ffffff",
+                          secondary_bg_color: "#232e3c",
+                          link_color: "#62b0e8",
+                          destructive_text_color: "#e53935",
+                      }
+                    : {
+                          bg_color: "#ffffff",
+                          text_color: "#1a1a1a",
+                          hint_color: "#6b6b6b",
+                          button_color: "#2481cc",
+                          button_text_color: "#ffffff",
+                          secondary_bg_color: "#f4f4f5",
+                          link_color: "#2481cc",
+                          destructive_text_color: "#d32f2f",
+                      };
+            Object.defineProperty(window, "Telegram", {
+                configurable: true,
+                value: {
+                    WebApp: {
+                        initData: "query_id=shot",
+                        initDataUnsafe: {},
+                        colorScheme,
+                        themeParams: theme,
+                        BackButton: {
+                            show() {},
+                            hide() {},
+                            onClick() {},
+                            offClick() {},
+                        },
+                        HapticFeedback: {
+                            notificationOccurred() {},
+                            impactOccurred() {},
+                            selectionChanged() {},
+                        },
+                        ...(introUnseen
+                            ? {
+                                  CloudStorage: {
+                                      getItem(_key, cb) {
+                                          cb(null, "");
+                                      },
+                                      setItem(_key, _value, cb) {
+                                          cb?.(null, true);
+                                      },
+                                  },
+                              }
+                            : {}),
+                        setHeaderColor() {},
+                        setBackgroundColor() {},
+                        setBottomBarColor() {},
+                        ready() {},
+                        expand() {},
+                        close() {},
+                        downloadFile(_opts, cb) {
+                            cb?.(true);
+                        },
+                        showConfirm(_m, cb) {
+                            cb?.(false);
+                        },
+                        onEvent() {},
+                        offEvent() {},
                     },
-                    HapticFeedback: {
-                        notificationOccurred() {},
-                        impactOccurred() {},
-                        selectionChanged() {},
-                    },
-                    setHeaderColor() {},
-                    setBackgroundColor() {},
-                    setBottomBarColor() {},
-                    ready() {},
-                    expand() {},
-                    close() {},
-                    downloadFile(_opts, cb) {
-                        cb?.(true);
-                    },
-                    showConfirm(_m, cb) {
-                        cb?.(false);
-                    },
-                    onEvent() {},
-                    offEvent() {},
                 },
-            },
-        });
-    }, scheme);
+            });
+        },
+        { colorScheme: scheme, introUnseen: options.introUnseen === true },
+    );
 }
 
 async function installTelegramWithStartParam(page, scheme, startParam) {
@@ -229,7 +244,6 @@ async function mockApi(page, mode) {
                     ...meDone,
                     onboarding_step: "age",
                     account_exists: false,
-                    active_contact_id: null,
                 }),
             });
             return;
@@ -244,7 +258,6 @@ async function mockApi(page, mode) {
                     consent_kind: "personal_data",
                     consent_version: "1",
                     account_exists: true,
-                    active_contact_id: null,
                 }),
             });
             return;
@@ -293,14 +306,6 @@ async function mockApi(page, mode) {
             });
             return;
         }
-        if (mode === "empty" && path === "/api/v1/me") {
-            await route.fulfill({
-                status: 200,
-                contentType: "application/json",
-                body: JSON.stringify({ ...meDone, active_contact_id: null }),
-            });
-            return;
-        }
         if (path === "/api/v1/contacts") {
             const contacts =
                 mode === "empty" ? [] : mode === "paired" ? [contact, pairedContact] : [contact];
@@ -313,7 +318,7 @@ async function mockApi(page, mode) {
         }
         if (path === "/api/v1/rules/pending") {
             const items =
-                mode === "paired" || mode === "home-pending"
+                mode === "paired"
                     ? [
                           {
                               id: sharedPending.id,
@@ -335,12 +340,7 @@ async function mockApi(page, mode) {
             return;
         }
         if (path.endsWith("/rules")) {
-            const rules =
-                mode === "home-rules-empty"
-                    ? []
-                    : mode === "paired" || mode === "home-pending"
-                      ? [rule, sharedPending]
-                      : [rule];
+            const rules = mode === "paired" ? [rule, sharedPending] : [rule];
             await route.fulfill({
                 status: 200,
                 contentType: "application/json",
@@ -380,6 +380,32 @@ async function mockApi(page, mode) {
         }
         if (path === "/api/v1/me/consents/revoke" || path === "/api/v1/me/delete") {
             await route.fulfill({ status: 204, body: "" });
+            return;
+        }
+        if (path === "/api/v1/compose") {
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    safety: "ok",
+                    applied_rules: [],
+                    choice_token: "choice",
+                    variants: [
+                        {
+                            kind: "softer",
+                            text: "Мне обидно, что так вышло. Давай обсудим, как нам быть.",
+                        },
+                        {
+                            kind: "firmer",
+                            text: "Я просил об этом. Мне важно, чтобы мы это выполняли.",
+                        },
+                        {
+                            kind: "check",
+                            text: "Ты опять не сделал то, что обещал. Сколько можно?",
+                        },
+                    ],
+                }),
+            });
             return;
         }
         if (path === "/api/v1/decode") {
@@ -484,44 +510,39 @@ async function captureScheme(browser, baseUrl, scheme) {
     await shot(unauthorized, `${scheme}-gate-unauthorized`);
     await unauthorized.close();
 
-    const homePending = await openApp(browser, baseUrl, scheme, "home-pending");
-    await homePending.waitForSelector("text=Ждёт вашего ответа");
-    await homePending.waitForSelector("text=извиняться спокойно");
-    await shot(homePending, `${scheme}-home-pending`);
-    await homePending.close();
-
-    const homeRules = await openApp(browser, baseUrl, scheme, "app");
-    await homeRules.waitForSelector("text=Мои правила для Аня");
-    await homeRules.waitForSelector("text=не повышать голос");
-    await shot(homeRules, `${scheme}-home-rules`);
-    await homeRules.close();
-
-    const homeRulesEmpty = await openApp(browser, baseUrl, scheme, "home-rules-empty");
-    await homeRulesEmpty.waitForSelector("text=Договоритесь о первом правиле");
-    await shot(homeRulesEmpty, `${scheme}-home-rules-empty`);
-    await homeRulesEmpty.close();
+    const intro = await newSettledPage(browser);
+    await installTelegram(intro, scheme, { introUnseen: true });
+    await mockApi(intro, "app");
+    await intro.goto(baseUrl, { waitUntil: "networkidle" });
+    await intro.waitForSelector("text=Помогаю написать важное сообщение твоими словами");
+    await intro.waitForSelector("text=Текст не сохраняется");
+    await shot(intro, `${scheme}-onboarding-intro`);
+    await intro.getByRole("button", { name: "Попробовать на примере" }).click();
+    await intro.waitForSelector("text=Твой черновик");
+    await intro.waitForSelector("text=Мне обидно, что так вышло");
+    await shot(intro, `${scheme}-intro-example`);
+    await intro.close();
 
     const home = await openApp(browser, baseUrl, scheme, "paired");
-    await home.waitForSelector("text=С кем сегодня важный разговор?");
-    await home.waitForSelector("text=@svoi_test_bot");
-    await home.waitForSelector("text=извиняться спокойно");
+    await home.waitForSelector("text=Что сделать с сообщением?");
     await shot(home, `${scheme}-home`);
-    await home.getByRole("button", { name: "Сменить" }).click();
-    await home.waitForSelector("text=С кем разговор");
+    await home.getByRole("button", { name: "Для кого: без контакта" }).click();
+    await home.waitForSelector("text=Аня");
     await shot(home, `${scheme}-home-picker`);
     await home.close();
 
     const emptyHome = await openApp(browser, baseUrl, scheme, "empty");
-    await emptyHome.waitForSelector("text=Пока никого нет рядом");
-    await shot(emptyHome, `${scheme}-home-empty`);
+    await emptyHome.waitForSelector("text=Что сделать с сообщением?");
     await emptyHome.getByRole("button", { name: "Люди", exact: true }).click();
     await emptyHome.waitForSelector("text=Добавить контакт");
     await shot(emptyHome, `${scheme}-people-empty`);
     await emptyHome.close();
 
     const people = await openApp(browser, baseUrl, scheme, "paired");
-    await people.waitForSelector("text=С кем сегодня важный разговор?");
+    await people.waitForSelector("text=Что сделать с сообщением?");
     await people.getByRole("button", { name: "Люди", exact: true }).click();
+    await people.waitForSelector("text=Ждёт вашего ответа");
+    await people.waitForSelector("text=извиняться спокойно");
     await people.waitForSelector("text=Боря");
     await shot(people, `${scheme}-people`);
     await people.getByRole("button", { name: /Аня/ }).first().click();
@@ -605,14 +626,13 @@ async function captureScheme(browser, baseUrl, scheme) {
         ["decode-limit", "decode-limit", "Новые разборы появятся завтра"],
     ]) {
         const decode = await openApp(browser, baseUrl, scheme, mode);
-        await decode.waitForSelector("text=С кем сегодня важный разговор?");
-        await decode.getByRole("button", { name: "Вставить и разобрать" }).click();
-        await decode.waitForSelector("text=Вставить из буфера");
+        await decode.waitForSelector("text=Что сделать с сообщением?");
+        await decode.getByRole("radio", { name: /Расшифровать/ }).click();
+        await decode.locator("textarea").fill("синтетическое входящее сообщение для скриншота");
         if (mode === "decode-streaming") {
             await shot(decode, `${scheme}-decode-input`);
         }
-        await decode.locator("textarea").fill("синтетическое входящее сообщение для скриншота");
-        await decode.getByRole("button", { name: "Разобрать", exact: true }).click();
+        await decode.getByRole("button", { name: "Расшифровать", exact: true }).click();
         await decode.waitForSelector(`text=${waitText}`);
         await shot(decode, `${scheme}-${name}`);
         if (mode === "decode-limit") {

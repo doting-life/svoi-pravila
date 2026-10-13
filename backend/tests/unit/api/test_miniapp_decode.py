@@ -78,10 +78,6 @@ from svoi_pravila.application.use_cases.decode_incoming import DecodeIncoming, D
 from svoi_pravila.application.use_cases.get_onboarding_step import GetOnboardingStep
 from svoi_pravila.application.use_cases.get_user_by_id import GetUserById
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
-from svoi_pravila.application.use_cases.set_active_contact import (
-    SetActiveContact,
-    SetActiveContactCommand,
-)
 from svoi_pravila.config import Environment
 from svoi_pravila.domain.enums import RelationshipKind, RuleCategory, UsageSurface, VariantKind
 from svoi_pravila.domain.ids import ContactId
@@ -236,7 +232,7 @@ def _app(
     )
 
 
-async def _activate_contact(world: AppWorld, telegram_id: int = _TG) -> ContactId:
+async def _create_contact(world: AppWorld, telegram_id: int = _TG) -> ContactId:
     user = await world.ensure_granted_user(telegram_id)
     contact = (
         await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
@@ -247,9 +243,6 @@ async def _activate_contact(world: AppWorld, telegram_id: int = _TG) -> ContactI
             )
         )
     ).contact
-    await SetActiveContact(world.uow_factory, world.catalog).execute(
-        SetActiveContactCommand(actor_id=user.id, contact_id=contact.id)
-    )
     return contact.id
 
 
@@ -267,7 +260,7 @@ def world() -> AppWorld:
 
 @pytest.mark.unit
 async def test_decode_completed_event_order_and_miniapp_surface(world: AppWorld) -> None:
-    await _activate_contact(world)
+    contact_id = await _create_contact(world)
     gen = FakeTextGenerator(stream_chunks=("a", "b"), decode_result=_ok_result())
     bundle = build_miniapp_decode_bundle(world, generator=gen)
     app = _app(world, bundle)
@@ -275,7 +268,7 @@ async def test_decode_completed_event_order_and_miniapp_surface(world: AppWorld)
         response = await client.post(
             "/api/v1/decode",
             headers=_auth(),
-            json={"text": "привет, как дела?"},
+            json={"text": "привет, как дела?", "contact_id": str(contact_id)},
         )
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
@@ -291,6 +284,60 @@ async def test_decode_completed_event_order_and_miniapp_surface(world: AppWorld)
     assert completed["applied_rule_template"] == load_applied_rule_template()
     assert bundle.sink.events
     assert all(event.surface is UsageSurface.MINIAPP for event in bundle.sink.events)
+
+
+@pytest.mark.unit
+async def test_decode_without_contact_has_no_rule_source_and_no_rules(world: AppWorld) -> None:
+    await _create_contact(world)
+    gen = FakeTextGenerator(stream_chunks=("a",), decode_result=_ok_result())
+    bundle = build_miniapp_decode_bundle(world, generator=gen)
+    app = _app(world, bundle)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/decode",
+            headers=_auth(),
+            json={"text": "привет, как дела?"},
+        )
+    assert response.status_code == 200
+    completed = _parse_sse(response.text)[-1][1]
+    assert completed["rule_source_token"] is None
+    assert gen.decode_stream_calls[0].relationship is RelationshipKind.OTHER
+    assert gen.decode_stream_calls[0].rules == ()
+
+
+@pytest.mark.unit
+async def test_decode_with_contact_uses_its_relationship(world: AppWorld) -> None:
+    contact_id = await _create_contact(world)
+    gen = FakeTextGenerator(stream_chunks=("a",), decode_result=_ok_result())
+    app = _app(world, build_miniapp_decode_bundle(world, generator=gen))
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.post(
+            "/api/v1/decode",
+            headers=_auth(),
+            json={"text": "привет, как дела?", "contact_id": str(contact_id)},
+        )
+    assert response.status_code == 200
+    assert gen.decode_stream_calls[0].relationship is RelationshipKind.PARTNER
+
+
+@pytest.mark.unit
+async def test_decode_foreign_unknown_and_malformed_contact_are_404(world: AppWorld) -> None:
+    foreign_contact = await _create_contact(world, telegram_id=_TG + 1)
+    await world.ensure_granted_user(_TG)
+    gen = FakeTextGenerator(stream_chunks=("a",), decode_result=_ok_result())
+    bundle = build_miniapp_decode_bundle(world, generator=gen)
+    app = _app(world, bundle)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        for contact_id in (str(foreign_contact), str(uuid4()), "not-a-uuid"):
+            response = await client.post(
+                "/api/v1/decode",
+                headers=_auth(),
+                json={"text": "привет, как дела?", "contact_id": contact_id},
+            )
+            assert response.status_code == 404
+            assert response.json()["code"] == "not_found"
+    assert gen.decode_stream_calls == []
+    assert bundle.sink.events == []
 
 
 @pytest.mark.unit
@@ -528,7 +575,7 @@ async def test_decode_client_cancel_releases_without_completion(world: AppWorld)
     from svoi_pravila.api.miniapp.decode_sse import DecodeStreamPorts, iter_decode_sse
     from svoi_pravila.domain.ids import TelegramUserId
 
-    user = await world.ensure_granted_user(_TG)
+    await world.ensure_granted_user(_TG)
     ports = DecodeStreamPorts(
         decode_incoming=decode,
         prepared_results=FakePreparedResults(),
@@ -539,9 +586,9 @@ async def test_decode_client_cancel_releases_without_completion(world: AppWorld)
     async def _consume() -> None:
         agen: AsyncGenerator[str] = iter_decode_sse(
             ports,
-            actor=user,
             telegram_user_id=TelegramUserId(_TG),
             text=text,
+            contact_id=None,
         )
         first = await agen.__anext__()
         assert "analysis" in first
@@ -568,7 +615,7 @@ async def test_decode_sse_cancelled_error_propagates(world: AppWorld) -> None:
         def execute(self, command: object) -> AsyncGenerator[object]:
             raise asyncio.CancelledError
 
-    user = await world.ensure_granted_user(_TG)
+    await world.ensure_granted_user(_TG)
     ports = DecodeStreamPorts(
         decode_incoming=_CancelOnExecute(),  # type: ignore[arg-type]
         prepared_results=FakePreparedResults(),
@@ -577,9 +624,9 @@ async def test_decode_sse_cancelled_error_propagates(world: AppWorld) -> None:
     )
     agen = iter_decode_sse(
         ports,
-        actor=user,
         telegram_user_id=TelegramUserId(_TG),
         text="cancel probe",
+        contact_id=None,
     )
     with pytest.raises(asyncio.CancelledError):
         await agen.__anext__()
@@ -598,7 +645,7 @@ async def test_decode_privacy_canary_absent_from_logs(
     world: AppWorld,
     capture_log_events: Callable[[], list[dict[str, Any]]],
 ) -> None:
-    await _activate_contact(world)
+    contact_id = await _create_contact(world)
     prepared = FakePreparedResults()
     sources = FakeRuleSources()
     gen = FakeTextGenerator(
@@ -620,7 +667,11 @@ async def test_decode_privacy_canary_absent_from_logs(
     )
     app = _app(world, bundle)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        await client.post("/api/v1/decode", headers=_auth(), json={"text": _CANARY})
+        await client.post(
+            "/api/v1/decode",
+            headers=_auth(),
+            json={"text": _CANARY, "contact_id": str(contact_id)},
+        )
     blob = " ".join(str(event) for event in capture_log_events())
     assert _CANARY not in blob
     assert prepared.items
@@ -635,7 +686,7 @@ async def test_decode_privacy_canary_absent_from_logs(
 
 @pytest.mark.unit
 async def test_suggest_from_decode_ok_and_unavailable(world: AppWorld) -> None:
-    contact_id = await _activate_contact(world)
+    contact_id = await _create_contact(world)
     sources = FakeRuleSources()
     gen = FakeTextGenerator()
     gen.suggest_rule_result = SuggestRuleProposed(
@@ -669,7 +720,7 @@ async def test_suggest_from_decode_ok_and_unavailable(world: AppWorld) -> None:
 
 @pytest.mark.unit
 async def test_suggest_from_decode_crisis_returns_support_copy(world: AppWorld) -> None:
-    contact_id = await _activate_contact(world)
+    contact_id = await _create_contact(world)
     sources = FakeRuleSources()
     bundle = build_miniapp_decode_bundle(world, rule_sources=sources)
     token = await sources.store(
@@ -692,7 +743,7 @@ async def test_suggest_from_decode_crisis_returns_support_copy(world: AppWorld) 
 
 @pytest.mark.unit
 async def test_suggest_from_decode_service_budget_exhausted(world: AppWorld) -> None:
-    contact_id = await _activate_contact(world)
+    contact_id = await _create_contact(world)
     sources = FakeRuleSources()
     bundle = build_miniapp_decode_bundle(
         world,
@@ -728,7 +779,7 @@ async def test_seal_helper_parity_insert_and_rule_source_token() -> None:
             telegram_user_id=_TG,
             incoming_text="incoming",
             completed=completed,
-            active_contact_id=ContactId(uuid4()),
+            contact_id=ContactId(uuid4()),
         ),
     )
     assert all(query is not None and query.startswith("p_") for query in sealed.insert_queries)
@@ -755,7 +806,7 @@ async def test_seal_helper_skips_empty_variant_text() -> None:
             telegram_user_id=_TG,
             incoming_text="incoming",
             completed=DecodeCompleted(analysis="a", result=result),
-            active_contact_id=None,
+            contact_id=None,
         ),
     )
     assert sealed.insert_queries[0] is None
@@ -779,7 +830,7 @@ async def test_seal_helper_non_ok_safety_yields_null_tokens() -> None:
             telegram_user_id=_TG,
             incoming_text="incoming",
             completed=DecodeCompleted(analysis="a", result=result),
-            active_contact_id=ContactId(uuid4()),
+            contact_id=ContactId(uuid4()),
         ),
     )
     assert sealed.insert_queries == (None,)

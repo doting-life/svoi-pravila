@@ -5,6 +5,7 @@ import { EmptyState } from "./components/EmptyState";
 import { LogoBubbles } from "./components/icons";
 import { ErrorView, LoadingView } from "./components/StatusViews";
 import { TabBar } from "./components/TabBar";
+import { useIntro } from "./hooks/useIntro";
 import { useMe, type Me } from "./hooks/useMe";
 import { usePendingRules } from "./hooks/usePendingRules";
 import type { RuleCategory } from "./hooks/useRules";
@@ -34,6 +35,7 @@ import { InviteScreen } from "./screens/InviteScreen";
 import { LimitScreen } from "./screens/LimitScreen";
 import { OnboardingAgeScreen } from "./screens/OnboardingAgeScreen";
 import { OnboardingConsentScreen } from "./screens/OnboardingConsentScreen";
+import { OnboardingIntroScreen } from "./screens/OnboardingIntroScreen";
 import { PeopleScreen } from "./screens/PeopleScreen";
 import { PrivacyScreen } from "./screens/PrivacyScreen";
 import {
@@ -51,7 +53,6 @@ export type AppProps = {
 type LocalOverrides = {
     readonly source: Me;
     readonly decodesUsed: number;
-    readonly activeContactId: string | null | undefined;
 };
 
 function Page({ children, tabs }: { readonly children: ReactNode; readonly tabs?: ReactNode }) {
@@ -74,21 +75,22 @@ function MiniappShell({
 }) {
     const me = useMe();
     const pendingRules = usePendingRules();
-    const [nav, setNav] = useState<NavigationState>(() => {
-        const stack: OverlayScreen[] = [];
-        if (telegram.startParam?.startsWith("inv_") === true) {
-            stack.push({ name: "invite" });
-        }
-        return createInitialNavigation(stack);
-    });
-    const [forceConsentGate, setForceConsentGate] = useState(false);
-    const [local, setLocal] = useState<LocalOverrides | null>(null);
     const [focusPending] = useState(() => {
         if (typeof window === "undefined") {
             return false;
         }
         return new URLSearchParams(window.location.search).get("view") === "pending";
     });
+    const [nav, setNav] = useState<NavigationState>(() => {
+        const stack: OverlayScreen[] = [];
+        if (telegram.startParam?.startsWith("inv_") === true) {
+            stack.push({ name: "invite" });
+        }
+        return createInitialNavigation(stack, focusPending ? "people" : "home");
+    });
+    const [forceConsentGate, setForceConsentGate] = useState(false);
+    const [local, setLocal] = useState<LocalOverrides | null>(null);
+    const intro = useIntro(telegram);
 
     useEffect(() => {
         const showBack =
@@ -179,25 +181,12 @@ function MiniappShell({
     }
 
     const overrides = local !== null && local.source === data ? local : null;
-    const activeContactId =
-        overrides !== null && overrides.activeContactId !== undefined
-            ? overrides.activeContactId
-            : data.active_contact_id;
     const decodeRemaining = Math.max(0, data.decode_remaining - (overrides?.decodesUsed ?? 0));
-
-    const activateLocally = (contactId: string) => {
-        setLocal({
-            source: data,
-            decodesUsed: overrides?.decodesUsed ?? 0,
-            activeContactId: contactId,
-        });
-    };
 
     const recordDecodeUsed = () => {
         setLocal({
             source: data,
             decodesUsed: (overrides?.decodesUsed ?? 0) + 1,
-            activeContactId: overrides?.activeContactId,
         });
     };
 
@@ -223,41 +212,44 @@ function MiniappShell({
 
     switch (screen.name) {
         case "home":
+            if (intro.state === "loading") {
+                return (
+                    <Page>
+                        <LoadingView />
+                    </Page>
+                );
+            }
+            if (intro.state === "show") {
+                return (
+                    <Page>
+                        <OnboardingIntroScreen
+                            botUsername={data.bot_username}
+                            onDismiss={intro.markSeen}
+                            onTryExample={() => {
+                                intro.markSeen();
+                                push({
+                                    name: "compose",
+                                    mode: "check",
+                                    draft: ru.introExampleDraft,
+                                    contactId: null,
+                                    title: ru.introExampleTitle,
+                                });
+                            }}
+                        />
+                    </Page>
+                );
+            }
             return (
                 <Page tabs={tabs}>
                     <HomeScreen
-                        telegram={telegram}
-                        activeContactId={activeContactId}
-                        botUsername={data.bot_username}
-                        pendingRules={pendingRules}
-                        focusPending={focusPending}
-                        onOpenDecode={() => {
-                            push({ name: "decode" });
+                        textMax={data.incoming_text_max_chars}
+                        onSubmit={({ mode, draft, contactId }) => {
+                            if (mode === "decode") {
+                                push({ name: "decode", draft, contactId });
+                                return;
+                            }
+                            push({ name: "compose", mode, draft, contactId });
                         }}
-                        onOpenCompose={() => {
-                            push({ name: "compose" });
-                        }}
-                        onOpenPeople={() => {
-                            setNav(selectRoot("people"));
-                        }}
-                        onOpenContactRules={(contact) => {
-                            push({
-                                name: "contactDetail",
-                                contactId: contact.id,
-                                label: contact.label,
-                                relationship: contact.relationship,
-                                paired: contact.paired,
-                            });
-                        }}
-                        onAddRule={(contact) => {
-                            push({
-                                name: "addRule",
-                                contactId: contact.id,
-                                label: contact.label,
-                                paired: contact.paired,
-                            });
-                        }}
-                        onActivated={activateLocally}
                     />
                 </Page>
             );
@@ -265,8 +257,9 @@ function MiniappShell({
             return (
                 <Page tabs={tabs}>
                     <PeopleScreen
-                        activeContactId={activeContactId}
                         telegram={telegram}
+                        pendingRules={pendingRules}
+                        focusPending={focusPending}
                         pendingByContact={
                             pendingRules.status === "success"
                                 ? pendingRules.data.reduce<Record<string, number>>((acc, item) => {
@@ -308,10 +301,10 @@ function MiniappShell({
                     <DecodeScreen
                         telegram={telegram}
                         displayTimezone={data.display_timezone}
-                        activeContactId={activeContactId ?? null}
+                        initialText={screen.draft}
+                        initialContactId={screen.contactId}
                         decodeRemaining={decodeRemaining}
                         onDecodeUsed={recordDecodeUsed}
-                        onActivated={activateLocally}
                         {...(fetchImpl !== undefined ? { fetchImpl } : {})}
                         onEditSuggestion={(contact, category, text) => {
                             push({
@@ -341,8 +334,11 @@ function MiniappShell({
                 <Page>
                     <ComposeScreen
                         telegram={telegram}
-                        activeContactId={activeContactId ?? null}
-                        onActivated={activateLocally}
+                        mode={screen.mode}
+                        {...(screen.title !== undefined ? { title: screen.title } : {})}
+                        draft={screen.draft}
+                        contactId={screen.contactId}
+                        draftMax={data.incoming_text_max_chars}
                         onLimit={(kind, message) => {
                             setNav((current) =>
                                 replaceTop(current, { name: "limit", kind, message }),
@@ -383,7 +379,6 @@ function MiniappShell({
                         label={screen.label}
                         relationship={screen.relationship}
                         paired={screen.paired}
-                        activeContactId={activeContactId}
                         displayTimezone={data.display_timezone}
                         telegram={telegram}
                         onAddRule={() => {
@@ -400,7 +395,6 @@ function MiniappShell({
                         onRenamed={(label) => {
                             setNav((current) => replaceTop(current, { ...screen, label }));
                         }}
-                        onActivated={activateLocally}
                     />
                 </Page>
             );

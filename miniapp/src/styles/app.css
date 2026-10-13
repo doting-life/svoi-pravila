@@ -474,61 +474,6 @@ a:hover {
     white-space: pre-line;
 }
 
-.home-rules-preview {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.home-rules-preview__item {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-}
-
-.home-decode-row,
-.home-compose-row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    width: 100%;
-    padding: 14px 16px;
-    border: 1px solid var(--line);
-    border-radius: var(--radius-md);
-    background: var(--accent-soft);
-    color: var(--ink);
-    text-align: left;
-    cursor: pointer;
-}
-
-.home-decode-row__text,
-.home-compose-row__text {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-}
-
-.home-decode-row__title,
-.home-compose-row__title {
-    font-weight: 600;
-}
-
-.home-decode-row__cta,
-.home-compose-row__cta {
-    color: var(--accent);
-    font-size: 14px;
-}
-
-.home-action-stack {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
 .tab-bar__badge {
     position: absolute;
     top: 2px;
@@ -602,6 +547,11 @@ a:hover {
     background: var(--accent-soft);
     color: var(--accent);
     font-weight: 600;
+}
+
+.avatar--empty {
+    background: var(--sunken);
+    color: var(--ink-3);
 }
 
 .avatar--sm {
@@ -1115,34 +1065,96 @@ a:hover {
 
 /* Home */
 
-.contact-card {
-    flex-direction: row;
-    align-items: center;
-    gap: 12px;
-    padding: 14px 16px;
+.mode-cards {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
 }
 
-.contact-card__body {
+.mode-card {
+    position: relative;
+    display: flex;
+}
+
+.mode-card__body {
     flex: 1;
-    min-width: 0;
+    min-height: 76px;
+    padding: 12px 10px;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    cursor: pointer;
+    transition:
+        background-color var(--motion-fast) ease,
+        border-color var(--motion-fast) ease;
 }
 
-.contact-card__eyebrow {
-    font-size: 12px;
-    color: var(--ink-3);
-}
-
-.contact-card__name {
-    font-size: 16px;
+.mode-card__title {
+    font-size: 15px;
     font-weight: 600;
 }
 
-.contact-card__relation {
-    font-weight: 400;
+.mode-card__hint {
+    font-size: 12px;
+    line-height: 16px;
     color: var(--ink-3);
+}
+
+.mode-card .choice-input:checked + .mode-card__body {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+}
+
+.choice-input:focus-visible + .mode-card__body {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.intro-close {
+    align-self: flex-end;
+}
+
+.intro-steps {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.intro-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+}
+
+.intro-step__number {
+    flex: none;
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.intro-step__title {
+    display: block;
+    font-weight: 600;
+}
+
+.intro-step__caption {
+    display: block;
+    font-size: 14px;
+    line-height: 20px;
+    color: var(--ink-2);
 }
 
 /* People */
@@ -1201,12 +1213,6 @@ a:hover {
     display: flex;
     align-items: center;
     gap: 14px;
-}
-
-.detail-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
 }
 
 .detail-header__text {
@@ -1290,7 +1296,19 @@ a:hover {
     background: var(--sunken);
 }
 
+.contact-chip {
+    max-width: 100%;
+}
+
+.contact-chip__label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .contact-chip > svg {
+    flex: none;
     color: var(--ink-3);
 }
 

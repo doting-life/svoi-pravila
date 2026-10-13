@@ -5,6 +5,7 @@ import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
 import { Card } from "../components/Card";
 import { ChevronRightIcon, PlusIcon } from "../components/icons";
+import { PendingRulesBlock, type PendingRulesState } from "../components/PendingRulesBlock";
 import { ScreenHeader } from "../components/ScreenHeader";
 import { EmptyView, ErrorView, LoadingView } from "../components/StatusViews";
 import type { Contact } from "../hooks/useContacts";
@@ -14,15 +15,17 @@ import { ContactFormSheet, type ContactFormInput } from "../sheets/ContactFormSh
 import type { TelegramAdapter } from "../telegram/webapp";
 
 export type PeopleScreenProps = {
-    readonly activeContactId: string | null | undefined;
     readonly telegram: TelegramAdapter;
+    readonly pendingRules: PendingRulesState;
+    readonly focusPending?: boolean;
     readonly pendingByContact?: Readonly<Record<string, number>>;
     readonly onOpenContact: (contact: Contact) => void;
 };
 
 export function PeopleScreen({
-    activeContactId,
     telegram,
+    pendingRules,
+    focusPending = false,
     pendingByContact = {},
     onOpenContact,
 }: PeopleScreenProps) {
@@ -51,6 +54,12 @@ export function PeopleScreen({
                 lead={ru.contactsLead}
             />
 
+            <PendingRulesBlock
+                telegram={telegram}
+                pending={pendingRules}
+                focusPending={focusPending}
+            />
+
             {contacts.status === "loading" ? <LoadingView /> : null}
             {contacts.status === "error" ? (
                 <ErrorView message={contacts.error.message} onRetry={contacts.refetch} />
@@ -61,7 +70,6 @@ export function PeopleScreen({
             {contacts.status === "success" && contacts.data.length > 0 ? (
                 <ul className="people-list">
                     {contacts.data.map((contact) => {
-                        const isActive = contact.id === activeContactId;
                         const pendingCount = pendingByContact[contact.id] ?? 0;
                         return (
                             <li key={contact.id}>
@@ -78,7 +86,6 @@ export function PeopleScreen({
                                             <span className="person__name">{contact.label}</span>
                                             <span className="person__meta">
                                                 {ru.relationships[contact.relationship]}
-                                                {isActive ? ` · ${ru.contactsActiveBadge}` : ""}
                                             </span>
                                         </span>
                                         {pendingCount > 0 ? (

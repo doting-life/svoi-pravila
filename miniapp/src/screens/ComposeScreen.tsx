@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useApiClient } from "../api/ApiContext";
 import { unwrapApiResult } from "../api/request";
@@ -8,16 +8,16 @@ import { Card } from "../components/Card";
 import { ChipGroup } from "../components/ChipGroup";
 import { ContactPicker } from "../components/ContactPicker";
 import { TextArea } from "../components/Field";
-import { Avatar } from "../components/Avatar";
-import { ChevronDownIcon, ClipboardIcon } from "../components/icons";
+import { ContactChip } from "../components/ContactChip";
+import { ClipboardIcon } from "../components/icons";
+import { QuoteCard } from "../components/QuoteCard";
 import { ScreenHeader } from "../components/ScreenHeader";
 import { Skeleton } from "../components/Skeleton";
 import { partnerSendUrl } from "../compose/partnerSendUrl";
 import { useAsyncResource } from "../hooks/useAsyncResource";
 import { useContacts, type Contact } from "../hooks/useContacts";
-import { useMe } from "../hooks/useMe";
 import { ru } from "../localization/ru";
-import type { LimitKind } from "../navigation/stack";
+import type { ComposeMode, LimitKind } from "../navigation/stack";
 import { codePointLength } from "../rules/ruleText";
 import type { TelegramAdapter } from "../telegram/webapp";
 
@@ -35,19 +35,21 @@ const GOAL_OPTIONS: readonly { readonly value: ComposeGoal; readonly label: stri
     { value: "reconnect", label: ru.composeGoals.reconnect },
 ];
 
-const KIND_ORDER: readonly VariantKind[] = ["check", "softer", "firmer"];
+const KIND_ORDER: Readonly<Record<ComposeMode, readonly VariantKind[]>> = {
+    check: ["check", "softer", "firmer"],
+    soften: ["softer", "firmer", "check"],
+};
 
 export type ComposePartnerProps =
-    | { readonly mode: "fixed" }
-    | {
-          readonly mode: "selectable";
-          readonly contacts: ReturnType<typeof useContacts>;
-          readonly activeContactId: string | null;
-          readonly onActivated: (contactId: string) => void;
-      };
+    | { readonly mode: "inline" }
+    | { readonly mode: "selectable"; readonly contacts: ReturnType<typeof useContacts> };
 
 export type ComposeEditorProps = {
     readonly telegram: TelegramAdapter;
+    readonly mode: ComposeMode;
+    readonly title?: string;
+    /** Request variants once on mount when a draft is already provided. */
+    readonly autoRun?: boolean;
     readonly draftMax: number;
     readonly initialDraft: string;
     readonly initialContactId: string | null;
@@ -70,6 +72,8 @@ type Phase =
           readonly variants: EditableVariant[];
           readonly appliedRules: readonly { readonly index: number; readonly text: string }[];
           readonly choiceToken: string;
+          readonly goal: ComposeGoal | null;
+          readonly sourceDraft: string;
       }
     | { readonly kind: "refused" }
     | { readonly kind: "error"; readonly message: string };
@@ -105,17 +109,23 @@ function errorMessageForCode(code: string): string {
 
 function orderedVariants(
     variants: readonly { readonly kind: VariantKind; readonly text: string }[],
+    mode: ComposeMode,
 ): EditableVariant[] {
     const byKind = new Map(variants.map((item) => [item.kind, item.text]));
-    return KIND_ORDER.filter((kind) => byKind.has(kind)).map((kind) => ({
-        kind,
-        text: byKind.get(kind) ?? "",
-    }));
+    return KIND_ORDER[mode]
+        .filter((kind) => byKind.has(kind))
+        .map((kind) => ({
+            kind,
+            text: byKind.get(kind) ?? "",
+        }));
 }
 
 /** Presentational compose editor shared by full-app and inline launches. */
 export function ComposeEditor({
     telegram,
+    mode,
+    title,
+    autoRun = false,
     draftMax,
     initialDraft,
     initialContactId,
@@ -127,13 +137,15 @@ export function ComposeEditor({
     const client = useApiClient();
     const allowContactPicker = partner.mode === "selectable";
     const contacts = partner.mode === "selectable" ? partner.contacts : null;
-    const activeContactId = partner.mode === "selectable" ? partner.activeContactId : null;
-    const onActivated = partner.mode === "selectable" ? partner.onActivated : null;
-    const showClose = partner.mode === "fixed";
+    const showClose = partner.mode === "inline";
+    const screenTitle = title ?? (mode === "soften" ? ru.composeTitle : ru.composeTitleCheck);
+    const showGoals = mode === "soften";
     const [goal, setGoal] = useState<ComposeGoal | null>(null);
     const [contactId, setContactId] = useState<string | null>(initialContactId);
     const [draft, setDraft] = useState(initialDraft);
-    const [phase, setPhase] = useState<Phase>({ kind: "idle" });
+    const [phase, setPhase] = useState<Phase>(
+        autoRun && initialDraft.trim().length > 0 ? { kind: "loading" } : { kind: "idle" },
+    );
     const [pasteHint, setPasteHint] = useState<string | null>(null);
     const [copyHint, setCopyHint] = useState<string | null>(null);
     const [pickerOpen, setPickerOpen] = useState(false);
@@ -170,18 +182,9 @@ export function ComposeEditor({
         }
     };
 
-    const selectContact = async (contact: Contact) => {
+    const selectContact = (contact: Contact) => {
         setPickerOpen(false);
         setContactId(contact.id);
-        if (contacts == null || onActivated == null || contact.id === activeContactId) {
-            return;
-        }
-        const result = await contacts.activateContact(contact.id);
-        if (result.error !== undefined) {
-            telegram.hapticNotification("error");
-            return;
-        }
-        onActivated(contact.id);
     };
 
     const selectNone = () => {
@@ -247,11 +250,27 @@ export function ComposeEditor({
         telegram.hapticNotification("success");
         setPhase({
             kind: "result",
-            variants: orderedVariants(data.variants),
+            variants: orderedVariants(data.variants, mode),
             appliedRules: data.applied_rules,
             choiceToken: data.choice_token,
+            goal,
+            sourceDraft: trimmed,
         });
     };
+
+    const submitRef = useRef(submit);
+    const autoRunStarted = useRef(false);
+
+    useEffect(() => {
+        submitRef.current = submit;
+    });
+
+    useEffect(() => {
+        if (autoRun && !autoRunStarted.current && initialDraft.trim().length > 0) {
+            autoRunStarted.current = true;
+            void submitRef.current();
+        }
+    }, [autoRun, initialDraft]);
 
     const updateVariantText = (kind: VariantKind, text: string) => {
         setPhase((current) => {
@@ -315,6 +334,18 @@ export function ComposeEditor({
         await recordChoiceAndClose(kind, choiceToken);
     };
 
+    const goalChips = (
+        <ChipGroup
+            legend={ru.composeGoalLegend}
+            options={GOAL_OPTIONS}
+            value={goal}
+            onChange={setGoal}
+            onClear={() => {
+                setGoal(null);
+            }}
+        />
+    );
+
     const reset = () => {
         setDraft("");
         setCopyHint(null);
@@ -324,7 +355,7 @@ export function ComposeEditor({
     if (phase.kind === "loading") {
         return (
             <section className="screen" aria-labelledby="compose-title">
-                <ScreenHeader title={ru.composeTitle} titleId="compose-title" />
+                <ScreenHeader title={screenTitle} titleId="compose-title" />
                 <div role="status">
                     <span className="visually-hidden">{ru.loading}</span>
                     <Skeleton shape="block" />
@@ -338,7 +369,23 @@ export function ComposeEditor({
     if (phase.kind === "result") {
         return (
             <section className="screen" aria-labelledby="compose-title">
-                <ScreenHeader title={ru.composeTitle} titleId="compose-title" />
+                <ScreenHeader title={screenTitle} titleId="compose-title" />
+
+                {allowContactPicker ? (
+                    <QuoteCard label={ru.composeYourDraft} text={phase.sourceDraft} />
+                ) : null}
+
+                {showGoals ? goalChips : null}
+                {showGoals && goal !== phase.goal ? (
+                    <Button
+                        variant="outline"
+                        onClick={() => {
+                            void submit();
+                        }}
+                    >
+                        {ru.composeRegenerate}
+                    </Button>
+                ) : null}
 
                 <section className="section" aria-labelledby="compose-results-title">
                     <h2 id="compose-results-title" className="section-title">
@@ -435,39 +482,17 @@ export function ComposeEditor({
 
     return (
         <section className="screen" aria-labelledby="compose-title">
-            <ScreenHeader title={ru.composeTitle} titleId="compose-title" lead={ru.composeLead} />
+            <ScreenHeader title={screenTitle} titleId="compose-title" lead={ru.composeLead} />
 
-            <ChipGroup
-                legend={ru.composeGoalLegend}
-                options={GOAL_OPTIONS}
-                value={goal}
-                onChange={setGoal}
-                onClear={() => {
-                    setGoal(null);
-                }}
-            />
+            {showGoals ? goalChips : null}
 
             {allowContactPicker ? (
-                <button
-                    type="button"
-                    className="contact-chip"
+                <ContactChip
+                    label={selected !== undefined ? selected.label : null}
                     onClick={() => {
                         setPickerOpen(true);
                     }}
-                >
-                    {selected !== undefined ? <Avatar name={selected.label} size="sm" /> : null}
-                    <span>
-                        {selected !== undefined
-                            ? ru.composeFor.replace("{label}", selected.label)
-                            : ru.pickerNone}
-                    </span>
-                    <ChevronDownIcon size={18} />
-                </button>
-            ) : displayLabel != null ? (
-                <div className="contact-chip contact-chip--static">
-                    <Avatar name={displayLabel} size="sm" />
-                    <span>{ru.composeFor.replace("{label}", displayLabel)}</span>
-                </div>
+                />
             ) : null}
 
             <TextArea
@@ -543,15 +568,13 @@ export function ComposeEditor({
             {pickerOpen && allowContactPicker ? (
                 <ContactPicker
                     contacts={contactList}
-                    activeContactId={contactId}
+                    selectedContactId={contactId}
                     noneOption={{
-                        label: ru.pickerNone,
+                        label: ru.contactNoneItem,
                         selected: contactId === null,
                         onSelect: selectNone,
                     }}
-                    onSelect={(contact) => {
-                        void selectContact(contact);
-                    }}
+                    onSelect={selectContact}
                     onClose={() => {
                         setPickerOpen(false);
                     }}
@@ -563,40 +586,28 @@ export function ComposeEditor({
 
 export type ComposeScreenProps = {
     readonly telegram: TelegramAdapter;
-    readonly activeContactId: string | null;
-    readonly onActivated: (contactId: string) => void;
+    readonly mode: ComposeMode;
+    readonly title?: string;
+    readonly draft: string;
+    readonly contactId: string | null;
+    readonly draftMax: number;
     readonly onLimit: (kind: LimitKind, message: string | null) => void;
     readonly onCrisis: (lead: string | null, resources: readonly string[]) => void;
 };
 
-/** Full-app compose (FULL scope via ``tma`` credential). */
+/** Full-app variants screen (FULL scope via ``tma`` credential); requests variants on open. */
 export function ComposeScreen(props: ComposeScreenProps) {
-    const me = useMe();
     const contacts = useContacts();
-    if (me.status === "loading" || me.status === "error") {
-        return (
-            <section className="screen" aria-labelledby="compose-title">
-                <ScreenHeader title={ru.composeTitle} titleId="compose-title" />
-                <div role="status">
-                    <span className="visually-hidden">{ru.loading}</span>
-                    <Skeleton shape="block" />
-                    <Skeleton shape="line" />
-                </div>
-            </section>
-        );
-    }
     return (
         <ComposeEditor
             telegram={props.telegram}
-            draftMax={me.data.incoming_text_max_chars}
-            initialDraft=""
-            initialContactId={props.activeContactId}
-            partner={{
-                mode: "selectable",
-                contacts,
-                activeContactId: props.activeContactId,
-                onActivated: props.onActivated,
-            }}
+            mode={props.mode}
+            {...(props.title !== undefined ? { title: props.title } : {})}
+            autoRun
+            draftMax={props.draftMax}
+            initialDraft={props.draft}
+            initialContactId={props.contactId}
+            partner={{ mode: "selectable", contacts }}
             onLimit={props.onLimit}
             onCrisis={props.onCrisis}
         />

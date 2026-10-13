@@ -57,7 +57,7 @@ from svoi_pravila.application.use_cases._cancelled_budget import (
     CancelledGeneration,
     handle_generation_cancelled,
 )
-from svoi_pravila.application.use_cases._generation_context import load_active_contact_rule_context
+from svoi_pravila.application.use_cases._generation_context import load_contact_rule_context
 from svoi_pravila.application.use_cases._limits import generation_unavailable_from_cache
 from svoi_pravila.domain.enums import (
     LimitKind,
@@ -68,7 +68,7 @@ from svoi_pravila.domain.enums import (
     UsageScenario,
     UsageSurface,
 )
-from svoi_pravila.domain.ids import TelegramUserId, UsageEventId
+from svoi_pravila.domain.ids import ContactId, TelegramUserId, UsageEventId
 from svoi_pravila.domain.product_day import product_day
 from svoi_pravila.domain.typography import humanize_typography
 from svoi_pravila.domain.usage import UsageEvent
@@ -86,6 +86,7 @@ class DecodeIncomingCommand:
     telegram_user_id: TelegramUserId
     incoming_text: str
     surface: UsageSurface
+    contact_id: ContactId | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,7 +162,7 @@ class DecodeIncoming:
         if len(text) > BOUNDED_TEXT_MAX:
             raise IncomingTextTooLong()
 
-        relationship, rules = await self._load_context(command.telegram_user_id)
+        relationship, rules = await self._load_context(command.telegram_user_id, command.contact_id)
         user_key = str(command.telegram_user_id.value)
         surface = command.surface
         if self._ports.crisis_screen.hit(text):
@@ -334,14 +335,14 @@ class DecodeIncoming:
             raise generation_unavailable_from_cache(exc) from exc
 
     async def _load_context(
-        self, telegram_user_id: TelegramUserId
+        self, telegram_user_id: TelegramUserId, contact_id: ContactId | None
     ) -> tuple[RelationshipKind, tuple[RuleContext, ...]]:
         async with self._ports.uow_factory() as uow:
             user = await uow.users.get_by_telegram_id(telegram_user_id)
             if user is None:
                 raise NotFound()
             await require_access(uow, self._ports.catalog, user.id)
-            return await load_active_contact_rule_context(uow, user)
+            return await load_contact_rule_context(uow, user, contact_id)
 
     def _base_event(self, draft: _UsageDraft) -> UsageEvent:
         ended = self._ports.monotonic.monotonic()

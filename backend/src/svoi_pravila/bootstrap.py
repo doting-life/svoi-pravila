@@ -136,7 +136,6 @@ from svoi_pravila.application.use_cases.run_daily_analytics import (
     RunDailyAnalyticsPorts,
 )
 from svoi_pravila.application.use_cases.serve_export_download import ServeExportDownload
-from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
     SuggestRuleFromDecode,
     SuggestRuleFromDecodePorts,
@@ -240,7 +239,6 @@ def _build_miniapp_mount(
             list_contacts=ListContacts(ports.uow_factory, ports.catalog),
             create_contact=CreateContact(ports.uow_factory, ports.catalog, ports.ids, ports.clock),
             rename_contact=RenameContact(ports.uow_factory, ports.catalog),
-            set_active_contact=SetActiveContact(ports.uow_factory, ports.catalog),
             create_invite=CreateInvite(
                 ports.uow_factory,
                 ports.catalog,

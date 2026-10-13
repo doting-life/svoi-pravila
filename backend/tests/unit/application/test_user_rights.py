@@ -261,11 +261,6 @@ async def test_delete_and_export(world: AppWorld) -> None:
         ApproveRuleCommand(invitee.id, shared.rule.id)
     )
     pseudo = FakePseudonymizer()
-    async with world.uow_factory() as uow:
-        stored = await uow.users.get(inviter.id)
-        assert stored is not None
-        await uow.users.update(stored.set_active_contact(contact.id))
-        await uow.commit()
     analytics_a = pseudo.pseudonymize("analytics", str(inviter.telegram_user_id.value))
     analytics_b = pseudo.pseudonymize("analytics", str(invitee.telegram_user_id.value))
     async with world.uow_factory() as uow:

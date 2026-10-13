@@ -57,3 +57,10 @@ def test_record_invalid_uses_none_and_other_for_absent_or_unknown_values() -> No
     monitor.record_invalid(InvalidOutputReason.LENGTH, None, "surprise")
     assert _invalid_count("length", "none", "none") == absent + 1
     assert _invalid_count("length", "none", "other") == unknown + 1
+
+
+@pytest.mark.unit
+def test_record_check_empty_increments_its_unlabelled_counter() -> None:
+    before = REGISTRY.get_sample_value("sp_variant_check_empty_total") or 0.0
+    MetricsVariantPolicyMonitor().record_check_empty()
+    assert REGISTRY.get_sample_value("sp_variant_check_empty_total") == before + 1

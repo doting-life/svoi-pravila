@@ -299,6 +299,43 @@ async def test_run_compares_check_with_references_after_whitespace_normalization
 
 
 @pytest.mark.unit
+async def test_run_substitutes_the_draft_for_an_empty_check_and_counts_it() -> None:
+    case = RewriteCase(id="c", draft="ну что ребята", check_expected=("ну что ребята",))
+    gen = FakeTextGenerator(
+        rewrite_result=_result(
+            Variant(text="", kind=VariantKind.CHECK),
+            Variant(text="Ну что, ребята, как вы", kind=VariantKind.SOFTER),
+            Variant(text="Ну что, ребята", kind=VariantKind.FIRMER),
+        )
+    )
+    result = await run_rewrite_eval(gen, [case], _params(repeat=2), SpendTracker())
+    first, second = result.records
+    assert first.check_empty is True
+    assert first.variants[0].text == "ну что ребята"
+    assert first.variants[0].check_ok is True
+    assert first.variants[0].violations == ()
+    assert second.check_empty is True
+    report = render_report([ModelEval("m", result, 0)])
+    assert "- check_empty (draft substituted): 2" in report
+    assert "| 1 / 2 | 2 |" not in report
+    assert "| 2 / 2 | 2 |" in report
+
+
+@pytest.mark.unit
+async def test_run_does_not_count_a_filled_check_as_empty() -> None:
+    gen = FakeTextGenerator(
+        rewrite_result=_result(
+            Variant(text=_DRAFT, kind=VariantKind.CHECK),
+            Variant(text="Пожалуйста, посиди дома", kind=VariantKind.SOFTER),
+            Variant(text="Жди дома", kind=VariantKind.FIRMER),
+        )
+    )
+    result = await run_rewrite_eval(gen, [_case("a")], _params(), SpendTracker())
+    assert result.records[0].check_empty is False
+    assert "- check_empty (draft substituted): 0" in render_report([ModelEval("m", result, 0)])
+
+
+@pytest.mark.unit
 async def test_run_records_slot_and_finish_reason_of_invalid_attempts() -> None:
     gen = FakeTextGenerator()
     gen.rewrite_error = InvalidGenerationOutput(

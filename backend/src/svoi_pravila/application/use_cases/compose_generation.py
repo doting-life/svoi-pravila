@@ -44,6 +44,7 @@ from svoi_pravila.application.ports.quota_gate import QuotaExhausted, QuotaGate,
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.ports.usage_event_sink import UsageEventSink
 from svoi_pravila.application.ports.variant_policy_monitor import VariantPolicyMonitor
+from svoi_pravila.application.rewrite_variants import fill_empty_check
 from svoi_pravila.application.use_cases._access import require_access
 from svoi_pravila.application.use_cases._cancelled_budget import (
     CancelledGeneration,
@@ -295,10 +296,13 @@ class ComposeGeneration:
         return await self._ports.generator.rewrite(self._generation_request(material))
 
     def _finish_variants(self, draft: str, generated: RewriteResult) -> tuple[Variant, ...]:
-        """Apply human typography, then report (never block) policy violations."""
+        """Fill an empty ``check`` with the draft, apply typography, report policy violations."""
+        variants, check_empty = fill_empty_check(draft, generated.variants)
+        if check_empty:
+            self._ports.policy_monitor.record_check_empty()
         finished = tuple(
             Variant(text=humanize_typography(draft, variant.text), kind=variant.kind)
-            for variant in generated.variants
+            for variant in variants
         )
         for variant in finished:
             for violation in check_variant_policy(draft, variant.kind, variant.text):

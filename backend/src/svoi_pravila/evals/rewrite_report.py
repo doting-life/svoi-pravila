@@ -29,6 +29,7 @@ def _summary(item: ModelEval) -> list[str]:
         f"- runs: {len(records)}",
         *(f"- {outcome.value}: {outcomes.get(outcome, 0)}" for outcome in RunOutcome),
         f"- check_ok: {sum(checks)} / {len(checks)}",
+        f"- check_empty (draft substituted): {sum(r.check_empty for r in records)}",
         f"- latency p50 / p95 ms: {p50:.0f} / {p95:.0f}",
         f"- billable tokens: {item.spent_billable}",
         "",
@@ -106,8 +107,8 @@ def _comparison(evals: list[ModelEval]) -> list[str]:
         "## Model comparison",
         "",
         "| model | status | runs | invalid_output | policy violations | check_ok "
-        "| latency p50 / p95 ms | billable tokens |",
-        "|---|---|---:|---:|---:|---|---|---:|",
+        "| check_empty | latency p50 / p95 ms | billable tokens |",
+        "|---|---|---:|---:|---:|---|---:|---|---:|",
     ]
     for item in evals:
         records = item.result.records
@@ -117,7 +118,7 @@ def _comparison(evals: list[ModelEval]) -> list[str]:
         checks = [v.check_ok for r in records for v in r.variants if v.check_ok is not None]
         lines.append(
             f"| {item.model} | {_status(item)} | {len(records)} | {invalid} | {violations} "
-            f"| {sum(checks)} / {len(checks)} "
+            f"| {sum(checks)} / {len(checks)} | {sum(r.check_empty for r in records)} "
             f"| {percentile(latencies, 50):.0f} / {percentile(latencies, 95):.0f} "
             f"| {item.spent_billable} |"
         )

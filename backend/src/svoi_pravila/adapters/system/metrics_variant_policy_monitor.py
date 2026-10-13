@@ -36,3 +36,7 @@ class MetricsVariantPolicyMonitor:
             slot=variant_slot_label(slot),
             finish_reason=finish_reason_label(finish_reason),
         ).inc()
+
+    def record_check_empty(self) -> None:
+        """Count one answer whose ``check`` slot was empty."""
+        families.VARIANT_CHECK_EMPTY.inc()

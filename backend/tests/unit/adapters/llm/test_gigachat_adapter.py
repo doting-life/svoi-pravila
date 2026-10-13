@@ -1702,6 +1702,48 @@ async def test_rewrite_empty_slots_invalid(
     assert list(call["finish_reasons"]) == ["stop", "stop"]
 
 
+def _rewrite_request() -> RewriteRequest:
+    return RewriteRequest(
+        goal=None,
+        draft="draft",
+        rules=(),
+        relationship=RelationshipKind.FRIEND,
+        deadline_seconds=5.0,
+    )
+
+
+def _slots_payload(check: str, softer: str, firmer: str) -> RewriteOutNoRules:
+    return RewriteOutNoRules.model_validate(
+        {"check": check, "softer": softer, "firmer": firmer, "safety": "ok"}
+    )
+
+
+@pytest.mark.unit
+async def test_rewrite_empty_check_is_accepted_as_no_corrections() -> None:
+    ache = _FakeAche(create_results=[_slots_payload("", "variant softer", "variant firmer")])
+    result = await _generator(ache).rewrite(_rewrite_request())
+    assert [(v.kind, v.text) for v in result.variants] == [
+        (VariantKind.CHECK, ""),
+        (VariantKind.SOFTER, "variant softer"),
+        (VariantKind.FIRMER, "variant firmer"),
+    ]
+    assert result.meta.attempts == 1
+
+
+@pytest.mark.unit
+async def test_rewrite_empty_softer_or_firmer_stays_invalid_even_with_empty_check() -> None:
+    for payload, slot in (
+        (_slots_payload("", "", "variant firmer"), VariantKind.SOFTER),
+        (_slots_payload("", "variant softer", ""), VariantKind.FIRMER),
+    ):
+        with pytest.raises(InvalidGenerationOutput) as exc_info:
+            await _generator(_FakeAche(create_results=[payload, payload])).rewrite(
+                _rewrite_request()
+            )
+        assert exc_info.value.slots == (slot, slot)
+        assert exc_info.value.reasons == (InvalidOutputReason.EMPTY_TEXT,) * 2
+
+
 @pytest.mark.unit
 async def test_length_finish_reason_is_recorded_per_attempt() -> None:
     ache = _FakeAche(finish="length")

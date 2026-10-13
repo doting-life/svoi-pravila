@@ -16,6 +16,7 @@ from svoi_pravila.application.ports.generation import (
     SafetyVerdict,
     TextGenerator,
 )
+from svoi_pravila.application.rewrite_variants import fill_empty_check
 from svoi_pravila.benchmarks.runner import SpendTracker
 from svoi_pravila.domain.enums import VariantKind
 from svoi_pravila.domain.typography import humanize_typography
@@ -64,6 +65,7 @@ class RewriteRunRecord:
     latency_ms: int | None
     billable_tokens: int
     diagnostics: tuple[InvalidDiagnostic, ...] = ()
+    check_empty: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,7 +134,8 @@ async def _call(
             exc.usage.billable,
             diagnostics,
         )
-    variants = tuple(_finish(case, variant.kind, variant.text) for variant in result.variants)
+    filled, check_empty = fill_empty_check(case.draft, result.variants)
+    variants = tuple(_finish(case, variant.kind, variant.text) for variant in filled)
     outcome = RunOutcome.OK if result.safety is SafetyVerdict.OK else RunOutcome.NOT_OK_SAFETY
     return RewriteRunRecord(
         case.id,
@@ -141,6 +144,7 @@ async def _call(
         variants,
         result.meta.latency_ms,
         result.meta.usage.billable,
+        check_empty=check_empty,
     )
 
 

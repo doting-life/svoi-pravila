@@ -201,7 +201,11 @@ def validate_rewrite_slots(
     firmer: str,
     spec: SlotValidation,
 ) -> tuple[tuple[Variant, ...], tuple[int, ...], SafetyVerdict]:
-    """Validate the three slots; return Variants (check, softer, firmer) or empty if not ok."""
+    """Validate the three slots; return Variants (check, softer, firmer) or empty if not ok.
+
+    An empty ``check`` means "no corrections" and is returned as an empty-text variant for
+    the application to replace with the draft; empty ``softer``/``firmer`` are invalid.
+    """
 
     def fail(
         reason: InvalidOutputReason, slot: VariantKind | None = None
@@ -237,6 +241,9 @@ def validate_rewrite_slots(
     kinds = (VariantKind.CHECK, VariantKind.SOFTER, VariantKind.FIRMER)
     texts: list[str] = []
     for text, kind in zip(slots, kinds, strict=True):
+        if kind is VariantKind.CHECK and not text:
+            texts.append(text)
+            continue
         dirty = text_reason(text)
         if dirty is not None:
             raise fail(dirty, kind)

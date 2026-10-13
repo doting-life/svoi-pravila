@@ -25,3 +25,6 @@ class VariantPolicyMonitor(Protocol):
 
         ``slot`` is the defective rewrite slot when known; ``finish_reason`` is the provider's.
         """
+
+    def record_check_empty(self) -> None:
+        """Count one answer whose ``check`` slot was empty and replaced with the draft."""

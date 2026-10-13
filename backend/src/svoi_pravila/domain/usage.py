@@ -6,12 +6,12 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from svoi_pravila.domain.enums import (
-    Firmness,
     LimitKind,
     UsageEventKind,
     UsageOutcome,
     UsageScenario,
     UsageSurface,
+    VariantKind,
 )
 from svoi_pravila.domain.errors import InvalidValueError
 from svoi_pravila.domain.ids import UsageEventId
@@ -41,7 +41,7 @@ class UsageEvent:
     output_tokens: int
     billable_tokens: int
     event_kind: UsageEventKind = UsageEventKind.GENERATION
-    variant_firmness: Firmness | None = None
+    variant_kind: VariantKind | None = None
     limit_kind: LimitKind | None = None
 
     def __post_init__(self) -> None:
@@ -85,8 +85,8 @@ class UsageEvent:
         if self.attempts < 1:
             msg = "attempts must be at least 1"
             raise InvalidValueError(msg)
-        if self.variant_firmness is not None:
-            msg = "generation events must not set variant_firmness"
+        if self.variant_kind is not None:
+            msg = "generation events must not set variant_kind"
             raise InvalidValueError(msg)
 
     def _validate_screened(self) -> None:
@@ -103,7 +103,7 @@ class UsageEvent:
             or self.billable_tokens != 0
             or self.ttfc_ms is not None
             or self.unavailable_kind is not None
-            or self.variant_firmness is not None
+            or self.variant_kind is not None
             or self.limit_kind is not None
         ):
             msg = "screened events must not carry generation metrics"
@@ -123,14 +123,14 @@ class UsageEvent:
             or self.billable_tokens != 0
             or self.ttfc_ms is not None
             or self.unavailable_kind is not None
-            or self.variant_firmness is not None
+            or self.variant_kind is not None
         ):
             msg = "limited events must not carry generation metrics"
             raise InvalidValueError(msg)
 
     def _validate_result_chosen(self) -> None:
-        if self.variant_firmness is None:
-            msg = "result_chosen events require variant_firmness"
+        if self.variant_kind is None:
+            msg = "result_chosen events require variant_kind"
             raise InvalidValueError(msg)
         if self.model is not None or self.prompt_version is not None:
             msg = "result_chosen events must not set model or prompt_version"

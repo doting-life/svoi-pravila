@@ -1,1 +1,0 @@
-"""Soften prompt package resources."""

@@ -8,10 +8,10 @@ from uuid import UUID
 import pytest
 
 from svoi_pravila.domain.enums import (
-    Firmness,
     RuleCategory,
     SuggestionSource,
     SuggestionStatus,
+    VariantKind,
 )
 from svoi_pravila.domain.errors import InvalidTransitionError, InvalidValueError
 from svoi_pravila.domain.ids import ContactId, RuleSuggestionId, UserId
@@ -19,7 +19,7 @@ from svoi_pravila.domain.rule_suggestion import (
     TONE_SIGNAL_WINDOW,
     RuleSuggestion,
     ToneSignal,
-    dominant_firmness,
+    dominant_variant_kind,
 )
 from svoi_pravila.domain.text import RuleText
 
@@ -31,7 +31,7 @@ SUGGESTION_ID = RuleSuggestionId(UUID(int=3))
 
 def _tone(
     *,
-    firmness: Firmness = Firmness.GENTLE,
+    variant_kind: VariantKind | None = VariantKind.SOFTER,
     status: SuggestionStatus = SuggestionStatus.PENDING,
     decided_at: datetime | None = None,
 ) -> RuleSuggestion:
@@ -42,7 +42,7 @@ def _tone(
         source=SuggestionSource.TONE,
         category=RuleCategory.HOW_TO_ASK,
         text=RuleText("Говорить мягко, без резких формулировок"),
-        firmness=firmness,
+        variant_kind=variant_kind,
         status=status,
         created_at=NOW,
         decided_at=decided_at,
@@ -50,8 +50,9 @@ def _tone(
 
 
 @pytest.mark.unit
-def test_tone_suggestion_requires_firmness() -> None:
-    with pytest.raises(InvalidValueError, match="tone suggestion requires firmness"):
+@pytest.mark.parametrize("variant_kind", [None, VariantKind.CHECK])
+def test_tone_suggestion_requires_softer_or_firmer(variant_kind: VariantKind | None) -> None:
+    with pytest.raises(InvalidValueError, match="tone suggestion requires softer or firmer"):
         RuleSuggestion(
             id=SUGGESTION_ID,
             user_id=USER,
@@ -59,7 +60,7 @@ def test_tone_suggestion_requires_firmness() -> None:
             source=SuggestionSource.TONE,
             category=RuleCategory.HOW_TO_ASK,
             text=RuleText("x"),
-            firmness=None,
+            variant_kind=variant_kind,
             status=SuggestionStatus.PENDING,
             created_at=NOW,
             decided_at=None,
@@ -67,8 +68,8 @@ def test_tone_suggestion_requires_firmness() -> None:
 
 
 @pytest.mark.unit
-def test_decode_suggestion_forbids_firmness() -> None:
-    with pytest.raises(InvalidValueError, match="decode suggestion forbids firmness"):
+def test_decode_suggestion_forbids_variant_kind() -> None:
+    with pytest.raises(InvalidValueError, match="decode suggestion forbids variant_kind"):
         RuleSuggestion(
             id=SUGGESTION_ID,
             user_id=USER,
@@ -76,7 +77,7 @@ def test_decode_suggestion_forbids_firmness() -> None:
             source=SuggestionSource.DECODE,
             category=RuleCategory.HOW_TO_ASK,
             text=RuleText("x"),
-            firmness=Firmness.FIRM,
+            variant_kind=VariantKind.FIRMER,
             status=SuggestionStatus.PENDING,
             created_at=NOW,
             decided_at=None,
@@ -91,16 +92,16 @@ def test_create_tone_is_pending() -> None:
         contact_id=CONTACT,
         category=RuleCategory.HOW_TO_ASK,
         text=RuleText("Говорить мягко, без резких формулировок"),
-        firmness=Firmness.GENTLE,
+        variant_kind=VariantKind.SOFTER,
         now=NOW,
     )
     assert suggestion.status is SuggestionStatus.PENDING
-    assert suggestion.firmness is Firmness.GENTLE
+    assert suggestion.variant_kind is VariantKind.SOFTER
     assert suggestion.decided_at is None
 
 
 @pytest.mark.unit
-def test_create_decode_is_pending_without_firmness() -> None:
+def test_create_decode_is_pending_without_variant_kind() -> None:
     suggestion = RuleSuggestion.create_decode(
         suggestion_id=SUGGESTION_ID,
         user_id=USER,
@@ -111,7 +112,7 @@ def test_create_decode_is_pending_without_firmness() -> None:
     )
     assert suggestion.status is SuggestionStatus.PENDING
     assert suggestion.source is SuggestionSource.DECODE
-    assert suggestion.firmness is None
+    assert suggestion.variant_kind is None
     assert suggestion.decided_at is None
 
 
@@ -159,7 +160,7 @@ def test_decided_requires_decided_at() -> None:
             source=SuggestionSource.TONE,
             category=RuleCategory.HOW_TO_ASK,
             text=RuleText("x"),
-            firmness=Firmness.GENTLE,
+            variant_kind=VariantKind.SOFTER,
             status=SuggestionStatus.ACCEPTED,
             created_at=NOW,
             decided_at=None,
@@ -170,9 +171,15 @@ def test_decided_requires_decided_at() -> None:
 def test_tone_signal_append_and_window() -> None:
     signal = ToneSignal(user_id=USER, contact_id=CONTACT, values=())
     for _ in range(TONE_SIGNAL_WINDOW + 3):
-        signal = signal.append(Firmness.GENTLE)
+        signal = signal.append(VariantKind.SOFTER)
     assert len(signal.values) == TONE_SIGNAL_WINDOW
-    assert all(v is Firmness.GENTLE for v in signal.values)
+    assert all(v is VariantKind.SOFTER for v in signal.values)
+
+
+@pytest.mark.unit
+def test_tone_signal_rejects_check_choice() -> None:
+    with pytest.raises(InvalidValueError, match="only softer or firmer"):
+        ToneSignal(user_id=USER, contact_id=CONTACT, values=(VariantKind.CHECK,))
 
 
 @pytest.mark.unit
@@ -181,7 +188,7 @@ def test_tone_signal_rejects_oversize_construction() -> None:
         ToneSignal(
             user_id=USER,
             contact_id=CONTACT,
-            values=tuple(Firmness.GENTLE for _ in range(TONE_SIGNAL_WINDOW + 1)),
+            values=tuple(VariantKind.SOFTER for _ in range(TONE_SIGNAL_WINDOW + 1)),
         )
 
 
@@ -190,23 +197,29 @@ def test_tone_signal_rejects_oversize_construction() -> None:
     ("values", "expected"),
     [
         ((), None),
-        ((Firmness.GENTLE,) * 4, None),
-        ((Firmness.GENTLE,) * 5, Firmness.GENTLE),
-        ((Firmness.BALANCED,) * 4 + (Firmness.FIRM,), Firmness.BALANCED),
-        ((Firmness.GENTLE,) * 4 + (Firmness.FIRM,), Firmness.GENTLE),
-        ((Firmness.FIRM,) * 8 + (Firmness.GENTLE,) * 2, Firmness.FIRM),
-        ((Firmness.GENTLE,) * 5 + (Firmness.BALANCED,) * 5, None),
+        ((VariantKind.SOFTER,) * 4, None),
+        ((VariantKind.SOFTER,) * 5, VariantKind.SOFTER),
+        ((VariantKind.FIRMER,) * 4 + (VariantKind.SOFTER,), VariantKind.FIRMER),
+        ((VariantKind.SOFTER,) * 4 + (VariantKind.FIRMER,), VariantKind.SOFTER),
+        ((VariantKind.FIRMER,) * 8 + (VariantKind.SOFTER,) * 2, VariantKind.FIRMER),
+        ((VariantKind.SOFTER,) * 5 + (VariantKind.FIRMER,) * 5, None),
         (
-            (Firmness.GENTLE, Firmness.BALANCED, Firmness.FIRM, Firmness.GENTLE, Firmness.BALANCED),
+            (
+                VariantKind.SOFTER,
+                VariantKind.FIRMER,
+                VariantKind.SOFTER,
+                VariantKind.FIRMER,
+                VariantKind.SOFTER,
+            ),
             None,
         ),
-        ((Firmness.GENTLE,) * 3 + (Firmness.BALANCED,) * 2, None),
-        ((Firmness.GENTLE,) * 7 + (Firmness.FIRM,) * 3, None),
+        ((VariantKind.SOFTER,) * 3 + (VariantKind.FIRMER,) * 2, None),
+        ((VariantKind.SOFTER,) * 7 + (VariantKind.FIRMER,) * 3, None),
     ],
 )
-def test_dominant_firmness_table(
-    values: tuple[Firmness, ...],
-    expected: Firmness | None,
+def test_dominant_variant_kind_table(
+    values: tuple[VariantKind, ...],
+    expected: VariantKind | None,
 ) -> None:
     signal = ToneSignal(user_id=USER, contact_id=CONTACT, values=values)
-    assert dominant_firmness(signal) is expected
+    assert dominant_variant_kind(signal) is expected

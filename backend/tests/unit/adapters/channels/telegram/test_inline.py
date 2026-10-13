@@ -270,8 +270,7 @@ async def test_inline_ignores_contacts_button_and_rules(
     assert request.relationship is RelationshipKind.OTHER
     assert request.rules == ()
     answered = [e for e in capture_log_events() if e.get("event") == "inline_answered"]
-    assert answered[-1]["rule_count"] == 0
-    assert answered[-1]["applied_count"] == 0
+    assert answered[-1]["outcome"] == "ok"
     blob = " ".join(str(v) for e in capture_log_events() for v in e.values())
     assert label_marker not in blob
     assert rule_marker not in blob
@@ -951,8 +950,8 @@ async def test_inline_answered_log_on_ok(
     assert event["reuse"] == "miss"
     assert isinstance(event["answer_latency_ms"], int)
     assert event["answer_latency_ms"] >= 0
-    assert event["rule_count"] == 0
-    assert event["applied_count"] == 0
+    assert "rule_count" not in event
+    assert "applied_count" not in event
     assert "query" not in event
     assert "draft" not in event
 

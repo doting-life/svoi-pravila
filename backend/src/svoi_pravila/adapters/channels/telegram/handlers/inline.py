@@ -85,8 +85,6 @@ class _AnsweredLog:
     scenario: UsageScenario | None
     outcome: InlineAnsweredOutcome
     reuse: str
-    rule_count: int
-    applied_count: int
 
 
 def build_inline_router() -> Router:
@@ -189,8 +187,6 @@ async def _answer_compose_error(
             scenario=None,
             outcome=outcome,
             reuse=_reuse_from_error(error),
-            rule_count=0,
-            applied_count=0,
         )
     )
 
@@ -291,8 +287,6 @@ async def _answer_compose_result(
             scenario=result.scenario,
             outcome=outcome,
             reuse=reuse,
-            rule_count=0,
-            applied_count=0,
         )
     )
 
@@ -324,8 +318,6 @@ def _log_answered(fields: _AnsweredLog) -> None:
         "outcome": fields.outcome.value,
         "reuse": fields.reuse,
         "answer_latency_ms": latency_ms,
-        "rule_count": fields.rule_count,
-        "applied_count": fields.applied_count,
     }
     if fields.scenario is not None:
         payload["scenario"] = fields.scenario.value

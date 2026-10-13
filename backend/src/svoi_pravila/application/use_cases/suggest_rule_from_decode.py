@@ -334,7 +334,7 @@ class SuggestRuleFromDecode:
             output_tokens=0,
             billable_tokens=0,
             event_kind=UsageEventKind.GENERATION,
-            variant_firmness=None,
+            variant_kind=None,
             limit_kind=LimitKind.GLOBAL_BUDGET,
         )
         with contextlib.suppress(UsageEventWriteFailed):

@@ -57,11 +57,9 @@ from svoi_pravila.application.ports.generation import (
     DecodeRequest,
     DecodeResult,
     GenerationMeta,
-    HelpSayRequest,
-    HelpSayResult,
+    RewriteRequest,
+    RewriteResult,
     SafetyVerdict,
-    SoftenRequest,
-    SoftenResult,
     SuggestRuleProposed,
     SuggestRuleRequest,
     SuggestRuleResult,
@@ -85,7 +83,7 @@ from svoi_pravila.application.use_cases.set_active_contact import (
     SetActiveContactCommand,
 )
 from svoi_pravila.config import Environment
-from svoi_pravila.domain.enums import Firmness, RelationshipKind, RuleCategory, UsageSurface
+from svoi_pravila.domain.enums import RelationshipKind, RuleCategory, UsageSurface, VariantKind
 from svoi_pravila.domain.ids import ContactId
 from svoi_pravila.domain.text import ContactLabel, RuleText
 
@@ -121,8 +119,8 @@ def _ok_result() -> DecodeResult:
         hypotheses=("h1",),
         underlying_request="u",
         variants=(
-            Variant(text="мягко", firmness=Firmness.GENTLE),
-            Variant(text="твёрдо", firmness=Firmness.FIRM),
+            Variant(text="мягко", kind=VariantKind.SOFTER),
+            Variant(text="твёрдо", kind=VariantKind.FIRMER),
         ),
         applied_rule_indexes=(),
         meta=_meta(),
@@ -146,7 +144,7 @@ class _SlowGenerator:
 
     def max_billable(
         self,
-        request: SoftenRequest | HelpSayRequest | DecodeRequest | SuggestRuleRequest,
+        request: RewriteRequest | RewriteRequest | DecodeRequest | SuggestRuleRequest,
     ) -> int:
         _ = request
         return self.max_billable_value
@@ -159,11 +157,8 @@ class _SlowGenerator:
         yield DecodeCompleted(analysis="часть", result=_ok_result())
         self.completed = True
 
-    async def soften(self, request: SoftenRequest) -> SoftenResult:
-        raise RuntimeError(f"unused soften: {request!r}")
-
-    async def help_say(self, request: HelpSayRequest) -> HelpSayResult:
-        raise RuntimeError(f"unused help_say: {request!r}")
+    async def rewrite(self, request: RewriteRequest) -> RewriteResult:
+        raise RuntimeError(f"unused rewrite: {request!r}")
 
     async def suggest_rule(self, request: SuggestRuleRequest) -> SuggestRuleResult:
         raise RuntimeError(f"unused suggest_rule: {request!r}")
@@ -612,7 +607,7 @@ async def test_decode_privacy_canary_absent_from_logs(
             safety=SafetyVerdict.OK,
             hypotheses=(),
             underlying_request="",
-            variants=(Variant(text=_CANARY, firmness=Firmness.BALANCED),),
+            variants=(Variant(text=_CANARY, kind=VariantKind.CHECK),),
             applied_rule_indexes=(),
             meta=_meta(),
         ),
@@ -748,8 +743,8 @@ async def test_seal_helper_skips_empty_variant_text() -> None:
         hypotheses=(),
         underlying_request="",
         variants=(
-            Variant(text="", firmness=Firmness.GENTLE),
-            Variant(text="есть текст", firmness=Firmness.FIRM),
+            Variant(text="", kind=VariantKind.SOFTER),
+            Variant(text="есть текст", kind=VariantKind.FIRMER),
         ),
         applied_rule_indexes=(),
         meta=_meta(),
@@ -774,7 +769,7 @@ async def test_seal_helper_non_ok_safety_yields_null_tokens() -> None:
         safety=SafetyVerdict.CRISIS,
         hypotheses=(),
         underlying_request="",
-        variants=(Variant(text="ignored", firmness=Firmness.GENTLE),),
+        variants=(Variant(text="ignored", kind=VariantKind.SOFTER),),
         applied_rule_indexes=(),
         meta=_meta(),
     )
@@ -850,7 +845,7 @@ async def test_decode_unknown_stream_error_propagates(world: AppWorld) -> None:
 
         def max_billable(
             self,
-            request: SoftenRequest | HelpSayRequest | DecodeRequest | SuggestRuleRequest,
+            request: RewriteRequest | RewriteRequest | DecodeRequest | SuggestRuleRequest,
         ) -> int:
             _ = request
             return 1000
@@ -861,11 +856,8 @@ async def test_decode_unknown_stream_error_propagates(world: AppWorld) -> None:
                 raise RuntimeError("unexpected-decode-failure")
             yield AnalysisChunk(text="")
 
-        async def soften(self, request: SoftenRequest) -> SoftenResult:
-            raise RuntimeError(f"unused soften: {request!r}")
-
-        async def help_say(self, request: HelpSayRequest) -> HelpSayResult:
-            raise RuntimeError(f"unused help_say: {request!r}")
+        async def rewrite(self, request: RewriteRequest) -> RewriteResult:
+            raise RuntimeError(f"unused rewrite: {request!r}")
 
         async def suggest_rule(self, request: SuggestRuleRequest) -> SuggestRuleResult:
             raise RuntimeError(f"unused suggest_rule: {request!r}")

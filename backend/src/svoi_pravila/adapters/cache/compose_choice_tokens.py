@@ -11,7 +11,7 @@ from redis.asyncio import Redis
 
 from svoi_pravila.application.errors import ComposeChoiceTokenInvalid
 from svoi_pravila.application.ports.compose_choice_tokens import (
-    COMPOSE_CHOICE_FIRMNESS_SET,
+    COMPOSE_CHOICE_KIND_SET,
     COMPOSE_CHOICE_TTL_SECONDS,
     ComposeChoiceBinding,
 )
@@ -27,7 +27,7 @@ _FIELD_SEPARATOR = "|"
 
 
 class ValkeyComposeChoiceTokens:
-    """Opaque ``c_`` tokens: HMAC over user, scenario, contact, firmness set; Valkey GETDEL."""
+    """Opaque ``c_`` tokens: HMAC over user, scenario, contact, variant-kind set; Valkey GETDEL."""
 
     def __init__(
         self,
@@ -57,7 +57,7 @@ class ValkeyComposeChoiceTokens:
         contact_raw = _contact_raw(binding.contact_id)
         value = (
             f"{token_id.hex()}\0{user_pseudonym}\0{binding.scenario.value}\0{contact_raw}"
-            f"\0{COMPOSE_CHOICE_FIRMNESS_SET}"
+            f"\0{COMPOSE_CHOICE_KIND_SET}"
         )
         return self._pseudonymizer.pseudonymize(_PURPOSE, value)
 

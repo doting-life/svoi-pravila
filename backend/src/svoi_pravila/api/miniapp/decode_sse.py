@@ -67,7 +67,7 @@ def _completed_payload(
 ) -> dict[str, Any]:
     variants = [
         {
-            "firmness": variant.firmness.value,
+            "kind": variant.kind.value,
             "text": variant.text,
             "insert_query": insert_queries[index] if index < len(insert_queries) else None,
         }

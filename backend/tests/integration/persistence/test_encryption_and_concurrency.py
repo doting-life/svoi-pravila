@@ -17,7 +17,7 @@ from svoi_pravila.application.errors import ConflictError
 from svoi_pravila.config import Settings
 from svoi_pravila.crypto import DecryptionError
 from svoi_pravila.domain.contact import Contact
-from svoi_pravila.domain.enums import Firmness, RelationshipKind, RuleCategory
+from svoi_pravila.domain.enums import RelationshipKind, RuleCategory, VariantKind
 from svoi_pravila.domain.ids import (
     ContactId,
     InviteId,
@@ -85,13 +85,13 @@ async def test_database_has_no_plaintext_c2_markers(
         contact_id=contact.id,
         category=RuleCategory.HOW_TO_ASK,
         text=RuleText(MARKER_SUGGESTION),
-        firmness=Firmness.GENTLE,
+        variant_kind=VariantKind.SOFTER,
         now=NOW,
     )
     signal = ToneSignal(
         user_id=owner.id,
         contact_id=contact.id,
-        values=(Firmness.GENTLE,) * 5,
+        values=(VariantKind.SOFTER,) * 5,
     )
     async with uow_factory() as uow:
         await uow.users.add(owner)
@@ -132,7 +132,7 @@ async def test_database_has_no_plaintext_c2_markers(
     assert MARKER_LABEL not in joined
     assert MARKER_RULE not in joined
     assert MARKER_SUGGESTION not in joined
-    assert any("gentle" in row for row in tone_values)
+    assert any("softer" in row for row in tone_values)
 
 
 @pytest.mark.integration

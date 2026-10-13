@@ -39,6 +39,7 @@ from svoi_pravila.application.ports.generation import (
     SafetyVerdict,
     TextGenerator,
     TokenUsage,
+    Variant,
 )
 from svoi_pravila.application.ports.id_generator import IdGenerator
 from svoi_pravila.application.ports.llm_budget import BudgetExhausted, LlmBudget
@@ -69,6 +70,7 @@ from svoi_pravila.domain.enums import (
 )
 from svoi_pravila.domain.ids import TelegramUserId, UsageEventId
 from svoi_pravila.domain.product_day import product_day
+from svoi_pravila.domain.typography import humanize_typography
 from svoi_pravila.domain.usage import UsageEvent
 
 _LOCK_MARGIN_SECONDS = 5
@@ -301,9 +303,17 @@ class DecodeIncoming:
                     first_chunk_at.append(self._ports.monotonic.monotonic())
                 yield event
                 continue
+            result = replace(
+                event.result,
+                variants=tuple(
+                    Variant(text=humanize_typography(args.text, variant.text), kind=variant.kind)
+                    for variant in event.result.variants
+                ),
+            )
             completed = replace(
                 event,
-                applied_rules=applied_rule_views(args.rules, event.result.applied_rule_indexes),
+                result=result,
+                applied_rules=applied_rule_views(args.rules, result.applied_rule_indexes),
             )
             yield completed
             await self._persist(
@@ -407,7 +417,7 @@ class DecodeIncoming:
             output_tokens=0,
             billable_tokens=0,
             event_kind=UsageEventKind.GENERATION,
-            variant_firmness=None,
+            variant_kind=None,
             limit_kind=limit_kind,
         )
 

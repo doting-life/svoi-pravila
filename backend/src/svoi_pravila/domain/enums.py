@@ -45,8 +45,7 @@ class UsageScenario(StrEnum):
     """Scenario that produced a usage event."""
 
     DECODE = "decode"
-    SOFTEN = "soften"
-    HELP_SAY = "help_say"
+    REWRITE = "rewrite"
     SUGGEST_RULE = "suggest_rule"
 
 
@@ -90,12 +89,21 @@ class UsageEventKind(StrEnum):
     RESULT_CHOSEN = "result_chosen"
 
 
-class Firmness(StrEnum):
-    """How firmly a suggested reply asserts a boundary."""
+class VariantKind(StrEnum):
+    """Which of the fixed variants a text is (shown in this order everywhere)."""
 
-    GENTLE = "gentle"
-    BALANCED = "balanced"
-    FIRM = "firm"
+    CHECK = "check"
+    SOFTER = "softer"
+    FIRMER = "firmer"
+
+
+class RewriteGoal(StrEnum):
+    """Optional goal of a rewrite (mini-app only; never chosen in inline)."""
+
+    DECLINE = "decline"
+    SET_BOUNDARY = "set_boundary"
+    ADMIT_FAULT = "admit_fault"
+    RECONNECT = "reconnect"
 
 
 class SuggestionSource(StrEnum):

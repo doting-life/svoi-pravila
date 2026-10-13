@@ -8,22 +8,19 @@ from svoi_pravila.adapters.llm.gigachat.attempt_policy import MAX_ATTEMPTS
 from svoi_pravila.adapters.llm.gigachat.prepared import (
     prepare_decode,
     prepare_decode_analysis,
-    prepare_help_say,
-    prepare_soften,
+    prepare_rewrite,
     prepare_suggest_rule,
 )
 from svoi_pravila.adapters.llm.gigachat.validation import (
     MAX_ANALYSIS_CHARS,
     MAX_TOKENS_ANALYSIS,
     MAX_TOKENS_DECODE,
-    MAX_TOKENS_HELP_SAY,
-    MAX_TOKENS_SOFTEN,
+    MAX_TOKENS_REWRITE,
     MAX_TOKENS_SUGGEST,
 )
 from svoi_pravila.application.ports.generation import (
     DecodeRequest,
-    HelpSayRequest,
-    SoftenRequest,
+    RewriteRequest,
     SuggestRuleRequest,
 )
 
@@ -41,17 +38,13 @@ def estimate_prepared_tokens(system: str, user: str, *, output_cap: int) -> int:
 
 
 def max_billable_for_request(
-    request: SoftenRequest | HelpSayRequest | DecodeRequest | SuggestRuleRequest,
+    request: RewriteRequest | DecodeRequest | SuggestRuleRequest,
 ) -> int:
     """Worst-case billable tokens for ``request``, including retries."""
-    if isinstance(request, SoftenRequest):
-        prepared = prepare_soften(request)
-        one = estimate_prepared_tokens(prepared.system, prepared.user, output_cap=MAX_TOKENS_SOFTEN)
-        return MAX_ATTEMPTS * one
-    if isinstance(request, HelpSayRequest):
-        prepared = prepare_help_say(request)
+    if isinstance(request, RewriteRequest):
+        prepared = prepare_rewrite(request)
         one = estimate_prepared_tokens(
-            prepared.system, prepared.user, output_cap=MAX_TOKENS_HELP_SAY
+            prepared.system, prepared.user, output_cap=MAX_TOKENS_REWRITE
         )
         return MAX_ATTEMPTS * one
     if isinstance(request, DecodeRequest):

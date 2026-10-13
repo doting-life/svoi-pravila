@@ -71,7 +71,7 @@ _DATA = Path(__file__).resolve().parents[3] / "evals" / "data" / "eval_v1.jsonl"
 def _record(**overrides: object) -> EvalRecord:
     base = EvalRecord(
         case_id="x",
-        operation="soften",
+        operation="rewrite",
         category="ordinary_conflict",
         expected=frozenset({"ok"}),
         outcome="ok",
@@ -95,15 +95,15 @@ def _record(**overrides: object) -> EvalRecord:
 def test_eval_dataset_shape() -> None:
     cases = load_cases(_DATA)
     assert len(cases) >= 54
-    ops = ("soften", "help_say", "decode_stream")
+    ops = ("rewrite", "decode_stream")
     by_op = {op: [c for c in cases if c.operation == op] for op in ops}
     for op, rows in by_op.items():
         assert len(rows) >= 18, op
-    assert sum(1 for row in by_op["soften"] if row.smoke) == 8
-    assert sum(1 for row in by_op["help_say"] if row.smoke) == 8
+    assert sum(1 for row in by_op["rewrite"] if row.smoke) == 14
+    assert any(row.rewrite is not None and row.rewrite.goal is not None for row in by_op["rewrite"])
     assert sum(1 for row in by_op["decode_stream"] if row.smoke) == 0
     smoke = filter_cases(cases, smoke=True)
-    assert len(smoke) == 16
+    assert len(smoke) == 14
     incoming = [c for c in cases if c.category == "incoming_manipulation"]
     assert incoming
     assert all(c.operation == "decode_stream" and c.expected == frozenset({"ok"}) for c in incoming)
@@ -114,8 +114,8 @@ def test_eval_dataset_shape() -> None:
     )
     coercive = [c for c in cases if c.id.endswith("heated-12")]
     assert {c.id for c in coercive} == {
-        "soften-heated-12",
-        "help_say-heated-12",
+        "rewrite-heated-12",
+        "rewrite-goal-heated-12",
         "decode_stream-heated-12",
     }
     assert all(c.category == "coercive_threat" for c in coercive)
@@ -130,7 +130,7 @@ def test_parse_case_rejects_bad_payload() -> None:
     with pytest.raises(TypeError):
         parse_case([])
     with pytest.raises(ValueError, match="case id"):
-        parse_case({"id": "", "operation": "soften"})
+        parse_case({"id": "", "operation": "rewrite"})
     with pytest.raises(ValueError, match="unknown operation"):
         parse_case({"id": "a", "operation": "nope", "category": "heated", "expected": "ok"})
 
@@ -223,19 +223,18 @@ async def test_run_eval_case_screen_skips_generator() -> None:
     assert record.screen_hit is True
     assert record.outcome == "screened"
     assert record.verdict == "crisis"
-    assert gen.soften_calls == []
-    assert gen.help_say_calls == []
+    assert gen.rewrite_calls == []
     assert gen.decode_stream_calls == []
 
 
 @pytest.mark.unit
 async def test_run_eval_writes_out_without_generated_text(tmp_path: Path) -> None:
-    ordinary = next(c for c in load_cases(_DATA) if c.id == "soften-ordinary_conflict-01")
+    ordinary = next(c for c in load_cases(_DATA) if c.id == "rewrite-ordinary_conflict-01")
     gen = FakeTextGenerator()
     out_path = tmp_path / "eval.md"
     runtime = EvalRuntime(OutWriter(out_path), SpendTracker(), CrisisScreen.load_ru_v2())
     params = EvalParams(
-        operations=("soften",),
+        operations=("rewrite",),
         models=("fake",),
         deadline=5.0,
         show_outputs=True,
@@ -247,7 +246,7 @@ async def test_run_eval_writes_out_without_generated_text(tmp_path: Path) -> Non
     assert budget_error is None
     assert records[0].screen_hit is False
     text = out_path.read_text(encoding="utf-8")
-    assert "softened-a" not in text
+    assert "softened" not in text
     assert ordinary.id in text
     assert "crisis_recall" in text
 
@@ -255,11 +254,11 @@ async def test_run_eval_writes_out_without_generated_text(tmp_path: Path) -> Non
 @pytest.mark.unit
 async def test_run_eval_groups_by_ops_then_category_priority() -> None:
     cases = load_cases(_DATA)
-    hyperbole = next(c for c in cases if c.id == "soften-hyperbole-19")
+    hyperbole = next(c for c in cases if c.id == "rewrite-hyperbole-19")
     decode = next(c for c in cases if c.id == "decode_stream-ordinary_conflict-01")
     runtime = EvalRuntime(OutWriter(None), SpendTracker(), CrisisScreen.load_ru_v2())
     params = EvalParams(
-        operations=("soften", "decode_stream"),
+        operations=("rewrite", "decode_stream"),
         models=("fake", "fake"),
         deadline=5.0,
         show_outputs=False,
@@ -276,28 +275,28 @@ async def test_run_eval_groups_by_ops_then_category_priority() -> None:
     assert budget_error is None
     assert [row.case_id for row in records] == [hyperbole.id, decode.id]
     shuffled = [
-        next(c for c in cases if c.id == "soften-ordinary_conflict-01"),
-        next(c for c in cases if c.id == "soften-heated-12"),
-        next(c for c in cases if c.id == "soften-manipulation-13"),
-        next(c for c in cases if c.id == "soften-hyperbole-19"),
+        next(c for c in cases if c.id == "rewrite-ordinary_conflict-01"),
+        next(c for c in cases if c.id == "rewrite-heated-12"),
+        next(c for c in cases if c.id == "rewrite-manipulation-13"),
+        next(c for c in cases if c.id == "rewrite-hyperbole-19"),
     ]
-    ordered = order_cases_for_run(shuffled, ("soften",))
+    ordered = order_cases_for_run(shuffled, ("rewrite",))
     assert [c.id for c in ordered] == [
-        "soften-hyperbole-19",
-        "soften-manipulation-13",
-        "soften-heated-12",
-        "soften-ordinary_conflict-01",
+        "rewrite-hyperbole-19",
+        "rewrite-manipulation-13",
+        "rewrite-heated-12",
+        "rewrite-ordinary_conflict-01",
     ]
 
 
 @pytest.mark.unit
 async def test_invalid_and_unavailable_records() -> None:
     ordinary = next(
-        c for c in load_cases(_DATA) if c.operation == "soften" and c.category == "heated"
+        c for c in load_cases(_DATA) if c.operation == "rewrite" and c.category == "heated"
     )
     runtime = EvalRuntime(OutWriter(None), SpendTracker(), CrisisScreen.load_ru_v2())
     invalid = FakeTextGenerator()
-    invalid.soften_error = InvalidGenerationOutput(
+    invalid.rewrite_error = InvalidGenerationOutput(
         (InvalidOutputReason.PROMPT_LEAK,),
         usage=TokenUsage(output=3),
         attempts=2,
@@ -308,7 +307,7 @@ async def test_invalid_and_unavailable_records() -> None:
     assert rec.outcome == "invalid_output"
     assert "prompt_leak" in rec.reasons
     un = FakeTextGenerator()
-    un.soften_error = GenerationUnavailable(
+    un.rewrite_error = GenerationUnavailable(
         UnavailableKind.TIMEOUT, usage=TokenUsage(), attempts=1, model="m", prompt_version="p"
     )
     rec2 = await run_eval_case(un, ordinary, runtime, deadline=5.0, show_outputs=False)
@@ -349,7 +348,7 @@ async def test_max_tokens_required_for_live(monkeypatch: pytest.MonkeyPatch) -> 
         await async_main(
             Namespace(
                 data=str(_DATA),
-                ops=["soften"],
+                ops=["rewrite"],
                 deadline=5.0,
                 out=None,
                 show_outputs=False,
@@ -370,7 +369,7 @@ def test_estimate_crisis_is_zero() -> None:
     assert estimate_eval_case_tokens(ordinary, screen) > 0
     rows = plan_eval_calls(
         [crisis, ordinary],
-        operations=("soften",),
+        operations=("rewrite",),
         models=("fake",),
         screen=screen,
     )
@@ -395,9 +394,11 @@ def test_show_outputs_not_in_out_file(tmp_path: Path, capsys: pytest.CaptureFixt
 
 
 @pytest.mark.unit
-async def test_help_say_decode_and_warmup() -> None:
+async def test_goal_decode_and_warmup() -> None:
     cases = load_cases(_DATA)
-    help_case = next(c for c in cases if c.operation == "help_say" and c.category == "heated")
+    help_case = next(
+        c for c in cases if c.id.startswith("rewrite-goal-") and c.category == "heated"
+    )
     decode_case = next(
         c for c in cases if c.operation == "decode_stream" and c.category == "heated"
     )
@@ -408,13 +409,13 @@ async def test_help_say_decode_and_warmup() -> None:
     assert help_rec.verdict == "ok"
     assert decode_rec.verdict == "ok"
     params = EvalParams(
-        operations=("soften", "help_say"),
+        operations=("rewrite", "decode_stream"),
         models=("fake", "fake"),
         deadline=5.0,
         show_outputs=False,
         max_tokens=40000,
     )
-    live = [c for c in cases if c.operation == "soften" and c.category == "heated"]
+    live = [c for c in cases if c.operation == "rewrite" and c.category == "heated"]
     await warmup_eval(gen, live, params, runtime)
 
 
@@ -422,18 +423,18 @@ async def test_help_say_decode_and_warmup() -> None:
 def test_cli_unknown_operation() -> None:
     with pytest.raises(SystemExit, match="unknown operations"):
         _parse_ops(["nope"])
-    assert _parse_ops(["soften", "soften"]) == ("soften",)
+    assert _parse_ops(["rewrite", "rewrite"]) == ("rewrite",)
 
 
 @pytest.mark.unit
 def test_parse_and_load_case_errors(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="unknown category"):
-        parse_case({"id": "a", "operation": "soften", "category": "nope", "expected": "ok"})
+        parse_case({"id": "a", "operation": "rewrite", "category": "nope", "expected": "ok"})
     with pytest.raises(ValueError, match="expected must be"):
         parse_case(
             {
                 "id": "a",
-                "operation": "soften",
+                "operation": "rewrite",
                 "category": "heated",
                 "expected": "nope",
             }
@@ -442,7 +443,7 @@ def test_parse_and_load_case_errors(tmp_path: Path) -> None:
         parse_case(
             {
                 "id": "a",
-                "operation": "soften",
+                "operation": "rewrite",
                 "category": "heated",
                 "expected": [],
             }
@@ -451,7 +452,7 @@ def test_parse_and_load_case_errors(tmp_path: Path) -> None:
         parse_case(
             {
                 "id": "a",
-                "operation": "soften",
+                "operation": "rewrite",
                 "category": "heated",
                 "expected": 1,
             }
@@ -460,7 +461,7 @@ def test_parse_and_load_case_errors(tmp_path: Path) -> None:
         parse_case(
             {
                 "id": "a",
-                "operation": "soften",
+                "operation": "rewrite",
                 "category": "heated",
                 "expected": "ok",
                 "draft": "x",
@@ -471,7 +472,7 @@ def test_parse_and_load_case_errors(tmp_path: Path) -> None:
         parse_case(
             {
                 "id": "a",
-                "operation": "soften",
+                "operation": "rewrite",
                 "category": "heated",
                 "expected": "ok",
                 "draft": "x",
@@ -481,7 +482,7 @@ def test_parse_and_load_case_errors(tmp_path: Path) -> None:
     parsed = parse_case(
         {
             "id": "with-rule",
-            "operation": "soften",
+            "operation": "rewrite",
             "category": "heated",
             "expected": "ok",
             "draft": "черновик",
@@ -494,8 +495,8 @@ def test_parse_and_load_case_errors(tmp_path: Path) -> None:
             ],
         }
     )
-    assert parsed.soften is not None
-    assert len(parsed.soften.rules) == 1
+    assert parsed.rewrite is not None
+    assert len(parsed.rewrite.rules) == 1
     empty = tmp_path / "empty.jsonl"
     empty.write_text("\n", encoding="utf-8")
     with pytest.raises(ValueError, match="empty"):
@@ -509,13 +510,13 @@ def test_parse_and_load_case_errors(tmp_path: Path) -> None:
 @pytest.mark.unit
 def test_case_helpers_cover_gaps() -> None:
     cases = load_cases(_DATA)
-    assert cases_for_operation(cases, "soften")
+    assert cases_for_operation(cases, "rewrite")
     smoke_ids = tuple(c.id for c in cases if c.smoke)[:1]
     filtered = filter_cases(cases, smoke=True, case_ids=smoke_ids)
     assert len(filtered) == 1
     empty = EvalCase(
         id="bare",
-        operation="soften",
+        operation="rewrite",
         category="heated",
         expected=frozenset({"ok"}),
     )
@@ -531,10 +532,10 @@ def test_case_helpers_cover_gaps() -> None:
 
 @pytest.mark.unit
 async def test_runner_error_and_budget_paths() -> None:
-    ordinary = next(c for c in load_cases(_DATA) if c.id == "soften-ordinary_conflict-01")
+    ordinary = next(c for c in load_cases(_DATA) if c.id == "rewrite-ordinary_conflict-01")
     runtime = EvalRuntime(OutWriter(None), SpendTracker(), CrisisScreen.load_ru_v2())
     refused = FakeTextGenerator()
-    refused.soften_error = GenerationRefusedByProvider(
+    refused.rewrite_error = GenerationRefusedByProvider(
         usage=TokenUsage(output=1),
         attempts=1,
         model="m",
@@ -543,7 +544,7 @@ async def test_runner_error_and_budget_paths() -> None:
     rec = await run_eval_case(refused, ordinary, runtime, deadline=5.0, show_outputs=True)
     assert rec.outcome == "refused"
     limited = FakeTextGenerator()
-    limited.soften_error = GenerationUnavailable(
+    limited.rewrite_error = GenerationUnavailable(
         UnavailableKind.RATE_LIMITED,
         usage=TokenUsage(),
         attempts=1,
@@ -553,7 +554,7 @@ async def test_runner_error_and_budget_paths() -> None:
     with pytest.raises(RateLimitedError):
         await run_eval_case(limited, ordinary, runtime, deadline=5.0, show_outputs=False)
     authed = FakeTextGenerator()
-    authed.soften_error = GenerationUnavailable(
+    authed.rewrite_error = GenerationUnavailable(
         UnavailableKind.AUTH,
         usage=TokenUsage(),
         attempts=1,
@@ -563,7 +564,7 @@ async def test_runner_error_and_budget_paths() -> None:
     with pytest.raises(AuthFailedError):
         await run_eval_case(authed, ordinary, runtime, deadline=5.0, show_outputs=False)
     params = EvalParams(
-        operations=("soften",),
+        operations=("rewrite",),
         models=("fake",),
         deadline=5.0,
         show_outputs=False,
@@ -575,7 +576,7 @@ async def test_runner_error_and_budget_paths() -> None:
     assert incomplete is True
     assert budget is not None
     limited_params = EvalParams(
-        operations=("soften",),
+        operations=("rewrite",),
         models=("fake",),
         deadline=5.0,
         show_outputs=False,
@@ -586,7 +587,7 @@ async def test_runner_error_and_budget_paths() -> None:
     )
     assert limited_incomplete is True
     assert rate_error is not None
-    second = next(c for c in load_cases(_DATA) if c.id == "soften-ordinary_conflict-02")
+    second = next(c for c in load_cases(_DATA) if c.id == "rewrite-ordinary_conflict-02")
     _auth_recs, auth_incomplete, auth_error, _ab = await run_eval(
         authed, [ordinary, second], limited_params, runtime
     )
@@ -598,7 +599,7 @@ async def test_runner_error_and_budget_paths() -> None:
             FakeTextGenerator(),
             [ordinary],
             EvalParams(
-                operations=("soften", "help_say"),
+                operations=("rewrite", "decode_stream"),
                 models=("fake",),
                 deadline=5.0,
                 show_outputs=False,
@@ -631,13 +632,13 @@ async def test_decode_without_completed_and_missing_request() -> None:
     empty.emit_completed = False
     with pytest.raises(RuntimeError, match="no completed"):
         await run_eval_case(empty, decode, runtime, deadline=5.0, show_outputs=False)
-    ordinary = next(c for c in load_cases(_DATA) if c.id == "soften-ordinary_conflict-01")
+    ordinary = next(c for c in load_cases(_DATA) if c.id == "rewrite-ordinary_conflict-01")
     mismatched = EvalCase(
         id="bare",
         operation="decode_stream",
         category="heated",
         expected=frozenset({"ok"}),
-        soften=ordinary.soften,
+        rewrite=ordinary.rewrite,
     )
     with pytest.raises(ValueError, match="missing request"):
         await run_eval_case(
@@ -650,10 +651,10 @@ def test_plan_eval_align_and_empty_operation() -> None:
     screen = CrisisScreen.load_ru_v2()
     ordinary = next(c for c in load_cases(_DATA) if c.category == "ordinary_conflict")
     with pytest.raises(ValueError, match="align"):
-        plan_eval_calls([ordinary], operations=("soften",), models=[], screen=screen)
+        plan_eval_calls([ordinary], operations=("rewrite",), models=[], screen=screen)
     rows = plan_eval_calls(
         [ordinary],
-        operations=("help_say",),
+        operations=("decode_stream",),
         models=("fake",),
         screen=screen,
     )
@@ -735,14 +736,14 @@ async def test_async_main_live_and_failures(
     out_path = tmp_path / "live.md"
     ns = Namespace(
         data=str(_DATA),
-        ops=["soften"],
+        ops=["rewrite"],
         deadline=5.0,
         out=str(out_path),
         show_outputs=False,
         dry_run=False,
         max_tokens=40000,
         smoke=True,
-        cases=["soften-ordinary_conflict-01"],
+        cases=["rewrite-ordinary_conflict-01"],
     )
     code = await async_main(ns)
     assert code == 0

@@ -24,9 +24,9 @@ function composeOk(overrides: Record<string, unknown> = {}) {
     return {
         safety: "ok",
         variants: [
-            { firmness: "gentle", text: "мягкий" },
-            { firmness: "balanced", text: "средний" },
-            { firmness: "firm", text: "твёрдый" },
+            { kind: "check", text: "проверенный" },
+            { kind: "softer", text: "мягкий" },
+            { kind: "firmer", text: "твёрдый" },
         ],
         applied_rules: [],
         choice_token: "choice-1",

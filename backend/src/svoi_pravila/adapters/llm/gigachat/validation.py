@@ -10,10 +10,6 @@ import structlog
 
 from svoi_pravila.adapters.llm.gigachat.schemas import (
     DecodeOut,
-    HelpSayOut,
-    HelpSayOutNoRules,
-    SoftenOut,
-    SoftenOutNoRules,
     SuggestRuleOut,
     SuggestRuleVerdictOut,
     VariantOut,
@@ -30,7 +26,7 @@ from svoi_pravila.application.ports.generation import (
     TokenUsage,
     Variant,
 )
-from svoi_pravila.domain.enums import Firmness, RuleCategory
+from svoi_pravila.domain.enums import RuleCategory, VariantKind
 from svoi_pravila.domain.errors import InvalidValueError
 from svoi_pravila.domain.text import RULE_TEXT_MAX_CHARS, RuleText
 
@@ -40,10 +36,13 @@ MAX_VARIANT_CHARS = 1000
 MAX_HYPOTHESES = 3
 MAX_ANALYSIS_CHARS = 2000
 MAX_VARIANTS = 3
+MAX_DECODE_VARIANTS = 2
 # Docs: average 3-4 characters per token; 3 is conservative so a max-valid
 # payload is never truncated by max_tokens.
 CHARS_PER_TOKEN = 3
 JSON_OVERHEAD_TOKENS = 128
+
+_DECODE_KINDS = frozenset({VariantKind.SOFTER, VariantKind.FIRMER})
 
 logger = structlog.get_logger(__name__)
 
@@ -53,11 +52,10 @@ def output_token_cap(max_chars: int) -> int:
     return math.ceil(max_chars / CHARS_PER_TOKEN) + JSON_OVERHEAD_TOKENS
 
 
-MAX_TOKENS_SOFTEN = output_token_cap(MAX_VARIANTS * MAX_VARIANT_CHARS)
-MAX_TOKENS_HELP_SAY = MAX_TOKENS_SOFTEN
+MAX_TOKENS_REWRITE = output_token_cap(MAX_VARIANTS * MAX_VARIANT_CHARS)
 MAX_TOKENS_ANALYSIS = output_token_cap(MAX_ANALYSIS_CHARS)
 MAX_TOKENS_DECODE = output_token_cap(
-    MAX_VARIANTS * MAX_VARIANT_CHARS + MAX_HYPOTHESES * MAX_VARIANT_CHARS + MAX_VARIANT_CHARS
+    MAX_DECODE_VARIANTS * MAX_VARIANT_CHARS + MAX_HYPOTHESES * MAX_VARIANT_CHARS + MAX_VARIANT_CHARS
 )
 MAX_RULE_CHARS = RULE_TEXT_MAX_CHARS
 MAX_TOKENS_SUGGEST = output_token_cap(MAX_RULE_CHARS)
@@ -72,7 +70,7 @@ class VariantValidation:
     rule_count: int
     min_variants: int
     max_variants: int
-    require_all_firmness: bool
+    require_all_kinds: bool
     usage: TokenUsage
     attempts: int
     model: str
@@ -162,30 +160,30 @@ def validate_variants(
         raise fail(InvalidOutputReason.VARIANT_COUNT)
 
     variants: list[Variant] = []
-    seen: set[Firmness] = set()
+    seen: set[VariantKind] = set()
     for item in variants_raw:
         dirty = text_reason(item.text)
         if dirty is not None:
             raise fail(dirty)
         try:
             # StrEnum constructor raises ValueError for an unknown member.
-            firmness = Firmness(item.firmness.value)
+            kind = VariantKind(item.kind.value)
         except ValueError as exc:
             raise fail(InvalidOutputReason.SCHEMA_VIOLATION) from exc
-        if firmness in seen:
-            raise fail(InvalidOutputReason.FIRMNESS_SET)
-        seen.add(firmness)
-        variants.append(Variant(text=item.text, firmness=firmness))
+        if kind in seen:
+            raise fail(InvalidOutputReason.VARIANT_KIND_SET)
+        seen.add(kind)
+        variants.append(Variant(text=item.text, kind=kind))
 
-    if spec.require_all_firmness and seen != set(Firmness):
-        raise fail(InvalidOutputReason.FIRMNESS_SET)
+    if spec.require_all_kinds and seen != _DECODE_KINDS:
+        raise fail(InvalidOutputReason.VARIANT_KIND_SET)
 
     return tuple(variants), tuple(spec.applied), safety
 
 
 @dataclass(frozen=True, slots=True)
 class SlotValidation:
-    """Parameters for validating fixed gentle/balanced/firm slots."""
+    """Parameters for validating the fixed check/softer/firmer slots."""
 
     applied: list[int]
     safety_raw: str
@@ -197,13 +195,13 @@ class SlotValidation:
     operation: str
 
 
-def validate_firmness_slots(
-    gentle: str,
-    balanced: str,
-    firm: str,
+def validate_rewrite_slots(
+    check: str,
+    softer: str,
+    firmer: str,
     spec: SlotValidation,
 ) -> tuple[tuple[Variant, ...], tuple[int, ...], SafetyVerdict]:
-    """Validate three fixed slots; return ordered Variants or empty on non-ok safety."""
+    """Validate the three slots; return Variants (check, softer, firmer) or empty if not ok."""
 
     def fail(reason: InvalidOutputReason) -> InvalidGenerationOutput:
         return invalid(
@@ -223,7 +221,7 @@ def validate_firmness_slots(
         if idx < 0 or idx >= spec.rule_count:
             raise fail(InvalidOutputReason.RULE_INDEX_OUT_OF_RANGE)
 
-    slots = (gentle.strip(), balanced.strip(), firm.strip())
+    slots = (check.strip(), softer.strip(), firmer.strip())
     if safety is not SafetyVerdict.OK:
         if any(slots):
             logger.info(
@@ -233,27 +231,17 @@ def validate_firmness_slots(
             )
         return (), tuple(spec.applied), safety
 
-    firmnesses = (Firmness.GENTLE, Firmness.BALANCED, Firmness.FIRM)
+    kinds = (VariantKind.CHECK, VariantKind.SOFTER, VariantKind.FIRMER)
     texts: list[str] = []
     for text in slots:
         dirty = text_reason(text)
         if dirty is not None:
             raise fail(dirty)
         texts.append(text)
-    if len(set(texts)) != MAX_VARIANTS:
-        raise fail(InvalidOutputReason.FIRMNESS_SET)
-    variants = tuple(
-        Variant(text=text, firmness=firmness)
-        for text, firmness in zip(texts, firmnesses, strict=True)
-    )
+    if texts[1] == texts[2]:
+        raise fail(InvalidOutputReason.VARIANT_KIND_SET)
+    variants = tuple(Variant(text=text, kind=kind) for text, kind in zip(texts, kinds, strict=True))
     return variants, tuple(spec.applied), safety
-
-
-def slots_from_soften(
-    parsed: SoftenOut | SoftenOutNoRules | HelpSayOut | HelpSayOutNoRules,
-) -> tuple[str, str, str]:
-    """Extract the three fixed text slots from a soften/help_say schema model."""
-    return parsed.gentle, parsed.balanced, parsed.firm
 
 
 def to_decode_result(parsed: DecodeOut, meta: GenerationMeta, *, rule_count: int) -> DecodeResult:
@@ -268,9 +256,9 @@ def to_decode_result(parsed: DecodeOut, meta: GenerationMeta, *, rule_count: int
             applied=list(parsed.applied_rule_indexes),
             safety_raw=parsed.safety.value,
             rule_count=rule_count,
-            min_variants=3 if ok else 0,
-            max_variants=3,
-            require_all_firmness=ok,
+            min_variants=MAX_DECODE_VARIANTS if ok else 0,
+            max_variants=MAX_DECODE_VARIANTS,
+            require_all_kinds=ok,
             usage=usage,
             attempts=attempts,
             model=meta.model,

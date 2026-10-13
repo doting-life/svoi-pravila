@@ -19,8 +19,7 @@ def to_bench_case(case: EvalCase) -> BenchCase:
         operation=jsonl_op,
         expected_safety=expected,
         smoke=case.smoke,
-        soften=case.soften,
-        help_say=case.help_say,
+        rewrite=case.rewrite,
         decode=case.decode,
     )
 

@@ -21,6 +21,7 @@ from tests.fakes.quota_budget import FakeLlmBudget, FakeQuotaGate
 from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
 from tests.fakes.tokens import FakeTokenGenerator
 from tests.fakes.uow import InMemoryUnitOfWorkFactory
+from tests.fakes.variant_policy import RecordingVariantPolicyMonitor
 from tests.support.miniapp_bindings import build_test_miniapp_bindings
 from tests.support.miniapp_decode import build_miniapp_decode_bundle
 from tests.unit.api.test_miniapp_api import _auth_header
@@ -42,8 +43,8 @@ from svoi_pravila.application.errors import (
 )
 from svoi_pravila.application.ports.generation import (
     GenerationMeta,
+    RewriteResult,
     SafetyVerdict,
-    SoftenResult,
     TokenUsage,
     Variant,
 )
@@ -58,11 +59,12 @@ from svoi_pravila.application.use_cases.get_user_by_id import GetUserById
 from svoi_pravila.application.use_cases.get_user_by_telegram_id import GetUserByTelegramId
 from svoi_pravila.config import Environment
 from svoi_pravila.domain.enums import (
-    Firmness,
     RelationshipKind,
+    RewriteGoal,
     UsageEventKind,
     UsageScenario,
     UsageSurface,
+    VariantKind,
 )
 from svoi_pravila.domain.text import ContactLabel
 
@@ -119,6 +121,7 @@ def _build_compose_app(
             quota_gate=gate,
             llm_budget=budget,
             sink=decode_bundle.sink,
+            policy_monitor=RecordingVariantPolicyMonitor(),
             clock=world.clock,
             monotonic=world.clock,
             ids=world.ids,
@@ -156,7 +159,7 @@ def mini_world() -> AppWorld:
 
 
 @pytest.mark.unit
-async def test_compose_soften_happy_path_and_choice(
+async def test_compose_happy_path_and_choice(
     mini_world: AppWorld,
     capture_log_events: Callable[[], list[dict[str, Any]]],
 ) -> None:
@@ -165,17 +168,17 @@ async def test_compose_soften_happy_path_and_choice(
         mini_world.uow_factory, mini_world.catalog, mini_world.ids, mini_world.clock
     ).execute(CreateContactCommand(user.id, ContactLabel("Аня"), RelationshipKind.PARTNER))
     gen = FakeTextGenerator(
-        soften_result=SoftenResult(
+        rewrite_result=RewriteResult(
             variants=(
-                Variant(text="вариант мягко", firmness=Firmness.GENTLE),
-                Variant(text="вариант баланс", firmness=Firmness.BALANCED),
-                Variant(text="вариант твёрдо", firmness=Firmness.FIRM),
+                Variant(text="вариант проверка", kind=VariantKind.CHECK),
+                Variant(text="вариант мягко", kind=VariantKind.SOFTER),
+                Variant(text="вариант твёрдо", kind=VariantKind.FIRMER),
             ),
             applied_rule_indexes=(),
             safety=SafetyVerdict.OK,
             meta=GenerationMeta(
                 model="fake",
-                prompt_version="soften@v5",
+                prompt_version="rewrite@v1",
                 latency_ms=1,
                 attempts=1,
                 usage=TokenUsage(input=2, output=2),
@@ -190,7 +193,6 @@ async def test_compose_soften_happy_path_and_choice(
             headers=headers,
             json={
                 "draft": _CANARY,
-                "intent": "soften",
                 "contact_id": str(contact.contact.id),
             },
         )
@@ -206,20 +208,20 @@ async def test_compose_soften_happy_path_and_choice(
         choice = await client.post(
             "/api/v1/compose/choice",
             headers=headers,
-            json={"token": body["choice_token"], "firmness": "gentle"},
+            json={"token": body["choice_token"], "kind": "softer"},
         )
         assert choice.status_code == 200
         assert choice.json() == {"outcome": "recorded"}
         reused = await client.post(
             "/api/v1/compose/choice",
             headers=headers,
-            json={"token": body["choice_token"], "firmness": "gentle"},
+            json={"token": body["choice_token"], "kind": "softer"},
         )
         assert reused.status_code == 422
         assert reused.json()["code"] == MiniappErrorCode.VALIDATION_ERROR
 
-    assert wired.soften_calls
-    assert wired.soften_calls[0].draft == _CANARY
+    assert wired.rewrite_calls
+    assert wired.rewrite_calls[0].draft == _CANARY
     generations = [e for e in bundle.sink.events if e.event_kind is UsageEventKind.GENERATION]
     choices = [e for e in bundle.sink.events if e.event_kind is UsageEventKind.RESULT_CHOSEN]
     assert generations[0].surface is UsageSurface.MINIAPP
@@ -227,7 +229,7 @@ async def test_compose_soften_happy_path_and_choice(
     async with mini_world.uow_factory() as uow:
         signal = await uow.tone_signals.get(user.id, contact.contact.id)
     assert signal is not None
-    assert signal.values == (Firmness.GENTLE,)
+    assert signal.values == (VariantKind.SOFTER,)
     blob = str(capture_log_events())
     assert _CANARY not in blob
     assert "вариант мягко" not in blob
@@ -248,7 +250,6 @@ async def test_compose_stranger_contact_not_found(mini_world: AppWorld) -> None:
             headers=headers,
             json={
                 "draft": "достаточно длинный черновик",
-                "intent": "soften",
                 "contact_id": str(contact.contact.id),
             },
         )
@@ -257,7 +258,7 @@ async def test_compose_stranger_contact_not_found(mini_world: AppWorld) -> None:
 
 
 @pytest.mark.unit
-async def test_compose_none_contact_and_help_say_intent(mini_world: AppWorld) -> None:
+async def test_compose_none_contact_and_goal(mini_world: AppWorld) -> None:
     await mini_world.ensure_granted_user(_TG)
     app, gen, _ = _build_compose_app(mini_world)
     headers = _auth_header(_TG)
@@ -265,11 +266,12 @@ async def test_compose_none_contact_and_help_say_intent(mini_world: AppWorld) ->
         response = await client.post(
             "/api/v1/compose",
             headers=headers,
-            json={"draft": "нужно мягко отказать", "intent": "decline"},
+            json={"draft": "нужно мягко отказать", "goal": "decline"},
         )
     assert response.status_code == 200
-    assert gen.help_say_calls
-    assert gen.help_say_calls[0].rules == ()
+    assert gen.rewrite_calls
+    assert gen.rewrite_calls[0].rules == ()
+    assert gen.rewrite_calls[0].goal is RewriteGoal.DECLINE
     assert response.json()["safety"] == "ok"
 
 
@@ -282,7 +284,7 @@ async def test_compose_quota_exhausted(mini_world: AppWorld) -> None:
         response = await client.post(
             "/api/v1/compose",
             headers=headers,
-            json={"draft": "длинный достаточно текст", "intent": "soften"},
+            json={"draft": "длинный достаточно текст"},
         )
     assert response.status_code == 429
     assert response.json()["code"] == MiniappErrorCode.QUOTA_EXHAUSTED
@@ -297,20 +299,20 @@ async def test_compose_choice_records_scenario(mini_world: AppWorld) -> None:
         generated = await client.post(
             "/api/v1/compose",
             headers=headers,
-            json={"draft": "нужно мягко отказать", "intent": "decline"},
+            json={"draft": "нужно мягко отказать", "goal": "decline"},
         )
         assert generated.status_code == 200
         token = generated.json()["choice_token"]
         response = await client.post(
             "/api/v1/compose/choice",
             headers=headers,
-            json={"token": token, "firmness": "firm"},
+            json={"token": token, "kind": "firmer"},
         )
     assert response.status_code == 200
     choices = [e for e in bundle.sink.events if e.event_kind is UsageEventKind.RESULT_CHOSEN]
     assert len(choices) == 1
-    assert choices[0].scenario is UsageScenario.HELP_SAY
-    assert choices[0].variant_firmness is Firmness.FIRM
+    assert choices[0].scenario is UsageScenario.REWRITE
+    assert choices[0].variant_kind is VariantKind.FIRMER
     assert choices[0].surface is UsageSurface.MINIAPP
     assert response.json() == {"outcome": "recorded"}
     async with mini_world.uow_factory() as uow:
@@ -326,7 +328,7 @@ async def test_compose_crisis_includes_lead_and_resources(mini_world: AppWorld) 
         response = await client.post(
             "/api/v1/compose",
             headers=headers,
-            json={"draft": "я не хочу жить больше", "intent": "soften"},
+            json={"draft": "я не хочу жить больше"},
         )
     assert response.status_code == 200
     body = response.json()
@@ -335,19 +337,19 @@ async def test_compose_crisis_includes_lead_and_resources(mini_world: AppWorld) 
     assert body["choice_token"] is None
     assert isinstance(body["lead"], str) and body["lead"]
     assert isinstance(body["resources"], list) and body["resources"]
-    assert gen.soften_calls == []
+    assert gen.rewrite_calls == []
 
 
 @pytest.mark.unit
 async def test_compose_maps_provider_errors(mini_world: AppWorld) -> None:
     await mini_world.ensure_granted_user(_TG)
     unavailable = FakeTextGenerator()
-    unavailable.soften_error = GenerationUnavailable(
+    unavailable.rewrite_error = GenerationUnavailable(
         UnavailableKind.TIMEOUT,
         usage=TokenUsage(),
         attempts=1,
         model="fake",
-        prompt_version="soften@v5",
+        prompt_version="rewrite@v1",
     )
     app, _, _ = _build_compose_app(mini_world, generator=unavailable)
     headers = _auth_header(_TG)
@@ -355,25 +357,25 @@ async def test_compose_maps_provider_errors(mini_world: AppWorld) -> None:
         response = await client.post(
             "/api/v1/compose",
             headers=headers,
-            json={"draft": "длинный достаточно текст", "intent": "soften"},
+            json={"draft": "длинный достаточно текст"},
         )
     assert response.status_code == 503
     assert response.json()["code"] == MiniappErrorCode.GENERATION_UNAVAILABLE
 
     invalid = FakeTextGenerator()
-    invalid.soften_error = InvalidGenerationOutput(
-        (InvalidOutputReason.FIRMNESS_SET,),
+    invalid.rewrite_error = InvalidGenerationOutput(
+        (InvalidOutputReason.VARIANT_KIND_SET,),
         usage=TokenUsage(),
         attempts=1,
         model="fake",
-        prompt_version="soften@v5",
+        prompt_version="rewrite@v1",
     )
     app, _, _ = _build_compose_app(mini_world, generator=invalid)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
             "/api/v1/compose",
             headers=headers,
-            json={"draft": "длинный достаточно текст", "intent": "soften"},
+            json={"draft": "длинный достаточно текст"},
         )
     assert response.status_code == 502
     assert response.json()["code"] == MiniappErrorCode.INVALID_OUTPUT
@@ -415,7 +417,7 @@ async def test_compose_maps_defensive_bound_errors(mini_world: AppWorld) -> None
             response = await client.post(
                 "/api/v1/compose",
                 headers=headers,
-                json={"draft": "длинный достаточно текст", "intent": "soften"},
+                json={"draft": "длинный достаточно текст"},
             )
         assert response.status_code == status
         assert response.json()["code"] == code
@@ -430,7 +432,7 @@ async def test_compose_choice_unknown_token(mini_world: AppWorld) -> None:
         response = await client.post(
             "/api/v1/compose/choice",
             headers=headers,
-            json={"token": "c_unknown", "firmness": "gentle"},
+            json={"token": "c_unknown", "kind": "softer"},
         )
     assert response.status_code == 422
     assert response.json()["code"] == MiniappErrorCode.VALIDATION_ERROR
@@ -455,7 +457,7 @@ async def test_compose_choice_maps_record_invalid_ref(mini_world: AppWorld) -> N
 
     tokens = FakeComposeChoiceTokens()
     real_pseudo = FakePseudonymizer().pseudonymize("analytics", str(_TG))
-    token = await tokens.issue(real_pseudo, UsageScenario.SOFTEN, None)
+    token = await tokens.issue(real_pseudo, UsageScenario.REWRITE, None)
     bindings = build_test_miniapp_bindings(
         auth=auth,
         world=mini_world,
@@ -476,7 +478,7 @@ async def test_compose_choice_maps_record_invalid_ref(mini_world: AppWorld) -> N
         response = await client.post(
             "/api/v1/compose/choice",
             headers=headers,
-            json={"token": token, "firmness": "gentle"},
+            json={"token": token, "kind": "softer"},
         )
     assert response.status_code == 422
     assert response.json()["code"] == MiniappErrorCode.VALIDATION_ERROR

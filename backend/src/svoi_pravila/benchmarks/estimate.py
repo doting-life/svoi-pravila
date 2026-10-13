@@ -19,10 +19,8 @@ __all__ = [
 
 def estimate_case_tokens(case: BenchCase, operation: RunOperation) -> int:
     """Worst-case tokens for one measured case (including retries per phase)."""
-    if operation == "soften" and case.soften is not None:
-        return max_billable_for_request(case.soften)
-    if operation == "help_say" and case.help_say is not None:
-        return max_billable_for_request(case.help_say)
+    if operation == "rewrite" and case.rewrite is not None:
+        return max_billable_for_request(case.rewrite)
     if operation == "decode_stream" and case.decode is not None:
         return max_billable_for_request(case.decode)
     if operation == "suggest_rule" and case.suggest_rule is not None:

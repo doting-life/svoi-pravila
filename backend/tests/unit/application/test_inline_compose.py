@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, timedelta
+from typing import Any
 
 import pytest
 
@@ -32,11 +35,9 @@ from svoi_pravila.application.ports.generation import (
     BOUNDED_TEXT_MAX,
     BOUNDED_TEXT_MIN,
     GenerationMeta,
-    HelpSayIntent,
-    HelpSayResult,
+    RewriteRequest,
+    RewriteResult,
     SafetyVerdict,
-    SoftenRequest,
-    SoftenResult,
     TokenUsage,
     Variant,
 )
@@ -69,7 +70,6 @@ from svoi_pravila.application.use_cases.set_active_contact import (
     SetActiveContactCommand,
 )
 from svoi_pravila.domain.enums import (
-    Firmness,
     LimitKind,
     RelationshipKind,
     RuleCategory,
@@ -77,25 +77,20 @@ from svoi_pravila.domain.enums import (
     UsageOutcome,
     UsageScenario,
     UsageSurface,
+    VariantKind,
 )
 from svoi_pravila.domain.ids import TelegramUserId
 from svoi_pravila.domain.text import ContactLabel, RuleText
 from svoi_pravila.domain.usage import UsageEvent
+from svoi_pravila.domain.variant_policy import PolicyRule
 from tests.fakes.generation import FakeTextGenerator
 from tests.fakes.inline_reuse import make_inline_reuse
 from tests.fakes.quota_budget import FakeLlmBudget, FakeQuotaGate
 from tests.fakes.rate_limit import FakePseudonymizer
 from tests.fakes.usage_sink import FailingUsageEventSink, RecordingUsageEventSink
+from tests.fakes.variant_policy import RecordingVariantPolicyMonitor
 from tests.unit.application.conftest import AppWorld
 from tests.unit.domain.test_crisis_screen import THREAT_AND_HYPERBOLE_NEGATIVES
-
-_PREFIXES = (
-    ("откажи:", HelpSayIntent.DECLINE),
-    ("граница:", HelpSayIntent.SET_BOUNDARY),
-    ("извинись:", HelpSayIntent.ADMIT_FAULT),
-    ("мир:", HelpSayIntent.RECONNECT_AFTER_CONFLICT),
-    ("помоги:", HelpSayIntent.OTHER),
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,7 +101,7 @@ class _Fakes:
     sink: RecordingUsageEventSink | FailingUsageEventSink | None = None
     reuse: InlineResultReuse | None = None
     min_chars: int = 8
-    intent_prefixes: tuple[tuple[str, HelpSayIntent], ...] = _PREFIXES
+    policy_monitor: RecordingVariantPolicyMonitor | None = None
 
 
 def _compose_generation(
@@ -123,6 +118,7 @@ def _compose_generation(
                 quota_gate=chosen.quota_gate or FakeQuotaGate(limit=30),
                 llm_budget=chosen.llm_budget or FakeLlmBudget(),
                 sink=sink,
+                policy_monitor=chosen.policy_monitor or RecordingVariantPolicyMonitor(),
                 clock=world.clock,
                 monotonic=world.clock,
                 ids=world.ids,
@@ -155,7 +151,6 @@ def _ports(
             compose=compose_generation,
             reuse=reuse,
             min_chars=chosen.min_chars,
-            intent_prefixes=chosen.intent_prefixes,
         )
     )
     return use_case, sink, reuse
@@ -189,55 +184,31 @@ async def test_inline_compose_too_short_and_too_long(world: AppWorld) -> None:
         await use_case.execute(
             InlineComposeCommand(TelegramUserId(100), "x" * (BOUNDED_TEXT_MAX + 1))
         )
-    assert generator.soften_calls == []
+    assert generator.rewrite_calls == []
     assert isinstance(sink, RecordingUsageEventSink)
     assert sink.events == []
 
 
 @pytest.mark.unit
-async def test_inline_compose_softens_without_prefix(world: AppWorld) -> None:
+async def test_inline_compose_rewrites_without_goal(world: AppWorld) -> None:
     await world.ensure_granted_user(100)
     generator = FakeTextGenerator()
     use_case, sink, _reuse = _ports(world, _Fakes(generator=generator))
     result = await use_case.execute(
         InlineComposeCommand(TelegramUserId(100), "  Please leave me alone  ")
     )
-    assert result.scenario is UsageScenario.SOFTEN
+    assert result.scenario is UsageScenario.REWRITE
     assert result.reuse is InlineReuseStatus.MISS
-    assert generator.soften_calls[0].draft == "Please leave me alone"
-    assert generator.soften_calls[0].relationship is RelationshipKind.OTHER
-    assert generator.help_say_calls == []
+    assert generator.rewrite_calls[0].draft == "Please leave me alone"
+    assert generator.rewrite_calls[0].relationship is RelationshipKind.OTHER
     assert isinstance(sink, RecordingUsageEventSink)
     event = sink.events[0]
     assert event.event_kind is UsageEventKind.GENERATION
     assert event.surface is UsageSurface.INLINE
-    assert event.scenario is UsageScenario.SOFTEN
+    assert event.scenario is UsageScenario.REWRITE
     assert event.outcome is UsageOutcome.OK
     assert event.ttfc_ms is None
-    assert event.variant_firmness is None
-
-
-@pytest.mark.unit
-async def test_inline_compose_help_say_prefix_casefold(world: AppWorld) -> None:
-    await world.ensure_granted_user(100)
-    generator = FakeTextGenerator()
-    use_case, _sink, _reuse = _ports(world, _Fakes(generator=generator))
-    await use_case.execute(InlineComposeCommand(TelegramUserId(100), "ОТКАЖИ:  I cannot come  "))
-    assert generator.help_say_calls[0].intent is HelpSayIntent.DECLINE
-    assert generator.help_say_calls[0].details == "I cannot come"
-    assert generator.soften_calls == []
-
-
-@pytest.mark.unit
-async def test_inline_compose_prefix_remainder_too_short(world: AppWorld) -> None:
-    await world.ensure_granted_user(100)
-    generator = FakeTextGenerator()
-    use_case, sink, _reuse = _ports(world, _Fakes(generator=generator))
-    with pytest.raises(InlineQueryTooShort):
-        await use_case.execute(InlineComposeCommand(TelegramUserId(100), "помоги: hi"))
-    assert generator.help_say_calls == []
-    assert isinstance(sink, RecordingUsageEventSink)
-    assert sink.events == []
+    assert event.variant_kind is None
 
 
 @pytest.mark.unit
@@ -251,7 +222,7 @@ async def test_inline_compose_quota_before_generation(world: AppWorld) -> None:
         await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
     assert isinstance(quota_info.value.cause, UserQuotaExhausted)
     assert quota_info.value.reuse is InlineReuseStatus.MISS
-    assert generator.soften_calls == []
+    assert generator.rewrite_calls == []
     assert isinstance(sink, RecordingUsageEventSink)
     assert len(sink.events) == 1
     assert sink.events[0].outcome is UsageOutcome.LIMITED
@@ -261,11 +232,11 @@ async def test_inline_compose_quota_before_generation(world: AppWorld) -> None:
 async def test_inline_compose_records_errors_and_swallows_sink_failure(world: AppWorld) -> None:
     await world.ensure_granted_user(100)
     refused = FakeTextGenerator()
-    refused.soften_error = GenerationRefusedByProvider(
+    refused.rewrite_error = GenerationRefusedByProvider(
         usage=TokenUsage(input=1, output=0),
         attempts=1,
         model="fake",
-        prompt_version="soften@v1",
+        prompt_version="rewrite@v1",
     )
     use_case, sink, _reuse = _ports(world, _Fakes(generator=refused))
     with pytest.raises(InlineComposeFailed) as refused_info:
@@ -276,12 +247,12 @@ async def test_inline_compose_records_errors_and_swallows_sink_failure(world: Ap
     assert sink.events[0].outcome is UsageOutcome.REFUSED
 
     unavailable = FakeTextGenerator()
-    unavailable.soften_error = GenerationUnavailable(
+    unavailable.rewrite_error = GenerationUnavailable(
         UnavailableKind.TIMEOUT,
         usage=TokenUsage(),
         attempts=1,
         model="fake",
-        prompt_version="soften@v1",
+        prompt_version="rewrite@v1",
     )
     use_case, sink, _reuse = _ports(world, _Fakes(generator=unavailable))
     with pytest.raises(InlineComposeFailed) as unavailable_info:
@@ -292,12 +263,12 @@ async def test_inline_compose_records_errors_and_swallows_sink_failure(world: Ap
     assert sink.events[0].outcome is UsageOutcome.UNAVAILABLE
 
     invalid = FakeTextGenerator()
-    invalid.soften_error = InvalidGenerationOutput(
+    invalid.rewrite_error = InvalidGenerationOutput(
         (InvalidOutputReason.VARIANT_COUNT,),
         usage=TokenUsage(),
         attempts=1,
         model="fake",
-        prompt_version="soften@v1",
+        prompt_version="rewrite@v1",
     )
     use_case, sink, _reuse = _ports(world, _Fakes(generator=invalid, sink=FailingUsageEventSink()))
     with pytest.raises(InlineComposeFailed) as invalid_info:
@@ -311,12 +282,12 @@ async def test_inline_compose_refund_matrix(world: AppWorld) -> None:
     await world.ensure_granted_user(100)
 
     unavailable = FakeTextGenerator()
-    unavailable.soften_error = GenerationUnavailable(
+    unavailable.rewrite_error = GenerationUnavailable(
         UnavailableKind.TIMEOUT,
         usage=TokenUsage(),
         attempts=1,
         model="fake",
-        prompt_version="soften@v1",
+        prompt_version="rewrite@v1",
     )
     quota_unavail = FakeQuotaGate(limit=30)
     use_case, _sink, _ = _ports(world, _Fakes(generator=unavailable, quota_gate=quota_unavail))
@@ -325,11 +296,11 @@ async def test_inline_compose_refund_matrix(world: AppWorld) -> None:
     assert len(quota_unavail.refund_calls) == 1
 
     refused = FakeTextGenerator()
-    refused.soften_error = GenerationRefusedByProvider(
+    refused.rewrite_error = GenerationRefusedByProvider(
         usage=TokenUsage(input=1, output=0),
         attempts=1,
         model="fake",
-        prompt_version="soften@v1",
+        prompt_version="rewrite@v1",
     )
     quota_refused = FakeQuotaGate(limit=30)
     use_case, _sink, _ = _ports(world, _Fakes(generator=refused, quota_gate=quota_refused))
@@ -338,12 +309,12 @@ async def test_inline_compose_refund_matrix(world: AppWorld) -> None:
     assert quota_refused.refund_calls == []
 
     invalid = FakeTextGenerator()
-    invalid.soften_error = InvalidGenerationOutput(
+    invalid.rewrite_error = InvalidGenerationOutput(
         (InvalidOutputReason.VARIANT_COUNT,),
         usage=TokenUsage(),
         attempts=1,
         model="fake",
-        prompt_version="soften@v1",
+        prompt_version="rewrite@v1",
     )
     quota_invalid = FakeQuotaGate(limit=30)
     use_case, _sink, _ = _ports(world, _Fakes(generator=invalid, quota_gate=quota_invalid))
@@ -351,16 +322,16 @@ async def test_inline_compose_refund_matrix(world: AppWorld) -> None:
         await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
     assert quota_invalid.refund_calls == []
 
-    class _CancelSoft(FakeTextGenerator):
-        async def soften(self, request: SoftenRequest) -> SoftenResult:
-            self.soften_calls.append(request)
+    class _CancelRewrite(FakeTextGenerator):
+        async def rewrite(self, request: RewriteRequest) -> RewriteResult:
+            self.rewrite_calls.append(request)
             raise asyncio.CancelledError
 
     quota_cancel = FakeQuotaGate(limit=30)
     budget_cancel = FakeLlmBudget()
     query = "long enough"
     use_case, _sink, _ = _ports(
-        world, _Fakes(generator=_CancelSoft(), quota_gate=quota_cancel, llm_budget=budget_cancel)
+        world, _Fakes(generator=_CancelRewrite(), quota_gate=quota_cancel, llm_budget=budget_cancel)
     )
     with pytest.raises(asyncio.CancelledError):
         await use_case.execute(InlineComposeCommand(TelegramUserId(100), query))
@@ -410,21 +381,6 @@ async def test_inline_compose_persist_before_budget_add(world: AppWorld) -> None
 
 
 @pytest.mark.unit
-async def test_inline_compose_skips_blank_prefix_entries(world: AppWorld) -> None:
-    await world.ensure_granted_user(100)
-    generator = FakeTextGenerator()
-    use_case, _sink, _ = _ports(
-        world,
-        _Fakes(
-            generator=generator,
-            intent_prefixes=(("", HelpSayIntent.OTHER), *_PREFIXES),
-        ),
-    )
-    await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough draft"))
-    assert generator.soften_calls
-
-
-@pytest.mark.unit
 async def test_inline_compose_service_budget_exhausted(world: AppWorld) -> None:
     await world.ensure_granted_user(100)
     generator = FakeTextGenerator()
@@ -435,7 +391,7 @@ async def test_inline_compose_service_budget_exhausted(world: AppWorld) -> None:
     with pytest.raises(InlineComposeFailed) as info:
         await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
     assert isinstance(info.value.cause, ServiceBudgetExhausted)
-    assert generator.soften_calls == []
+    assert generator.rewrite_calls == []
     assert isinstance(sink, RecordingUsageEventSink)
     assert sink.events[0].outcome is UsageOutcome.LIMITED
     assert sink.events[0].limit_kind is LimitKind.GLOBAL_BUDGET
@@ -489,22 +445,16 @@ async def test_inline_compose_crisis_screen_skips_quota_and_generator(world: App
     assert result.safety is SafetyVerdict.CRISIS
     assert result.reuse is None
     assert result.variants == ()
-    assert result.scenario is UsageScenario.SOFTEN
-    assert generator.soften_calls == []
+    assert result.scenario is UsageScenario.REWRITE
+    assert generator.rewrite_calls == []
     assert quota_gate.reserve_count() == 0
     assert llm_budget.check_count() == 0
     assert isinstance(sink, RecordingUsageEventSink)
     event = sink.events[0]
     assert event.outcome is UsageOutcome.SCREENED
     assert event.safety == SafetyVerdict.CRISIS.value
-    assert event.scenario is UsageScenario.SOFTEN
+    assert event.scenario is UsageScenario.REWRITE
     assert event.billable_tokens == 0
-    help_result = await use_case.execute(
-        InlineComposeCommand(TelegramUserId(100), "граница: я не хочу жить")
-    )
-    assert help_result.scenario is UsageScenario.HELP_SAY
-    assert help_result.safety is SafetyVerdict.CRISIS
-    assert generator.help_say_calls == []
 
 
 @pytest.mark.unit
@@ -514,13 +464,13 @@ async def test_inline_compose_ok_with_failing_sink(world: AppWorld) -> None:
         world,
         _Fakes(
             generator=FakeTextGenerator(
-                soften_result=SoftenResult(
-                    variants=(Variant(text="a", firmness=Firmness.GENTLE),),
+                rewrite_result=RewriteResult(
+                    variants=(Variant(text="a", kind=VariantKind.SOFTER),),
                     applied_rule_indexes=(),
                     safety=SafetyVerdict.OK,
                     meta=GenerationMeta(
                         model="fake",
-                        prompt_version="soften@v1",
+                        prompt_version="rewrite@v1",
                         latency_ms=2,
                         attempts=1,
                         usage=TokenUsage(input=1, output=1),
@@ -535,33 +485,6 @@ async def test_inline_compose_ok_with_failing_sink(world: AppWorld) -> None:
 
 
 @pytest.mark.unit
-async def test_inline_compose_help_say_ok_event(world: AppWorld) -> None:
-    await world.ensure_granted_user(100)
-    generator = FakeTextGenerator(
-        help_say_result=HelpSayResult(
-            variants=(Variant(text="h", firmness=Firmness.FIRM),),
-            applied_rule_indexes=(),
-            safety=SafetyVerdict.OK,
-            meta=GenerationMeta(
-                model="fake",
-                prompt_version="help_say@v1",
-                latency_ms=3,
-                attempts=1,
-                usage=TokenUsage(input=2, output=2),
-            ),
-        )
-    )
-    use_case, sink, _reuse = _ports(world, _Fakes(generator=generator))
-    result = await use_case.execute(
-        InlineComposeCommand(TelegramUserId(100), "граница: keep the evening free")
-    )
-    assert result.scenario is UsageScenario.HELP_SAY
-    assert generator.help_say_calls[0].intent is HelpSayIntent.SET_BOUNDARY
-    assert isinstance(sink, RecordingUsageEventSink)
-    assert sink.events[0].scenario is UsageScenario.HELP_SAY
-
-
-@pytest.mark.unit
 @pytest.mark.parametrize("phrase", THREAT_AND_HYPERBOLE_NEGATIVES)
 async def test_inline_threat_and_hyperbole_still_calls_generator(
     world: AppWorld, phrase: str
@@ -571,7 +494,7 @@ async def test_inline_threat_and_hyperbole_still_calls_generator(
     use_case, sink, _reuse = _ports(world, _Fakes(generator=generator))
     result = await use_case.execute(InlineComposeCommand(TelegramUserId(100), phrase))
     assert result.safety is not SafetyVerdict.CRISIS
-    assert generator.soften_calls
+    assert generator.rewrite_calls
     assert isinstance(sink, RecordingUsageEventSink)
     assert sink.events[0].outcome is not UsageOutcome.SCREENED
 
@@ -600,16 +523,16 @@ async def _user_with_active_contact_and_rule(world: AppWorld, telegram_id: int) 
 
 
 @pytest.mark.unit
-async def test_inline_compose_ignores_active_contact_and_rules_soften(world: AppWorld) -> None:
+async def test_inline_compose_ignores_active_contact_and_rules(world: AppWorld) -> None:
     await _user_with_active_contact_and_rule(world, 130)
     generator = FakeTextGenerator(
-        soften_result=SoftenResult(
-            variants=(Variant(text="a", firmness=Firmness.GENTLE),),
+        rewrite_result=RewriteResult(
+            variants=(Variant(text="a", kind=VariantKind.SOFTER),),
             applied_rule_indexes=(0,),
             safety=SafetyVerdict.OK,
             meta=GenerationMeta(
                 model="fake",
-                prompt_version="soften@v1",
+                prompt_version="rewrite@v1",
                 latency_ms=1,
                 attempts=1,
                 usage=TokenUsage(input=1, output=1),
@@ -618,24 +541,11 @@ async def test_inline_compose_ignores_active_contact_and_rules_soften(world: App
     )
     use_case, sink, _reuse = _ports(world, _Fakes(generator=generator))
     await use_case.execute(InlineComposeCommand(TelegramUserId(130), "long enough"))
-    request = generator.soften_calls[0]
+    request = generator.rewrite_calls[0]
     assert request.relationship is RelationshipKind.OTHER
     assert request.rules == ()
     assert isinstance(sink, RecordingUsageEventSink)
     assert "не повышать голос" not in str(sink.events[0])
-
-
-@pytest.mark.unit
-async def test_inline_compose_ignores_active_contact_and_rules_help_say(
-    world: AppWorld,
-) -> None:
-    await _user_with_active_contact_and_rule(world, 131)
-    generator = FakeTextGenerator()
-    use_case, _sink, _reuse = _ports(world, _Fakes(generator=generator))
-    await use_case.execute(InlineComposeCommand(TelegramUserId(131), "помоги: long enough"))
-    request = generator.help_say_calls[0]
-    assert request.relationship is RelationshipKind.OTHER
-    assert request.rules == ()
 
 
 @pytest.mark.unit
@@ -665,13 +575,13 @@ async def test_inline_compose_reuse_join_one_generator_call(world: AppWorld) -> 
     await world.ensure_granted_user(100)
     generator = FakeTextGenerator()
     gate = asyncio.Event()
-    generator.soften_block = gate
+    generator.rewrite_block = gate
     reuse = make_inline_reuse(world.clock)
     use_case, sink, _ = _ports(world, _Fakes(generator=generator, reuse=reuse))
     t1 = asyncio.create_task(
         use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough draft"))
     )
-    await generator.soften_started.wait()
+    await generator.rewrite_started.wait()
     t2 = asyncio.create_task(
         use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough draft"))
     )
@@ -716,16 +626,7 @@ async def test_inline_compose_reuse_key_ignores_contact_state(world: AppWorld) -
     )
     assert first.reuse is InlineReuseStatus.MISS
     assert after_contact.reuse is InlineReuseStatus.HIT
-    help_say = await use_case.execute(
-        InlineComposeCommand(TelegramUserId(140), "помоги: long enough draft")
-    )
-    assert help_say.reuse is InlineReuseStatus.MISS
-    assert help_say.scenario is UsageScenario.HELP_SAY
-    decline = await use_case.execute(
-        InlineComposeCommand(TelegramUserId(140), "откажи: long enough draft")
-    )
-    assert decline.reuse is InlineReuseStatus.MISS
-    assert generator.call_count == 3
+    assert generator.call_count == 1
     assert isinstance(sink, RecordingUsageEventSink)
 
 
@@ -747,20 +648,20 @@ async def test_inline_compose_reuse_error_to_joiners_not_stored(world: AppWorld)
     await world.ensure_granted_user(100)
     generator = FakeTextGenerator()
     gate = asyncio.Event()
-    generator.soften_block = gate
-    generator.soften_error = GenerationUnavailable(
+    generator.rewrite_block = gate
+    generator.rewrite_error = GenerationUnavailable(
         UnavailableKind.TIMEOUT,
         usage=TokenUsage(),
         attempts=1,
         model="fake",
-        prompt_version="soften@v1",
+        prompt_version="rewrite@v1",
     )
     reuse = make_inline_reuse(world.clock)
     use_case, sink, _ = _ports(world, _Fakes(generator=generator, reuse=reuse))
     t1 = asyncio.create_task(
         use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough draft"))
     )
-    await generator.soften_started.wait()
+    await generator.rewrite_started.wait()
     t2 = asyncio.create_task(
         use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough draft"))
     )
@@ -778,8 +679,8 @@ async def test_inline_compose_reuse_error_to_joiners_not_stored(world: AppWorld)
         InlineReuseStatus.JOIN,
     }
     assert generator.call_count == 1
-    generator.soften_error = None
-    generator.soften_block = None
+    generator.rewrite_error = None
+    generator.rewrite_block = None
     ok = await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough draft"))
     assert ok.reuse is InlineReuseStatus.MISS
     assert generator.call_count == 2
@@ -791,13 +692,13 @@ async def test_inline_compose_waiter_cancel_keeps_shared_generation(world: AppWo
     await world.ensure_granted_user(100)
     generator = FakeTextGenerator()
     gate = asyncio.Event()
-    generator.soften_block = gate
+    generator.rewrite_block = gate
     reuse = make_inline_reuse(world.clock)
     use_case, _sink, _ = _ports(world, _Fakes(generator=generator, reuse=reuse))
     producer = asyncio.create_task(
         use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough draft"))
     )
-    await generator.soften_started.wait()
+    await generator.rewrite_started.wait()
     joiner = asyncio.create_task(
         use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough draft"))
     )
@@ -862,7 +763,7 @@ async def test_compose_generation_execute_bounds_and_unknown_user(world: AppWorl
             ComposeGenerationCommand(
                 telegram_user_id=TelegramUserId(100),
                 draft="",
-                intent=None,
+                goal=None,
                 contact_id=None,
                 surface=UsageSurface.MINIAPP,
             )
@@ -872,7 +773,7 @@ async def test_compose_generation_execute_bounds_and_unknown_user(world: AppWorl
             ComposeGenerationCommand(
                 telegram_user_id=TelegramUserId(100),
                 draft="x" * (BOUNDED_TEXT_MAX + 1),
-                intent=None,
+                goal=None,
                 contact_id=None,
                 surface=UsageSurface.MINIAPP,
             )
@@ -882,12 +783,12 @@ async def test_compose_generation_execute_bounds_and_unknown_user(world: AppWorl
             ComposeGenerationCommand(
                 telegram_user_id=TelegramUserId(404),
                 draft="long enough draft",
-                intent=None,
+                goal=None,
                 contact_id=None,
                 surface=UsageSurface.MINIAPP,
             )
         )
-    assert generator.soften_calls == []
+    assert generator.rewrite_calls == []
     assert isinstance(sink, RecordingUsageEventSink)
     assert sink.events == []
 
@@ -902,15 +803,109 @@ async def test_compose_generation_execute_crisis_before_quota(world: AppWorld) -
         ComposeGenerationCommand(
             telegram_user_id=TelegramUserId(100),
             draft="я не хочу жить больше",
-            intent=None,
+            goal=None,
             contact_id=None,
             surface=UsageSurface.MINIAPP,
         )
     )
     assert result.safety is SafetyVerdict.CRISIS
     assert result.variants == ()
-    assert generator.soften_calls == []
+    assert generator.rewrite_calls == []
     assert quota_gate.reserve_count() == 0
     assert isinstance(sink, RecordingUsageEventSink)
     assert sink.events[0].outcome is UsageOutcome.SCREENED
     assert sink.events[0].surface is UsageSurface.MINIAPP
+
+
+def _rewrite_result(*texts: str) -> RewriteResult:
+    kinds = (VariantKind.CHECK, VariantKind.SOFTER, VariantKind.FIRMER)
+    return RewriteResult(
+        variants=tuple(
+            Variant(text=text, kind=kind) for text, kind in zip(texts, kinds, strict=True)
+        ),
+        applied_rule_indexes=(),
+        safety=SafetyVerdict.OK,
+        meta=GenerationMeta(
+            model="fake",
+            prompt_version="rewrite@v1",
+            latency_ms=1,
+            attempts=1,
+            usage=TokenUsage(input=1, output=1),
+        ),
+    )
+
+
+@pytest.mark.unit
+async def test_inline_compose_humanizes_typography_from_draft(world: AppWorld) -> None:
+    await world.ensure_granted_user(100)
+    generator = FakeTextGenerator(
+        rewrite_result=_rewrite_result(
+            "Нужно поговорить \u2014 сегодня\u2026",
+            "Давай поговорим \u2014 сегодня",
+            "Говорим сегодня",
+        )
+    )
+    use_case, _sink, _reuse = _ports(world, _Fakes(generator=generator))
+    result = await use_case.execute(InlineComposeCommand(TelegramUserId(100), "нужно поговорить"))
+    assert [v.text for v in result.variants] == [
+        "Нужно поговорить, сегодня...",
+        "Давай поговорим, сегодня",
+        "Говорим сегодня",
+    ]
+
+
+@pytest.mark.unit
+async def test_inline_compose_keeps_dashes_when_draft_has_a_dash(world: AppWorld) -> None:
+    await world.ensure_granted_user(100)
+    generator = FakeTextGenerator(
+        rewrite_result=_rewrite_result(
+            "нужно \u2014 поговорить", "давай \u2014 поговорим", "говорим"
+        )
+    )
+    use_case, _sink, _reuse = _ports(world, _Fakes(generator=generator))
+    result = await use_case.execute(
+        InlineComposeCommand(TelegramUserId(100), "нужно \u2014 поговорить")
+    )
+    assert result.variants[0].text == "нужно \u2014 поговорить"
+    assert result.variants[1].text == "давай \u2014 поговорим"
+
+
+@pytest.mark.unit
+async def test_inline_compose_reports_policy_violations_without_blocking(
+    world: AppWorld,
+) -> None:
+    await world.ensure_granted_user(100)
+    monitor = RecordingVariantPolicyMonitor()
+    generator = FakeTextGenerator(
+        rewrite_result=_rewrite_result(
+            "я ценю, что мы поговорим сегодня вечером",
+            "давай обсудим спокойно",
+            "говорим сегодня",
+        )
+    )
+    use_case, _sink, _reuse = _ports(world, _Fakes(generator=generator, policy_monitor=monitor))
+    result = await use_case.execute(InlineComposeCommand(TelegramUserId(100), "нужно поговорить"))
+    assert len(result.variants) == 3
+    assert (VariantKind.CHECK, PolicyRule.STOP_PHRASE) in monitor.records
+    assert (VariantKind.SOFTER, PolicyRule.STOP_PHRASE) in monitor.records
+    assert all(rule is not PolicyRule.REGISTER for _kind, rule in monitor.records)
+
+
+@pytest.mark.unit
+async def test_policy_path_does_not_log_conversation_text(
+    world: AppWorld, capture_log_events: Callable[[], list[dict[str, Any]]]
+) -> None:
+    await world.ensure_granted_user(100)
+    marker = "CANARY-7f3a9c"
+    generator = FakeTextGenerator(
+        rewrite_result=_rewrite_result(
+            f"я ценю {marker} \u2014 {marker}",
+            f"давай обсудим спокойно {marker}",
+            f"говорим {marker}",
+        )
+    )
+    monitor = RecordingVariantPolicyMonitor()
+    use_case, _sink, _reuse = _ports(world, _Fakes(generator=generator, policy_monitor=monitor))
+    await use_case.execute(InlineComposeCommand(TelegramUserId(100), f"нужно поговорить {marker}"))
+    assert monitor.records
+    assert marker not in json.dumps(capture_log_events())

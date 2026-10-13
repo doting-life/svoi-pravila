@@ -86,6 +86,15 @@ def upgrade_head(*, sqlalchemy_url: str | None = None) -> None:
     _run_alembic_in_isolated_loop(lambda: command.upgrade(cfg, "head"))
 
 
+def upgrade_to(revision: str, *, sqlalchemy_url: str | None = None) -> None:
+    """Apply Alembic migrations up to ``revision`` on a ``*_test`` database only."""
+    if sqlalchemy_url is None:
+        sqlalchemy_url = load_test_infra_settings().database_url.get_secret_value()
+    require_test_database_url(sqlalchemy_url)
+    cfg = alembic_config(sqlalchemy_url=sqlalchemy_url)
+    _run_alembic_in_isolated_loop(lambda: command.upgrade(cfg, revision))
+
+
 def downgrade_base(*, sqlalchemy_url: str | None = None) -> None:
     """Downgrade Alembic migrations to base on a ``*_test`` database only."""
     if sqlalchemy_url is None:

@@ -28,13 +28,13 @@ from svoi_pravila.application.use_cases.revoke_all_consents import (
 from svoi_pravila.domain.contact import Contact
 from svoi_pravila.domain.enums import (
     ConsentKind,
-    Firmness,
     RelationshipKind,
     RuleCategory,
     RuleStatus,
     UsageOutcome,
     UsageScenario,
     UsageSurface,
+    VariantKind,
 )
 from svoi_pravila.domain.ids import (
     ContactId,
@@ -276,7 +276,7 @@ async def test_delete_and_export(world: AppWorld) -> None:
                 contact_id=contact.id,
                 category=RuleCategory.HOW_TO_ASK,
                 text=RuleText("Говорить мягко, без резких формулировок"),
-                firmness=Firmness.GENTLE,
+                variant_kind=VariantKind.SOFTER,
                 now=world.clock.now(),
             )
         )
@@ -284,7 +284,7 @@ async def test_delete_and_export(world: AppWorld) -> None:
             ToneSignal(
                 user_id=inviter.id,
                 contact_id=contact.id,
-                values=(Firmness.GENTLE,) * 5,
+                values=(VariantKind.SOFTER,) * 5,
             )
         )
         await uow.usage_events.add(
@@ -344,7 +344,7 @@ async def test_delete_and_export(world: AppWorld) -> None:
     assert "together" in blob
     assert "partner only" not in blob
     assert "Говорить мягко, без резких формулировок" in blob
-    assert "gentle" in blob
+    assert "softer" in blob
 
     deleter = DeleteMyAccount(
         DeleteMyAccountPorts(

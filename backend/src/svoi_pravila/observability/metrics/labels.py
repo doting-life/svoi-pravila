@@ -7,7 +7,14 @@ from svoi_pravila.application.errors import (
     AnalyticsJobStatus,
     CacheErrorKind,
 )
-from svoi_pravila.domain.enums import LimitKind, UsageOutcome, UsageScenario, UsageSurface
+from svoi_pravila.domain.enums import (
+    LimitKind,
+    UsageOutcome,
+    UsageScenario,
+    UsageSurface,
+    VariantKind,
+)
+from svoi_pravila.domain.variant_policy import PolicyRule
 
 NONE = "none"
 OTHER = "other"
@@ -32,12 +39,11 @@ KNOWN_MODELS: frozenset[str] = frozenset(
 
 KNOWN_PROMPT_VERSIONS: frozenset[str] = frozenset(
     {
-        "soften@v5",
-        "help_say@v6",
-        "decode@v3",
+        "rewrite@v1",
+        "decode@v4",
         "decode_analysis@v1",
         "suggest_rule@v1",
-        "decode_analysis@v1+decode@v3",
+        "decode_analysis@v1+decode@v4",
         NONE,
         OTHER,
     }
@@ -74,6 +80,8 @@ KNOWN_UPDATE_TYPES: frozenset[str] = frozenset(
 )
 
 SCENARIOS: frozenset[str] = frozenset(m.value for m in UsageScenario)
+VARIANT_KINDS: frozenset[str] = frozenset(m.value for m in VariantKind)
+POLICY_RULES: frozenset[str] = frozenset(m.value for m in PolicyRule)
 SURFACES: frozenset[str] = frozenset(m.value for m in UsageSurface)
 OUTCOMES: frozenset[str] = frozenset(m.value for m in UsageOutcome)
 LIMIT_KINDS: frozenset[str] = frozenset(m.value for m in LimitKind) | {NONE}
@@ -93,6 +101,18 @@ def scenario_label(value: UsageScenario | str) -> str:
     """Return a scenario enum value or ``other``."""
     raw = value.value if isinstance(value, UsageScenario) else value
     return raw if raw in SCENARIOS else OTHER
+
+
+def variant_kind_label(value: VariantKind | str) -> str:
+    """Return a variant kind value or ``other``."""
+    raw = value.value if isinstance(value, VariantKind) else value
+    return raw if raw in VARIANT_KINDS else OTHER
+
+
+def policy_rule_label(value: PolicyRule | str) -> str:
+    """Return a policy rule value or ``other``."""
+    raw = value.value if isinstance(value, PolicyRule) else value
+    return raw if raw in POLICY_RULES else OTHER
 
 
 def surface_label(value: UsageSurface | str) -> str:

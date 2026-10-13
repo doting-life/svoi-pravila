@@ -13,7 +13,7 @@ from svoi_pravila.adapters.cache.sealed_token import (
 from svoi_pravila.application.errors import PreparedResultUnavailable
 from svoi_pravila.application.ports.prepared_results import PreparedVariant
 from svoi_pravila.application.prepared_ref import PREPARED_REF_PREFIX, is_prepared_ref
-from svoi_pravila.domain.enums import Firmness
+from svoi_pravila.domain.enums import VariantKind
 
 _ID_LEN = 16
 _AAD_VERSION = "prepared:v1"
@@ -40,7 +40,7 @@ class ValkeyPreparedResults:
 
     async def store(self, user_pseudonym: str, variant: PreparedVariant) -> str:
         """Encrypt ``variant`` under a random key and return a ``p_`` token."""
-        plaintext = f"{variant.firmness.value}\n{variant.text}".encode()
+        plaintext = f"{variant.kind.value}\n{variant.text}".encode()
         return await self._store.store(UserBinding(pseudonym=user_pseudonym), plaintext)
 
     async def redeem(self, user_pseudonym: str, token: str) -> PreparedVariant:
@@ -64,11 +64,11 @@ def _parse_plaintext(plaintext: bytes) -> PreparedVariant:
         decoded = plaintext.decode()
     except UnicodeDecodeError as exc:
         raise PreparedResultUnavailable() from exc
-    firmness_raw, separator, text = decoded.partition("\n")
+    kind_raw, separator, text = decoded.partition("\n")
     if not separator:
         raise PreparedResultUnavailable()
     try:
-        firmness = Firmness(firmness_raw)
+        kind = VariantKind(kind_raw)
     except ValueError as exc:
         raise PreparedResultUnavailable() from exc
-    return PreparedVariant(firmness=firmness, text=text)
+    return PreparedVariant(kind=kind, text=text)

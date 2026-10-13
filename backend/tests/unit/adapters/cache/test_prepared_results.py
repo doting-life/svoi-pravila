@@ -18,7 +18,7 @@ from svoi_pravila.application.prepared_ref import (
     PREPARED_REF_LENGTH,
     is_prepared_ref,
 )
-from svoi_pravila.domain.enums import Firmness
+from svoi_pravila.domain.enums import VariantKind
 
 
 class _MemoryRedis:
@@ -52,7 +52,7 @@ def _store() -> tuple[ValkeyPreparedResults, _MemoryRedis]:
 @pytest.mark.unit
 async def test_prepared_token_length_fits_inline_query_limit() -> None:
     store, _memory = _store()
-    token = await store.store("a" * 64, PreparedVariant(Firmness.GENTLE, "hello"))
+    token = await store.store("a" * 64, PreparedVariant(VariantKind.SOFTER, "hello"))
     assert len(token) == PREPARED_REF_LENGTH
     assert PREPARED_REF_LENGTH < INLINE_QUERY_LIMIT
     assert is_prepared_ref(token)
@@ -62,10 +62,10 @@ async def test_prepared_token_length_fits_inline_query_limit() -> None:
 async def test_prepared_redeem_roundtrip_and_delete() -> None:
     store, memory = _store()
     owner = "ab" * 32
-    token = await store.store(owner, PreparedVariant(Firmness.FIRM, "keep this"))
+    token = await store.store(owner, PreparedVariant(VariantKind.FIRMER, "keep this"))
     redeemed = await store.redeem(owner, token)
     assert redeemed.text == "keep this"
-    assert redeemed.firmness is Firmness.FIRM
+    assert redeemed.kind is VariantKind.FIRMER
     assert "keep this" not in "".join(memory.data.values())
     await store.delete(owner, token)
     with pytest.raises(PreparedResultUnavailable):
@@ -76,7 +76,7 @@ async def test_prepared_redeem_roundtrip_and_delete() -> None:
 async def test_prepared_wrong_user_and_tamper_rejected() -> None:
     store, memory = _store()
     owner = "ab" * 32
-    token = await store.store(owner, PreparedVariant(Firmness.BALANCED, "secret-text"))
+    token = await store.store(owner, PreparedVariant(VariantKind.CHECK, "secret-text"))
     with pytest.raises(PreparedResultUnavailable):
         await store.redeem("cd" * 32, token)
     key = next(iter(memory.data))
@@ -95,11 +95,11 @@ async def test_prepared_wrong_user_and_tamper_rejected() -> None:
 async def test_prepared_missing_and_corrupt_value() -> None:
     store, memory = _store()
     owner = "ab" * 32
-    token = await store.store(owner, PreparedVariant(Firmness.GENTLE, "x"))
+    token = await store.store(owner, PreparedVariant(VariantKind.SOFTER, "x"))
     memory.data.clear()
     with pytest.raises(PreparedResultUnavailable):
         await store.redeem(owner, token)
-    token = await store.store(owner, PreparedVariant(Firmness.GENTLE, "x"))
+    token = await store.store(owner, PreparedVariant(VariantKind.SOFTER, "x"))
     memory.data[next(iter(memory.data))] = "%%%"
     with pytest.raises(PreparedResultUnavailable):
         await store.redeem(owner, token)

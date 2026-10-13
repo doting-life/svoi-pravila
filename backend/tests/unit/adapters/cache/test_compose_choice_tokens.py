@@ -102,11 +102,11 @@ def test_ttl_bounds() -> None:
 @pytest.mark.unit
 async def test_issue_and_redeem_once() -> None:
     tokens, store = _tokens()
-    token = await tokens.issue("user-a", UsageScenario.SOFTEN, None)
+    token = await tokens.issue("user-a", UsageScenario.REWRITE, None)
     assert token.startswith("c_")
     assert store.data
     binding = await tokens.redeem_once("user-a", token)
-    assert binding == ComposeChoiceBinding(UsageScenario.SOFTEN, None)
+    assert binding == ComposeChoiceBinding(UsageScenario.REWRITE, None)
     assert store.data == {}
     with pytest.raises(ComposeChoiceTokenInvalid):
         await tokens.redeem_once("user-a", token)
@@ -115,7 +115,7 @@ async def test_issue_and_redeem_once() -> None:
 @pytest.mark.unit
 async def test_redeem_rejects_wrong_user_and_corrupt_tokens() -> None:
     tokens, store = _tokens()
-    token = await tokens.issue("user-a", UsageScenario.HELP_SAY, _CONTACT)
+    token = await tokens.issue("user-a", UsageScenario.REWRITE, _CONTACT)
     with pytest.raises(ComposeChoiceTokenInvalid):
         await tokens.redeem_once("user-b", token)
     assert store.data
@@ -131,7 +131,7 @@ async def test_redeem_rejects_wrong_user_and_corrupt_tokens() -> None:
 @pytest.mark.unit
 async def test_redeem_rejects_corrupt_stored_scenario() -> None:
     tokens, store = _tokens()
-    token = await tokens.issue("user-a", UsageScenario.SOFTEN, None)
+    token = await tokens.issue("user-a", UsageScenario.REWRITE, None)
     key = next(iter(store.data))
     for corrupt in ("not-a-scenario|", "soften", "soften|not-a-uuid", "|"):
         store.data[key] = corrupt
@@ -142,9 +142,9 @@ async def test_redeem_rejects_corrupt_stored_scenario() -> None:
 @pytest.mark.unit
 async def test_redeem_rejects_tampered_stored_contact() -> None:
     tokens, store = _tokens()
-    token = await tokens.issue("user-a", UsageScenario.SOFTEN, _CONTACT)
+    token = await tokens.issue("user-a", UsageScenario.REWRITE, _CONTACT)
     key = next(iter(store.data))
-    for swapped in (f"soften|{UUID(int=99)}", "soften|", f"decode|{_CONTACT}"):
+    for swapped in (f"rewrite|{UUID(int=99)}", "rewrite|", f"decode|{_CONTACT}"):
         store.data[key] = swapped
         with pytest.raises(ComposeChoiceTokenInvalid):
             await tokens.redeem_once("user-a", token)
@@ -154,9 +154,9 @@ async def test_redeem_rejects_tampered_stored_contact() -> None:
 @pytest.mark.unit
 async def test_redeem_returns_bound_contact() -> None:
     tokens, _store = _tokens()
-    token = await tokens.issue("user-a", UsageScenario.SOFTEN, _CONTACT)
+    token = await tokens.issue("user-a", UsageScenario.REWRITE, _CONTACT)
     binding = await tokens.redeem_once("user-a", token)
-    assert binding == ComposeChoiceBinding(UsageScenario.SOFTEN, _CONTACT)
+    assert binding == ComposeChoiceBinding(UsageScenario.REWRITE, _CONTACT)
 
 
 @pytest.mark.unit
@@ -186,7 +186,7 @@ async def test_redeem_rejects_missing_key_and_delete_race() -> None:
 
     race_store = _DeleteZeroRedis()
     race_tokens = ValkeyComposeChoiceTokens(cast(Redis, race_store), FakePseudonymizer())
-    token2 = await race_tokens.issue("user-a", UsageScenario.SOFTEN, None)
+    token2 = await race_tokens.issue("user-a", UsageScenario.REWRITE, None)
     with pytest.raises(ComposeChoiceTokenInvalid):
         await race_tokens.redeem_once("user-a", token2)
 
@@ -195,6 +195,6 @@ async def test_redeem_rejects_missing_key_and_delete_race() -> None:
 async def test_redeem_accepts_bytes_stored_value() -> None:
     memory = _BytesGetRedis()
     tokens = ValkeyComposeChoiceTokens(cast(Redis, memory), FakePseudonymizer())
-    token = await tokens.issue("user-a", UsageScenario.HELP_SAY, _CONTACT)
+    token = await tokens.issue("user-a", UsageScenario.REWRITE, _CONTACT)
     binding = await tokens.redeem_once("user-a", token)
-    assert binding == ComposeChoiceBinding(UsageScenario.HELP_SAY, _CONTACT)
+    assert binding == ComposeChoiceBinding(UsageScenario.REWRITE, _CONTACT)

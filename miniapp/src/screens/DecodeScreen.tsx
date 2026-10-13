@@ -80,11 +80,11 @@ function errorMessageForCode(code: string): string {
     }
 }
 
-function firmnessLabel(firmness: string): string {
-    if (firmness === "gentle" || firmness === "balanced" || firmness === "firm") {
-        return ru.firmness[firmness];
+function variantKindLabel(kind: string): string {
+    if (kind === "check" || kind === "softer" || kind === "firmer") {
+        return ru.variantKinds[kind];
     }
-    return firmness;
+    return kind;
 }
 
 export function DecodeScreen({
@@ -362,10 +362,10 @@ export function DecodeScreen({
                             </h2>
                             <ul className="rule-list">
                                 {phase.payload.variants.map((variant) => (
-                                    <li key={`${variant.firmness}-${variant.text}`}>
+                                    <li key={`${variant.kind}-${variant.text}`}>
                                         <Card as="article" className="variant">
                                             <Badge tone="neutral">
-                                                {firmnessLabel(variant.firmness)}
+                                                {variantKindLabel(variant.kind)}
                                             </Badge>
                                             <p className="variant__text">{variant.text}</p>
                                             <div className="variant__actions">

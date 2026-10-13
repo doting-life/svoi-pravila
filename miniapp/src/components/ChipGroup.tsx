@@ -10,8 +10,10 @@ export type ChipOption<T extends string> = {
 export type ChipGroupProps<T extends string> = {
     readonly legend: string;
     readonly options: readonly ChipOption<T>[];
-    readonly value: T;
+    readonly value: T | null;
     readonly onChange: (value: T) => void;
+    /** When set, choosing the selected chip again clears the selection. */
+    readonly onClear?: () => void;
 };
 
 export function ChipGroup<T extends string>({
@@ -19,6 +21,7 @@ export function ChipGroup<T extends string>({
     options,
     value,
     onChange,
+    onClear,
 }: ChipGroupProps<T>) {
     const name = useId();
     return (
@@ -36,6 +39,12 @@ export function ChipGroup<T extends string>({
                             onChange={() => {
                                 hapticSelection();
                                 onChange(option.value);
+                            }}
+                            onClick={() => {
+                                if (option.value === value && onClear !== undefined) {
+                                    hapticSelection();
+                                    onClear();
+                                }
                             }}
                         />
                         <span className="chip__label">{option.label}</span>

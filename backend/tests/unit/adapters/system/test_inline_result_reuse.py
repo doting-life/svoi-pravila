@@ -23,15 +23,15 @@ from svoi_pravila.application.ports.inline_result_reuse import (
     ReuseFailed,
     ReuseSucceeded,
 )
-from svoi_pravila.domain.enums import Firmness, UsageScenario
+from svoi_pravila.domain.enums import UsageScenario, VariantKind
 
 
 def _value(
     text: str = "ok-variant", *, safety: SafetyVerdict = SafetyVerdict.OK
 ) -> InlineReuseValue:
     return InlineReuseValue(
-        scenario=UsageScenario.SOFTEN,
-        variants=(Variant(text=text, firmness=Firmness.GENTLE),),
+        scenario=UsageScenario.REWRITE,
+        variants=(Variant(text=text, kind=VariantKind.SOFTER),),
         safety=safety,
         applied_rules=(),
     )
@@ -128,7 +128,7 @@ async def test_error_propagates_to_joiners_and_is_not_stored() -> None:
         usage=TokenUsage(),
         attempts=1,
         model="fake",
-        prompt_version="soften@v1",
+        prompt_version="rewrite@v1",
     )
 
     async def produce() -> InlineReuseValue | GenerationUnavailable:

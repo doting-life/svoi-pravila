@@ -36,7 +36,6 @@ from svoi_pravila.adapters.channels.telegram.init_data import AiogramInitDataVer
 from svoi_pravila.adapters.channels.telegram.inline_scheduler import InlineQueryCoordinator
 from svoi_pravila.adapters.channels.telegram.lifecycle import TelegramLifecycle
 from svoi_pravila.adapters.channels.telegram.localization import (
-    help_say_intent_prefixes,
     load_ru_strings,
 )
 from svoi_pravila.adapters.channels.telegram.pair_notifier import TelegramPairNotifier
@@ -60,6 +59,9 @@ from svoi_pravila.adapters.system.clock import SystemClock
 from svoi_pravila.adapters.system.ids import Uuid7IdGenerator
 from svoi_pravila.adapters.system.inline_result_reuse import InProcessInlineResultReuse
 from svoi_pravila.adapters.system.metrics_analytics_store import MetricsAnalyticsStore
+from svoi_pravila.adapters.system.metrics_variant_policy_monitor import (
+    MetricsVariantPolicyMonitor,
+)
 from svoi_pravila.adapters.system.monotonic import SystemMonotonicClock
 from svoi_pravila.adapters.system.tokens import SecretsInviteTokenGenerator
 from svoi_pravila.adapters.system.tone_suggestion_catalog import StaticToneSuggestionCatalog
@@ -419,6 +421,7 @@ class _ComposeWireDeps:
     quota_gate: ValkeyQuotaGate
     llm_budget: ValkeyLlmBudget
     sink: MetricsUsageEventSink
+    policy_monitor: MetricsVariantPolicyMonitor
     monotonic: SystemMonotonicClock
     crisis_screen: CrisisScreen
     tone_catalog: StaticToneSuggestionCatalog
@@ -427,7 +430,7 @@ class _ComposeWireDeps:
 
 
 def _wire_compose_stack(deps: _ComposeWireDeps) -> tuple[ComposeGeneration, RecordInlineChoice]:
-    """Shared soften/help-say generation and choice recording for mini-app and inline."""
+    """Shared rewrite generation and choice recording for mini-app and inline."""
     compose = ComposeGeneration(
         ComposeGenerationPorts(
             uow_factory=deps.ports.uow_factory,
@@ -436,6 +439,7 @@ def _wire_compose_stack(deps: _ComposeWireDeps) -> tuple[ComposeGeneration, Reco
             quota_gate=deps.quota_gate,
             llm_budget=deps.llm_budget,
             sink=deps.sink,
+            policy_monitor=deps.policy_monitor,
             clock=deps.ports.clock,
             monotonic=deps.monotonic,
             ids=deps.ports.ids,
@@ -562,6 +566,7 @@ def create_application(settings: Settings) -> FastAPI:
             quota_gate=quota_gate,
             llm_budget=llm_budget,
             sink=sink,
+            policy_monitor=MetricsVariantPolicyMonitor(),
             monotonic=monotonic,
             crisis_screen=crisis_screen,
             tone_catalog=tone_catalog,
@@ -613,7 +618,6 @@ def create_application(settings: Settings) -> FastAPI:
                 compose=compose_generation,
                 reuse=inline_reuse,
                 min_chars=settings.inline_min_chars,
-                intent_prefixes=help_say_intent_prefixes(strings),
             )
         )
         deps = TelegramDeps(

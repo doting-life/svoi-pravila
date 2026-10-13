@@ -1,4 +1,4 @@
-"""Scenario-level text generation port (soften, help-say, decode_stream)."""
+"""Scenario-level text generation port (rewrite, decode_stream, suggest_rule)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
-from svoi_pravila.domain.enums import Firmness, RelationshipKind, RuleCategory
+from svoi_pravila.domain.enums import RelationshipKind, RewriteGoal, RuleCategory, VariantKind
 from svoi_pravila.domain.text import INCOMING_TEXT_MAX_CHARS, RuleText
 
 BOUNDED_TEXT_MIN = 1
@@ -28,16 +28,6 @@ class SafetyVerdict(StrEnum):
     OK = "ok"
     CRISIS = "crisis"
     REFUSE_MANIPULATION = "refuse_manipulation"
-
-
-class HelpSayIntent(StrEnum):
-    """Intent for the help-say scenario."""
-
-    DECLINE = "decline"
-    SET_BOUNDARY = "set_boundary"
-    ADMIT_FAULT = "admit_fault"
-    RECONNECT_AFTER_CONFLICT = "reconnect_after_conflict"
-    OTHER = "other"
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,30 +50,17 @@ class AppliedRuleView:
 
 
 @dataclass(frozen=True, slots=True)
-class SoftenRequest:
-    """Input for softening a draft message."""
+class RewriteRequest:
+    """Input for rewriting a draft into check, softer and firmer variants."""
 
     draft: str
+    goal: RewriteGoal | None
     rules: tuple[RuleContext, ...]
     relationship: RelationshipKind
     deadline_seconds: float
 
     def __post_init__(self) -> None:
         _validate_bounded_text("draft", self.draft)
-
-
-@dataclass(frozen=True, slots=True)
-class HelpSayRequest:
-    """Input for composing a difficult message from an intent."""
-
-    intent: HelpSayIntent
-    details: str
-    rules: tuple[RuleContext, ...]
-    relationship: RelationshipKind
-    deadline_seconds: float
-
-    def __post_init__(self) -> None:
-        _validate_bounded_text("details", self.details)
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,10 +110,10 @@ SuggestRuleResult = SuggestRuleProposed | SuggestRuleNothing
 
 @dataclass(frozen=True, slots=True)
 class Variant:
-    """One suggested reply with firmness."""
+    """One suggested text of a fixed kind."""
 
     text: str
-    firmness: Firmness
+    kind: VariantKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,18 +154,8 @@ class GenerationMeta:
 
 
 @dataclass(frozen=True, slots=True)
-class SoftenResult:
-    """Structured soften response."""
-
-    variants: tuple[Variant, ...]
-    applied_rule_indexes: tuple[int, ...]
-    safety: SafetyVerdict
-    meta: GenerationMeta
-
-
-@dataclass(frozen=True, slots=True)
-class HelpSayResult:
-    """Structured help-say response."""
+class RewriteResult:
+    """Structured rewrite response: variants in order check, softer, firmer (empty if not ok)."""
 
     variants: tuple[Variant, ...]
     applied_rule_indexes: tuple[int, ...]
@@ -227,17 +194,14 @@ class DecodeCompleted:
 DecodeEvent = AnalysisChunk | DecodeCompleted
 
 
-GenerationRequest = SoftenRequest | HelpSayRequest | DecodeRequest | SuggestRuleRequest
+GenerationRequest = RewriteRequest | DecodeRequest | SuggestRuleRequest
 
 
 class TextGenerator(Protocol):
     """Port for scenario-level generation."""
 
-    async def soften(self, request: SoftenRequest) -> SoftenResult:
-        """Produce softened variants of a draft."""
-
-    async def help_say(self, request: HelpSayRequest) -> HelpSayResult:
-        """Produce variants for a difficult message."""
+    async def rewrite(self, request: RewriteRequest) -> RewriteResult:
+        """Produce check, softer and firmer variants of a draft in one call."""
 
     def decode_stream(self, request: DecodeRequest) -> AsyncIterator[DecodeEvent]:
         """Stream decode analysis chunks, then a completed structured result."""

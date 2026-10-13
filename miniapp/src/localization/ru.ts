@@ -203,15 +203,13 @@ export const ru = {
     decodeSuggestPending: "Уже есть предложение из расшифровки.",
 
     composeTitle: "Смягчить",
-    composeLead: "Напишите черновик — предложим мягче, сбалансированнее или твёрже.",
-    composeIntentLegend: "Зачем",
-    composeIntents: {
-        soften: "Смягчить",
+    composeLead: "Напишите черновик — проверим, смягчим или сделаем твёрже.",
+    composeGoalLegend: "Зачем (необязательно)",
+    composeGoals: {
         decline: "Отказать",
         set_boundary: "Граница",
         admit_fault: "Извиниться",
         reconnect: "Помириться",
-        other: "Другое",
     },
     composeFor: "Для: {label}",
     composeField: "Черновик",
@@ -222,11 +220,6 @@ export const ru = {
     composePrivacy: "Текст не сохраняется. Правила не применятся — без выбранного человека.",
     composeSubmit: "Предложить варианты",
     composeResults: "Варианты",
-    composeFirmness: {
-        gentle: "Мягко",
-        balanced: "Сбалансированно",
-        firm: "Твёрдо",
-    },
     composeCopy: "Копировать",
     composeCopyAndReturn: "Скопировать и вернуться в чат",
     composeSend: "Отправить {label}",
@@ -261,10 +254,10 @@ export const ru = {
     crisisAlways: "Этот экран доступен всегда — даже когда лимиты на сегодня исчерпаны.",
     crisisBack: "Вернуться",
 
-    firmness: {
-        gentle: "мягко",
-        balanced: "ровно",
-        firm: "твёрдо",
+    variantKinds: {
+        check: "Проверить",
+        softer: "Мягче",
+        firmer: "Твёрже",
     },
     relationships: {
         partner: "Партнёр",

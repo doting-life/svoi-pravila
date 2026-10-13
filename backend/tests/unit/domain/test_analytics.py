@@ -14,12 +14,12 @@ from svoi_pravila.domain.analytics import (
     percentile_cont,
 )
 from svoi_pravila.domain.enums import (
-    Firmness,
     LimitKind,
     UsageEventKind,
     UsageOutcome,
     UsageScenario,
     UsageSurface,
+    VariantKind,
 )
 from svoi_pravila.domain.ids import UsageEventId
 from svoi_pravila.domain.usage import UsageEvent
@@ -108,7 +108,7 @@ def _chosen(
         output_tokens=0,
         billable_tokens=0,
         event_kind=UsageEventKind.RESULT_CHOSEN,
-        variant_firmness=Firmness.GENTLE,
+        variant_kind=VariantKind.SOFTER,
     )
 
 

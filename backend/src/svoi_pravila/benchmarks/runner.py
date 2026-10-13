@@ -20,8 +20,7 @@ from svoi_pravila.application.ports.generation import (
     DecodeCompleted,
     DecodeRequest,
     DecodeResult,
-    HelpSayRequest,
-    SoftenRequest,
+    RewriteRequest,
     SuggestRuleProposed,
     SuggestRuleRequest,
     SuggestRuleResult,
@@ -232,50 +231,26 @@ def _usage_fields(usage: TokenUsage) -> tuple[int, int, int]:
     return usage.input, usage.output, usage.billable
 
 
-async def _run_soften(
-    gen: TextGenerator, request: SoftenRequest, *, case_id: str, show_outputs: bool
+async def _run_rewrite(
+    gen: TextGenerator, request: RewriteRequest, *, case_id: str, show_outputs: bool
 ) -> _AttemptResult:
-    soften = await gen.soften(request)
+    rewrite = await gen.rewrite(request)
     output_line = None
     if show_outputs:
         output_line = json.dumps(
-            {"id": case_id, "variants": [v.text for v in soften.variants]},
+            {"id": case_id, "variants": [v.text for v in rewrite.variants]},
             ensure_ascii=False,
         )
-    inp, out, billable = _usage_fields(soften.meta.usage)
+    inp, out, billable = _usage_fields(rewrite.meta.usage)
     return _AttemptResult(
         outcome="ok",
-        attempts=soften.meta.attempts,
+        attempts=rewrite.meta.attempts,
         reasons=(),
         unavailable_kind=None,
         input_tokens=inp,
         output_tokens=out,
         billable_tokens=billable,
-        actual_safety=soften.safety.value,
-        output_line=output_line,
-    )
-
-
-async def _run_help_say(
-    gen: TextGenerator, request: HelpSayRequest, *, case_id: str, show_outputs: bool
-) -> _AttemptResult:
-    help_say = await gen.help_say(request)
-    output_line = None
-    if show_outputs:
-        output_line = json.dumps(
-            {"id": case_id, "variants": [v.text for v in help_say.variants]},
-            ensure_ascii=False,
-        )
-    inp, out, billable = _usage_fields(help_say.meta.usage)
-    return _AttemptResult(
-        outcome="ok",
-        attempts=help_say.meta.attempts,
-        reasons=(),
-        unavailable_kind=None,
-        input_tokens=inp,
-        output_tokens=out,
-        billable_tokens=billable,
-        actual_safety=help_say.safety.value,
+        actual_safety=rewrite.safety.value,
         output_line=output_line,
     )
 
@@ -447,13 +422,9 @@ async def run_case(
         output_line=None,
     )
     try:
-        if options.operation == "soften" and timed.soften is not None:
-            attempt = await _run_soften(
-                gen, timed.soften, case_id=timed.id, show_outputs=options.show_outputs
-            )
-        elif options.operation == "help_say" and timed.help_say is not None:
-            attempt = await _run_help_say(
-                gen, timed.help_say, case_id=timed.id, show_outputs=options.show_outputs
+        if options.operation == "rewrite" and timed.rewrite is not None:
+            attempt = await _run_rewrite(
+                gen, timed.rewrite, case_id=timed.id, show_outputs=options.show_outputs
             )
         elif options.operation == "decode_stream" and timed.decode is not None:
             attempt = await _run_decode_stream(

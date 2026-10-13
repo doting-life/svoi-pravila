@@ -52,10 +52,9 @@ from svoi_pravila.application.inline_result_ref import encode_inline_result_ref
 from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
 from svoi_pravila.application.ports.generation import (
     GenerationMeta,
-    HelpSayResult,
+    RewriteRequest,
+    RewriteResult,
     SafetyVerdict,
-    SoftenRequest,
-    SoftenResult,
     TokenUsage,
     Variant,
 )
@@ -80,11 +79,11 @@ from svoi_pravila.application.use_cases.set_active_contact import (
 from svoi_pravila.config import Environment, Settings, TelegramUpdatesMode
 from svoi_pravila.domain.enums import (
     ConsentKind,
-    Firmness,
     RelationshipKind,
     RuleCategory,
     UsageEventKind,
     UsageScenario,
+    VariantKind,
 )
 from svoi_pravila.domain.ids import TelegramUserId
 from svoi_pravila.domain.text import ContactLabel, RuleText
@@ -274,7 +273,7 @@ async def test_inline_ignores_active_contact_button_and_rules(
         miniapp_url=deps.miniapp_url or "",
         handoff=True,
     )
-    request = generator.soften_calls[0]
+    request = generator.rewrite_calls[0]
     assert request.relationship is RelationshipKind.OTHER
     assert request.rules == ()
     answered = [e for e in capture_log_events() if e.get("event") == "inline_answered"]
@@ -304,7 +303,13 @@ async def test_inline_compose_articles_and_choice(
     await _await_inline(deps)
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
     assert answers[-1].is_personal is True
-    assert len(answers[-1].results) == 2
+    assert len(answers[-1].results) == 3
+    articles = [r for r in answers[-1].results if isinstance(r, InlineQueryResultArticle)]
+    assert [a.title for a in articles] == ["Проверить", "Мягче", "Твёрже"]
+    assert [a.id for a in articles] == [
+        encode_inline_result_ref(UsageScenario.REWRITE, kind)
+        for kind in (VariantKind.CHECK, VariantKind.SOFTER, VariantKind.FIRMER)
+    ]
     _assert_web_app_button(
         answers[-1].button,
         text=deps.strings.inline_button_compose,
@@ -315,14 +320,14 @@ async def test_inline_compose_articles_and_choice(
     assert isinstance(first, InlineQueryResultArticle)
     content = first.input_message_content
     assert isinstance(content, InputTextMessageContent)
-    assert first.id == encode_inline_result_ref(UsageScenario.SOFTEN, Firmness.GENTLE)
-    assert content.message_text == "softened-a"
+    assert first.id == encode_inline_result_ref(UsageScenario.REWRITE, VariantKind.CHECK)
+    assert content.message_text == "checked"
     generations = [event for event in sink.events if event.event_kind is UsageEventKind.GENERATION]
     assert len(generations) == 1
     await lifecycle.dispatcher.feed_update(bot, _chosen(21, 14, first.id, "please leave quietly"))
     chosen = [event for event in sink.events if event.event_kind is UsageEventKind.RESULT_CHOSEN]
     assert len(chosen) == 1
-    assert chosen[0].variant_firmness is Firmness.GENTLE
+    assert chosen[0].variant_kind is VariantKind.CHECK
     tone = [e for e in capture_log_events() if e.get("event") == "tone_signal"]
     assert [e["outcome"] for e in tone] == ["skipped_inline"]
 
@@ -349,11 +354,11 @@ async def test_prepared_token_answers_without_generation() -> None:
     await _grant(uow, catalog, 15)
     token = await prepared.store(
         deps.pseudonymizer.pseudonymize("prepared", "15"),
-        PreparedVariant(firmness=Firmness.BALANCED, text="insert-me"),
+        PreparedVariant(kind=VariantKind.CHECK, text="insert-me"),
     )
     await lifecycle.dispatcher.feed_update(bot, _inline(30, 15, token))
     await _await_inline(deps)
-    assert generator.soften_calls == []
+    assert generator.rewrite_calls == []
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
     assert len(answers[-1].results) == 1
     article = answers[-1].results[0]
@@ -395,8 +400,8 @@ async def test_inline_debounce_cancels_before_provider(
     await sleeper.entered.wait()
     sleeper.release.set()
     await lifecycle.shutdown()
-    assert len(generator.soften_calls) == 1
-    assert generator.soften_calls[0].draft == "second draft here"
+    assert len(generator.rewrite_calls) == 1
+    assert generator.rewrite_calls[0].draft == "second draft here"
     assert [e for e in capture_log_events() if e.get("event") == "inline_task_failed"] == []
 
 
@@ -406,7 +411,7 @@ async def test_inline_in_flight_generation_not_cancelled() -> None:
     uow = InMemoryUnitOfWorkFactory()
     block = asyncio.Event()
     generator = FakeTextGenerator()
-    generator.soften_block = block
+    generator.rewrite_block = block
     sink = RecordingUsageEventSink()
     deps = make_telegram_deps(
         TelegramTestDeps(
@@ -422,13 +427,13 @@ async def test_inline_in_flight_generation_not_cancelled() -> None:
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
     await _grant(uow, catalog, 17)
     await lifecycle.dispatcher.feed_update(bot, _inline(50, 17, "first long draft"))
-    await generator.soften_started.wait()
-    assert [call.draft for call in generator.soften_calls] == ["first long draft"]
+    await generator.rewrite_started.wait()
+    assert [call.draft for call in generator.rewrite_calls] == ["first long draft"]
     await lifecycle.dispatcher.feed_update(bot, _inline(51, 17, "second long draft"))
-    assert [call.draft for call in generator.soften_calls] == ["first long draft"]
+    assert [call.draft for call in generator.rewrite_calls] == ["first long draft"]
     block.set()
     await _await_inline(deps)
-    assert [call.draft for call in generator.soften_calls] == [
+    assert [call.draft for call in generator.rewrite_calls] == [
         "first long draft",
         "second long draft",
     ]
@@ -440,48 +445,17 @@ async def test_inline_in_flight_generation_not_cancelled() -> None:
 
 
 @pytest.mark.unit
-async def test_help_say_inline_articles() -> None:
-    catalog = FakeConsentCatalog()
-    uow = InMemoryUnitOfWorkFactory()
-    generator = FakeTextGenerator(
-        help_say_result=HelpSayResult(
-            variants=(Variant(text="n", firmness=Firmness.GENTLE),),
-            applied_rule_indexes=(),
-            safety=SafetyVerdict.OK,
-            meta=GenerationMeta(
-                model="fake",
-                prompt_version="help_say@v1",
-                latency_ms=1,
-                attempts=1,
-                usage=TokenUsage(),
-            ),
-        )
-    )
-    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, generator=generator))
-    session = FakeTelegramSession()
-    bot = Bot(token="1:TEST", session=session)
-    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
-    await _grant(uow, catalog, 19)
-    await lifecycle.dispatcher.feed_update(bot, _inline(70, 19, "извинись: I was late to dinner"))
-    await _await_inline(deps)
-    answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
-    article = answers[-1].results[0]
-    assert isinstance(article, InlineQueryResultArticle)
-    assert article.id.startswith("s:help_say:")
-
-
-@pytest.mark.unit
 async def test_inline_empty_variants_help_button() -> None:
     catalog = FakeConsentCatalog()
     uow = InMemoryUnitOfWorkFactory()
     generator = FakeTextGenerator(
-        soften_result=SoftenResult(
+        rewrite_result=RewriteResult(
             variants=(),
             applied_rule_indexes=(),
             safety=SafetyVerdict.OK,
             meta=GenerationMeta(
                 model="fake",
-                prompt_version="soften@v1",
+                prompt_version="rewrite@v1",
                 latency_ms=1,
                 attempts=1,
                 usage=TokenUsage(),
@@ -519,7 +493,7 @@ async def test_newer_query_waits_for_in_flight_then_runs() -> None:
     uow = InMemoryUnitOfWorkFactory()
     block = asyncio.Event()
     generator = FakeTextGenerator()
-    generator.soften_block = block
+    generator.rewrite_block = block
     sink = RecordingUsageEventSink()
     deps = make_telegram_deps(
         TelegramTestDeps(
@@ -535,12 +509,12 @@ async def test_newer_query_waits_for_in_flight_then_runs() -> None:
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
     await _grant(uow, catalog, 24)
     await lifecycle.dispatcher.feed_update(bot, _inline(100, 24, "alpha draft waiting"))
-    await generator.soften_started.wait()
+    await generator.rewrite_started.wait()
     await lifecycle.dispatcher.feed_update(bot, _inline(101, 24, "beta draft waiting"))
-    assert len(generator.soften_calls) == 1
+    assert len(generator.rewrite_calls) == 1
     block.set()
     await _await_inline(deps)
-    assert [call.draft for call in generator.soften_calls] == [
+    assert [call.draft for call in generator.rewrite_calls] == [
         "alpha draft waiting",
         "beta draft waiting",
     ]
@@ -555,7 +529,7 @@ async def test_third_query_supersedes_waiter_only_latest_runs() -> None:
     uow = InMemoryUnitOfWorkFactory()
     block = asyncio.Event()
     generator = FakeTextGenerator()
-    generator.soften_block = block
+    generator.rewrite_block = block
     deps = make_telegram_deps(
         TelegramTestDeps(
             uow=uow,
@@ -569,14 +543,14 @@ async def test_third_query_supersedes_waiter_only_latest_runs() -> None:
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
     await _grant(uow, catalog, 25)
     await lifecycle.dispatcher.feed_update(bot, _inline(110, 25, "first of three drafts"))
-    await generator.soften_started.wait()
+    await generator.rewrite_started.wait()
     await lifecycle.dispatcher.feed_update(bot, _inline(111, 25, "middle of three drafts"))
     await asyncio.sleep(0)
     await lifecycle.dispatcher.feed_update(bot, _inline(112, 25, "latest of three drafts"))
-    assert [call.draft for call in generator.soften_calls] == ["first of three drafts"]
+    assert [call.draft for call in generator.rewrite_calls] == ["first of three drafts"]
     block.set()
     await _await_inline(deps)
-    assert [call.draft for call in generator.soften_calls] == [
+    assert [call.draft for call in generator.rewrite_calls] == [
         "first of three drafts",
         "latest of three drafts",
     ]
@@ -676,7 +650,7 @@ async def _assert_prepared_ref_empty(
     assert is_prepared_ref(query)
     await lifecycle.dispatcher.feed_update(bot, _inline(update_id, user_id, query))
     await lifecycle.shutdown()
-    assert generator.soften_calls == []
+    assert generator.rewrite_calls == []
     answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
     assert len(answers) == 1
     assert answers[0].results == []
@@ -693,7 +667,7 @@ async def test_prepared_ref_wrong_user_empty_help() -> None:
     prepared = FakePreparedResults()
     stored = await prepared.store(
         "other-user",
-        PreparedVariant(firmness=Firmness.GENTLE, text="nope"),
+        PreparedVariant(kind=VariantKind.SOFTER, text="nope"),
     )
     await _assert_prepared_ref_empty(user_id=27, update_id=130, query=stored, prepared=prepared)
 
@@ -703,7 +677,7 @@ async def test_prepared_ref_expired_empty_help() -> None:
     prepared = FakePreparedResults()
     stored = await prepared.store(
         "placeholder",
-        PreparedVariant(firmness=Firmness.GENTLE, text="gone"),
+        PreparedVariant(kind=VariantKind.SOFTER, text="gone"),
     )
     prepared.expired.add(stored)
     await _assert_prepared_ref_empty(user_id=28, update_id=131, query=stored, prepared=prepared)
@@ -714,7 +688,7 @@ async def test_prepared_ref_tampered_byte_empty_help() -> None:
     prepared = FakePreparedResults()
     stored = await prepared.store(
         "placeholder",
-        PreparedVariant(firmness=Firmness.GENTLE, text="secret"),
+        PreparedVariant(kind=VariantKind.SOFTER, text="secret"),
     )
     flip = "A" if stored[-1] != "A" else "B"
     tampered = stored[:-1] + flip
@@ -737,16 +711,16 @@ async def test_inline_quota_and_long_preview() -> None:
     uow = InMemoryUnitOfWorkFactory()
     long_text = ("please stay calm " * 20).strip()
     generator = FakeTextGenerator(
-        soften_result=SoftenResult(
+        rewrite_result=RewriteResult(
             variants=(
-                Variant(text="", firmness=Firmness.GENTLE),
-                Variant(text=long_text, firmness=Firmness.BALANCED),
+                Variant(text="", kind=VariantKind.SOFTER),
+                Variant(text=long_text, kind=VariantKind.CHECK),
             ),
             applied_rule_indexes=(),
             safety=SafetyVerdict.OK,
             meta=GenerationMeta(
                 model="fake",
-                prompt_version="soften@v1",
+                prompt_version="rewrite@v1",
                 latency_ms=1,
                 attempts=1,
                 usage=TokenUsage(),
@@ -786,20 +760,20 @@ async def test_inline_quota_and_long_preview() -> None:
 
 
 class _BoomThenOk(FakeTextGenerator):
-    async def soften(self, request: SoftenRequest) -> SoftenResult:
-        self.soften_calls.append(request)
-        self.soften_started.set()
-        if self.soften_block is not None:
-            await self.soften_block.wait()
-        if len(self.soften_calls) == 1:
+    async def rewrite(self, request: RewriteRequest) -> RewriteResult:
+        self.rewrite_calls.append(request)
+        self.rewrite_started.set()
+        if self.rewrite_block is not None:
+            await self.rewrite_block.wait()
+        if len(self.rewrite_calls) == 1:
             raise RuntimeError("provider exploded")
-        return SoftenResult(
-            variants=(Variant(text="recovered", firmness=Firmness.BALANCED),),
+        return RewriteResult(
+            variants=(Variant(text="recovered", kind=VariantKind.CHECK),),
             applied_rule_indexes=(),
             safety=SafetyVerdict.OK,
             meta=GenerationMeta(
                 model="fake",
-                prompt_version="soften@v1",
+                prompt_version="rewrite@v1",
                 latency_ms=1,
                 attempts=1,
                 usage=TokenUsage(),
@@ -815,7 +789,7 @@ async def test_in_flight_failure_does_not_drop_latest_query(
     uow = InMemoryUnitOfWorkFactory()
     block = asyncio.Event()
     generator = _BoomThenOk()
-    generator.soften_block = block
+    generator.rewrite_block = block
     sink = RecordingUsageEventSink()
     deps = make_telegram_deps(
         TelegramTestDeps(
@@ -840,7 +814,7 @@ async def test_in_flight_failure_does_not_drop_latest_query(
     try:
         await _grant(uow, catalog, 33)
         await lifecycle.dispatcher.feed_update(bot, _inline(160, 33, "first failing draft"))
-        await generator.soften_started.wait()
+        await generator.rewrite_started.wait()
         await lifecycle.dispatcher.feed_update(bot, _inline(161, 33, "second surviving draft"))
         await asyncio.sleep(0)
         block.set()
@@ -890,7 +864,7 @@ async def test_prepared_answer_telegram_rejection_keeps_ref(
     await _grant(uow, catalog, 35)
     token = await prepared.store(
         deps.pseudonymizer.pseudonymize("prepared", "35"),
-        PreparedVariant(firmness=Firmness.GENTLE, text="keep-me"),
+        PreparedVariant(kind=VariantKind.SOFTER, text="keep-me"),
     )
     await lifecycle.dispatcher.feed_update(bot, _inline(180, 35, token))
     assert token in prepared.items
@@ -931,13 +905,13 @@ async def test_inline_crisis_and_refuse_buttons() -> None:
     )
 
     refuse_gen = FakeTextGenerator(
-        soften_result=SoftenResult(
+        rewrite_result=RewriteResult(
             variants=(),
             applied_rule_indexes=(),
             safety=SafetyVerdict.REFUSE_MANIPULATION,
             meta=GenerationMeta(
                 model="fake",
-                prompt_version="soften@v1",
+                prompt_version="rewrite@v1",
                 latency_ms=1,
                 attempts=1,
                 usage=TokenUsage(),
@@ -979,7 +953,7 @@ async def test_inline_answered_log_on_ok(
     answered = [e for e in capture_log_events() if e.get("event") == "inline_answered"]
     assert len(answered) == 1
     event = answered[0]
-    assert event["scenario"] == "soften"
+    assert event["scenario"] == "rewrite"
     assert event["outcome"] == "ok"
     assert event["reuse"] == "miss"
     assert isinstance(event["answer_latency_ms"], int)
@@ -998,7 +972,7 @@ async def test_inline_answered_absent_when_stale(
     uow = InMemoryUnitOfWorkFactory()
     block = asyncio.Event()
     generator = FakeTextGenerator()
-    generator.soften_block = block
+    generator.rewrite_block = block
     deps = make_telegram_deps(
         TelegramTestDeps(
             uow=uow,
@@ -1012,7 +986,7 @@ async def test_inline_answered_absent_when_stale(
     lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
     await _grant(uow, catalog, 61)
     await lifecycle.dispatcher.feed_update(bot, _inline(200, 61, "first long draft"))
-    await generator.soften_started.wait()
+    await generator.rewrite_started.wait()
     await lifecycle.dispatcher.feed_update(bot, _inline(201, 61, "second long draft"))
     block.set()
     await _await_inline(deps)
@@ -1032,7 +1006,7 @@ async def test_inline_answered_absent_when_stale(
                 usage=TokenUsage(),
                 attempts=1,
                 model="fake",
-                prompt_version="soften@v1",
+                prompt_version="rewrite@v1",
             ),
             "invalid_output",
             InlineReuseStatus.MISS,
@@ -1042,7 +1016,7 @@ async def test_inline_answered_absent_when_stale(
                 usage=TokenUsage(),
                 attempts=1,
                 model="fake",
-                prompt_version="soften@v1",
+                prompt_version="rewrite@v1",
             ),
             "refused",
             InlineReuseStatus.JOIN,
@@ -1053,7 +1027,7 @@ async def test_inline_answered_absent_when_stale(
                 usage=TokenUsage(),
                 attempts=1,
                 model="fake",
-                prompt_version="soften@v1",
+                prompt_version="rewrite@v1",
             ),
             "timeout",
             InlineReuseStatus.MISS,
@@ -1064,7 +1038,7 @@ async def test_inline_answered_absent_when_stale(
                 usage=TokenUsage(),
                 attempts=1,
                 model="fake",
-                prompt_version="soften@v1",
+                prompt_version="rewrite@v1",
             ),
             "rate_limited",
             InlineReuseStatus.HIT,

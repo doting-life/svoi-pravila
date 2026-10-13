@@ -11,12 +11,12 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from svoi_pravila.domain.enums import (
-    Firmness,
     LimitKind,
     UsageEventKind,
     UsageOutcome,
     UsageScenario,
     UsageSurface,
+    VariantKind,
 )
 from svoi_pravila.domain.errors import InvalidTimestampError, InvalidValueError
 from svoi_pravila.domain.ids import UsageEventId
@@ -101,12 +101,12 @@ def test_usage_event_rejects_negative_latencies_and_tokens() -> None:
 
 
 @pytest.mark.unit
-def test_usage_event_result_chosen_requires_firmness() -> None:
+def test_usage_event_result_chosen_requires_variant_kind() -> None:
     event = UsageEvent(
         id=UsageEventId(UUID(int=2)),
         occurred_at=_NOW,
         user_pseudonym=_PSEUDO,
-        scenario=UsageScenario.SOFTEN,
+        scenario=UsageScenario.REWRITE,
         surface=UsageSurface.INLINE,
         outcome=UsageOutcome.OK,
         unavailable_kind=None,
@@ -120,11 +120,11 @@ def test_usage_event_result_chosen_requires_firmness() -> None:
         output_tokens=0,
         billable_tokens=0,
         event_kind=UsageEventKind.RESULT_CHOSEN,
-        variant_firmness=Firmness.GENTLE,
+        variant_kind=VariantKind.SOFTER,
     )
     assert event.event_kind is UsageEventKind.RESULT_CHOSEN
-    with pytest.raises(InvalidValueError, match="variant_firmness"):
-        replace(event, variant_firmness=None)
+    with pytest.raises(InvalidValueError, match="variant_kind"):
+        replace(event, variant_kind=None)
     with pytest.raises(InvalidValueError, match="model"):
         replace(event, model="x")
     with pytest.raises(InvalidValueError, match="generation metrics"):
@@ -136,9 +136,9 @@ def test_usage_event_result_chosen_requires_firmness() -> None:
 
 
 @pytest.mark.unit
-def test_usage_event_generation_rejects_firmness() -> None:
-    with pytest.raises(InvalidValueError, match="variant_firmness"):
-        replace(_event(), variant_firmness=Firmness.FIRM)
+def test_usage_event_generation_rejects_variant_kind() -> None:
+    with pytest.raises(InvalidValueError, match="variant_kind"):
+        replace(_event(), variant_kind=VariantKind.FIRMER)
 
 
 @pytest.mark.unit

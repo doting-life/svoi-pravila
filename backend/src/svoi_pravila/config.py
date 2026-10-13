@@ -109,8 +109,7 @@ class GigaChatRuntimeSettings(Protocol):
     gigachat_credentials: SecretStr
     gigachat_scope: GigaChatScope
     gigachat_ca_bundle_file: Path
-    gigachat_model_soften: str
-    gigachat_model_help_say: str
+    gigachat_model_rewrite: str
     gigachat_model_decode: str
     gigachat_model_suggest: str
     gigachat_timeout_seconds: float
@@ -125,8 +124,7 @@ class LlmToolSettings(BaseSettings):
     gigachat_credentials: SecretStr
     gigachat_scope: GigaChatScope
     gigachat_ca_bundle_file: Path
-    gigachat_model_soften: str = Field(min_length=1)
-    gigachat_model_help_say: str = Field(min_length=1)
+    gigachat_model_rewrite: str = Field(min_length=1)
     gigachat_model_decode: str = Field(min_length=1)
     gigachat_model_suggest: str = Field(default="GigaChat-3-Lightning", min_length=1)
     gigachat_timeout_seconds: float = Field(default=30.0, gt=0, le=120)
@@ -251,8 +249,7 @@ class Settings(BaseSettings):
     gigachat_credentials: SecretStr
     gigachat_scope: GigaChatScope
     gigachat_ca_bundle_file: Path
-    gigachat_model_soften: str = Field(min_length=1)
-    gigachat_model_help_say: str = Field(min_length=1)
+    gigachat_model_rewrite: str = Field(min_length=1)
     gigachat_model_decode: str = Field(min_length=1)
     gigachat_model_suggest: str = Field(default="GigaChat-3-Lightning", min_length=1)
     gigachat_timeout_seconds: float = Field(default=30.0, gt=0, le=120)

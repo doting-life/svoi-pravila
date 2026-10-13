@@ -61,7 +61,7 @@ async def test_usage_event_sink_commits_c0_row(
         forbidden = {"text", "telegram_user_id", "contact_id", "rule_id"}
         assert forbidden.isdisjoint(set(columns))
         assert "event_kind" in columns
-        assert "variant_firmness" in columns
+        assert "variant_kind" in columns
 
 
 @pytest.mark.integration

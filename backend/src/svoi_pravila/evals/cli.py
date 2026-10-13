@@ -60,10 +60,9 @@ def _parse_ops(raw: list[str] | None) -> tuple[RunOperation, ...]:
 def models_for_operations(
     settings: LlmToolSettings, operations: tuple[RunOperation, ...]
 ) -> list[str]:
-    """Configured model per operation (Lightning soften/help_say, 2-Pro decode)."""
+    """Configured model per operation."""
     mapping = {
-        "soften": settings.gigachat_model_soften,
-        "help_say": settings.gigachat_model_help_say,
+        "rewrite": settings.gigachat_model_rewrite,
         "decode_stream": settings.gigachat_model_decode,
     }
     return [mapping[operation] for operation in operations]

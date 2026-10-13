@@ -181,8 +181,7 @@ def _set_base_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SP_GIGACHAT_CREDENTIALS", "test-credentials")
     monkeypatch.setenv("SP_GIGACHAT_SCOPE", "PERS")
     monkeypatch.setenv("SP_GIGACHAT_CA_BUNDLE_FILE", str(_CERT))
-    monkeypatch.setenv("SP_GIGACHAT_MODEL_SOFTEN", "GigaChat-2")
-    monkeypatch.setenv("SP_GIGACHAT_MODEL_HELP_SAY", "GigaChat-2")
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_REWRITE", "GigaChat-2")
     monkeypatch.setenv("SP_GIGACHAT_MODEL_DECODE", "GigaChat-2")
     monkeypatch.setenv("SP_GIGACHAT_TIMEOUT_SECONDS", "5")
     monkeypatch.setenv("SP_GIGACHAT_MAX_RETRIES", "0")
@@ -443,13 +442,12 @@ def test_llm_tool_settings_loads_without_telegram(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("SP_GIGACHAT_CREDENTIALS", "test-credentials")
     monkeypatch.setenv("SP_GIGACHAT_SCOPE", "PERS")
     monkeypatch.setenv("SP_GIGACHAT_CA_BUNDLE_FILE", str(_CERT))
-    monkeypatch.setenv("SP_GIGACHAT_MODEL_SOFTEN", "GigaChat-3-Lightning")
-    monkeypatch.setenv("SP_GIGACHAT_MODEL_HELP_SAY", "GigaChat-3-Lightning")
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_REWRITE", "GigaChat-3-Lightning")
     monkeypatch.setenv("SP_GIGACHAT_MODEL_DECODE", "GigaChat-2-Pro")
     monkeypatch.setenv("SP_TELEGRAM_UPDATES_MODE", "polling")
     monkeypatch.delenv("SP_TELEGRAM_BOT_TOKEN", raising=False)
     loaded = LlmToolSettings()
-    assert loaded.gigachat_model_soften == "GigaChat-3-Lightning"
+    assert loaded.gigachat_model_rewrite == "GigaChat-3-Lightning"
     assert loaded.gigachat_scope.value == "PERS"
 
 
@@ -458,8 +456,7 @@ def test_llm_tool_settings_requires_credentials(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.delenv("SP_GIGACHAT_CREDENTIALS", raising=False)
     monkeypatch.setenv("SP_GIGACHAT_SCOPE", "PERS")
     monkeypatch.setenv("SP_GIGACHAT_CA_BUNDLE_FILE", str(_CERT))
-    monkeypatch.setenv("SP_GIGACHAT_MODEL_SOFTEN", "GigaChat-2")
-    monkeypatch.setenv("SP_GIGACHAT_MODEL_HELP_SAY", "GigaChat-2")
+    monkeypatch.setenv("SP_GIGACHAT_MODEL_REWRITE", "GigaChat-2")
     monkeypatch.setenv("SP_GIGACHAT_MODEL_DECODE", "GigaChat-2")
     with pytest.raises(ValidationError):
         LlmToolSettings()
@@ -470,8 +467,7 @@ def _llm_tool_values(**overrides: object) -> dict[str, object]:
         "gigachat_credentials": "test-credentials",
         "gigachat_scope": "PERS",
         "gigachat_ca_bundle_file": _CERT,
-        "gigachat_model_soften": "GigaChat-2",
-        "gigachat_model_help_say": "GigaChat-2",
+        "gigachat_model_rewrite": "GigaChat-2",
         "gigachat_model_decode": "GigaChat-2",
     }
     values.update(overrides)

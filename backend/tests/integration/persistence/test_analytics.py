@@ -25,12 +25,12 @@ from svoi_pravila.application.use_cases.run_daily_analytics import (
 )
 from svoi_pravila.domain.analytics import aggregate, cohorts, event_day
 from svoi_pravila.domain.enums import (
-    Firmness,
     LimitKind,
     UsageEventKind,
     UsageOutcome,
     UsageScenario,
     UsageSurface,
+    VariantKind,
 )
 from svoi_pravila.domain.ids import UsageEventId
 from svoi_pravila.domain.usage import UsageEvent
@@ -116,7 +116,7 @@ def _chosen(event_id: int, when: datetime, user: str, scenario: UsageScenario) -
         output_tokens=0,
         billable_tokens=0,
         event_kind=UsageEventKind.RESULT_CHOSEN,
-        variant_firmness=Firmness.BALANCED,
+        variant_kind=VariantKind.CHECK,
     )
 
 
@@ -159,14 +159,14 @@ def _dataset() -> tuple[UsageEvent, ...]:
         _gen(2, t_a, u1),
         _gen(3, t_a, u2, surface=UsageSurface.MINIAPP, latency_ms=20, ttfc_ms=5, tokens=3),
         _gen(4, t_a, u3, surface=UsageSurface.INLINE, latency_ms=100, ttfc_ms=40),
-        _chosen(5, t_a, u3, UsageScenario.SOFTEN),
+        _chosen(5, t_a, u3, UsageScenario.REWRITE),
         _gen(6, t_a, u4, outcome=UsageOutcome.REFUSED),
         _gen(7, t_a, u4, outcome=UsageOutcome.SCREENED, latency_ms=0),
         _gen(8, t_a, u4, outcome=UsageOutcome.INVALID_OUTPUT),
         _gen(9, t_a, u4, outcome=UsageOutcome.UNAVAILABLE),
         _gen(10, t_a, u4, scenario=UsageScenario.SUGGEST_RULE),
-        _gen(11, t_b, u2, scenario=UsageScenario.HELP_SAY, latency_ms=30, ttfc_ms=8),
-        _chosen(12, t_b, u2, UsageScenario.HELP_SAY),
+        _gen(11, t_b, u2, scenario=UsageScenario.REWRITE, latency_ms=30, ttfc_ms=8),
+        _chosen(12, t_b, u2, UsageScenario.REWRITE),
         _limited(13, t_a, u5, limit_kind=LimitKind.USER_QUOTA),
         _limited(14, t_a, u5, limit_kind=LimitKind.GLOBAL_BUDGET, surface=UsageSurface.MINIAPP),
     )

@@ -1,7 +1,7 @@
 .PHONY: install fmt fmt-check lint typecheck imports test-unit test-integration test \
 	audit secrets migrations-check image image-scan openapi miniapp-install miniapp-api-check \
 	miniapp-check miniapp-tunnel miniapp-tunnel-down observability-up observability-down \
-	dev-env infra-up infra-down build up down logs ps bench-llm eval-llm analytics check \
+	dev-env infra-up infra-down build up down logs ps bench-llm eval-llm eval-rewrite analytics check \
 	toolchain-check stack-smoke prod-smoke publish ownership-guard hooks ci quick shellcheck
 
 BACKEND := backend
@@ -86,6 +86,12 @@ eval-llm:
 	$(COMPOSE) --profile app run --rm \
 		-v "$(CURDIR)/$(BACKEND)/evals/out:/app/evals/out" \
 		--entrypoint svoi-pravila-eval api $(EVAL_ARGS)
+
+eval-rewrite:
+	mkdir -p $(BACKEND)/evals/out
+	$(COMPOSE) --profile app run --rm \
+		-v "$(CURDIR)/$(BACKEND)/evals/out:/app/evals/out" \
+		--entrypoint svoi-pravila-eval-rewrite api $(EVAL_ARGS)
 
 audit:
 	cd $(BACKEND) && uv export --frozen --no-dev --no-emit-project -o /tmp/svoi-pravila-requirements.txt

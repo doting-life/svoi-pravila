@@ -50,7 +50,7 @@ from svoi_pravila.benchmarks.runner import (
 )
 from svoi_pravila.config import LlmToolSettings
 
-_DEFAULT_OPS: tuple[RunOperation, ...] = ("soften", "help_say", "decode_stream")
+_DEFAULT_OPS: tuple[RunOperation, ...] = ("rewrite", "decode_stream")
 
 _ESTIMATE_HELP = (
     "Token estimate heuristic: ceil(rendered system+user characters / 3) "
@@ -63,10 +63,8 @@ def _parse_ops(raw: list[str] | None) -> tuple[RunOperation, ...]:
         return _DEFAULT_OPS
     ordered: list[RunOperation] = []
     for item in raw:
-        if item == "soften":
-            ordered.append("soften")
-        elif item == "help_say":
-            ordered.append("help_say")
+        if item == "rewrite":
+            ordered.append("rewrite")
         elif item == "decode_stream":
             ordered.append("decode_stream")
         elif item == "suggest_rule":
@@ -136,8 +134,7 @@ async def _run_model(
 ) -> tuple[list[str], bool, FailFastUnavailableError | None, TokenBudgetExceededError | None]:
     run_settings = run.settings.model_copy(
         update={
-            "gigachat_model_soften": run.model,
-            "gigachat_model_help_say": run.model,
+            "gigachat_model_rewrite": run.model,
             "gigachat_model_decode": run.model,
         }
     )
@@ -346,7 +343,7 @@ def main() -> None:
         nargs="*",
         default=None,
         choices=list(RUN_OPERATIONS),
-        help="Operations to run (default: soften help_say decode_stream)",
+        help="Operations to run (default: rewrite decode_stream)",
     )
     parser.add_argument("--repeat", type=int, default=3, help="Repeats per case (default: 3)")
     parser.add_argument("--deadline", type=float, default=30.0, help="Per-call deadline seconds")

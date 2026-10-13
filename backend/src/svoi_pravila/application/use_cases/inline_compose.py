@@ -1,4 +1,4 @@
-"""Compose soften / help-say variants for an inline query (non-streaming)."""
+"""Compose rewrite variants for an inline query (non-streaming, never a goal)."""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from svoi_pravila.application.inline_text import normalize_inline_text
 from svoi_pravila.application.ports.consent_catalog import ConsentCatalog
 from svoi_pravila.application.ports.generation import (
     BOUNDED_TEXT_MAX,
-    HelpSayIntent,
     SafetyVerdict,
     Variant,
 )
@@ -63,11 +62,10 @@ class InlineComposePorts:
     compose: ComposeGeneration
     reuse: InlineResultReuse
     min_chars: int
-    intent_prefixes: tuple[tuple[str, HelpSayIntent], ...]
 
 
 class InlineCompose:
-    """Produce inline soften or help-say variants for a fully onboarded user."""
+    """Produce inline rewrite variants for a fully onboarded user."""
 
     def __init__(self, ports: InlineComposePorts) -> None:
         self._ports = ports
@@ -81,20 +79,12 @@ class InlineCompose:
             raise IncomingTextTooLong()
         if len(normalized) < self._ports.min_chars:
             raise InlineQueryTooShort()
-        matched = _match_prefix(normalized, self._ports.intent_prefixes)
-        scenario = UsageScenario.SOFTEN
+        scenario = UsageScenario.REWRITE
         draft = normalized
-        intent: HelpSayIntent | None = None
-        if matched is not None:
-            intent, remainder = matched
-            draft = normalize_inline_text(remainder)
-            if len(draft) < self._ports.min_chars:
-                raise InlineQueryTooShort()
-            scenario = UsageScenario.HELP_SAY
         material = ComposeProduceMaterial(
             user_key=user_key,
             scenario=scenario,
-            intent=intent,
+            goal=None,
             draft=draft,
             relationship=RelationshipKind.OTHER,
             rules=(),
@@ -111,7 +101,6 @@ class InlineCompose:
         reuse_material = InlineReuseKeyMaterial(
             user_key=user_key,
             scenario=scenario,
-            intent=intent,
             draft=draft,
         )
         key = inline_reuse_key(reuse_material)
@@ -138,19 +127,3 @@ class InlineCompose:
             if user is None:
                 raise NotFound()
             await require_access(uow, self._ports.catalog, user.id)
-
-
-def _match_prefix(
-    query: str,
-    prefixes: tuple[tuple[str, HelpSayIntent], ...],
-) -> tuple[HelpSayIntent, str] | None:
-    folded = query.casefold()
-    ordered = sorted(prefixes, key=lambda item: len(item[0]), reverse=True)
-    for prefix, intent in ordered:
-        needle = prefix.strip().casefold()
-        if not needle:
-            continue
-        if folded.startswith(needle):
-            remainder = query[len(prefix.strip()) :].strip()
-            return intent, remainder
-    return None

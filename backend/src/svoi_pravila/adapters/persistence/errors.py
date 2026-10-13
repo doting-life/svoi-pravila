@@ -16,7 +16,7 @@ _CONFLICT_CONSTRAINTS = frozenset(
         "uq_users_telegram_user_id",
         "uq_invites_token_hash",
         "uq_pairs_member_low_member_high",
-        "uq_rule_suggestions_tone_user_contact_firmness",
+        "uq_rule_suggestions_tone_user_contact_variant_kind",
         "uq_rule_suggestions_pending_user_contact_source",
     }
 )

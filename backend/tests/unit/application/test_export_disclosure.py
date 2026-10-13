@@ -16,7 +16,7 @@ from svoi_pravila.application.use_cases.export_my_data import (
     ExportMyDataCommand,
 )
 from svoi_pravila.application.use_cases.propose_rule import ProposeRule, ProposeRuleCommand
-from svoi_pravila.domain.enums import Firmness, RuleCategory
+from svoi_pravila.domain.enums import RuleCategory, VariantKind
 from svoi_pravila.domain.ids import RuleSuggestionId
 from svoi_pravila.domain.rule_suggestion import RuleSuggestion, ToneSignal
 from svoi_pravila.domain.text import RuleText
@@ -127,7 +127,7 @@ async def test_rich_export_uses_only_declared_content_section_keys(world: AppWor
                 contact_id=contact.id,
                 category=RuleCategory.HOW_TO_ASK,
                 text=RuleText("Говорить мягко в disclosure"),
-                firmness=Firmness.GENTLE,
+                variant_kind=VariantKind.SOFTER,
                 now=world.clock.now(),
             )
         )
@@ -135,7 +135,7 @@ async def test_rich_export_uses_only_declared_content_section_keys(world: AppWor
             ToneSignal(
                 user_id=inviter.id,
                 contact_id=contact.id,
-                values=(Firmness.GENTLE,) * 5,
+                values=(VariantKind.SOFTER,) * 5,
             )
         )
         await uow.commit()

@@ -61,6 +61,7 @@ from tests.fakes.export_download import FakeExportDownloadStore
 from tests.fakes.quota_budget import FakeLlmBudget, FakeQuotaGate
 from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter
 from tests.fakes.telegram_public_username import FakeTelegramPublicUsername
+from tests.fakes.variant_policy import RecordingVariantPolicyMonitor
 from tests.support.miniapp_decode import MiniappDecodeBundle
 
 
@@ -147,6 +148,7 @@ def build_test_miniapp_bindings(
                 quota_gate=FakeQuotaGate(limit=300),
                 llm_budget=FakeLlmBudget(),
                 sink=decode_bundle.sink,
+                policy_monitor=RecordingVariantPolicyMonitor(),
                 clock=world.clock,
                 monotonic=world.clock,
                 ids=world.ids,

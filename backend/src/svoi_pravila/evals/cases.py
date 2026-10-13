@@ -10,14 +10,12 @@ from typing import Literal
 
 from svoi_pravila.application.ports.generation import (
     DecodeRequest,
-    HelpSayIntent,
-    HelpSayRequest,
+    RewriteRequest,
     RuleContext,
-    SoftenRequest,
 )
-from svoi_pravila.domain.enums import RelationshipKind, RuleCategory
+from svoi_pravila.domain.enums import RelationshipKind, RewriteGoal, RuleCategory
 
-RunOperation = Literal["soften", "help_say", "decode_stream"]
+RunOperation = Literal["rewrite", "decode_stream"]
 EvalCategory = Literal[
     "ordinary_conflict",
     "heated",
@@ -32,7 +30,7 @@ EvalCategory = Literal[
     "rule_effect",
 ]
 ExpectedVerdict = Literal["ok", "crisis", "refuse_manipulation"]
-OPERATIONS: tuple[RunOperation, ...] = ("soften", "help_say", "decode_stream")
+OPERATIONS: tuple[RunOperation, ...] = ("rewrite", "decode_stream")
 CATEGORIES: tuple[EvalCategory, ...] = (
     "ordinary_conflict",
     "heated",
@@ -64,18 +62,15 @@ class EvalCase:
     category: EvalCategory
     expected: frozenset[ExpectedVerdict]
     smoke: bool = False
-    soften: SoftenRequest | None = None
-    help_say: HelpSayRequest | None = None
+    rewrite: RewriteRequest | None = None
     decode: DecodeRequest | None = None
     stop_stems: tuple[str, ...] = ()
     effect_pair: str | None = None
 
     def screen_text(self) -> str:
         """User-supplied text the crisis screen inspects."""
-        if self.soften is not None:
-            return self.soften.draft
-        if self.help_say is not None:
-            return self.help_say.details
+        if self.rewrite is not None:
+            return self.rewrite.draft
         if self.decode is not None:
             return self.decode.incoming
         msg = f"case {self.id} has no request payload"
@@ -83,10 +78,8 @@ class EvalCase:
 
     def has_rules(self) -> bool:
         """True when the case supplies a non-empty rule context."""
-        if self.soften is not None:
-            return bool(self.soften.rules)
-        if self.help_say is not None:
-            return bool(self.help_say.rules)
+        if self.rewrite is not None:
+            return bool(self.rewrite.rules)
         if self.decode is not None:
             return bool(self.decode.rules)
         return False
@@ -143,34 +136,19 @@ def parse_case(raw: object) -> EvalCase:
     if category == "rule_effect" and not effect_pair:
         msg = "rule_effect cases require effect_pair"
         raise ValueError(msg)
-    if operation == "soften":
+    if operation == "rewrite":
+        goal_raw = raw.get("goal")
         return EvalCase(
             id=ident,
-            operation="soften",
+            operation="rewrite",
             category=category,
             expected=expected,
             smoke=smoke,
             stop_stems=stop_stems,
             effect_pair=effect_pair,
-            soften=SoftenRequest(
+            rewrite=RewriteRequest(
                 draft=str(raw["draft"]),
-                rules=rules,
-                relationship=relationship,
-                deadline_seconds=1.0,
-            ),
-        )
-    if operation == "help_say":
-        return EvalCase(
-            id=ident,
-            operation="help_say",
-            category=category,
-            expected=expected,
-            smoke=smoke,
-            stop_stems=stop_stems,
-            effect_pair=effect_pair,
-            help_say=HelpSayRequest(
-                intent=HelpSayIntent(str(raw["intent"])),
-                details=str(raw["details"]),
+                goal=None if goal_raw is None else RewriteGoal(str(goal_raw)),
                 rules=rules,
                 relationship=relationship,
                 deadline_seconds=1.0,
@@ -292,8 +270,8 @@ def filter_cases(
 
 def with_deadline(case: EvalCase, deadline: float) -> EvalCase:
     """Copy the case with the per-call deadline applied."""
-    if case.soften is not None:
-        req = case.soften
+    if case.rewrite is not None:
+        req = case.rewrite
         return EvalCase(
             id=case.id,
             operation=case.operation,
@@ -302,28 +280,11 @@ def with_deadline(case: EvalCase, deadline: float) -> EvalCase:
             smoke=case.smoke,
             stop_stems=case.stop_stems,
             effect_pair=case.effect_pair,
-            soften=SoftenRequest(
+            rewrite=RewriteRequest(
                 draft=req.draft,
+                goal=req.goal,
                 rules=req.rules,
                 relationship=req.relationship,
-                deadline_seconds=deadline,
-            ),
-        )
-    if case.help_say is not None:
-        help_req = case.help_say
-        return EvalCase(
-            id=case.id,
-            operation=case.operation,
-            category=case.category,
-            expected=case.expected,
-            smoke=case.smoke,
-            stop_stems=case.stop_stems,
-            effect_pair=case.effect_pair,
-            help_say=HelpSayRequest(
-                intent=help_req.intent,
-                details=help_req.details,
-                rules=help_req.rules,
-                relationship=help_req.relationship,
                 deadline_seconds=deadline,
             ),
         )

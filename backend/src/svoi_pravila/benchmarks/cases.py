@@ -10,18 +10,16 @@ from typing import Literal
 
 from svoi_pravila.application.ports.generation import (
     DecodeRequest,
-    HelpSayIntent,
-    HelpSayRequest,
+    RewriteRequest,
     RuleContext,
-    SoftenRequest,
     SuggestRuleRequest,
 )
-from svoi_pravila.domain.enums import RelationshipKind, RuleCategory
+from svoi_pravila.domain.enums import RelationshipKind, RewriteGoal, RuleCategory
 
-JSONL_OPERATIONS = ("soften", "help_say", "decode", "suggest_rule")
-RUN_OPERATIONS = ("soften", "help_say", "decode_stream", "suggest_rule")
-JsonlOperation = Literal["soften", "help_say", "decode", "suggest_rule"]
-RunOperation = Literal["soften", "help_say", "decode_stream", "suggest_rule"]
+JSONL_OPERATIONS = ("rewrite", "decode", "suggest_rule")
+RUN_OPERATIONS = ("rewrite", "decode_stream", "suggest_rule")
+JsonlOperation = Literal["rewrite", "decode", "suggest_rule"]
+RunOperation = Literal["rewrite", "decode_stream", "suggest_rule"]
 ExpectedSafety = Literal["ok", "crisis"]
 ExpectedVerdict = Literal["ok", "none"]
 
@@ -34,8 +32,7 @@ class BenchCase:
     operation: JsonlOperation
     expected_safety: ExpectedSafety
     smoke: bool = False
-    soften: SoftenRequest | None = None
-    help_say: HelpSayRequest | None = None
+    rewrite: RewriteRequest | None = None
     decode: DecodeRequest | None = None
     suggest_rule: SuggestRuleRequest | None = None
     expected_verdict: ExpectedVerdict | None = None
@@ -83,28 +80,16 @@ def parse_case(raw: object) -> BenchCase:
     relationship = RelationshipKind(str(raw["relationship"]))
     rules = _rules(raw.get("rules"))
     smoke = bool(raw.get("smoke", False))
-    if operation == "soften":
+    if operation == "rewrite":
+        goal_raw = raw.get("goal")
         return BenchCase(
             id=ident,
-            operation="soften",
+            operation="rewrite",
             expected_safety=expected_safety,
             smoke=smoke,
-            soften=SoftenRequest(
+            rewrite=RewriteRequest(
                 draft=str(raw["draft"]),
-                rules=rules,
-                relationship=relationship,
-                deadline_seconds=1.0,
-            ),
-        )
-    if operation == "help_say":
-        return BenchCase(
-            id=ident,
-            operation="help_say",
-            expected_safety=expected_safety,
-            smoke=smoke,
-            help_say=HelpSayRequest(
-                intent=HelpSayIntent(str(raw["intent"])),
-                details=str(raw["details"]),
+                goal=None if goal_raw is None else RewriteGoal(str(goal_raw)),
                 rules=rules,
                 relationship=relationship,
                 deadline_seconds=1.0,
@@ -198,34 +183,18 @@ def filter_cases(
 
 def with_deadline(case: BenchCase, deadline: float) -> BenchCase:
     """Return a copy of the case with the per-call deadline applied."""
-    if case.operation == "soften" and case.soften is not None:
-        req = case.soften
+    if case.operation == "rewrite" and case.rewrite is not None:
+        req = case.rewrite
         return BenchCase(
             id=case.id,
             operation=case.operation,
             expected_safety=case.expected_safety,
             smoke=case.smoke,
-            soften=SoftenRequest(
+            rewrite=RewriteRequest(
                 draft=req.draft,
+                goal=req.goal,
                 rules=req.rules,
                 relationship=req.relationship,
-                deadline_seconds=deadline,
-            ),
-            expected_verdict=case.expected_verdict,
-            expected_category=case.expected_category,
-        )
-    if case.operation == "help_say" and case.help_say is not None:
-        req_help = case.help_say
-        return BenchCase(
-            id=case.id,
-            operation=case.operation,
-            expected_safety=case.expected_safety,
-            smoke=case.smoke,
-            help_say=HelpSayRequest(
-                intent=req_help.intent,
-                details=req_help.details,
-                rules=req_help.rules,
-                relationship=req_help.relationship,
                 deadline_seconds=deadline,
             ),
             expected_verdict=case.expected_verdict,

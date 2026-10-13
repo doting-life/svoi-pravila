@@ -6,10 +6,10 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 
 from svoi_pravila.domain.enums import (
-    Firmness,
     RuleCategory,
     SuggestionSource,
     SuggestionStatus,
+    VariantKind,
 )
 from svoi_pravila.domain.errors import InvalidTransitionError, InvalidValueError
 from svoi_pravila.domain.ids import ContactId, RuleSuggestionId, UserId
@@ -26,39 +26,44 @@ def _require(*, ok: bool, message: str) -> None:
         raise InvalidValueError(message)
 
 
+_TONE_KINDS = frozenset({VariantKind.SOFTER, VariantKind.FIRMER})
+
+
 @dataclass(frozen=True, slots=True)
 class ToneSignal:
-    """Last ≤ ``TONE_SIGNAL_WINDOW`` firmness choices for one (user, contact)."""
+    """Last ≤ ``TONE_SIGNAL_WINDOW`` softer/firmer choices for one (user, contact)."""
 
     user_id: UserId
     contact_id: ContactId
-    values: tuple[Firmness, ...]
+    values: tuple[VariantKind, ...]
 
     def __post_init__(self) -> None:
         _require(
             ok=len(self.values) <= TONE_SIGNAL_WINDOW,
             message=f"ToneSignal holds at most {TONE_SIGNAL_WINDOW} values",
         )
+        _require(
+            ok=all(value in _TONE_KINDS for value in self.values),
+            message="ToneSignal holds only softer or firmer choices",
+        )
 
-    def append(self, firmness: Firmness) -> ToneSignal:
-        """Append a firmness choice, dropping the oldest when over the window."""
-        next_values = (*self.values, firmness)
+    def append(self, kind: VariantKind) -> ToneSignal:
+        """Append a choice, dropping the oldest when over the window."""
+        next_values = (*self.values, kind)
         if len(next_values) > TONE_SIGNAL_WINDOW:
             next_values = next_values[-TONE_SIGNAL_WINDOW:]
         return replace(self, values=next_values)
 
 
-def dominant_firmness(signal: ToneSignal) -> Firmness | None:
-    """Return the dominant firmness when the sample and share thresholds are met."""
+def dominant_variant_kind(signal: ToneSignal) -> VariantKind | None:
+    """Return the dominant kind when the sample and share thresholds are met."""
     if len(signal.values) < TONE_SIGNAL_MIN_SAMPLES:
         return None
-    counts: dict[Firmness, int] = {}
+    counts: dict[VariantKind, int] = {}
     for value in signal.values:
         counts[value] = counts.get(value, 0) + 1
     total = len(signal.values)
-    winners = [
-        firmness for firmness, count in counts.items() if count / total >= TONE_SIGNAL_DOMINANCE
-    ]
+    winners = [kind for kind, count in counts.items() if count / total >= TONE_SIGNAL_DOMINANCE]
     if len(winners) != 1:
         return None
     return winners[0]
@@ -74,7 +79,7 @@ class RuleSuggestion:
     source: SuggestionSource
     category: RuleCategory
     text: RuleText
-    firmness: Firmness | None
+    variant_kind: VariantKind | None
     status: SuggestionStatus
     created_at: datetime
     decided_at: datetime | None
@@ -84,9 +89,12 @@ class RuleSuggestion:
         if self.decided_at is not None:
             require_utc(self.decided_at)
         if self.source is SuggestionSource.TONE:
-            _require(ok=self.firmness is not None, message="tone suggestion requires firmness")
+            _require(
+                ok=self.variant_kind in _TONE_KINDS,
+                message="tone suggestion requires softer or firmer",
+            )
         else:
-            _require(ok=self.firmness is None, message="decode suggestion forbids firmness")
+            _require(ok=self.variant_kind is None, message="decode suggestion forbids variant_kind")
         if self.status is SuggestionStatus.PENDING:
             _require(ok=self.decided_at is None, message="pending suggestion has no decided_at")
         else:
@@ -103,7 +111,7 @@ class RuleSuggestion:
         contact_id: ContactId,
         category: RuleCategory,
         text: RuleText,
-        firmness: Firmness,
+        variant_kind: VariantKind,
         now: datetime,
     ) -> RuleSuggestion:
         """Create a pending tone-source suggestion."""
@@ -114,7 +122,7 @@ class RuleSuggestion:
             source=SuggestionSource.TONE,
             category=category,
             text=text,
-            firmness=firmness,
+            variant_kind=variant_kind,
             status=SuggestionStatus.PENDING,
             created_at=now,
             decided_at=None,
@@ -139,7 +147,7 @@ class RuleSuggestion:
             source=SuggestionSource.DECODE,
             category=category,
             text=text,
-            firmness=None,
+            variant_kind=None,
             status=SuggestionStatus.PENDING,
             created_at=now,
             decided_at=None,

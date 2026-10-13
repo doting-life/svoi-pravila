@@ -73,7 +73,7 @@ async def _store_insert_tokens(
             continue
         token = await ports.prepared_results.store(
             pseudonym,
-            PreparedVariant(firmness=variant.firmness, text=variant.text),
+            PreparedVariant(kind=variant.kind, text=variant.text),
         )
         tokens.append(token)
     return tuple(tokens)

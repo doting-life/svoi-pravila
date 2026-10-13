@@ -226,7 +226,7 @@ async def test_compose_session_auth_and_no_contact_scope(
         ok = await client.post(
             "/api/v1/compose",
             headers=headers,
-            json={"draft": draft, "intent": "soften"},
+            json={"draft": draft},
         )
         assert ok.status_code == 200
 
@@ -234,7 +234,7 @@ async def test_compose_session_auth_and_no_contact_scope(
             rejected = await client.post(
                 "/api/v1/compose",
                 headers=headers,
-                json={"draft": draft, "intent": "soften", "contact_id": str(contact_id)},
+                json={"draft": draft, "contact_id": str(contact_id)},
             )
             assert rejected.status_code == 404
             assert rejected.json()["code"] == MiniappErrorCode.NOT_FOUND
@@ -246,7 +246,7 @@ async def test_compose_session_auth_and_no_contact_scope(
         bad = await client.post(
             "/api/v1/compose",
             headers={"Authorization": "compose cs_" + ("x" * 64)},
-            json={"draft": "пожалуйста смягчи это сообщение немного", "intent": "soften"},
+            json={"draft": "пожалуйста смягчи это сообщение немного"},
         )
         assert bad.status_code == 401
         assert bad.json()["code"] == MiniappErrorCode.COMPOSE_SESSION_EXPIRED
@@ -260,7 +260,7 @@ async def test_compose_session_auth_and_no_contact_scope(
         deleted = await client.post(
             "/api/v1/compose",
             headers=headers,
-            json={"draft": "пожалуйста смягчи это сообщение немного", "intent": "soften"},
+            json={"draft": "пожалуйста смягчи это сообщение немного"},
         )
         assert deleted.status_code == 401
         assert deleted.json()["code"] == MiniappErrorCode.COMPOSE_SESSION_EXPIRED
@@ -359,7 +359,6 @@ async def test_compose_auth_schemes_and_handoff_header_edges(mini_world: AppWorl
     unknown_tma = build_webapp_init_data(_TOKEN, user_id=40_099, auth_date=int(_NOW.timestamp()))
     draft_body = {
         "draft": "пожалуйста смягчи это сообщение немного",
-        "intent": "soften",
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         me_bad_scheme = await client.get("/api/v1/me", headers={"Authorization": "Bearer x"})

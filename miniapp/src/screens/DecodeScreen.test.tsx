@@ -35,7 +35,8 @@ function renderDecode(
     fetchImpl: typeof fetch,
     options: {
         readonly decodeRemaining?: number | null;
-        readonly activeContactId?: string | null;
+        readonly initialText?: string;
+        readonly contactId?: string | null;
         readonly contacts?: readonly (typeof anya)[];
     } = {},
 ) {
@@ -45,9 +46,6 @@ function renderDecode(
         const url = requestUrl(input);
         if (url.endsWith("/api/v1/contacts")) {
             return Promise.resolve(jsonResponse({ contacts }));
-        }
-        if (url.endsWith("/activate")) {
-            return Promise.resolve(jsonResponse(null, 204));
         }
         return fetchImpl(input, init);
     };
@@ -60,16 +58,14 @@ function renderDecode(
         onLimit: vi.fn(),
         onCrisis: vi.fn(),
         onDecodeUsed: vi.fn(),
-        onActivated: vi.fn(),
     };
     render(
         <ApiProvider credential={{ scheme: "tma", value: telegram.initData }} client={client}>
             <DecodeScreen
                 telegram={telegram}
                 displayTimezone="Europe/Moscow"
-                activeContactId={
-                    options.activeContactId === undefined ? "c1" : options.activeContactId
-                }
+                initialText={options.initialText ?? ""}
+                initialContactId={options.contactId === undefined ? "c1" : options.contactId}
                 decodeRemaining={
                     options.decodeRemaining === undefined ? 5 : options.decodeRemaining
                 }
@@ -79,6 +75,14 @@ function renderDecode(
         </ApiProvider>,
     );
     return { telegram, ...handlers };
+}
+
+function decodeBody(fetchImpl: typeof fetch): unknown {
+    const call = vi
+        .mocked(fetchImpl)
+        .mock.calls.find(([req]) => requestUrl(req).includes("/api/v1/decode"));
+    const body = call?.[1]?.body;
+    return typeof body === "string" ? JSON.parse(body) : undefined;
 }
 
 function sseResponse(body: string): Response {
@@ -208,11 +212,11 @@ describe("DecodeScreen", () => {
                 <DecodeScreen
                     telegram={telegram}
                     displayTimezone="Europe/Moscow"
-                    activeContactId="c1"
+                    initialText=""
+                    initialContactId="c1"
                     fetchImpl={fetchImpl}
                     decodeRemaining={5}
                     onDecodeUsed={() => undefined}
-                    onActivated={() => undefined}
                     onEditSuggestion={() => undefined}
                     onLimit={() => undefined}
                     onCrisis={() => undefined}
@@ -657,33 +661,94 @@ describe("DecodeScreen", () => {
         expect(await screen.findByText(ru.decodePasteFailed)).toBeInTheDocument();
     });
 
-    it("switches the contact the message is from", async () => {
+    it("switches the contact the message is from as local state only", async () => {
         const boris = { ...anya, id: "c2", label: "Боря", relationship: "friend" };
-        const fetchImpl = vi.fn(() => Promise.resolve(jsonResponse({}, 404))) as typeof fetch;
-        const { onActivated } = renderDecode(fetchImpl, { contacts: [anya, boris] });
+        const fetchImpl = vi.fn((input: RequestInfo | URL) =>
+            Promise.resolve(
+                requestUrl(input).includes("/api/v1/decode")
+                    ? sseResponse(completedSse())
+                    : jsonResponse({}, 404),
+            ),
+        ) as typeof fetch;
+        renderDecode(fetchImpl, { contacts: [anya, boris] });
         fireEvent.click(
             await screen.findByRole("button", { name: ru.decodeFrom.replace("{name}", "Аня") }),
         );
         const dialog = screen.getByRole("dialog");
         fireEvent.click(within(dialog).getByRole("button", { name: /Аня/ }));
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-        expect(onActivated).not.toHaveBeenCalled();
 
         fireEvent.click(
             screen.getByRole("button", { name: ru.decodeFrom.replace("{name}", "Аня") }),
         );
         fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: /Боря/ }));
-        await waitFor(() => {
-            expect(onActivated).toHaveBeenCalledWith("c2");
-        });
+        expect(
+            await screen.findByRole("button", { name: ru.decodeFrom.replace("{name}", "Боря") }),
+        ).toBeInTheDocument();
+        fireEvent.change(screen.getByRole("textbox"), { target: { value: "текст" } });
+        fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
+        expect(await screen.findByText("вариант")).toBeInTheDocument();
+        expect(decodeBody(fetchImpl)).toEqual({ text: "текст", contact_id: "c2" });
+        expect(
+            vi.mocked(fetchImpl).mock.calls.some(([req]) => requestUrl(req).includes("/activate")),
+        ).toBe(false);
     });
 
-    it("blocks submitting without a chosen contact", () => {
-        const fetchImpl = vi.fn(() => Promise.resolve(jsonResponse({}, 404))) as typeof fetch;
-        renderDecode(fetchImpl, { activeContactId: null });
-        expect(screen.getByRole("button", { name: ru.decodeSubmit })).toBeDisabled();
+    it("decodes without a contact and sends contact_id null", async () => {
+        const fetchImpl = vi.fn((input: RequestInfo | URL) =>
+            Promise.resolve(
+                requestUrl(input).includes("/api/v1/decode")
+                    ? sseResponse(completedSse({ ruleSourceToken: null }))
+                    : jsonResponse({}, 404),
+            ),
+        ) as typeof fetch;
+        renderDecode(fetchImpl, { contactId: null });
         expect(screen.getByRole("button", { name: ru.decodeFromNone })).toBeInTheDocument();
         expect(screen.getByText(ru.decodePrivacy)).toBeInTheDocument();
+        fireEvent.change(screen.getByRole("textbox"), { target: { value: "текст" } });
+        expect(screen.getByRole("button", { name: ru.decodeSubmit })).toBeEnabled();
+        fireEvent.click(screen.getByRole("button", { name: ru.decodeSubmit }));
+        expect(await screen.findByText("вариант")).toBeInTheDocument();
+        expect(decodeBody(fetchImpl)).toEqual({ text: "текст", contact_id: null });
+    });
+
+    it("picks no contact from the picker", async () => {
+        const fetchImpl = vi.fn(() => Promise.resolve(jsonResponse({}, 404))) as typeof fetch;
+        renderDecode(fetchImpl);
+        fireEvent.click(
+            await screen.findByRole("button", { name: ru.decodeFrom.replace("{name}", "Аня") }),
+        );
+        fireEvent.click(
+            within(screen.getByRole("dialog")).getByRole("button", { name: ru.pickerNone }),
+        );
+        expect(screen.getByRole("button", { name: ru.decodeFromNone })).toBeInTheDocument();
+    });
+
+    it("decodes straight away when text is provided", async () => {
+        const fetchImpl = vi.fn((input: RequestInfo | URL) =>
+            Promise.resolve(
+                requestUrl(input).includes("/api/v1/decode")
+                    ? sseResponse(completedSse())
+                    : jsonResponse({}, 404),
+            ),
+        ) as typeof fetch;
+        const { onDecodeUsed } = renderDecode(fetchImpl, {
+            initialText: "Ты опять не ответил",
+            contactId: "c1",
+        });
+        expect(await screen.findByText("вариант")).toBeInTheDocument();
+        expect(onDecodeUsed).toHaveBeenCalledTimes(1);
+        expect(decodeBody(fetchImpl)).toEqual({ text: "Ты опять не ответил", contact_id: "c1" });
+        const decodeCalls = vi
+            .mocked(fetchImpl)
+            .mock.calls.filter(([req]) => requestUrl(req).includes("/api/v1/decode"));
+        expect(decodeCalls).toHaveLength(1);
+    });
+
+    it("shows the form with an error when the provided text is too long", async () => {
+        const fetchImpl = vi.fn(() => Promise.resolve(jsonResponse({}, 404))) as typeof fetch;
+        renderDecode(fetchImpl, { initialText: "я".repeat(4001) });
+        expect(await screen.findByText(ru.decodeErrorLong)).toBeInTheDocument();
     });
 
     it("haptics error when accept or dismiss fails", async () => {

@@ -5,6 +5,7 @@ import {
     createTelegramAdapter,
     hapticImpact,
     hapticSelection,
+    readClipboardText,
     resetTelegramAdapterGuardsForTests,
 } from "./webapp";
 
@@ -437,5 +438,70 @@ describe("createTelegramAdapter", () => {
         expect(seen).toEqual(["dark"]);
         stop();
         expect(mocks.offEvent).toHaveBeenCalledWith("themeChanged", themeChanged);
+    });
+
+    it("has no cloud storage when the WebApp does not provide it", () => {
+        installMockWebApp("query_id=1");
+        expect(createTelegramAdapter().cloudStorage).toBeNull();
+    });
+
+    it("reads and writes cloud storage items", async () => {
+        installMockWebApp("query_id=1");
+        const items = new Map<string, string>();
+        const failing = new Set<string>();
+        Object.defineProperty(window.Telegram?.WebApp ?? {}, "CloudStorage", {
+            configurable: true,
+            value: {
+                getItem: (
+                    key: string,
+                    callback: (error: string | null, value?: string) => void,
+                ) => {
+                    if (failing.has(key)) {
+                        callback("STORAGE_ERROR");
+                        return;
+                    }
+                    callback(null, items.get(key));
+                },
+                setItem: (
+                    key: string,
+                    value: string,
+                    callback?: (error: string | null, stored?: boolean) => void,
+                ) => {
+                    if (failing.has(key)) {
+                        callback?.("STORAGE_ERROR");
+                        return;
+                    }
+                    items.set(key, value);
+                    callback?.(null, key !== "unstored");
+                },
+            },
+        });
+        const storage = createTelegramAdapter().cloudStorage;
+        expect(storage).not.toBeNull();
+        await expect(storage?.getItem("missing")).resolves.toBe("");
+        await expect(storage?.setItem("k", "1")).resolves.toBe(true);
+        await expect(storage?.getItem("k")).resolves.toBe("1");
+        await expect(storage?.setItem("unstored", "1")).resolves.toBe(false);
+        failing.add("bad");
+        await expect(storage?.getItem("bad")).rejects.toThrow("STORAGE_ERROR");
+        await expect(storage?.setItem("bad", "1")).resolves.toBe(false);
+    });
+});
+
+describe("readClipboardText", () => {
+    it("returns the clipboard text", async () => {
+        Object.defineProperty(navigator, "clipboard", {
+            configurable: true,
+            value: { readText: () => Promise.resolve("из буфера") },
+        });
+        await expect(readClipboardText()).resolves.toBe("из буфера");
+    });
+
+    it("returns null when the clipboard cannot be read", async () => {
+        Object.defineProperty(navigator, "clipboard", {
+            configurable: true,
+            value: { readText: () => Promise.reject(new Error("denied")) },
+        });
+        await expect(readClipboardText()).resolves.toBeNull();
     });
 });

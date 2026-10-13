@@ -28,6 +28,15 @@ interface TelegramDownloadFileParams {
     readonly file_name: string;
 }
 
+interface TelegramCloudStorage {
+    getItem: (key: string, callback: (error: string | null, value?: string) => void) => void;
+    setItem: (
+        key: string,
+        value: string,
+        callback?: (error: string | null, stored?: boolean) => void,
+    ) => void;
+}
+
 interface TelegramWebApp {
     readonly initData: string;
     readonly initDataUnsafe?: TelegramWebAppInitDataUnsafe;
@@ -36,6 +45,7 @@ interface TelegramWebApp {
     readonly platform?: string;
     readonly BackButton?: TelegramBackButton;
     readonly HapticFeedback?: TelegramHapticFeedback;
+    readonly CloudStorage?: TelegramCloudStorage;
     ready: () => void;
     expand: () => void;
     close: () => void;

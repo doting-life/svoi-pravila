@@ -164,10 +164,11 @@ export function InlineComposeApp({ telegram, handoffToken, fetchImpl }: InlineCo
             <main className="app-main">
                 <ComposeEditor
                     telegram={telegram}
+                    mode="check"
                     draftMax={draftMax}
                     initialDraft={sliceCodePoints(context.draft, draftMax)}
                     initialContactId={null}
-                    partner={{ mode: "fixed" }}
+                    partner={{ mode: "inline" }}
                     onLimit={(kind, message) => {
                         setPhase({ kind: "limit", limitKind: kind, message });
                     }}

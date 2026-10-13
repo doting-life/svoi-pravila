@@ -26,10 +26,10 @@ const DECODE_MAX = 4000;
 export type DecodeScreenProps = {
     readonly telegram: TelegramAdapter;
     readonly displayTimezone: string;
-    readonly activeContactId: string | null;
+    readonly initialText: string;
+    readonly initialContactId: string | null;
     readonly decodeRemaining: number | null;
     readonly onDecodeUsed: () => void;
-    readonly onActivated: (contactId: string) => void;
     readonly onEditSuggestion: (contact: Contact, category: string, text: string) => void;
     readonly onLimit: (kind: LimitKind, message: string | null) => void;
     readonly onCrisis: (lead: string | null, resources: readonly string[]) => void;
@@ -90,10 +90,10 @@ function variantKindLabel(kind: string): string {
 export function DecodeScreen({
     telegram,
     displayTimezone,
-    activeContactId,
+    initialText,
+    initialContactId,
     decodeRemaining,
     onDecodeUsed,
-    onActivated,
     onEditSuggestion,
     onLimit,
     onCrisis,
@@ -102,8 +102,11 @@ export function DecodeScreen({
     const client = useApiClient();
     const credential = useApiCredential();
     const contacts = useContacts();
-    const [text, setText] = useState("");
-    const [phase, setPhase] = useState<Phase>({ kind: "idle" });
+    const [text, setText] = useState(initialText);
+    const [contactId, setContactId] = useState<string | null>(initialContactId);
+    const [phase, setPhase] = useState<Phase>(
+        initialText.trim().length > 0 ? { kind: "streaming", analysis: "" } : { kind: "idle" },
+    );
     const [suggestion, setSuggestion] = useState<SuggestionCard | null>(null);
     const [suggestBusy, setSuggestBusy] = useState(false);
     const [suggestMessage, setSuggestMessage] = useState<string | null>(null);
@@ -119,7 +122,7 @@ export function DecodeScreen({
     }, []);
 
     const contactList = contacts.status === "success" ? contacts.data : [];
-    const active = contactList.find((contact) => contact.id === activeContactId);
+    const active = contactList.find((contact) => contact.id === contactId);
 
     const submit = async () => {
         const trimmed = text.trim();
@@ -145,7 +148,7 @@ export function DecodeScreen({
                     "Content-Type": "application/json",
                     Accept: "text/event-stream",
                 },
-                body: JSON.stringify({ text: trimmed }),
+                body: JSON.stringify({ text: trimmed, contact_id: contactId }),
                 signal: controller.signal,
             });
             if (!response.ok) {
@@ -303,18 +306,27 @@ export function DecodeScreen({
         }
     };
 
-    const selectContact = async (contact: Contact) => {
+    const selectContact = (contact: Contact | null) => {
         setPickerOpen(false);
-        if (contact.id === activeContactId) {
-            return;
-        }
-        const result = await contacts.activateContact(contact.id);
-        if (result.error !== undefined) {
-            telegram.hapticNotification("error");
-            return;
-        }
-        onActivated(contact.id);
+        setContactId(contact === null ? null : contact.id);
     };
+
+    const submitRef = useRef(submit);
+    const autoRunStarted = useRef(false);
+
+    useEffect(() => {
+        submitRef.current = submit;
+    });
+
+    useEffect(() => {
+        if (!autoRunStarted.current && initialText.trim().length > 0) {
+            autoRunStarted.current = true;
+            void submitRef.current();
+        }
+        return () => {
+            autoRunStarted.current = false;
+        };
+    }, [initialText]);
 
     const reset = () => {
         abortRef.current?.abort();
@@ -570,7 +582,6 @@ export function DecodeScreen({
                 <Button
                     size="lg"
                     block
-                    disabled={activeContactId === null}
                     onClick={() => {
                         void submit();
                     }}
@@ -582,10 +593,15 @@ export function DecodeScreen({
             {pickerOpen ? (
                 <ContactPicker
                     contacts={contactList}
-                    activeContactId={activeContactId}
-                    onSelect={(contact) => {
-                        void selectContact(contact);
+                    selectedContactId={contactId}
+                    noneOption={{
+                        label: ru.pickerNone,
+                        selected: contactId === null,
+                        onSelect: () => {
+                            selectContact(null);
+                        },
                     }}
+                    onSelect={selectContact}
                     onClose={() => {
                         setPickerOpen(false);
                     }}

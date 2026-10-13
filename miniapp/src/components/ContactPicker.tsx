@@ -6,7 +6,7 @@ import { Sheet } from "./Sheet";
 
 export type ContactPickerProps = {
     readonly contacts: readonly Contact[];
-    readonly activeContactId: string | null | undefined;
+    readonly selectedContactId: string | null | undefined;
     readonly onSelect: (contact: Contact) => void;
     readonly onClose: () => void;
     readonly noneOption?: {
@@ -18,7 +18,7 @@ export type ContactPickerProps = {
 
 export function ContactPicker({
     contacts,
-    activeContactId,
+    selectedContactId,
     onSelect,
     onClose,
     noneOption,
@@ -56,7 +56,7 @@ export function ContactPicker({
                         key={contact.id}
                         type="button"
                         className="picker__item"
-                        aria-current={contact.id === activeContactId ? "true" : undefined}
+                        aria-current={contact.id === selectedContactId ? "true" : undefined}
                         onClick={() => {
                             onSelect(contact);
                         }}

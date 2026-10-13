@@ -18,12 +18,20 @@ export type Launch =
     | { readonly kind: "identified" }
     | { readonly kind: "inline_compose"; readonly handoffToken: string };
 
+/** Telegram CloudStorage; `getItem` resolves `""` for a missing key and rejects on failure. */
+export type TelegramCloudStorageControls = {
+    getItem: (key: string) => Promise<string>;
+    setItem: (key: string, value: string) => Promise<boolean>;
+};
+
 export type TelegramAdapter = {
     readonly initData: string;
     readonly startParam: string | null;
     readonly colorScheme: ColorScheme;
     readonly launch: Launch;
     readonly BackButton: TelegramBackButtonControls;
+    /** `null` when the client has no CloudStorage. */
+    readonly cloudStorage: TelegramCloudStorageControls | null;
     ready: () => void;
     expand: () => void;
     close: () => void;
@@ -104,6 +112,42 @@ function createBackButtonControls(webApp: TelegramWebApp | undefined): TelegramB
     };
 }
 
+function createCloudStorageControls(
+    webApp: TelegramWebApp | undefined,
+): TelegramCloudStorageControls | null {
+    const storage = webApp?.CloudStorage;
+    if (storage === undefined) {
+        return null;
+    }
+    return {
+        getItem: (key: string) =>
+            new Promise<string>((resolve, reject) => {
+                storage.getItem(key, (error, value) => {
+                    if (error !== null) {
+                        reject(new Error(error));
+                        return;
+                    }
+                    resolve(value ?? "");
+                });
+            }),
+        setItem: (key: string, value: string) =>
+            new Promise<boolean>((resolve) => {
+                storage.setItem(key, value, (error, stored) => {
+                    resolve(error === null && stored === true);
+                });
+            }),
+    };
+}
+
+/** Clipboard text, or `null` when the browser refuses to read it. */
+export async function readClipboardText(): Promise<string | null> {
+    try {
+        return await navigator.clipboard.readText();
+    } catch {
+        return null;
+    }
+}
+
 /** Build a typed adapter over `window.Telegram.WebApp`. Safe outside Telegram. */
 export function createTelegramAdapter(): TelegramAdapter {
     const webApp = readWebApp();
@@ -121,6 +165,7 @@ export function createTelegramAdapter(): TelegramAdapter {
         },
         launch,
         BackButton: createBackButtonControls(webApp),
+        cloudStorage: createCloudStorageControls(webApp),
         ready: () => {
             if (!insideTelegram || readyCalled) {
                 return;

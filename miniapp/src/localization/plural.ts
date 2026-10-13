@@ -18,7 +18,3 @@ function pickPlural(
 export function decodeRemainingLabel(count: number): string {
     return pickPlural(count, ru.decodeRemaining);
 }
-
-export function homeRulesCountLabel(count: number): string {
-    return pickPlural(count, ru.homeRulesCount);
-}

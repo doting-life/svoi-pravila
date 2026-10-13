@@ -1678,7 +1678,9 @@ async def test_empty_assistant_text_completion_invalid() -> None:
 
 
 @pytest.mark.unit
-async def test_rewrite_empty_slots_invalid() -> None:
+async def test_rewrite_empty_slots_invalid(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
     ache = _FakeAche(create_results=[_rewrite_payload_no_rules(bad=True)])
     with pytest.raises(InvalidGenerationOutput) as exc_info:
         await _generator(ache).rewrite(
@@ -1691,6 +1693,39 @@ async def test_rewrite_empty_slots_invalid() -> None:
             )
         )
     assert InvalidOutputReason.EMPTY_TEXT in exc_info.value.reasons
+    error = exc_info.value
+    assert error.slots == (VariantKind.SOFTER, VariantKind.SOFTER)
+    assert error.finish_reasons == ("stop", "stop")
+    assert error.labelled_reasons() == ("empty_text:softer", "empty_text:softer")
+    (call,) = [e for e in capture_log_events() if e.get("event") == "generation_call"]
+    assert list(call["reasons"]) == ["empty_text:softer", "empty_text:softer"]
+    assert list(call["finish_reasons"]) == ["stop", "stop"]
+
+
+@pytest.mark.unit
+async def test_length_finish_reason_is_recorded_per_attempt() -> None:
+    ache = _FakeAche(finish="length")
+    with pytest.raises(InvalidGenerationOutput) as exc_info:
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=None,
+                draft="chernovik",
+                rules=(),
+                relationship=RelationshipKind.OTHER,
+                deadline_seconds=5.0,
+            )
+        )
+    assert exc_info.value.finish_reasons == ("length", "length")
+    assert exc_info.value.slots == (None, None)
+    assert exc_info.value.labelled_reasons() == ("length", "length")
+
+
+@pytest.mark.unit
+async def test_decode_stream_invalid_keeps_slot_and_finish_reason_defaults() -> None:
+    with pytest.raises(InvalidGenerationOutput) as exc_info:
+        await _collect_decode_stream(_FakeAche(stream_parts=["   "]))
+    assert exc_info.value.slots == (None,) * len(exc_info.value.reasons)
+    assert exc_info.value.finish_reasons == (None,) * len(exc_info.value.reasons)
 
 
 @pytest.mark.unit

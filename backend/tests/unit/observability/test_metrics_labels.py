@@ -8,8 +8,15 @@ from svoi_pravila.application.errors import (
     AnalyticsJobName,
     AnalyticsJobStatus,
     CacheErrorKind,
+    InvalidOutputReason,
 )
-from svoi_pravila.domain.enums import LimitKind, UsageOutcome, UsageScenario, UsageSurface
+from svoi_pravila.domain.enums import (
+    LimitKind,
+    UsageOutcome,
+    UsageScenario,
+    UsageSurface,
+    VariantKind,
+)
 from svoi_pravila.observability.metrics import labels
 
 
@@ -85,3 +92,19 @@ def test_no_other_enum_values_can_be_produced_for_core_labels() -> None:
     limited = {labels.limit_kind_label(m, outcome=UsageOutcome.LIMITED) for m in LimitKind}
     assert limited == {m.value for m in LimitKind}
     assert labels.limit_kind_label("user_quota", outcome=UsageOutcome.OK) == labels.NONE
+
+
+@pytest.mark.unit
+def test_invalid_output_labels_cover_reasons_slots_and_finish_reasons() -> None:
+    for reason in InvalidOutputReason:
+        assert labels.invalid_reason_label(reason) == reason.value
+    assert labels.invalid_reason_label("free-text") == labels.OTHER
+
+    for kind in VariantKind:
+        assert labels.variant_slot_label(kind) == kind.value
+    assert labels.variant_slot_label(None) == labels.NONE
+
+    for finish_reason in ("stop", "length", "blacklist", "error", "function_call"):
+        assert labels.finish_reason_label(finish_reason) == finish_reason
+    assert labels.finish_reason_label(None) == labels.NONE
+    assert labels.finish_reason_label("surprise") == labels.OTHER

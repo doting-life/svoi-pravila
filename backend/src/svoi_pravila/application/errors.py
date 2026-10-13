@@ -8,6 +8,7 @@ from enum import StrEnum
 from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
 from svoi_pravila.application.ports.generation import TokenUsage
 from svoi_pravila.domain.access import AccessStatus
+from svoi_pravila.domain.enums import VariantKind
 
 
 class UnavailableKind(StrEnum):
@@ -255,7 +256,12 @@ class RateLimited(ApplicationError):
 
 
 class InvalidGenerationOutput(ApplicationError):
-    """Model output failed schema or content validation."""
+    """Model output failed schema or content validation.
+
+    ``slots`` and ``finish_reasons`` are C0 diagnostics, one entry per reason: the rewrite
+    slot that was defective and the provider ``finish_reason`` of that attempt. They default
+    to ``None`` entries and are set with ``with_diagnostics``.
+    """
 
     def __init__(
         self,
@@ -270,11 +276,33 @@ class InvalidGenerationOutput(ApplicationError):
             msg = "InvalidGenerationOutput requires at least one reason"
             raise ValueError(msg)
         self.reasons = reasons
+        self.slots: tuple[VariantKind | None, ...] = (None,) * len(reasons)
+        self.finish_reasons: tuple[str | None, ...] = (None,) * len(reasons)
         self.usage = usage
         self.attempts = attempts
         self.model = model
         self.prompt_version = prompt_version
         super().__init__("invalid generation output")
+
+    def with_diagnostics(
+        self,
+        slots: tuple[VariantKind | None, ...],
+        finish_reasons: tuple[str | None, ...],
+    ) -> InvalidGenerationOutput:
+        """Attach per-reason slots and finish_reasons; return ``self`` for raising."""
+        if len(slots) != len(self.reasons) or len(finish_reasons) != len(self.reasons):
+            msg = "slots and finish_reasons must have one entry per reason"
+            raise ValueError(msg)
+        self.slots = slots
+        self.finish_reasons = finish_reasons
+        return self
+
+    def labelled_reasons(self) -> tuple[str, ...]:
+        """Reasons as ``reason`` or ``reason:slot`` (C0 diagnostics, no text)."""
+        return tuple(
+            reason.value if slot is None else f"{reason.value}:{slot.value}"
+            for reason, slot in zip(self.reasons, self.slots, strict=True)
+        )
 
 
 InlineProduceError = (

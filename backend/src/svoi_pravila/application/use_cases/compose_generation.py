@@ -251,6 +251,10 @@ class ComposeGeneration:
             await self._budget_add(day, exc.usage.billable)
             return exc
         except InvalidGenerationOutput as exc:
+            for reason, slot, finish_reason in zip(
+                exc.reasons, exc.slots, exc.finish_reasons, strict=True
+            ):
+                self._ports.policy_monitor.record_invalid(reason, slot, finish_reason)
             await self._persist(self._event_from_error(material, started, exc))
             await self._budget_add(day, exc.usage.billable)
             return exc

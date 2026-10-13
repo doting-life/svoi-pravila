@@ -518,13 +518,13 @@ async function captureScheme(browser, baseUrl, scheme) {
     await intro.waitForSelector("text=Текст не сохраняется");
     await shot(intro, `${scheme}-onboarding-intro`);
     await intro.getByRole("button", { name: "Попробовать на примере" }).click();
+    await intro.waitForSelector("text=Твой черновик");
     await intro.waitForSelector("text=Мне обидно, что так вышло");
     await shot(intro, `${scheme}-intro-example`);
     await intro.close();
 
     const home = await openApp(browser, baseUrl, scheme, "paired");
     await home.waitForSelector("text=Что сделать с сообщением?");
-    await home.waitForSelector("text=@svoi_test_bot");
     await shot(home, `${scheme}-home`);
     await home.getByRole("button", { name: "Для кого: без контакта" }).click();
     await home.waitForSelector("text=Аня");

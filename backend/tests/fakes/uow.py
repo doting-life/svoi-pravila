@@ -23,7 +23,7 @@ from svoi_pravila.application.ports.repositories import (
 from svoi_pravila.application.ports.unit_of_work import UnitOfWork
 from svoi_pravila.domain.consent import Consent
 from svoi_pravila.domain.contact import Contact
-from svoi_pravila.domain.enums import Firmness, RuleStatus, SuggestionSource, SuggestionStatus
+from svoi_pravila.domain.enums import RuleStatus, SuggestionSource, SuggestionStatus, VariantKind
 from svoi_pravila.domain.ids import (
     ContactId,
     InviteId,
@@ -301,14 +301,14 @@ class InMemoryRuleSuggestionRepository:
         self,
         user_id: UserId,
         contact_id: ContactId,
-        firmness: Firmness,
+        variant_kind: VariantKind,
     ) -> RuleSuggestion | None:
         for suggestion in self._working.rule_suggestions.values():
             if (
                 suggestion.user_id == user_id
                 and suggestion.contact_id == contact_id
                 and suggestion.source is SuggestionSource.TONE
-                and suggestion.firmness is firmness
+                and suggestion.variant_kind is variant_kind
             ):
                 return suggestion
         return None

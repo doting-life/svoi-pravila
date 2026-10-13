@@ -8,16 +8,12 @@ from svoi_pravila.adapters.llm.gigachat.boundaries import (
     allocate_boundary_marker,
     wrap_untrusted_payload,
 )
-from svoi_pravila.adapters.llm.gigachat.prompt_compose import (
-    compose_help_say_template,
-    compose_soften_template,
-)
+from svoi_pravila.adapters.llm.gigachat.prompt_compose import compose_rewrite_template
 from svoi_pravila.adapters.llm.gigachat.validation import rules_text, untrusted_texts
 from svoi_pravila.adapters.llm.registry import load_prompt_template, render_system_prompt
 from svoi_pravila.application.ports.generation import (
     DecodeRequest,
-    HelpSayRequest,
-    SoftenRequest,
+    RewriteRequest,
     SuggestRuleRequest,
 )
 
@@ -32,45 +28,20 @@ class PreparedMessages:
     boundary_marker: str
 
 
-def prepare_soften(request: SoftenRequest) -> PreparedMessages:
-    """Build rendered system/user messages for soften."""
+def prepare_rewrite(request: RewriteRequest) -> PreparedMessages:
+    """Build rendered system/user messages for rewrite."""
+    goal = "none" if request.goal is None else request.goal.value
     marker = allocate_boundary_marker(
-        untrusted_texts(request.draft, request.relationship.value, rules=request.rules)
+        untrusted_texts(request.draft, goal, request.relationship.value, rules=request.rules)
     )
-    template = compose_soften_template(has_rules=bool(request.rules))
-    prompt_version = "soften@v5"
+    template = compose_rewrite_template(has_rules=bool(request.rules))
+    prompt_version = "rewrite@v1"
     system = render_system_prompt(template, boundary_marker=marker)
     user = wrap_untrusted_payload(
         marker,
         (
             ("draft", request.draft),
-            ("rules", rules_text(request.rules)),
-            ("relationship", request.relationship.value),
-        ),
-    )
-    return PreparedMessages(
-        system=system, user=user, prompt_version=prompt_version, boundary_marker=marker
-    )
-
-
-def prepare_help_say(request: HelpSayRequest) -> PreparedMessages:
-    """Build rendered system/user messages for help-say."""
-    marker = allocate_boundary_marker(
-        untrusted_texts(
-            request.intent.value,
-            request.details,
-            request.relationship.value,
-            rules=request.rules,
-        )
-    )
-    template = compose_help_say_template(has_rules=bool(request.rules))
-    prompt_version = "help_say@v6"
-    system = render_system_prompt(template, boundary_marker=marker)
-    user = wrap_untrusted_payload(
-        marker,
-        (
-            ("intent", request.intent.value),
-            ("details", request.details),
+            ("goal", goal),
             ("rules", rules_text(request.rules)),
             ("relationship", request.relationship.value),
         ),
@@ -90,7 +61,7 @@ def prepare_decode(request: DecodeRequest, *, analysis: str) -> PreparedMessages
             rules=request.rules,
         )
     )
-    template, prompt_version = load_prompt_template("decode", "v3")
+    template, prompt_version = load_prompt_template("decode", "v4")
     system = render_system_prompt(template, boundary_marker=marker)
     user = wrap_untrusted_payload(
         marker,

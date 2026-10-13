@@ -1,4 +1,4 @@
-"""Shared soften / help-say generation for inline and mini-app surfaces."""
+"""Shared rewrite generation for inline and mini-app surfaces."""
 
 from __future__ import annotations
 
@@ -27,13 +27,10 @@ from svoi_pravila.application.ports.generation import (
     BOUNDED_TEXT_MAX,
     BOUNDED_TEXT_MIN,
     AppliedRuleView,
-    HelpSayIntent,
-    HelpSayRequest,
-    HelpSayResult,
+    RewriteRequest,
+    RewriteResult,
     RuleContext,
     SafetyVerdict,
-    SoftenRequest,
-    SoftenResult,
     TextGenerator,
     TokenUsage,
     Variant,
@@ -46,6 +43,7 @@ from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.quota_gate import QuotaExhausted, QuotaGate, Reserved
 from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.ports.usage_event_sink import UsageEventSink
+from svoi_pravila.application.ports.variant_policy_monitor import VariantPolicyMonitor
 from svoi_pravila.application.use_cases._access import require_access
 from svoi_pravila.application.use_cases._cancelled_budget import (
     CancelledGeneration,
@@ -57,6 +55,7 @@ from svoi_pravila.domain.enums import (
     LimitKind,
     QuotaClass,
     RelationshipKind,
+    RewriteGoal,
     UsageEventKind,
     UsageOutcome,
     UsageScenario,
@@ -64,7 +63,9 @@ from svoi_pravila.domain.enums import (
 )
 from svoi_pravila.domain.ids import ContactId, TelegramUserId, UsageEventId
 from svoi_pravila.domain.product_day import product_day
+from svoi_pravila.domain.typography import humanize_typography
 from svoi_pravila.domain.usage import UsageEvent
+from svoi_pravila.domain.variant_policy import check_variant_policy
 
 _QUOTA_PURPOSE = "inline_quota"
 _ANALYTICS_PURPOSE = "analytics"
@@ -76,7 +77,7 @@ class ComposeGenerationCommand:
 
     telegram_user_id: TelegramUserId
     draft: str
-    intent: HelpSayIntent | None
+    goal: RewriteGoal | None
     contact_id: ContactId | None
     surface: UsageSurface
 
@@ -97,7 +98,7 @@ class ComposeProduceMaterial:
 
     user_key: str
     scenario: UsageScenario
-    intent: HelpSayIntent | None
+    goal: RewriteGoal | None
     draft: str
     relationship: RelationshipKind
     rules: tuple[RuleContext, ...]
@@ -114,6 +115,7 @@ class ComposeGenerationPorts:
     quota_gate: QuotaGate
     llm_budget: LlmBudget
     sink: UsageEventSink
+    policy_monitor: VariantPolicyMonitor
     clock: Clock
     monotonic: MonotonicClock
     ids: IdGenerator
@@ -142,7 +144,7 @@ class _UsageDraft:
 
 
 class ComposeGeneration:
-    """Produce soften or help-say variants for inline or mini-app surfaces."""
+    """Produce rewrite variants for inline or mini-app surfaces."""
 
     def __init__(self, ports: ComposeGenerationPorts) -> None:
         self._ports = ports
@@ -154,13 +156,13 @@ class ComposeGeneration:
             raise IncomingTextTooShort()
         if len(draft) > BOUNDED_TEXT_MAX:
             raise IncomingTextTooLong()
-        scenario = UsageScenario.HELP_SAY if command.intent is not None else UsageScenario.SOFTEN
+        scenario = UsageScenario.REWRITE
         user_key = str(command.telegram_user_id.value)
         relationship, rules = await self._load_context(command.telegram_user_id, command.contact_id)
         material = ComposeProduceMaterial(
             user_key=user_key,
             scenario=scenario,
-            intent=command.intent,
+            goal=command.goal,
             draft=draft,
             relationship=relationship,
             rules=rules,
@@ -271,36 +273,33 @@ class ComposeGeneration:
         await self._budget_add(day, generated.meta.usage.billable)
         return InlineReuseValue(
             scenario=material.scenario,
-            variants=generated.variants,
+            variants=self._finish_variants(material.draft, generated),
             safety=generated.safety,
             applied_rules=applied_rule_views(material.rules, generated.applied_rule_indexes),
         )
 
-    def _generation_request(
-        self, material: ComposeProduceMaterial
-    ) -> SoftenRequest | HelpSayRequest:
-        if material.intent is not None:
-            return HelpSayRequest(
-                intent=material.intent,
-                details=material.draft,
-                rules=material.rules,
-                relationship=material.relationship,
-                deadline_seconds=self._ports.deadline_seconds,
-            )
-        return SoftenRequest(
+    def _generation_request(self, material: ComposeProduceMaterial) -> RewriteRequest:
+        return RewriteRequest(
             draft=material.draft,
+            goal=material.goal,
             rules=material.rules,
             relationship=material.relationship,
             deadline_seconds=self._ports.deadline_seconds,
         )
 
-    async def _call_generator(
-        self, material: ComposeProduceMaterial
-    ) -> SoftenResult | HelpSayResult:
-        request = self._generation_request(material)
-        if isinstance(request, HelpSayRequest):
-            return await self._ports.generator.help_say(request)
-        return await self._ports.generator.soften(request)
+    async def _call_generator(self, material: ComposeProduceMaterial) -> RewriteResult:
+        return await self._ports.generator.rewrite(self._generation_request(material))
+
+    def _finish_variants(self, draft: str, generated: RewriteResult) -> tuple[Variant, ...]:
+        """Apply human typography, then report (never block) policy violations."""
+        finished = tuple(
+            Variant(text=humanize_typography(draft, variant.text), kind=variant.kind)
+            for variant in generated.variants
+        )
+        for variant in finished:
+            for violation in check_variant_policy(draft, variant.kind, variant.text):
+                self._ports.policy_monitor.record(variant.kind, violation.rule)
+        return finished
 
     async def _budget_add(self, day: date, billable_tokens: int) -> None:
         try:
@@ -347,7 +346,7 @@ class ComposeGeneration:
             output_tokens=draft.usage.output,
             billable_tokens=draft.usage.billable,
             event_kind=UsageEventKind.GENERATION,
-            variant_firmness=None,
+            variant_kind=None,
         )
 
     def _event_from_screened(self, material: ComposeProduceMaterial) -> UsageEvent:
@@ -391,7 +390,7 @@ class ComposeGeneration:
             output_tokens=0,
             billable_tokens=0,
             event_kind=UsageEventKind.GENERATION,
-            variant_firmness=None,
+            variant_kind=None,
             limit_kind=limit_kind,
         )
 
@@ -399,7 +398,7 @@ class ComposeGeneration:
         self,
         material: ComposeProduceMaterial,
         started: float,
-        generated: SoftenResult | HelpSayResult,
+        generated: RewriteResult,
     ) -> UsageEvent:
         meta = generated.meta
         return self._base_event(

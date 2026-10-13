@@ -18,11 +18,9 @@ from svoi_pravila.application.ports.generation import (
     DecodeResult,
     GenerationMeta,
     GenerationRequest,
-    HelpSayRequest,
-    HelpSayResult,
+    RewriteRequest,
+    RewriteResult,
     SafetyVerdict,
-    SoftenRequest,
-    SoftenResult,
     SuggestRuleProposed,
     SuggestRuleRequest,
     SuggestRuleResult,
@@ -30,7 +28,7 @@ from svoi_pravila.application.ports.generation import (
     TokenUsage,
     Variant,
 )
-from svoi_pravila.domain.enums import Firmness, RuleCategory
+from svoi_pravila.domain.enums import RuleCategory, VariantKind
 from svoi_pravila.domain.text import RuleText
 
 
@@ -50,36 +48,28 @@ class FakeTextGenerator:
     def __init__(
         self,
         *,
-        soften_result: SoftenResult | None = None,
-        help_say_result: HelpSayResult | None = None,
+        rewrite_result: RewriteResult | None = None,
         decode_result: DecodeResult | None = None,
         stream_chunks: tuple[str, ...] = (),
         stream_error: (
             GenerationRefusedByProvider | InvalidGenerationOutput | GenerationUnavailable | None
         ) = None,
     ) -> None:
-        self.soften_result = soften_result
-        self.help_say_result = help_say_result
+        self.rewrite_result = rewrite_result
         self.decode_result = decode_result
         self.suggest_rule_result: SuggestRuleResult | None = None
         self.stream_chunks = stream_chunks
         self.stream_error = stream_error
         self.emit_completed = True
-        self.soften_error: (
-            GenerationRefusedByProvider | InvalidGenerationOutput | GenerationUnavailable | None
-        ) = None
-        self.help_say_error: (
+        self.rewrite_error: (
             GenerationRefusedByProvider | InvalidGenerationOutput | GenerationUnavailable | None
         ) = None
         self.suggest_rule_error: (
             GenerationRefusedByProvider | InvalidGenerationOutput | GenerationUnavailable | None
         ) = None
-        self.soften_block: asyncio.Event | None = None
-        self.soften_started = asyncio.Event()
-        self.help_say_block: asyncio.Event | None = None
-        self.help_say_started = asyncio.Event()
-        self.soften_calls: list[SoftenRequest] = []
-        self.help_say_calls: list[HelpSayRequest] = []
+        self.rewrite_block: asyncio.Event | None = None
+        self.rewrite_started = asyncio.Event()
+        self.rewrite_calls: list[RewriteRequest] = []
         self.decode_stream_calls: list[DecodeRequest] = []
         self.suggest_rule_calls: list[SuggestRuleRequest] = []
         self.max_billable_value: int = 1_000
@@ -92,45 +82,27 @@ class FakeTextGenerator:
 
     @property
     def call_count(self) -> int:
-        """Total soften + help_say invocations."""
-        return len(self.soften_calls) + len(self.help_say_calls)
+        """Total rewrite invocations."""
+        return len(self.rewrite_calls)
 
-    async def soften(self, request: SoftenRequest) -> SoftenResult:
-        self.soften_calls.append(request)
-        self.soften_started.set()
-        if self.soften_block is not None:
-            await self.soften_block.wait()
-        if self.soften_error is not None:
-            raise self.soften_error
-        if self.soften_result is not None:
-            return self.soften_result
-        return SoftenResult(
+    async def rewrite(self, request: RewriteRequest) -> RewriteResult:
+        self.rewrite_calls.append(request)
+        self.rewrite_started.set()
+        if self.rewrite_block is not None:
+            await self.rewrite_block.wait()
+        if self.rewrite_error is not None:
+            raise self.rewrite_error
+        if self.rewrite_result is not None:
+            return self.rewrite_result
+        return RewriteResult(
             variants=(
-                Variant(text="softened-a", firmness=Firmness.GENTLE),
-                Variant(text="softened-b", firmness=Firmness.BALANCED),
+                Variant(text="checked", kind=VariantKind.CHECK),
+                Variant(text="softened", kind=VariantKind.SOFTER),
+                Variant(text="firmed", kind=VariantKind.FIRMER),
             ),
             applied_rule_indexes=(),
             safety=SafetyVerdict.OK,
-            meta=_meta("soften"),
-        )
-
-    async def help_say(self, request: HelpSayRequest) -> HelpSayResult:
-        self.help_say_calls.append(request)
-        self.help_say_started.set()
-        if self.help_say_block is not None:
-            await self.help_say_block.wait()
-        if self.help_say_error is not None:
-            raise self.help_say_error
-        if self.help_say_result is not None:
-            return self.help_say_result
-        return HelpSayResult(
-            variants=(
-                Variant(text="help-a", firmness=Firmness.GENTLE),
-                Variant(text="help-b", firmness=Firmness.FIRM),
-            ),
-            applied_rule_indexes=(),
-            safety=SafetyVerdict.OK,
-            meta=_meta("help_say"),
+            meta=_meta("rewrite"),
         )
 
     def _decode_result(self, request: DecodeRequest) -> DecodeResult:
@@ -140,9 +112,8 @@ class FakeTextGenerator:
             hypotheses=("hypothesis",),
             underlying_request="request",
             variants=(
-                Variant(text="decode-g", firmness=Firmness.GENTLE),
-                Variant(text="decode-b", firmness=Firmness.BALANCED),
-                Variant(text="decode-f", firmness=Firmness.FIRM),
+                Variant(text="decode-s", kind=VariantKind.SOFTER),
+                Variant(text="decode-f", kind=VariantKind.FIRMER),
             ),
             applied_rule_indexes=(),
             safety=SafetyVerdict.OK,

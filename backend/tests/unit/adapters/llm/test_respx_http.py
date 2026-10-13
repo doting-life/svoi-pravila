@@ -19,8 +19,7 @@ from svoi_pravila.adapters.llm.gigachat.client import create_gigachat_client
 from svoi_pravila.adapters.llm.gigachat.validation import (
     MAX_TOKENS_ANALYSIS,
     MAX_TOKENS_DECODE,
-    MAX_TOKENS_HELP_SAY,
-    MAX_TOKENS_SOFTEN,
+    MAX_TOKENS_REWRITE,
 )
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
@@ -31,11 +30,9 @@ from svoi_pravila.application.ports.generation import (
     AnalysisChunk,
     DecodeCompleted,
     DecodeRequest,
-    HelpSayIntent,
-    HelpSayRequest,
-    SoftenRequest,
+    RewriteRequest,
 )
-from svoi_pravila.domain.enums import RelationshipKind
+from svoi_pravila.domain.enums import RelationshipKind, RewriteGoal, VariantKind
 from tests.factories import make_settings
 
 _FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "gigachat"
@@ -154,37 +151,25 @@ def _mock_decode_stream_two_phase(
 
 @pytest.mark.unit
 @respx.mock
-async def test_http_soften_success() -> None:
-    route = _mock_chat("soften_success.json")
-    result = await _generator().soften(
-        SoftenRequest(
+@pytest.mark.parametrize("goal", [None, RewriteGoal.DECLINE])
+async def test_http_rewrite_success(goal: RewriteGoal | None) -> None:
+    route = _mock_chat("rewrite_success.json")
+    result = await _generator().rewrite(
+        RewriteRequest(
             draft="draft text",
+            goal=goal,
             rules=(),
             relationship=RelationshipKind.FRIEND,
             deadline_seconds=5.0,
         )
     )
-    assert 2 <= len(result.variants) <= 3
+    assert [item.kind for item in result.variants] == [
+        VariantKind.CHECK,
+        VariantKind.SOFTER,
+        VariantKind.FIRMER,
+    ]
     body = json.loads(route.calls.last.request.content.decode("utf-8"))
-    assert body["max_tokens"] == MAX_TOKENS_SOFTEN
-
-
-@pytest.mark.unit
-@respx.mock
-async def test_http_help_say_success() -> None:
-    route = _mock_chat("help_say_success.json")
-    result = await _generator().help_say(
-        HelpSayRequest(
-            intent=HelpSayIntent.DECLINE,
-            details="details",
-            rules=(),
-            relationship=RelationshipKind.WORK,
-            deadline_seconds=5.0,
-        )
-    )
-    assert 2 <= len(result.variants) <= 3
-    body = json.loads(route.calls.last.request.content.decode("utf-8"))
-    assert body["max_tokens"] == MAX_TOKENS_HELP_SAY
+    assert body["max_tokens"] == MAX_TOKENS_REWRITE
 
 
 @pytest.mark.unit
@@ -206,7 +191,7 @@ async def test_http_decode_success() -> None:
     ]
     completed = events[-1]
     assert isinstance(completed, DecodeCompleted)
-    assert len(completed.result.variants) == 3
+    assert len(completed.result.variants) == 2
 
 
 @pytest.mark.unit
@@ -232,8 +217,8 @@ async def test_http_decode_stream_success() -> None:
     completed = events[-1]
     assert isinstance(completed, DecodeCompleted)
     assert completed.analysis == streamed
-    assert len(completed.result.variants) == 3
-    assert completed.result.meta.prompt_version == "decode_analysis@v1+decode@v3"
+    assert len(completed.result.variants) == 2
+    assert completed.result.meta.prompt_version == "decode_analysis@v1+decode@v4"
 
 
 @pytest.mark.unit
@@ -303,8 +288,9 @@ async def test_http_decode_stream_phase_a_invalid_after_yield_no_retry() -> None
 async def test_http_blacklist() -> None:
     _mock_chat("blacklist.json")
     with pytest.raises(GenerationRefusedByProvider):
-        await _generator().soften(
-            SoftenRequest(
+        await _generator().rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="draft",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
@@ -318,8 +304,9 @@ async def test_http_blacklist() -> None:
 async def test_http_length() -> None:
     _mock_chat("length.json")
     with pytest.raises(InvalidGenerationOutput):
-        await _generator().soften(
-            SoftenRequest(
+        await _generator().rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="draft",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
@@ -333,8 +320,9 @@ async def test_http_length() -> None:
 async def test_http_401() -> None:
     _mock_chat("http_401.json")
     with pytest.raises(GenerationUnavailable) as exc_info:
-        await _generator().soften(
-            SoftenRequest(
+        await _generator().rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="draft",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
@@ -349,8 +337,9 @@ async def test_http_401() -> None:
 async def test_http_429() -> None:
     _mock_chat("http_429.json")
     with pytest.raises(GenerationUnavailable) as exc_info:
-        await _generator().soften(
-            SoftenRequest(
+        await _generator().rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="draft",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
@@ -365,8 +354,9 @@ async def test_http_429() -> None:
 async def test_http_503() -> None:
     _mock_chat("http_503.json")
     with pytest.raises(GenerationUnavailable) as exc_info:
-        await _generator().soften(
-            SoftenRequest(
+        await _generator().rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="draft",
                 rules=(),
                 relationship=RelationshipKind.OTHER,

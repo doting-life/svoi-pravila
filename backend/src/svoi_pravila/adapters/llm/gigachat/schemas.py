@@ -12,10 +12,11 @@ from svoi_pravila.domain.text import RULE_TEXT_MAX_CHARS
 _HypothesisText = Annotated[str, Field(max_length=1000)]
 
 
-class FirmnessOut(StrEnum):
-    GENTLE = "gentle"
-    BALANCED = "balanced"
-    FIRM = "firm"
+class VariantKindOut(StrEnum):
+    """Kinds a decode reply can carry (decode has no «check» variant)."""
+
+    SOFTER = "softer"
+    FIRMER = "firmer"
 
 
 class SafetyOut(StrEnum):
@@ -25,58 +26,37 @@ class SafetyOut(StrEnum):
 
 
 class VariantOut(BaseModel):
-    """Decode-only variant item (array with firmness). Soften/help_say use slots."""
+    """Decode-only variant item (array with kind). Rewrite uses fixed slots."""
 
     text: str = Field(min_length=1, max_length=1000)
-    firmness: FirmnessOut
+    kind: VariantKindOut
 
 
-class SoftenOut(BaseModel):
-    """Fixed three-slot soften output when the request carries rules."""
+class RewriteOut(BaseModel):
+    """Fixed three-slot rewrite output when the request carries rules."""
 
-    gentle: str = Field(max_length=1000)
-    balanced: str = Field(max_length=1000)
-    firm: str = Field(max_length=1000)
+    check: str = Field(max_length=1000)
+    softer: str = Field(max_length=1000)
+    firmer: str = Field(max_length=1000)
     applied_rule_indexes: list[int]
     safety: SafetyOut
 
 
-class SoftenOutNoRules(BaseModel):
-    """Soften slots when the request has no rules (indexes omitted from the schema)."""
+class RewriteOutNoRules(BaseModel):
+    """Rewrite slots when the request has no rules (indexes omitted from the schema)."""
 
     model_config = ConfigDict(extra="forbid")
 
-    gentle: str = Field(max_length=1000)
-    balanced: str = Field(max_length=1000)
-    firm: str = Field(max_length=1000)
-    safety: SafetyOut
-
-
-class HelpSayOut(BaseModel):
-    """Fixed three-slot help-say output when the request carries rules."""
-
-    gentle: str = Field(max_length=1000)
-    balanced: str = Field(max_length=1000)
-    firm: str = Field(max_length=1000)
-    applied_rule_indexes: list[int]
-    safety: SafetyOut
-
-
-class HelpSayOutNoRules(BaseModel):
-    """Help-say slots when the request has no rules (indexes omitted from the schema)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    gentle: str = Field(max_length=1000)
-    balanced: str = Field(max_length=1000)
-    firm: str = Field(max_length=1000)
+    check: str = Field(max_length=1000)
+    softer: str = Field(max_length=1000)
+    firmer: str = Field(max_length=1000)
     safety: SafetyOut
 
 
 class DecodeOut(BaseModel):
     hypotheses: list[_HypothesisText] = Field(default_factory=list, max_length=3)
     underlying_request: str = Field(default="", max_length=1000)
-    variants: list[VariantOut] = Field(default_factory=list, max_length=3)
+    variants: list[VariantOut] = Field(default_factory=list, max_length=2)
     applied_rule_indexes: list[int]
     safety: SafetyOut
 

@@ -57,13 +57,13 @@ from svoi_pravila.application.use_cases.set_active_contact import (
     SetActiveContactCommand,
 )
 from svoi_pravila.domain.enums import (
-    Firmness,
     LimitKind,
     RelationshipKind,
     RuleCategory,
     UsageOutcome,
     UsageScenario,
     UsageSurface,
+    VariantKind,
 )
 from svoi_pravila.domain.ids import TelegramUserId
 from svoi_pravila.domain.rules import RuleRevision
@@ -298,9 +298,9 @@ async def test_decode_sink_failure_does_not_fail_stream(world: AppWorld) -> None
             hypotheses=("h",),
             underlying_request="u",
             variants=(
-                Variant(text="g", firmness=Firmness.GENTLE),
-                Variant(text="b", firmness=Firmness.BALANCED),
-                Variant(text="f", firmness=Firmness.FIRM),
+                Variant(text="g", kind=VariantKind.SOFTER),
+                Variant(text="b", kind=VariantKind.CHECK),
+                Variant(text="f", kind=VariantKind.FIRMER),
             ),
             applied_rule_indexes=(),
             safety=SafetyVerdict.OK,
@@ -807,7 +807,7 @@ async def test_decode_maps_applied_rule_indexes(world: AppWorld) -> None:
         decode_result=DecodeResult(
             hypotheses=("h",),
             underlying_request="u",
-            variants=(Variant(text="g", firmness=Firmness.GENTLE),),
+            variants=(Variant(text="g", kind=VariantKind.SOFTER),),
             applied_rule_indexes=(0, 9, 1),
             safety=SafetyVerdict.OK,
             meta=GenerationMeta(

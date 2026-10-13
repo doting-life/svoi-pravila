@@ -17,10 +17,10 @@ from svoi_pravila.application.use_cases.record_inline_choice import (
     ToneSignalOutcome,
 )
 from svoi_pravila.domain.enums import (
-    Firmness,
     UsageEventKind,
     UsageScenario,
     UsageSurface,
+    VariantKind,
 )
 from svoi_pravila.domain.ids import TelegramUserId
 from tests.fakes.clock import FakeClock
@@ -49,9 +49,9 @@ def _choice(
 
 @pytest.mark.unit
 def test_inline_result_ref_roundtrip() -> None:
-    ref = encode_inline_result_ref(UsageScenario.SOFTEN, Firmness.GENTLE)
+    ref = encode_inline_result_ref(UsageScenario.REWRITE, VariantKind.SOFTER)
     assert len(ref.encode()) <= 64
-    assert parse_inline_result_ref(ref) == (UsageScenario.SOFTEN, Firmness.GENTLE)
+    assert parse_inline_result_ref(ref) == (UsageScenario.REWRITE, VariantKind.SOFTER)
 
 
 @pytest.mark.unit
@@ -59,7 +59,7 @@ def test_inline_result_ref_rejects_text_and_junk() -> None:
     with pytest.raises(InvalidInlineResultRef):
         parse_inline_result_ref("please leave me alone")
     with pytest.raises(InvalidInlineResultRef):
-        parse_inline_result_ref("s:nope:f:gentle")
+        parse_inline_result_ref("s:nope:k:softer")
     with pytest.raises(InvalidInlineResultRef):
         parse_inline_result_ref("x" * 65)
 
@@ -68,15 +68,15 @@ def test_inline_result_ref_rejects_text_and_junk() -> None:
 async def test_record_inline_choice_writes_c0_event() -> None:
     sink = RecordingUsageEventSink()
     use_case = _choice(sink)
-    ref = encode_inline_result_ref(UsageScenario.HELP_SAY, Firmness.FIRM)
+    ref = encode_inline_result_ref(UsageScenario.REWRITE, VariantKind.FIRMER)
     result = await use_case.execute(RecordInlineChoiceCommand(TelegramUserId(9), ref))
     assert result.suggestion_id is None
     assert result.tone_outcome is ToneSignalOutcome.SKIPPED_INLINE
     event = sink.events[0]
     assert event.event_kind is UsageEventKind.RESULT_CHOSEN
     assert event.surface is UsageSurface.INLINE
-    assert event.scenario is UsageScenario.HELP_SAY
-    assert event.variant_firmness is Firmness.FIRM
+    assert event.scenario is UsageScenario.REWRITE
+    assert event.variant_kind is VariantKind.FIRMER
     assert event.model is None
 
 
@@ -95,7 +95,7 @@ async def test_record_inline_choice_swallows_sink_failure() -> None:
     result = await use_case.execute(
         RecordInlineChoiceCommand(
             TelegramUserId(9),
-            encode_inline_result_ref(UsageScenario.DECODE, Firmness.BALANCED),
+            encode_inline_result_ref(UsageScenario.DECODE, VariantKind.CHECK),
         )
     )
     assert result.suggestion_id is None
@@ -110,8 +110,8 @@ async def test_record_inline_choice_rejects_dm_surface() -> None:
         await use_case.execute(
             RecordInlineChoiceCommand(
                 TelegramUserId(9),
-                scenario=UsageScenario.SOFTEN,
-                firmness=Firmness.GENTLE,
+                scenario=UsageScenario.REWRITE,
+                kind=VariantKind.SOFTER,
                 surface=UsageSurface.DM,
             )
         )
@@ -119,7 +119,7 @@ async def test_record_inline_choice_rejects_dm_surface() -> None:
 
 
 @pytest.mark.unit
-async def test_record_inline_choice_requires_ref_or_scenario_firmness() -> None:
+async def test_record_inline_choice_requires_ref_or_scenario_kind() -> None:
     sink = RecordingUsageEventSink()
     use_case = _choice(sink)
     with pytest.raises(InvalidInlineResultRef):
@@ -128,14 +128,14 @@ async def test_record_inline_choice_requires_ref_or_scenario_firmness() -> None:
 
 
 @pytest.mark.unit
-async def test_record_inline_choice_miniapp_scenario_firmness() -> None:
+async def test_record_inline_choice_miniapp_scenario_kind() -> None:
     sink = RecordingUsageEventSink()
     use_case = _choice(sink)
     result = await use_case.execute(
         RecordInlineChoiceCommand(
             TelegramUserId(9),
-            scenario=UsageScenario.HELP_SAY,
-            firmness=Firmness.BALANCED,
+            scenario=UsageScenario.REWRITE,
+            kind=VariantKind.CHECK,
             surface=UsageSurface.MINIAPP,
         )
     )
@@ -143,5 +143,5 @@ async def test_record_inline_choice_miniapp_scenario_firmness() -> None:
     event = sink.events[0]
     assert event.event_kind is UsageEventKind.RESULT_CHOSEN
     assert event.surface is UsageSurface.MINIAPP
-    assert event.scenario is UsageScenario.HELP_SAY
-    assert event.variant_firmness is Firmness.BALANCED
+    assert event.scenario is UsageScenario.REWRITE
+    assert event.variant_kind is VariantKind.CHECK

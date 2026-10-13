@@ -1,4 +1,4 @@
-"""Compose soften/help_say system templates from one skeleton per scenario."""
+"""Compose the rewrite system template from one skeleton."""
 
 from __future__ import annotations
 
@@ -9,11 +9,9 @@ from importlib import resources
 from pydantic import BaseModel
 
 from svoi_pravila.adapters.llm.gigachat.schemas import (
-    HelpSayOut,
-    HelpSayOutNoRules,
+    RewriteOut,
+    RewriteOutNoRules,
     SafetyOut,
-    SoftenOut,
-    SoftenOutNoRules,
 )
 from svoi_pravila.adapters.llm.registry import load_prompt_template
 
@@ -35,9 +33,9 @@ def _fragment(operation: str, name: str) -> str:
 def empty_answer_json[T: BaseModel](schema: type[T], *, safety: SafetyOut) -> str:
     """Compact empty-slot JSON example from the structured-output schema."""
     data: dict[str, object] = {
-        "gentle": "",
-        "balanced": "",
-        "firm": "",
+        "check": "",
+        "softer": "",
+        "firmer": "",
         "safety": safety,
     }
     if "applied_rule_indexes" in schema.model_fields:
@@ -56,56 +54,19 @@ def _fill(skeleton: str, parts: _ComposeParts) -> str:
     )
 
 
-def compose_soften_template(*, has_rules: bool) -> str:
-    """Return the soften@v5 system template for the given rule shape."""
-    skeleton, _version = load_prompt_template("soften", "v5")
-    schema: type[BaseModel] = SoftenOut if has_rules else SoftenOutNoRules
-    if has_rules:
-        return _fill(
-            skeleton,
-            _ComposeParts(
-                binding=_fragment("soften", "binding"),
-                refuse_json=empty_answer_json(schema, safety=SafetyOut.REFUSE_MANIPULATION),
-                crisis_json=empty_answer_json(schema, safety=SafetyOut.CRISIS),
-                refuse_extra="",
-                json_close=_fragment("soften", "json_close_rules"),
-            ),
-        )
+def compose_rewrite_template(*, has_rules: bool) -> str:
+    """Return the rewrite@v1 system template for the given rule shape."""
+    skeleton, _version = load_prompt_template("rewrite", "v1")
+    schema: type[BaseModel] = RewriteOut if has_rules else RewriteOutNoRules
     return _fill(
         skeleton,
         _ComposeParts(
-            binding="",
+            binding=_fragment("rewrite", "binding") if has_rules else "",
             refuse_json=empty_answer_json(schema, safety=SafetyOut.REFUSE_MANIPULATION),
             crisis_json=empty_answer_json(schema, safety=SafetyOut.CRISIS),
-            refuse_extra="",
-            json_close=_fragment("soften", "json_close_no_rules"),
-        ),
-    )
-
-
-def compose_help_say_template(*, has_rules: bool) -> str:
-    """Return the help_say@v6 system template for the given rule shape."""
-    skeleton, _version = load_prompt_template("help_say", "v6")
-    schema: type[BaseModel] = HelpSayOut if has_rules else HelpSayOutNoRules
-    refuse_extra = _fragment("help_say", "refuse_extra") if has_rules else ""
-    if has_rules:
-        return _fill(
-            skeleton,
-            _ComposeParts(
-                binding=_fragment("help_say", "binding"),
-                refuse_json=empty_answer_json(schema, safety=SafetyOut.REFUSE_MANIPULATION),
-                crisis_json=empty_answer_json(schema, safety=SafetyOut.CRISIS),
-                refuse_extra=refuse_extra,
-                json_close=_fragment("help_say", "json_close_rules"),
+            refuse_extra=_fragment("rewrite", "refuse_extra") if has_rules else "",
+            json_close=_fragment(
+                "rewrite", "json_close_rules" if has_rules else "json_close_no_rules"
             ),
-        )
-    return _fill(
-        skeleton,
-        _ComposeParts(
-            binding="",
-            refuse_json=empty_answer_json(schema, safety=SafetyOut.REFUSE_MANIPULATION),
-            crisis_json=empty_answer_json(schema, safety=SafetyOut.CRISIS),
-            refuse_extra="",
-            json_close=_fragment("help_say", "json_close_no_rules"),
         ),
     )

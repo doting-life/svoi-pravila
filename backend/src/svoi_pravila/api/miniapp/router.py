@@ -73,7 +73,7 @@ from svoi_pravila.application.errors import (
 from svoi_pravila.application.ports.bot_username import BotUsername
 from svoi_pravila.application.ports.clock import Clock
 from svoi_pravila.application.ports.compose_choice_tokens import ComposeChoiceTokens
-from svoi_pravila.application.ports.generation import HelpSayIntent, SafetyVerdict
+from svoi_pravila.application.ports.generation import SafetyVerdict
 from svoi_pravila.application.ports.prepared_results import PreparedResults
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
 from svoi_pravila.application.ports.quota_gate import QuotaGate
@@ -178,11 +178,12 @@ from svoi_pravila.application.use_cases.suggest_rule_from_decode import (
 from svoi_pravila.domain.contact import MAX_CONTACTS_PER_USER, Contact
 from svoi_pravila.domain.enums import (
     ConsentKind,
-    Firmness,
     QuotaClass,
     RelationshipKind,
+    RewriteGoal,
     RuleCategory,
     UsageSurface,
+    VariantKind,
 )
 from svoi_pravila.domain.ids import ContactId, RuleId, RuleSuggestionId, UserId
 from svoi_pravila.domain.product_day import product_day
@@ -373,16 +374,6 @@ def _register_test_routes(router: APIRouter) -> None:
         return StreamingResponse(frames(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
 
-_COMPOSE_INTENT_MAP: dict[str, HelpSayIntent | None] = {
-    "soften": None,
-    "decline": HelpSayIntent.DECLINE,
-    "set_boundary": HelpSayIntent.SET_BOUNDARY,
-    "admit_fault": HelpSayIntent.ADMIT_FAULT,
-    "reconnect": HelpSayIntent.RECONNECT_AFTER_CONFLICT,
-    "other": HelpSayIntent.OTHER,
-}
-
-
 def _register_compose(
     router: APIRouter,
     bindings: MiniappRouterBindings,
@@ -407,13 +398,13 @@ def _register_compose(
         if body.contact_id is not None:
             contact_id = ContactId(parse_path_uuid(body.contact_id))
         enforce_compose_contact(principal, contact_id)
-        intent = _COMPOSE_INTENT_MAP[body.intent]
+        goal = None if body.goal is None else RewriteGoal(body.goal)
         try:
             result = await bindings.compose_generation.execute(
                 ComposeGenerationCommand(
                     telegram_user_id=actor.telegram_user_id,
                     draft=body.draft,
-                    intent=intent,
+                    goal=goal,
                     contact_id=contact_id,
                     surface=UsageSurface.MINIAPP,
                 )
@@ -436,9 +427,7 @@ def _register_compose(
             )
         payload: dict[str, Any] = {
             "safety": result.safety.value,
-            "variants": [
-                {"text": item.text, "firmness": item.firmness.value} for item in result.variants
-            ],
+            "variants": [{"text": item.text, "kind": item.kind.value} for item in result.variants],
             "applied_rules": [
                 {"index": rule.index, "text": rule.text} for rule in result.applied_rules
             ],
@@ -471,7 +460,7 @@ def _register_compose(
                 RecordInlineChoiceCommand(
                     telegram_user_id=actor.telegram_user_id,
                     scenario=binding.scenario,
-                    firmness=Firmness(body.firmness),
+                    kind=VariantKind(body.kind),
                     surface=UsageSurface.MINIAPP,
                     contact_id=binding.contact_id,
                 )
@@ -606,7 +595,7 @@ def _register_decode(
                     "category": s.category.value,
                     "text": s.text.value,
                     "source": s.source.value,
-                    "firmness": s.firmness.value if s.firmness is not None else None,
+                    "variant_kind": s.variant_kind.value if s.variant_kind is not None else None,
                     "created_at": s.created_at,
                 }
             )
@@ -1280,7 +1269,7 @@ def _register_suggestions(
                     "category": s.category.value,
                     "text": s.text.value,
                     "source": s.source.value,
-                    "firmness": s.firmness.value if s.firmness is not None else None,
+                    "variant_kind": s.variant_kind.value if s.variant_kind is not None else None,
                     "created_at": s.created_at,
                 }
             )

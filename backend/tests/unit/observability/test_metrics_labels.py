@@ -43,9 +43,9 @@ def test_model_and_prompt_version_allowlists() -> None:
     assert labels.model_label("secret-model") == labels.OTHER
 
     assert labels.prompt_version_label(None) == labels.NONE
-    assert labels.prompt_version_label("decode@v3") == "decode@v3"
-    assert labels.prompt_version_label("decode_analysis@v1+decode@v3") == (
-        "decode_analysis@v1+decode@v3"
+    assert labels.prompt_version_label("decode@v4") == "decode@v4"
+    assert labels.prompt_version_label("decode_analysis@v1+decode@v4") == (
+        "decode_analysis@v1+decode@v4"
     )
     assert labels.prompt_version_label("decode@v99") == labels.OTHER
 

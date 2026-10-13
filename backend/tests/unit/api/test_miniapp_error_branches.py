@@ -47,7 +47,7 @@ from svoi_pravila.application.use_cases.rename_contact import RenameContact
 from svoi_pravila.application.use_cases.set_active_contact import SetActiveContact
 from svoi_pravila.config import Environment
 from svoi_pravila.domain.access import AccessStatus
-from svoi_pravila.domain.enums import ConsentKind, Firmness, RuleCategory
+from svoi_pravila.domain.enums import ConsentKind, RuleCategory, VariantKind
 from svoi_pravila.domain.ids import ContactId, RuleSuggestionId, TelegramUserId
 from svoi_pravila.domain.rule_suggestion import RuleSuggestion
 from svoi_pravila.domain.text import RuleText
@@ -250,7 +250,7 @@ async def test_require_actor_age_step_for_existing_user(world: AppWorld) -> None
 
 
 @pytest.mark.unit
-async def test_tone_suggestion_firmness_in_list(world: AppWorld) -> None:
+async def test_tone_suggestion_variant_kind_in_list(world: AppWorld) -> None:
     user = await world.ensure_granted_user(_TG)
     app = _app_with_bindings(world)
     transport = ASGITransport(app=app)
@@ -271,7 +271,7 @@ async def test_tone_suggestion_firmness_in_list(world: AppWorld) -> None:
                     contact_id=ContactId(contact_id),
                     category=RuleCategory.OTHER,
                     text=RuleText("tone rule"),
-                    firmness=Firmness.FIRM,
+                    variant_kind=VariantKind.FIRMER,
                     now=world.clock.now(),
                 )
             )
@@ -281,7 +281,7 @@ async def test_tone_suggestion_firmness_in_list(world: AppWorld) -> None:
             headers=headers,
         )
     assert listed.status_code == 200
-    assert listed.json()["suggestions"][0]["firmness"] == "firm"
+    assert listed.json()["suggestions"][0]["variant_kind"] == "firmer"
 
 
 @pytest.mark.unit

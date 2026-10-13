@@ -6,13 +6,12 @@ import json
 from dataclasses import dataclass
 from importlib import resources
 
-from svoi_pravila.application.ports.generation import HelpSayIntent
 from svoi_pravila.application.support_resources import (
     load_applied_rule_template,
     load_crisis_lead,
     load_support_resources,
 )
-from svoi_pravila.domain.enums import Firmness
+from svoi_pravila.domain.enums import VariantKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,14 +21,9 @@ class TelegramStrings:
     dm_welcome: str
     dm_open_app: str
     help_inline: str
-    inline_prefix_decline: str
-    inline_prefix_set_boundary: str
-    inline_prefix_admit_fault: str
-    inline_prefix_reconnect: str
-    inline_prefix_other: str
-    inline_firmness_gentle: str
-    inline_firmness_balanced: str
-    inline_firmness_firm: str
+    inline_variant_check: str
+    inline_variant_softer: str
+    inline_variant_firmer: str
     inline_button_how_to: str
     inline_button_finish_setup: str
     inline_button_need_support: str
@@ -49,14 +43,9 @@ _KEYS: dict[str, str] = {
     "dm.welcome": "dm_welcome",
     "dm.open_app": "dm_open_app",
     "help.inline": "help_inline",
-    "inline.prefix.decline": "inline_prefix_decline",
-    "inline.prefix.set_boundary": "inline_prefix_set_boundary",
-    "inline.prefix.admit_fault": "inline_prefix_admit_fault",
-    "inline.prefix.reconnect": "inline_prefix_reconnect",
-    "inline.prefix.other": "inline_prefix_other",
-    "inline.firmness.gentle": "inline_firmness_gentle",
-    "inline.firmness.balanced": "inline_firmness_balanced",
-    "inline.firmness.firm": "inline_firmness_firm",
+    "inline.variant.check": "inline_variant_check",
+    "inline.variant.softer": "inline_variant_softer",
+    "inline.variant.firmer": "inline_variant_firmer",
     "inline.button.how_to": "inline_button_how_to",
     "inline.button.finish_setup": "inline_button_finish_setup",
     "inline.button.need_support": "inline_button_need_support",
@@ -88,26 +77,13 @@ def load_ru_strings() -> TelegramStrings:
     return TelegramStrings(**values)
 
 
-def help_say_intent_prefixes(
-    strings: TelegramStrings,
-) -> tuple[tuple[str, HelpSayIntent], ...]:
-    """Intent prefixes from the catalog (not literals in use-case code)."""
-    return (
-        (strings.inline_prefix_decline, HelpSayIntent.DECLINE),
-        (strings.inline_prefix_set_boundary, HelpSayIntent.SET_BOUNDARY),
-        (strings.inline_prefix_admit_fault, HelpSayIntent.ADMIT_FAULT),
-        (strings.inline_prefix_reconnect, HelpSayIntent.RECONNECT_AFTER_CONFLICT),
-        (strings.inline_prefix_other, HelpSayIntent.OTHER),
-    )
-
-
-def firmness_label(strings: TelegramStrings, firmness: Firmness) -> str:
-    """Catalog title for a variant's firmness."""
-    if firmness is Firmness.GENTLE:
-        return strings.inline_firmness_gentle
-    if firmness is Firmness.BALANCED:
-        return strings.inline_firmness_balanced
-    return strings.inline_firmness_firm
+def variant_label(strings: TelegramStrings, kind: VariantKind) -> str:
+    """Catalog title for a variant kind."""
+    if kind is VariantKind.CHECK:
+        return strings.inline_variant_check
+    if kind is VariantKind.SOFTER:
+        return strings.inline_variant_softer
+    return strings.inline_variant_firmer
 
 
 def render_crisis_message() -> str:

@@ -10,7 +10,7 @@ _BOUNDARY_PLACEHOLDER = "{{BOUNDARY_MARKER}}"
 def load_prompt_template(operation: str, version: str = "v1") -> tuple[str, str]:
     """Return ``(template_text, prompt_version)`` for an operation.
 
-    ``prompt_version`` is formatted as ``{operation}@{version}`` (e.g. ``soften@v1``).
+    ``prompt_version`` is formatted as ``{operation}@{version}`` (e.g. ``rewrite@v1``).
     """
     package = f"svoi_pravila.adapters.llm.prompts.{operation}"
     resource = f"{version}.md"

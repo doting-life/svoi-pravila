@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-from svoi_pravila.domain.enums import Firmness
+from svoi_pravila.domain.enums import VariantKind
 from svoi_pravila.domain.text import RuleText
 
-_TEMPLATES: dict[Firmness, RuleText] = {
-    Firmness.GENTLE: RuleText("Говорить мягко, без резких формулировок"),
-    Firmness.BALANCED: RuleText("Говорить спокойно и по делу"),
-    Firmness.FIRM: RuleText("Говорить прямо и твёрдо, без долгих смягчений"),
+_TEMPLATES: dict[VariantKind, RuleText] = {
+    VariantKind.SOFTER: RuleText("Говорить мягко, без резких формулировок"),
+    VariantKind.FIRMER: RuleText("Говорить прямо и твёрдо, без долгих смягчений"),
 }
 
 
 class StaticToneSuggestionCatalog:
-    """In-process catalog of tone rule templates keyed by firmness."""
+    """In-process catalog of tone rule templates keyed by variant kind."""
 
-    def template(self, firmness: Firmness) -> RuleText:
-        """Return the catalog template for ``firmness``."""
-        return _TEMPLATES[firmness]
+    def template(self, kind: VariantKind) -> RuleText:
+        """Return the catalog template for ``kind``."""
+        return _TEMPLATES[kind]

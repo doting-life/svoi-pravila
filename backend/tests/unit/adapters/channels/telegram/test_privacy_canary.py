@@ -42,7 +42,7 @@ from svoi_pravila.application.use_cases.accept_age_confirmation import (
 )
 from svoi_pravila.application.use_cases.grant_consent import GrantConsent, GrantConsentCommand
 from svoi_pravila.config import Environment, TelegramUpdatesMode
-from svoi_pravila.domain.enums import ConsentKind, Firmness, UsageScenario
+from svoi_pravila.domain.enums import ConsentKind, UsageScenario, VariantKind
 from svoi_pravila.domain.ids import TelegramUserId
 
 _SENTINEL_TEXT = "SENTINEL_TEXT_PRIVACY_0006"
@@ -173,7 +173,7 @@ async def test_privacy_canary_crisis_screen_hit_inline(
     await _await_inline(deps)
     blob = json.dumps(capture_log_events())
     assert _SENTINEL_CRISIS not in blob
-    assert generator.soften_calls == []
+    assert generator.rewrite_calls == []
     assert sink.events[0].outcome.value == "screened"
     assert sink.events[0].surface.value == "inline"
 
@@ -227,7 +227,7 @@ async def test_inline_and_choice_privacy_canary(
         ),
     )
     await _await_inline(deps)
-    result_id = encode_inline_result_ref(UsageScenario.SOFTEN, Firmness.GENTLE)
+    result_id = encode_inline_result_ref(UsageScenario.REWRITE, VariantKind.SOFTER)
     await lifecycle.dispatcher.feed_update(
         bot,
         Update(
@@ -241,7 +241,7 @@ async def test_inline_and_choice_privacy_canary(
     )
     token = await prepared.store(
         deps.pseudonymizer.pseudonymize("prepared", str(_SENTINEL_ID)),
-        PreparedVariant(Firmness.GENTLE, _SENTINEL_VARIANT),
+        PreparedVariant(VariantKind.SOFTER, _SENTINEL_VARIANT),
     )
     await lifecycle.dispatcher.feed_update(
         bot,

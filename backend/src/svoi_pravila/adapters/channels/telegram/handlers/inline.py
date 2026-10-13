@@ -21,7 +21,7 @@ from aiogram.types import (
 )
 
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
-from svoi_pravila.adapters.channels.telegram.localization import firmness_label
+from svoi_pravila.adapters.channels.telegram.localization import variant_label
 from svoi_pravila.application.errors import (
     AccessNotGranted,
     GenerationRefusedByProvider,
@@ -342,7 +342,7 @@ async def _answer_prepared(query: InlineQuery, bot: Bot, tg_deps: TelegramDeps) 
     articles = _articles(
         tg_deps,
         UsageScenario.DECODE,
-        (Variant(text=variant.text, firmness=variant.firmness),),
+        (Variant(text=variant.text, kind=variant.kind),),
     )
     await _send_inline_answer(
         bot,
@@ -363,8 +363,8 @@ def _articles(
             continue
         articles.append(
             InlineQueryResultArticle(
-                id=encode_inline_result_ref(scenario, variant.firmness),
-                title=firmness_label(tg_deps.strings, variant.firmness),
+                id=encode_inline_result_ref(scenario, variant.kind),
+                title=variant_label(tg_deps.strings, variant.kind),
                 description=_preview(variant.text),
                 input_message_content=InputTextMessageContent(
                     message_text=variant.text,

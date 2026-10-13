@@ -30,6 +30,12 @@ LLM_TOKENS = Counter(
     ("scenario", "kind"),
 )
 
+VARIANT_POLICY_VIOLATIONS = Counter(
+    "sp_variant_policy_violations_total",
+    "Rewrite variants that broke a variant-policy rule (never blocks, no text)",
+    ("kind", "rule"),
+)
+
 USAGE_EVENTS = Counter(
     "sp_usage_events_total",
     "Persisted usage events",

@@ -135,8 +135,8 @@ class ExportMyData:
                                 "текст": suggestion.text.value,
                                 "жёсткость": (
                                     None
-                                    if suggestion.firmness is None
-                                    else suggestion.firmness.value
+                                    if suggestion.variant_kind is None
+                                    else suggestion.variant_kind.value
                                 ),
                                 "статус": suggestion.status.value,
                                 "создано": _iso(suggestion.created_at),

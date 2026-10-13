@@ -22,16 +22,16 @@ from svoi_pravila.application.ports.unit_of_work import UnitOfWorkFactory
 from svoi_pravila.application.ports.usage_event_sink import UsageEventSink
 from svoi_pravila.application.use_cases._access import require_access
 from svoi_pravila.domain.enums import (
-    Firmness,
     RuleCategory,
     SuggestionSource,
     UsageEventKind,
     UsageOutcome,
     UsageScenario,
     UsageSurface,
+    VariantKind,
 )
 from svoi_pravila.domain.ids import ContactId, RuleSuggestionId, TelegramUserId, UsageEventId
-from svoi_pravila.domain.rule_suggestion import RuleSuggestion, dominant_firmness
+from svoi_pravila.domain.rule_suggestion import RuleSuggestion, dominant_variant_kind
 from svoi_pravila.domain.usage import UsageEvent
 
 _ANALYTICS_PURPOSE = "analytics"
@@ -43,6 +43,7 @@ class ToneSignalOutcome(StrEnum):
     RECORDED = "recorded"
     SUGGESTION_CREATED = "suggestion_created"
     SKIPPED_INLINE = "skipped_inline"
+    SKIPPED_CHECK = "skipped_check"
     SKIPPED_NO_CONTACT = "skipped_no_contact"
     SKIPPED_NO_ACCESS = "skipped_no_access"
     SKIPPED_CONFLICT = "skipped_conflict"
@@ -53,14 +54,14 @@ class RecordInlineChoiceCommand:
     """Input for RecordInlineChoice. Never includes query text.
 
     Provide either ``result_ref`` (Telegram inline) or both ``scenario`` and
-    ``firmness`` (mini-app compose). ``surface`` defaults to inline. ``contact_id`` is
+    ``kind`` (mini-app compose). ``surface`` defaults to inline. ``contact_id`` is
     the contact bound in the redeemed compose choice token (mini-app only).
     """
 
     telegram_user_id: TelegramUserId
     result_ref: str | None = None
     scenario: UsageScenario | None = None
-    firmness: Firmness | None = None
+    kind: VariantKind | None = None
     surface: UsageSurface = UsageSurface.INLINE
     contact_id: ContactId | None = None
 
@@ -89,8 +90,8 @@ class RecordInlineChoicePorts:
 class RecordInlineChoice:
     """Persist a C0 ``result_chosen`` event and optionally create a tone suggestion.
 
-    Inline choices never produce a tone signal. A mini-app choice attributes the firmness
-    to the contact the user explicitly chose for that generation (bound in the token).
+    Inline choices never produce a tone signal. A mini-app choice attributes a softer or firmer
+    choice to the contact the user explicitly chose for that generation (bound in the token).
     Usage-event recording (txn 1 via ``UsageEventSink``) and the tone-signal path
     (txn 2 via its own unit of work) are independent: failure of either does not
     roll back the other. Unexpected signal-path errors propagate after the usage
@@ -101,8 +102,8 @@ class RecordInlineChoice:
         self._ports = ports
 
     async def execute(self, command: RecordInlineChoiceCommand) -> RecordInlineChoiceResult:
-        """Resolve scenario/firmness, record the choice, then try the tone-signal path."""
-        scenario, firmness = _resolve_tone(command)
+        """Resolve scenario/kind, record the choice, then try the tone-signal path."""
+        scenario, kind = _resolve_tone(command)
         if command.surface not in {UsageSurface.INLINE, UsageSurface.MINIAPP}:
             raise InvalidInlineResultRef()
         analytics = self._ports.pseudonymizer.pseudonymize(
@@ -126,7 +127,7 @@ class RecordInlineChoice:
             output_tokens=0,
             billable_tokens=0,
             event_kind=UsageEventKind.RESULT_CHOSEN,
-            variant_firmness=firmness,
+            variant_kind=kind,
         )
         with contextlib.suppress(UsageEventWriteFailed):
             await self._ports.sink.record(event)
@@ -141,8 +142,13 @@ class RecordInlineChoice:
                 tone_outcome=ToneSignalOutcome.SKIPPED_NO_CONTACT,
                 suggestion_id=None,
             )
+        if kind is VariantKind.CHECK:
+            return RecordInlineChoiceResult(
+                tone_outcome=ToneSignalOutcome.SKIPPED_CHECK,
+                suggestion_id=None,
+            )
         try:
-            return await self._append_tone_signal(command.contact_id, command, firmness)
+            return await self._append_tone_signal(command.contact_id, command, kind)
         except ConflictError:
             return RecordInlineChoiceResult(
                 tone_outcome=ToneSignalOutcome.SKIPPED_CONFLICT,
@@ -153,7 +159,7 @@ class RecordInlineChoice:
         self,
         contact_id: ContactId,
         command: RecordInlineChoiceCommand,
-        firmness: Firmness,
+        kind: VariantKind,
     ) -> RecordInlineChoiceResult:
         async with self._ports.uow_factory() as uow:
             user = await uow.users.get_by_telegram_id(command.telegram_user_id)
@@ -176,12 +182,12 @@ class RecordInlineChoice:
                     suggestion_id=None,
                 )
 
-            signal = (await uow.tone_signals.lock_for_append(user.id, contact_id)).append(firmness)
+            signal = (await uow.tone_signals.lock_for_append(user.id, contact_id)).append(kind)
             await uow.tone_signals.upsert(signal)
 
             created_id: RuleSuggestionId | None = None
             outcome = ToneSignalOutcome.RECORDED
-            dominant = dominant_firmness(signal)
+            dominant = dominant_variant_kind(signal)
             if dominant is not None:
                 prior = await uow.rule_suggestions.get_tone(user.id, contact_id, dominant)
                 if prior is None:
@@ -197,7 +203,7 @@ class RecordInlineChoice:
                             contact_id=contact_id,
                             category=RuleCategory.HOW_TO_ASK,
                             text=self._ports.tone_catalog.template(dominant),
-                            firmness=dominant,
+                            variant_kind=dominant,
                             now=self._ports.clock.now(),
                         )
                         await uow.rule_suggestions.add(suggestion)
@@ -207,9 +213,9 @@ class RecordInlineChoice:
             return RecordInlineChoiceResult(tone_outcome=outcome, suggestion_id=created_id)
 
 
-def _resolve_tone(command: RecordInlineChoiceCommand) -> tuple[UsageScenario, Firmness]:
+def _resolve_tone(command: RecordInlineChoiceCommand) -> tuple[UsageScenario, VariantKind]:
     if command.result_ref is not None:
         return parse_inline_result_ref(command.result_ref)
-    if command.scenario is not None and command.firmness is not None:
-        return command.scenario, command.firmness
+    if command.scenario is not None and command.kind is not None:
+        return command.scenario, command.kind
     raise InvalidInlineResultRef()

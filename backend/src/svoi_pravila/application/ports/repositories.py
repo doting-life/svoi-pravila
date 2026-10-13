@@ -7,7 +7,7 @@ from typing import Protocol
 
 from svoi_pravila.domain.consent import Consent
 from svoi_pravila.domain.contact import Contact
-from svoi_pravila.domain.enums import Firmness, SuggestionSource
+from svoi_pravila.domain.enums import SuggestionSource, VariantKind
 from svoi_pravila.domain.ids import (
     ContactId,
     InviteId,
@@ -234,9 +234,9 @@ class RuleSuggestionRepository(Protocol):
         self,
         user_id: UserId,
         contact_id: ContactId,
-        firmness: Firmness,
+        variant_kind: VariantKind,
     ) -> RuleSuggestion | None:
-        """Return the tone suggestion for ``(user, contact, firmness)`` in any status."""
+        """Return the tone suggestion for ``(user, contact, variant_kind)`` in any status."""
         ...
 
     async def has_pending_for_source(

@@ -9,7 +9,7 @@ from svoi_pravila.domain.enums import UsageScenario
 from svoi_pravila.domain.ids import ContactId
 
 COMPOSE_CHOICE_TTL_SECONDS = 600
-COMPOSE_CHOICE_FIRMNESS_SET = "gentle,balanced,firm"
+COMPOSE_CHOICE_KIND_SET = "check,softer,firmer"
 
 
 @dataclass(frozen=True, slots=True)

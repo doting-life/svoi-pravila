@@ -13,7 +13,6 @@ from svoi_pravila.domain.consent import Consent
 from svoi_pravila.domain.contact import Contact
 from svoi_pravila.domain.enums import (
     ConsentKind,
-    Firmness,
     RelationshipKind,
     RuleCategory,
     RuleStatus,
@@ -21,6 +20,7 @@ from svoi_pravila.domain.enums import (
     UsageOutcome,
     UsageScenario,
     UsageSurface,
+    VariantKind,
 )
 from svoi_pravila.domain.ids import (
     ConsentId,
@@ -347,7 +347,7 @@ async def test_usage_event_repo_roundtrip(uow_factory: UnitOfWorkFactory) -> Non
             id=UsageEventId(UUID(int=72)),
             occurred_at=NOW,
             user_pseudonym="cd" * 32,
-            scenario=UsageScenario.SOFTEN,
+            scenario=UsageScenario.REWRITE,
             surface=UsageSurface.INLINE,
             outcome=UsageOutcome.OK,
             unavailable_kind=None,
@@ -361,7 +361,7 @@ async def test_usage_event_repo_roundtrip(uow_factory: UnitOfWorkFactory) -> Non
             output_tokens=0,
             billable_tokens=0,
             event_kind=UsageEventKind.RESULT_CHOSEN,
-            variant_firmness=Firmness.BALANCED,
+            variant_kind=VariantKind.CHECK,
         )
         await uow.usage_events.add(chosen)
         await uow.commit()

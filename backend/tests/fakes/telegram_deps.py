@@ -8,10 +8,7 @@ from zoneinfo import ZoneInfo
 from svoi_pravila.adapters.channels.telegram.bot_username import BotUsernameCache
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.inline_scheduler import InlineQueryCoordinator
-from svoi_pravila.adapters.channels.telegram.localization import (
-    help_say_intent_prefixes,
-    load_ru_strings,
-)
+from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
 from svoi_pravila.adapters.system.tone_suggestion_catalog import StaticToneSuggestionCatalog
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.application.ports.welcome_throttle import WelcomeThrottle
@@ -41,6 +38,7 @@ from tests.fakes.rate_limit import FakePseudonymizer, FakeRateLimiter, FakeUpdat
 from tests.fakes.sleeper import GateSleeper, ImmediateSleeper
 from tests.fakes.uow import InMemoryUnitOfWorkFactory
 from tests.fakes.usage_sink import FailingUsageEventSink, RecordingUsageEventSink
+from tests.fakes.variant_policy import RecordingVariantPolicyMonitor
 from tests.fakes.welcome_throttle import FakeWelcomeThrottle
 
 
@@ -92,6 +90,7 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             quota_gate=FakeQuotaGate(limit=chosen.inline_quota_limit),
             llm_budget=llm_budget,
             sink=sink,
+            policy_monitor=RecordingVariantPolicyMonitor(),
             clock=clock,
             monotonic=clock,
             ids=ids,
@@ -108,7 +107,6 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             compose=compose_generation,
             reuse=reuse,
             min_chars=chosen.inline_min_chars,
-            intent_prefixes=help_say_intent_prefixes(strings),
         )
     )
     return TelegramDeps(

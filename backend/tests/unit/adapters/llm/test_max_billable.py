@@ -11,55 +11,37 @@ from svoi_pravila.adapters.llm.gigachat.estimate import (
 from svoi_pravila.adapters.llm.gigachat.prepared import (
     prepare_decode,
     prepare_decode_analysis,
-    prepare_help_say,
-    prepare_soften,
+    prepare_rewrite,
     prepare_suggest_rule,
 )
 from svoi_pravila.adapters.llm.gigachat.validation import (
     MAX_ANALYSIS_CHARS,
     MAX_TOKENS_ANALYSIS,
     MAX_TOKENS_DECODE,
-    MAX_TOKENS_HELP_SAY,
-    MAX_TOKENS_SOFTEN,
+    MAX_TOKENS_REWRITE,
     MAX_TOKENS_SUGGEST,
 )
 from svoi_pravila.application.ports.generation import (
     DecodeRequest,
-    HelpSayIntent,
-    HelpSayRequest,
-    SoftenRequest,
+    RewriteRequest,
     SuggestRuleRequest,
 )
-from svoi_pravila.domain.enums import RelationshipKind
+from svoi_pravila.domain.enums import RelationshipKind, RewriteGoal
 
 
 @pytest.mark.unit
-def test_max_billable_soften_known_prompt() -> None:
-    request = SoftenRequest(
+@pytest.mark.parametrize("goal", [None, RewriteGoal.DECLINE])
+def test_max_billable_rewrite_known_prompt(goal: RewriteGoal | None) -> None:
+    request = RewriteRequest(
         draft="пожалуйста говори спокойнее",
+        goal=goal,
         rules=(),
         relationship=RelationshipKind.PARTNER,
         deadline_seconds=5.0,
     )
-    prepared = prepare_soften(request)
+    prepared = prepare_rewrite(request)
     expected = 2 * estimate_prepared_tokens(
-        prepared.system, prepared.user, output_cap=MAX_TOKENS_SOFTEN
-    )
-    assert max_billable_for_request(request) == expected
-
-
-@pytest.mark.unit
-def test_max_billable_help_say_known_prompt() -> None:
-    request = HelpSayRequest(
-        intent=HelpSayIntent.DECLINE,
-        details="мне нужно отказать вежливо",
-        rules=(),
-        relationship=RelationshipKind.FRIEND,
-        deadline_seconds=5.0,
-    )
-    prepared = prepare_help_say(request)
-    expected = 2 * estimate_prepared_tokens(
-        prepared.system, prepared.user, output_cap=MAX_TOKENS_HELP_SAY
+        prepared.system, prepared.user, output_cap=MAX_TOKENS_REWRITE
     )
     assert max_billable_for_request(request) == expected
 
@@ -111,8 +93,9 @@ def test_adapter_max_billable_delegates_to_estimate() -> None:
             return None
 
     generator = GigaChatTextGenerator(cast(Any, _Client()), make_settings())
-    request = SoftenRequest(
+    request = RewriteRequest(
         draft="пожалуйста говори спокойнее",
+        goal=None,
         rules=(),
         relationship=RelationshipKind.PARTNER,
         deadline_seconds=5.0,

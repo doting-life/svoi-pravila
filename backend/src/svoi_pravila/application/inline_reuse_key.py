@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
-from svoi_pravila.application.ports.generation import HelpSayIntent
 from svoi_pravila.domain.enums import UsageScenario
 
 _PERSON = b"inline-reuse"
@@ -17,7 +16,6 @@ class InlineReuseKeyMaterial:
 
     user_key: str
     scenario: UsageScenario
-    intent: HelpSayIntent | None
     draft: str
 
 
@@ -31,7 +29,6 @@ def inline_reuse_key(material: InlineReuseKeyMaterial) -> str:
     parts = [
         _field(material.user_key),
         _field(material.scenario.value),
-        _field("" if material.intent is None else material.intent.value),
         _field(material.draft),
     ]
     digest = hashlib.blake2b(b"".join(parts), person=_PERSON, digest_size=32)

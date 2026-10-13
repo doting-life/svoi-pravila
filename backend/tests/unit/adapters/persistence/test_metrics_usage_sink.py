@@ -11,12 +11,12 @@ from tests.fakes.usage_sink import RecordingUsageEventSink
 
 from svoi_pravila.adapters.persistence.metrics_usage_sink import MetricsUsageEventSink
 from svoi_pravila.domain.enums import (
-    Firmness,
     LimitKind,
     UsageEventKind,
     UsageOutcome,
     UsageScenario,
     UsageSurface,
+    VariantKind,
 )
 from svoi_pravila.domain.ids import UsageEventId
 from svoi_pravila.domain.usage import UsageEvent
@@ -51,7 +51,7 @@ def _generation(
     ttfc_ms: int | None = 12,
     limit_kind: LimitKind | None = None,
     model: str | None = "GigaChat-2-Pro",
-    prompt_version: str | None = "decode@v3",
+    prompt_version: str | None = "decode@v4",
     input_tokens: int = 3,
     output_tokens: int = 5,
     billable_tokens: int = 8,
@@ -168,23 +168,23 @@ async def test_ttfc_only_when_present_and_tokens_on_generation() -> None:
     with_ttfc = _generation(outcome=UsageOutcome.OK, ttfc_ms=40)
     without = _generation(
         outcome=UsageOutcome.OK,
-        scenario=UsageScenario.SOFTEN,
+        scenario=UsageScenario.REWRITE,
         surface=UsageSurface.INLINE,
         ttfc_ms=None,
         model="GigaChat-3-Lightning",
-        prompt_version="soften@v5",
+        prompt_version="rewrite@v1",
     )
     ttfc_before = _hist_sum("sp_llm_ttfc_seconds", scenario="decode", surface="miniapp")
     await sink.record(with_ttfc)
     assert _hist_sum("sp_llm_ttfc_seconds", scenario="decode", surface="miniapp") >= (
         ttfc_before + 0.04
     )
-    tokens_before = _counter("sp_llm_tokens_total", scenario="soften", kind="billable")
+    tokens_before = _counter("sp_llm_tokens_total", scenario="rewrite", kind="billable")
     await sink.record(without)
-    assert _counter("sp_llm_tokens_total", scenario="soften", kind="billable") == (
+    assert _counter("sp_llm_tokens_total", scenario="rewrite", kind="billable") == (
         tokens_before + 8.0
     )
-    assert _hist_sum("sp_llm_ttfc_seconds", scenario="soften", surface="inline") >= 0.0
+    assert _hist_sum("sp_llm_ttfc_seconds", scenario="rewrite", surface="inline") >= 0.0
 
 
 @pytest.mark.unit
@@ -196,7 +196,7 @@ async def test_result_chosen_counts_usage_only() -> None:
         id=UsageEventId(UUID(int=20)),
         occurred_at=_NOW,
         user_pseudonym=_PSEUDO,
-        scenario=UsageScenario.SOFTEN,
+        scenario=UsageScenario.REWRITE,
         surface=UsageSurface.INLINE,
         outcome=UsageOutcome.OK,
         unavailable_kind=None,
@@ -210,11 +210,11 @@ async def test_result_chosen_counts_usage_only() -> None:
         output_tokens=0,
         billable_tokens=0,
         event_kind=UsageEventKind.RESULT_CHOSEN,
-        variant_firmness=Firmness.BALANCED,
+        variant_kind=VariantKind.CHECK,
     )
     before = _counter(
         "sp_usage_events_total",
-        scenario="soften",
+        scenario="rewrite",
         surface="inline",
         outcome="ok",
         limit_kind="none",
@@ -223,7 +223,7 @@ async def test_result_chosen_counts_usage_only() -> None:
     assert (
         _counter(
             "sp_usage_events_total",
-            scenario="soften",
+            scenario="rewrite",
             surface="inline",
             outcome="ok",
             limit_kind="none",

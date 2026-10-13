@@ -59,7 +59,7 @@ Configure the bot once in [@BotFather](https://t.me/BotFather):
 
 1. **Main Mini App** — set the HTTPS origin of the mini-app (same value as `SP_MINIAPP_URL`, no path). This is the only UI for onboarding, rules, invites, export, and privacy.
 2. **`/setjoingroups`** → **Disable** — the bot must not join groups; if it is added, it leaves immediately.
-3. **Inline mode** — enable. Soften / help-say work via `@bot` in any chat; the button above inline results opens the mini-app (`web_app`), not a deep link into the bot chat.
+3. **Inline mode** — enable. Rewrite (check / softer / firmer) works via `@bot` in any chat; the button above inline results opens the mini-app (`web_app`), not a deep link into the bot chat.
 4. **`/setinlinefeedback`** → **Enabled** (100%) — without this, Telegram never sends `chosen_inline_result`, so the bot cannot record which inline suggestion was used.
 5. **Description** (calm, short):  
    `Помощник для трудных разговоров: общие правила с близким человеком и мягкие подсказки в любом чате.`

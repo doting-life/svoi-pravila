@@ -35,7 +35,7 @@ class InvalidOutputReason(StrEnum):
     JSON_DECODE = "json_decode"
     SCHEMA_VIOLATION = "schema_violation"
     VARIANT_COUNT = "variant_count"
-    FIRMNESS_SET = "firmness_set"
+    VARIANT_KIND_SET = "variant_kind_set"
     RULE_INDEX_OUT_OF_RANGE = "rule_index_out_of_range"
     URL_IN_TEXT = "url_in_text"
     MARKUP_FENCE = "markup_fence"
@@ -227,7 +227,7 @@ class InlineQueryTooShort(ApplicationError):
 
 
 class InvalidInlineResultRef(ApplicationError):
-    """chosen_inline_result identifier does not encode a known scenario and firmness."""
+    """chosen_inline_result identifier does not encode a known scenario and variant kind."""
 
 
 class PreparedResultUnavailable(ApplicationError):

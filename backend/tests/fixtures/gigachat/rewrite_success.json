@@ -1,0 +1,8 @@
+{
+  "method": "POST",
+  "url": "https://api.giga.chat/v2/chat/completions",
+  "status": 200,
+  "request_headers": {},
+  "request_body": "",
+  "response_body": "{\"model\": \"GigaChat-2:2.0.30.01\", \"created_at\": 1791046012, \"messages\": [{\"role\": \"assistant\", \"content\": [{\"text\": \"{\\\"check\\\": \\\"Ты не отправил отчёт к пятнице. Почему так?\\\", \\\"softer\\\": \\\"Отчёт не пришёл к пятнице, и меня это расстроило. Скажи, когда пришлёшь.\\\", \\\"firmer\\\": \\\"Отчёт нужен сегодня. Пришли его до вечера.\\\", \\\"safety\\\": \\\"ok\\\"}\"}]}], \"finish_reason\": \"stop\", \"usage\": {\"input_tokens\": 349, \"input_tokens_details\": {\"prompt_tokens\": 349, \"cached_tokens\": 237}, \"output_tokens\": 120, \"total_tokens\": 469}}"
+}

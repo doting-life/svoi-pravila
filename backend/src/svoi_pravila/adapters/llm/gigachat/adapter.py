@@ -21,29 +21,24 @@ from svoi_pravila.adapters.llm.gigachat.prepared import (
     PreparedMessages,
     prepare_decode,
     prepare_decode_analysis,
-    prepare_help_say,
-    prepare_soften,
+    prepare_rewrite,
     prepare_suggest_rule,
 )
 from svoi_pravila.adapters.llm.gigachat.schemas import (
     DecodeOut,
-    HelpSayOut,
-    HelpSayOutNoRules,
-    SoftenOut,
-    SoftenOutNoRules,
+    RewriteOut,
+    RewriteOutNoRules,
     SuggestRuleOut,
 )
 from svoi_pravila.adapters.llm.gigachat.structured import StructuredCallParams, structured_call
 from svoi_pravila.adapters.llm.gigachat.validation import (
     MAX_TOKENS_DECODE,
-    MAX_TOKENS_HELP_SAY,
-    MAX_TOKENS_SOFTEN,
+    MAX_TOKENS_REWRITE,
     MAX_TOKENS_SUGGEST,
     SlotValidation,
-    slots_from_soften,
     to_decode_result,
     to_suggest_rule_result,
-    validate_firmness_slots,
+    validate_rewrite_slots,
 )
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
@@ -58,10 +53,8 @@ from svoi_pravila.application.ports.generation import (
     DecodeResult,
     GenerationMeta,
     GenerationRequest,
-    HelpSayRequest,
-    HelpSayResult,
-    SoftenRequest,
-    SoftenResult,
+    RewriteRequest,
+    RewriteResult,
     SuggestRuleRequest,
     SuggestRuleResult,
     TokenUsage,
@@ -131,13 +124,9 @@ class GigaChatTextGenerator:
         self._client = client
         self._settings = settings
 
-    def prepare_soften(self, request: SoftenRequest) -> PreparedMessages:
-        """Build rendered system/user messages for soften (also used by tests)."""
-        return prepare_soften(request)
-
-    def prepare_help_say(self, request: HelpSayRequest) -> PreparedMessages:
-        """Build rendered system/user messages for help-say."""
-        return prepare_help_say(request)
+    def prepare_rewrite(self, request: RewriteRequest) -> PreparedMessages:
+        """Build rendered system/user messages for rewrite (also used by tests)."""
+        return prepare_rewrite(request)
 
     def prepare_decode(self, request: DecodeRequest, *, analysis: str) -> PreparedMessages:
         """Build rendered system/user messages for structured decode phase B."""
@@ -155,173 +144,54 @@ class GigaChatTextGenerator:
         """Worst-case billable tokens from rendered messages, caps, and retries."""
         return max_billable_for_request(request)
 
-    async def soften(self, request: SoftenRequest) -> SoftenResult:
-        prepared = self.prepare_soften(request)
+    async def rewrite(self, request: RewriteRequest) -> RewriteResult:
+        prepared = self.prepare_rewrite(request)
+        model = self._settings.gigachat_model_rewrite
         state = AttemptState(
             started=time.perf_counter(),
-            model=self._settings.gigachat_model_soften,
+            model=model,
             prompt_version=prepared.prompt_version,
         )
 
-        def build_with_rules(parsed: SoftenOut, meta: GenerationMeta) -> SoftenResult:
-            gentle, balanced, firm = slots_from_soften(parsed)
-            variants, indexes, safety = validate_firmness_slots(
-                gentle,
-                balanced,
-                firm,
+        def build(parsed: RewriteOut | RewriteOutNoRules, meta: GenerationMeta) -> RewriteResult:
+            applied = list(parsed.applied_rule_indexes) if isinstance(parsed, RewriteOut) else []
+            variants, indexes, safety = validate_rewrite_slots(
+                parsed.check,
+                parsed.softer,
+                parsed.firmer,
                 SlotValidation(
-                    applied=list(parsed.applied_rule_indexes),
+                    applied=applied,
                     safety_raw=parsed.safety.value,
                     rule_count=len(request.rules),
                     usage=meta.usage,
                     attempts=meta.attempts,
                     model=meta.model,
                     prompt_version=meta.prompt_version,
-                    operation="soften",
+                    operation="rewrite",
                 ),
             )
-            return SoftenResult(
+            return RewriteResult(
                 variants=variants,
                 applied_rule_indexes=indexes,
                 safety=safety,
                 meta=meta,
             )
 
-        def build_no_rules(parsed: SoftenOutNoRules, meta: GenerationMeta) -> SoftenResult:
-            gentle, balanced, firm = slots_from_soften(parsed)
-            variants, indexes, safety = validate_firmness_slots(
-                gentle,
-                balanced,
-                firm,
-                SlotValidation(
-                    applied=[],
-                    safety_raw=parsed.safety.value,
-                    rule_count=0,
-                    usage=meta.usage,
-                    attempts=meta.attempts,
-                    model=meta.model,
-                    prompt_version=meta.prompt_version,
-                    operation="soften",
-                ),
-            )
-            return SoftenResult(
-                variants=variants,
-                applied_rule_indexes=indexes,
-                safety=safety,
-                meta=meta,
-            )
-
-        try:
-            async with asyncio.timeout_at(_deadline_at(request.deadline_seconds)):
-                if request.rules:
-                    return await structured_call(
-                        StructuredCallParams(
-                            client=self._client,
-                            operation="soften",
-                            model=self._settings.gigachat_model_soften,
-                            prepared=prepared,
-                            response_format=SoftenOut,
-                            max_tokens=MAX_TOKENS_SOFTEN,
-                        ),
-                        build_with_rules,
-                        state=state,
-                    )
-                return await structured_call(
-                    StructuredCallParams(
-                        client=self._client,
-                        operation="soften",
-                        model=self._settings.gigachat_model_soften,
-                        prepared=prepared,
-                        response_format=SoftenOutNoRules,
-                        max_tokens=MAX_TOKENS_SOFTEN,
-                    ),
-                    build_no_rules,
-                    state=state,
-                )
-        except TimeoutError:
-            raise _timeout_unavailable(state) from None
-
-    async def help_say(self, request: HelpSayRequest) -> HelpSayResult:
-        prepared = self.prepare_help_say(request)
-        state = AttemptState(
-            started=time.perf_counter(),
-            model=self._settings.gigachat_model_help_say,
-            prompt_version=prepared.prompt_version,
+        response_format: type[RewriteOut | RewriteOutNoRules] = (
+            RewriteOut if request.rules else RewriteOutNoRules
         )
-
-        def build_with_rules(parsed: HelpSayOut, meta: GenerationMeta) -> HelpSayResult:
-            gentle, balanced, firm = slots_from_soften(parsed)
-            variants, indexes, safety = validate_firmness_slots(
-                gentle,
-                balanced,
-                firm,
-                SlotValidation(
-                    applied=list(parsed.applied_rule_indexes),
-                    safety_raw=parsed.safety.value,
-                    rule_count=len(request.rules),
-                    usage=meta.usage,
-                    attempts=meta.attempts,
-                    model=meta.model,
-                    prompt_version=meta.prompt_version,
-                    operation="help_say",
-                ),
-            )
-            return HelpSayResult(
-                variants=variants,
-                applied_rule_indexes=indexes,
-                safety=safety,
-                meta=meta,
-            )
-
-        def build_no_rules(parsed: HelpSayOutNoRules, meta: GenerationMeta) -> HelpSayResult:
-            gentle, balanced, firm = slots_from_soften(parsed)
-            variants, indexes, safety = validate_firmness_slots(
-                gentle,
-                balanced,
-                firm,
-                SlotValidation(
-                    applied=[],
-                    safety_raw=parsed.safety.value,
-                    rule_count=0,
-                    usage=meta.usage,
-                    attempts=meta.attempts,
-                    model=meta.model,
-                    prompt_version=meta.prompt_version,
-                    operation="help_say",
-                ),
-            )
-            return HelpSayResult(
-                variants=variants,
-                applied_rule_indexes=indexes,
-                safety=safety,
-                meta=meta,
-            )
-
         try:
             async with asyncio.timeout_at(_deadline_at(request.deadline_seconds)):
-                if request.rules:
-                    return await structured_call(
-                        StructuredCallParams(
-                            client=self._client,
-                            operation="help_say",
-                            model=self._settings.gigachat_model_help_say,
-                            prepared=prepared,
-                            response_format=HelpSayOut,
-                            max_tokens=MAX_TOKENS_HELP_SAY,
-                        ),
-                        build_with_rules,
-                        state=state,
-                    )
                 return await structured_call(
                     StructuredCallParams(
                         client=self._client,
-                        operation="help_say",
-                        model=self._settings.gigachat_model_help_say,
+                        operation="rewrite",
+                        model=model,
                         prepared=prepared,
-                        response_format=HelpSayOutNoRules,
-                        max_tokens=MAX_TOKENS_HELP_SAY,
+                        response_format=response_format,
+                        max_tokens=MAX_TOKENS_REWRITE,
                     ),
-                    build_no_rules,
+                    build,
                     state=state,
                 )
         except TimeoutError:

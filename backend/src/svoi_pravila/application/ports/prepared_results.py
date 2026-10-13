@@ -5,14 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from svoi_pravila.domain.enums import Firmness
+from svoi_pravila.domain.enums import VariantKind
 
 
 @dataclass(frozen=True, slots=True)
 class PreparedVariant:
     """One variant stored for later inline insertion (plaintext only in memory)."""
 
-    firmness: Firmness
+    kind: VariantKind
     text: str
 
 

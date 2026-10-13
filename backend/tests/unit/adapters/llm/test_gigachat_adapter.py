@@ -40,21 +40,20 @@ from svoi_pravila.adapters.llm.gigachat.boundaries import (
 from svoi_pravila.adapters.llm.gigachat.client import close_gigachat_client, create_gigachat_client
 from svoi_pravila.adapters.llm.gigachat.schemas import (
     DecodeOut,
-    FirmnessOut,
-    HelpSayOut,
-    HelpSayOutNoRules,
-    SoftenOut,
-    SoftenOutNoRules,
+    RewriteOut,
+    RewriteOutNoRules,
+    VariantKindOut,
     VariantOut,
 )
 from svoi_pravila.adapters.llm.gigachat.validation import (
     CHARS_PER_TOKEN,
     JSON_OVERHEAD_TOKENS,
     MAX_ANALYSIS_CHARS,
+    MAX_DECODE_VARIANTS,
     MAX_HYPOTHESES,
     MAX_TOKENS_ANALYSIS,
     MAX_TOKENS_DECODE,
-    MAX_TOKENS_SOFTEN,
+    MAX_TOKENS_REWRITE,
     MAX_VARIANT_CHARS,
     MAX_VARIANTS,
     SlotValidation,
@@ -62,7 +61,7 @@ from svoi_pravila.adapters.llm.gigachat.validation import (
     last_reason,
     rules_text,
     untrusted_texts,
-    validate_firmness_slots,
+    validate_rewrite_slots,
     validate_variants,
 )
 from svoi_pravila.application.errors import (
@@ -77,15 +76,13 @@ from svoi_pravila.application.ports.generation import (
     DecodeCompleted,
     DecodeRequest,
     DecodeResult,
-    HelpSayIntent,
-    HelpSayRequest,
+    RewriteRequest,
     RuleContext,
-    SoftenRequest,
     TextGenerator,
     TokenUsage,
 )
 from svoi_pravila.benchmarks.estimate import chars_to_tokens
-from svoi_pravila.domain.enums import Firmness, RelationshipKind, RuleCategory
+from svoi_pravila.domain.enums import RelationshipKind, RewriteGoal, RuleCategory, VariantKind
 from tests.factories import make_settings
 
 
@@ -97,82 +94,58 @@ def _rule() -> RuleContext:
     )
 
 
-def _soften_payload(*, bad: bool = False) -> SoftenOut:
+def _rewrite_payload(*, bad: bool = False) -> RewriteOut:
     if bad:
-        return SoftenOut.model_validate(
+        return RewriteOut.model_validate(
             {
-                "gentle": "a",
-                "balanced": "",
-                "firm": "",
+                "check": "a",
+                "softer": "",
+                "firmer": "",
                 "applied_rule_indexes": [],
                 "safety": "ok",
             }
         )
-    return SoftenOut.model_validate(
+    return RewriteOut.model_validate(
         {
-            "gentle": "variant soft",
-            "balanced": "variant balanced",
-            "firm": "variant firm",
+            "check": "variant check",
+            "softer": "variant softer",
+            "firmer": "variant firmer",
             "applied_rule_indexes": [0],
             "safety": "ok",
         }
     )
 
 
-def _soften_payload_no_rules(*, bad: bool = False) -> SoftenOutNoRules:
+def _rewrite_payload_no_rules(*, bad: bool = False) -> RewriteOutNoRules:
     if bad:
-        return SoftenOutNoRules.model_validate(
+        return RewriteOutNoRules.model_validate(
             {
-                "gentle": "a",
-                "balanced": "",
-                "firm": "",
+                "check": "a",
+                "softer": "",
+                "firmer": "",
                 "safety": "ok",
             }
         )
-    return SoftenOutNoRules.model_validate(
+    return RewriteOutNoRules.model_validate(
         {
-            "gentle": "variant soft",
-            "balanced": "variant balanced",
-            "firm": "variant firm",
-            "safety": "ok",
-        }
-    )
-
-
-def _help_say_payload() -> HelpSayOut:
-    return HelpSayOut.model_validate(
-        {
-            "gentle": "help-gentle",
-            "balanced": "help-balanced",
-            "firm": "help-firm",
-            "applied_rule_indexes": [],
-            "safety": "ok",
-        }
-    )
-
-
-def _help_say_payload_no_rules() -> HelpSayOutNoRules:
-    return HelpSayOutNoRules.model_validate(
-        {
-            "gentle": "help-gentle",
-            "balanced": "help-balanced",
-            "firm": "help-firm",
+            "check": "variant check",
+            "softer": "variant softer",
+            "firmer": "variant firmer",
             "safety": "ok",
         }
     )
 
 
 def _decode_payload(*, safety: str = "ok", with_url: bool = False) -> DecodeOut:
-    text_g = "https://example.test/x" if with_url else "gentle-reply"
+    text_g = "https://example.test/x" if with_url else "softer-reply"
     return DecodeOut.model_validate(
         {
             "hypotheses": ["h1"] if safety == "ok" else [],
             "underlying_request": "needs space" if safety == "ok" else "",
             "variants": (
                 [
-                    {"text": text_g, "firmness": "gentle"},
-                    {"text": "balanced-reply", "firmness": "balanced"},
-                    {"text": "firm-reply", "firmness": "firm"},
+                    {"text": text_g, "kind": "softer"},
+                    {"text": "firmer-reply", "kind": "firmer"},
                 ]
                 if safety == "ok"
                 else []
@@ -330,10 +303,11 @@ async def _decode_via_stream(ache: _FakeAche, **overrides: object) -> DecodeResu
 
 
 @pytest.mark.unit
-async def test_soften_valid() -> None:
-    ache = _FakeAche(create_results=[_soften_payload()])
-    result = await _generator(ache).soften(
-        SoftenRequest(
+async def test_rewrite_valid() -> None:
+    ache = _FakeAche(create_results=[_rewrite_payload()])
+    result = await _generator(ache).rewrite(
+        RewriteRequest(
+            goal=None,
             draft="ty vsegda opazdyvaesh",
             rules=(_rule(),),
             relationship=RelationshipKind.PARTNER,
@@ -341,19 +315,20 @@ async def test_soften_valid() -> None:
         )
     )
     assert len(result.variants) == 3
-    assert {item.firmness for item in result.variants} == {
-        Firmness.GENTLE,
-        Firmness.BALANCED,
-        Firmness.FIRM,
-    }
+    assert [item.kind for item in result.variants] == [
+        VariantKind.CHECK,
+        VariantKind.SOFTER,
+        VariantKind.FIRMER,
+    ]
     assert result.applied_rule_indexes == (0,)
     assert result.meta.attempts == 1
 
 
 @pytest.mark.unit
-async def test_soften_no_rules_payload_ok() -> None:
-    result = await _generator(_FakeAche(create_results=[_soften_payload_no_rules()])).soften(
-        SoftenRequest(
+async def test_rewrite_no_rules_payload_ok() -> None:
+    result = await _generator(_FakeAche(create_results=[_rewrite_payload_no_rules()])).rewrite(
+        RewriteRequest(
+            goal=None,
             draft="draft",
             rules=(),
             relationship=RelationshipKind.OTHER,
@@ -362,24 +337,25 @@ async def test_soften_no_rules_payload_ok() -> None:
     )
     assert len(result.variants) == 3
     assert result.applied_rule_indexes == ()
-    assert result.meta.prompt_version == "soften@v5"
+    assert result.meta.prompt_version == "rewrite@v1"
 
 
 @pytest.mark.unit
-async def test_soften_no_rules_rejects_applied_indexes_field() -> None:
-    with_indexes = SoftenOut.model_validate(
+async def test_rewrite_no_rules_rejects_applied_indexes_field() -> None:
+    with_indexes = RewriteOut.model_validate(
         {
-            "gentle": "variant soft",
-            "balanced": "variant balanced",
-            "firm": "variant firm",
+            "check": "variant check",
+            "softer": "variant softer",
+            "firmer": "variant firmer",
             "applied_rule_indexes": [],
             "safety": "ok",
         }
     )
     ache = _FakeAche(create_results=[with_indexes, with_indexes])
     with pytest.raises(InvalidGenerationOutput) as exc_info:
-        await _generator(ache).soften(
-            SoftenRequest(
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="draft",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
@@ -390,11 +366,11 @@ async def test_soften_no_rules_rejects_applied_indexes_field() -> None:
 
 
 @pytest.mark.unit
-async def test_help_say_no_rules_payload_ok() -> None:
-    result = await _generator(_FakeAche(create_results=[_help_say_payload_no_rules()])).help_say(
-        HelpSayRequest(
-            intent=HelpSayIntent.DECLINE,
-            details="details",
+async def test_rewrite_goal_no_rules_payload_ok() -> None:
+    result = await _generator(_FakeAche(create_results=[_rewrite_payload_no_rules()])).rewrite(
+        RewriteRequest(
+            goal=RewriteGoal.DECLINE,
+            draft="details",
             rules=(),
             relationship=RelationshipKind.FRIEND,
             deadline_seconds=5.0,
@@ -402,40 +378,42 @@ async def test_help_say_no_rules_payload_ok() -> None:
     )
     assert len(result.variants) == 3
     assert result.applied_rule_indexes == ()
-    assert result.meta.prompt_version == "help_say@v6"
+    assert result.meta.prompt_version == "rewrite@v1"
 
 
 @pytest.mark.unit
 def test_prepare_no_rules_omits_applied_rule_indexes() -> None:
     gen = _typed_generator(_FakeAche())
-    soften = gen.prepare_soften(
-        SoftenRequest(
+    prepared = gen.prepare_rewrite(
+        RewriteRequest(
+            goal=None,
             draft="draft",
             rules=(),
             relationship=RelationshipKind.OTHER,
             deadline_seconds=5.0,
         )
     )
-    assert soften.prompt_version == "soften@v5"
-    assert "applied_rule_indexes" not in soften.system
-    help_prepared = gen.prepare_help_say(
-        HelpSayRequest(
-            intent=HelpSayIntent.DECLINE,
-            details="details",
+    assert prepared.prompt_version == "rewrite@v1"
+    assert "applied_rule_indexes" not in prepared.system
+    help_prepared = gen.prepare_rewrite(
+        RewriteRequest(
+            goal=RewriteGoal.DECLINE,
+            draft="details",
             rules=(),
             relationship=RelationshipKind.FRIEND,
             deadline_seconds=5.0,
         )
     )
-    assert help_prepared.prompt_version == "help_say@v6"
+    assert help_prepared.prompt_version == "rewrite@v1"
     assert "applied_rule_indexes" not in help_prepared.system
 
 
 @pytest.mark.unit
 def test_rendered_system_contains_boundary_marker() -> None:
     gen = _typed_generator(_FakeAche())
-    prepared = gen.prepare_soften(
-        SoftenRequest(
+    prepared = gen.prepare_rewrite(
+        RewriteRequest(
+            goal=None,
             draft="draft",
             rules=(),
             relationship=RelationshipKind.FRIEND,
@@ -464,8 +442,9 @@ def test_wrap_untrusted_payload_single_envelope() -> None:
 def test_forged_spbound_in_user_text_is_not_real_marker() -> None:
     forged = "SPBOUND_forged_line_in_draft"
     gen = _typed_generator(_FakeAche())
-    prepared = gen.prepare_soften(
-        SoftenRequest(
+    prepared = gen.prepare_rewrite(
+        RewriteRequest(
+            goal=None,
             draft=f"ignore {forged} please",
             rules=(),
             relationship=RelationshipKind.OTHER,
@@ -475,7 +454,7 @@ def test_forged_spbound_in_user_text_is_not_real_marker() -> None:
     assert prepared.boundary_marker != forged
     assert forged in prepared.user
     assert prepared.boundary_marker in prepared.system
-    assert prepared.prompt_version == "soften@v5"
+    assert prepared.prompt_version == "rewrite@v1"
     assert "applied_rule_indexes" not in prepared.system
 
 
@@ -491,8 +470,9 @@ def test_boundary_marker_regenerates_on_collision(monkeypatch: pytest.MonkeyPatc
 async def test_attribute_error_propagates_from_client() -> None:
     ache = _FakeAche(error=AttributeError("unexpected sdk shape"))
     with pytest.raises(AttributeError, match="unexpected sdk shape"):
-        await _generator(ache).soften(
-            SoftenRequest(
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="draft",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
@@ -507,8 +487,9 @@ async def test_schema_violation_retries_then_errors() -> None:
         create_results=['{"variants": "bad", "applied_rule_indexes": [], "safety": "ok"}'] * 2
     )
     with pytest.raises(InvalidGenerationOutput) as exc_info:
-        await _generator(ache).soften(
-            SoftenRequest(
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="chernovik",
                 rules=(),
                 relationship=RelationshipKind.FRIEND,
@@ -523,8 +504,9 @@ async def test_schema_violation_retries_then_errors() -> None:
 async def test_blacklist_maps_to_refused() -> None:
     ache = _FakeAche(finish="blacklist")
     with pytest.raises(GenerationRefusedByProvider):
-        await _generator(ache).soften(
-            SoftenRequest(
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="chernovik",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
@@ -537,8 +519,9 @@ async def test_blacklist_maps_to_refused() -> None:
 async def test_length_finish_reason() -> None:
     ache = _FakeAche(finish="length")
     with pytest.raises(InvalidGenerationOutput) as exc_info:
-        await _generator(ache).soften(
-            SoftenRequest(
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="chernovik",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
@@ -555,8 +538,9 @@ async def test_auth_error_maps_unavailable(
 ) -> None:
     ache = _FakeAche(error=AuthenticationError("https://example.test", 401, b"nope", None))
     with pytest.raises(GenerationUnavailable):
-        await _generator(ache).soften(
-            SoftenRequest(
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="chernovik",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
@@ -570,10 +554,10 @@ async def test_auth_error_maps_unavailable(
 async def test_rate_limit_maps_unavailable() -> None:
     ache = _FakeAche(error=RateLimitError("https://example.test", 429, b"slow", None))
     with pytest.raises(GenerationUnavailable):
-        await _generator(ache).help_say(
-            HelpSayRequest(
-                intent=HelpSayIntent.DECLINE,
-                details="ne mogu",
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=RewriteGoal.DECLINE,
+                draft="ne mogu",
                 rules=(),
                 relationship=RelationshipKind.WORK,
                 deadline_seconds=5.0,
@@ -585,8 +569,9 @@ async def test_rate_limit_maps_unavailable() -> None:
 async def test_server_error_maps_unavailable() -> None:
     ache = _FakeAche(error=ServerError("https://example.test", 503, b"down", None))
     with pytest.raises(GenerationUnavailable):
-        await _generator(ache).soften(
-            SoftenRequest(
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="chernovik",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
@@ -603,8 +588,9 @@ async def test_timeout_maps_unavailable() -> None:
             raise RuntimeError("timeout expected")
 
     with pytest.raises(GenerationUnavailable):
-        await _generator(SlowAche()).soften(
-            SoftenRequest(
+        await _generator(SlowAche()).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="chernovik",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
@@ -626,8 +612,8 @@ async def test_decode_stream_success_two_phase() -> None:
     completed = events[-1]
     assert isinstance(completed, DecodeCompleted)
     assert completed.analysis == analysis_text
-    assert completed.result.variants[0].firmness is Firmness.GENTLE
-    assert completed.result.meta.prompt_version == "decode_analysis@v1+decode@v3"
+    assert completed.result.variants[0].kind is VariantKind.SOFTER
+    assert completed.result.meta.prompt_version == "decode_analysis@v1+decode@v4"
     assert completed.result.meta.usage.input == 5
     assert completed.result.meta.usage.output == 9
     assert completed.result.meta.attempts == 2
@@ -807,7 +793,7 @@ def test_prepare_decode_analysis_and_decode_with_analysis() -> None:
 
     analysis = "vozmozhno partner ustal"
     decode_prepared = gen.prepare_decode(request, analysis=analysis)
-    assert decode_prepared.prompt_version == "decode@v3"
+    assert decode_prepared.prompt_version == "decode@v4"
     assert analysis in decode_prepared.user
     assert "analysis:\n" + analysis in decode_prepared.user
 
@@ -835,8 +821,9 @@ async def test_log_canary_for_adapter(
     capture_log_events: Callable[[], list[dict[str, Any]]],
 ) -> None:
     canary = "CANARY-LLM-ADAPTER-UNIQUE-MARKER"
-    await _generator(_FakeAche(create_results=[_soften_payload()])).soften(
-        SoftenRequest(
+    await _generator(_FakeAche(create_results=[_rewrite_payload()])).rewrite(
+        RewriteRequest(
+            goal=None,
             draft=canary,
             rules=(
                 RuleContext(
@@ -855,24 +842,27 @@ async def test_log_canary_for_adapter(
 
 
 @pytest.mark.unit
-async def test_help_say_and_decode_valid() -> None:
-    help_result = await _generator(_FakeAche(create_results=[_help_say_payload()])).help_say(
-        HelpSayRequest(
-            intent=HelpSayIntent.SET_BOUNDARY,
-            details="ask gently",
+async def test_rewrite_goal_and_decode_valid() -> None:
+    help_result = await _generator(_FakeAche(create_results=[_rewrite_payload()])).rewrite(
+        RewriteRequest(
+            goal=RewriteGoal.SET_BOUNDARY,
+            draft="ask gently",
             rules=(_rule(),),
             relationship=RelationshipKind.PARTNER,
             deadline_seconds=5.0,
         )
     )
-    assert help_result.meta.prompt_version == "help_say@v6"
+    assert help_result.meta.prompt_version == "rewrite@v1"
     decode_result = await _decode_via_stream(
         _FakeAche(stream_parts=["valid analysis"], create_results=[_decode_payload()]),
         incoming="incoming text",
         relationship=RelationshipKind.FRIEND,
     )
-    assert decode_result.meta.prompt_version == "decode_analysis@v1+decode@v3"
-    assert len(decode_result.variants) == 3
+    assert decode_result.meta.prompt_version == "decode_analysis@v1+decode@v4"
+    assert [item.kind for item in decode_result.variants] == [
+        VariantKind.SOFTER,
+        VariantKind.FIRMER,
+    ]
 
 
 @pytest.mark.unit
@@ -898,8 +888,9 @@ async def test_url_in_variant_retries_then_fails() -> None:
 async def test_response_error_and_close_client() -> None:
     ache = _FakeAche(error=ResponseError("https://example.test", 503, b"down", None))
     with pytest.raises(GenerationUnavailable):
-        await _generator(ache).soften(
-            SoftenRequest(
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="draft",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
@@ -918,18 +909,18 @@ async def test_response_error_and_close_client() -> None:
 
 
 @pytest.mark.unit
-def test_validate_variants_index_count_and_duplicate_firmness() -> None:
+def test_validate_variants_index_count_and_duplicate_kind() -> None:
     usage = TokenUsage()
     with pytest.raises(InvalidGenerationOutput) as bad_idx:
         validate_variants(
-            [VariantOut(text="only", firmness=FirmnessOut.GENTLE)],
+            [VariantOut(text="only", kind=VariantKindOut.SOFTER)],
             VariantValidation(
                 applied=[3],
                 safety_raw="ok",
                 rule_count=1,
                 min_variants=1,
                 max_variants=1,
-                require_all_firmness=False,
+                require_all_kinds=False,
                 usage=usage,
                 attempts=1,
                 model="m",
@@ -939,14 +930,14 @@ def test_validate_variants_index_count_and_duplicate_firmness() -> None:
         )
     assert InvalidOutputReason.RULE_INDEX_OUT_OF_RANGE in bad_idx.value.reasons
     ok_variants, ok_indexes, ok_safety = validate_variants(
-        [VariantOut(text="only", firmness=FirmnessOut.GENTLE)],
+        [VariantOut(text="only", kind=VariantKindOut.SOFTER)],
         VariantValidation(
             applied=[0],
             safety_raw="ok",
             rule_count=1,
             min_variants=1,
             max_variants=1,
-            require_all_firmness=False,
+            require_all_kinds=False,
             usage=usage,
             attempts=1,
             model="m",
@@ -954,19 +945,19 @@ def test_validate_variants_index_count_and_duplicate_firmness() -> None:
             operation="decode",
         ),
     )
-    assert ok_variants[0].firmness is Firmness.GENTLE
+    assert ok_variants[0].kind is VariantKind.SOFTER
     assert ok_indexes == (0,)
     assert ok_safety.value == "ok"
     with pytest.raises(InvalidGenerationOutput) as count:
         validate_variants(
-            [VariantOut(text="only", firmness=FirmnessOut.GENTLE)],
+            [VariantOut(text="only", kind=VariantKindOut.SOFTER)],
             VariantValidation(
                 applied=[],
                 safety_raw="ok",
                 rule_count=0,
                 min_variants=2,
                 max_variants=3,
-                require_all_firmness=False,
+                require_all_kinds=False,
                 usage=usage,
                 attempts=1,
                 model="m",
@@ -978,8 +969,8 @@ def test_validate_variants_index_count_and_duplicate_firmness() -> None:
     with pytest.raises(InvalidGenerationOutput) as dup:
         validate_variants(
             [
-                VariantOut(text="a", firmness=FirmnessOut.GENTLE),
-                VariantOut(text="b", firmness=FirmnessOut.GENTLE),
+                VariantOut(text="a", kind=VariantKindOut.SOFTER),
+                VariantOut(text="b", kind=VariantKindOut.SOFTER),
             ],
             VariantValidation(
                 applied=[],
@@ -987,7 +978,7 @@ def test_validate_variants_index_count_and_duplicate_firmness() -> None:
                 rule_count=0,
                 min_variants=2,
                 max_variants=2,
-                require_all_firmness=False,
+                require_all_kinds=False,
                 usage=usage,
                 attempts=1,
                 model="m",
@@ -995,9 +986,9 @@ def test_validate_variants_index_count_and_duplicate_firmness() -> None:
                 operation="decode",
             ),
         )
-    assert InvalidOutputReason.FIRMNESS_SET in dup.value.reasons
+    assert InvalidOutputReason.VARIANT_KIND_SET in dup.value.reasons
     with pytest.raises(InvalidGenerationOutput) as bad_safety:
-        validate_firmness_slots(
+        validate_rewrite_slots(
             "g",
             "b",
             "f",
@@ -1009,7 +1000,7 @@ def test_validate_variants_index_count_and_duplicate_firmness() -> None:
                 attempts=1,
                 model="m",
                 prompt_version="p",
-                operation="soften",
+                operation="rewrite",
             ),
         )
     assert InvalidOutputReason.SCHEMA_VIOLATION in bad_safety.value.reasons
@@ -1026,28 +1017,28 @@ def test_validate_variants_defensive_branches() -> None:
                 rule_count=0,
                 min_variants=0,
                 max_variants=0,
-                require_all_firmness=False,
+                require_all_kinds=False,
                 usage=TokenUsage(),
                 attempts=1,
                 model="m",
                 prompt_version="p",
-                operation="soften",
+                operation="rewrite",
             ),
         )
     dropped, indexes, safety = validate_variants(
-        [VariantOut(text="should-not-appear", firmness=FirmnessOut.GENTLE)],
+        [VariantOut(text="should-not-appear", kind=VariantKindOut.SOFTER)],
         VariantValidation(
             applied=[],
             safety_raw="crisis",
             rule_count=0,
             min_variants=0,
             max_variants=3,
-            require_all_firmness=False,
+            require_all_kinds=False,
             usage=TokenUsage(),
             attempts=1,
             model="m",
             prompt_version="p",
-            operation="soften",
+            operation="rewrite",
         ),
     )
     assert dropped == ()
@@ -1055,7 +1046,7 @@ def test_validate_variants_defensive_branches() -> None:
     assert safety.value == "crisis"
     bad_item = VariantOut.model_construct(
         text="ok",
-        firmness=cast(Any, SimpleNamespace(value="nope")),
+        kind=cast(Any, SimpleNamespace(value="nope")),
     )
     with pytest.raises(InvalidGenerationOutput):
         validate_variants(
@@ -1066,48 +1057,46 @@ def test_validate_variants_defensive_branches() -> None:
                 rule_count=0,
                 min_variants=1,
                 max_variants=1,
-                require_all_firmness=False,
+                require_all_kinds=False,
                 usage=TokenUsage(),
                 attempts=1,
                 model="m",
                 prompt_version="p",
-                operation="soften",
+                operation="rewrite",
             ),
         )
     with pytest.raises(InvalidGenerationOutput):
         validate_variants(
-            [
-                VariantOut(text="gentle-only", firmness=FirmnessOut.GENTLE),
-                VariantOut(text="balanced-only", firmness=FirmnessOut.BALANCED),
-            ],
+            [VariantOut(text="softer-only", kind=VariantKindOut.SOFTER)],
             VariantValidation(
                 applied=[],
                 safety_raw="ok",
                 rule_count=0,
-                min_variants=2,
+                min_variants=1,
                 max_variants=2,
-                require_all_firmness=True,
+                require_all_kinds=True,
                 usage=TokenUsage(),
                 attempts=1,
                 model="m",
                 prompt_version="p",
-                operation="soften",
+                operation="rewrite",
             ),
         )
 
 
 @pytest.mark.unit
 async def test_crisis_empty_variants_ok() -> None:
-    payload = SoftenOutNoRules.model_validate(
+    payload = RewriteOutNoRules.model_validate(
         {
-            "gentle": "",
-            "balanced": "",
-            "firm": "",
+            "check": "",
+            "softer": "",
+            "firmer": "",
             "safety": "crisis",
         }
     )
-    result = await _generator(_FakeAche(create_results=[payload])).soften(
-        SoftenRequest(
+    result = await _generator(_FakeAche(create_results=[payload])).rewrite(
+        RewriteRequest(
+            goal=None,
             draft="draft",
             rules=(),
             relationship=RelationshipKind.OTHER,
@@ -1123,17 +1112,18 @@ async def test_crisis_empty_variants_ok() -> None:
 async def test_non_ok_verdict_drops_payload_without_retry(
     capture_log_events: Callable[[], list[dict[str, Any]]],
 ) -> None:
-    payload = SoftenOutNoRules.model_validate(
+    payload = RewriteOutNoRules.model_validate(
         {
-            "gentle": "CANARY-NON-OK-DROPPED",
-            "balanced": "",
-            "firm": "other-variant",
+            "check": "CANARY-NON-OK-DROPPED",
+            "softer": "",
+            "firmer": "other-variant",
             "safety": "refuse_manipulation",
         }
     )
     ache = _FakeAche(create_results=[payload])
-    result = await _generator(ache).soften(
-        SoftenRequest(
+    result = await _generator(ache).rewrite(
+        RewriteRequest(
+            goal=None,
             draft="CANARY-NON-OK-DROPPED",
             rules=(),
             relationship=RelationshipKind.OTHER,
@@ -1146,7 +1136,7 @@ async def test_non_ok_verdict_drops_payload_without_retry(
     events = capture_log_events()
     dropped = [e for e in events if e.get("event") == "non_ok_payload_dropped"]
     assert len(dropped) == 1
-    assert dropped[0]["operation"] == "soften"
+    assert dropped[0]["operation"] == "rewrite"
     assert dropped[0]["verdict"] == "refuse_manipulation"
     blob = json.dumps(events, ensure_ascii=False)
     assert "CANARY-NON-OK-DROPPED" not in blob
@@ -1160,7 +1150,7 @@ async def test_decode_non_ok_drops_payload_without_retry(
         {
             "hypotheses": ["CANARY-DECODE-DROPPED"],
             "underlying_request": "CANARY-DECODE-DROPPED",
-            "variants": [{"text": "CANARY-DECODE-DROPPED", "firmness": "gentle"}],
+            "variants": [{"text": "CANARY-DECODE-DROPPED", "kind": "softer"}],
             "applied_rule_indexes": [],
             "safety": "crisis",
         }
@@ -1185,44 +1175,46 @@ async def test_decode_non_ok_drops_payload_without_retry(
 
 @pytest.mark.unit
 async def test_bad_rule_index_and_duplicate_slots() -> None:
-    bad_idx = SoftenOut.model_validate(
+    bad_idx = RewriteOut.model_validate(
         {
-            "gentle": "a-gentle",
-            "balanced": "a-balanced",
-            "firm": "a-firm",
+            "check": "a-gentle",
+            "softer": "a-balanced",
+            "firmer": "a-firm",
             "applied_rule_indexes": [9],
             "safety": "ok",
         }
     )
     ache = _FakeAche(create_results=[bad_idx, bad_idx])
     with pytest.raises(InvalidGenerationOutput):
-        await _generator(ache).soften(
-            SoftenRequest(
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="draft",
                 rules=(_rule(),),
                 relationship=RelationshipKind.PARTNER,
                 deadline_seconds=5.0,
             )
         )
-    dup = SoftenOutNoRules.model_validate(
+    dup = RewriteOutNoRules.model_validate(
         {
-            "gentle": "same-text",
-            "balanced": "same-text",
-            "firm": "different-firm",
+            "check": "different-check",
+            "softer": "same-text",
+            "firmer": "same-text",
             "safety": "ok",
         }
     )
     ache2 = _FakeAche(create_results=[dup, dup])
     with pytest.raises(InvalidGenerationOutput) as dup_info:
-        await _generator(ache2).soften(
-            SoftenRequest(
+        await _generator(ache2).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="draft",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
                 deadline_seconds=5.0,
             )
         )
-    assert InvalidOutputReason.FIRMNESS_SET in dup_info.value.reasons
+    assert InvalidOutputReason.VARIANT_KIND_SET in dup_info.value.reasons
 
 
 @pytest.mark.unit
@@ -1232,9 +1224,8 @@ async def test_decode_validation_edges() -> None:
             "hypotheses": [],
             "underlying_request": "needs space",
             "variants": [
-                {"text": "gentle-reply", "firmness": "gentle"},
-                {"text": "balanced-reply", "firmness": "balanced"},
-                {"text": "firm-reply", "firmness": "firm"},
+                {"text": "softer-reply", "kind": "softer"},
+                {"text": "firmer-reply", "kind": "firmer"},
             ],
             "applied_rule_indexes": [],
             "safety": "ok",
@@ -1279,10 +1270,11 @@ async def test_empty_messages_completion_invalid() -> None:
                 usage=ChatUsage(input_tokens=1, output_tokens=1),
             )
 
-    ache = EmptyMsgsAche(create_results=[_soften_payload(), _soften_payload()])
+    ache = EmptyMsgsAche(create_results=[_rewrite_payload(), _rewrite_payload()])
     with pytest.raises(InvalidGenerationOutput) as exc_info:
-        await _generator(ache).soften(
-            SoftenRequest(
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="draft",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
@@ -1302,8 +1294,9 @@ async def test_json_decode_retries_then_fails() -> None:
 
     ache = JsonAche()
     with pytest.raises(InvalidGenerationOutput) as exc_info:
-        await _generator(ache).soften(
-            SoftenRequest(
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="draft",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
@@ -1326,8 +1319,9 @@ async def test_generation_unavailable_from_parse() -> None:
         )
     )
     with pytest.raises(GenerationUnavailable):
-        await _generator(ache).soften(
-            SoftenRequest(
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="draft",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
@@ -1337,12 +1331,12 @@ async def test_generation_unavailable_from_parse() -> None:
 
 
 @pytest.mark.unit
-def test_prepare_help_say_and_decode_include_rules() -> None:
+def test_prepare_rewrite_and_decode_include_rules() -> None:
     gen = _typed_generator(_FakeAche())
-    help_prepared = gen.prepare_help_say(
-        HelpSayRequest(
-            intent=HelpSayIntent.DECLINE,
-            details="details",
+    help_prepared = gen.prepare_rewrite(
+        RewriteRequest(
+            goal=RewriteGoal.DECLINE,
+            draft="details",
             rules=(_rule(),),
             relationship=RelationshipKind.WORK,
             deadline_seconds=5.0,
@@ -1369,9 +1363,8 @@ async def test_decode_unclean_underlying_and_hypothesis() -> None:
             "hypotheses": ["h1"],
             "underlying_request": "see https://example.test",
             "variants": [
-                {"text": "gentle-reply", "firmness": "gentle"},
-                {"text": "balanced-reply", "firmness": "balanced"},
-                {"text": "firm-reply", "firmness": "firm"},
+                {"text": "softer-reply", "kind": "softer"},
+                {"text": "firmer-reply", "kind": "firmer"},
             ],
             "applied_rule_indexes": [],
             "safety": "ok",
@@ -1388,9 +1381,8 @@ async def test_decode_unclean_underlying_and_hypothesis() -> None:
             "hypotheses": ["see ```code```"],
             "underlying_request": "needs space",
             "variants": [
-                {"text": "gentle-reply", "firmness": "gentle"},
-                {"text": "balanced-reply", "firmness": "balanced"},
-                {"text": "firm-reply", "firmness": "firm"},
+                {"text": "softer-reply", "kind": "softer"},
+                {"text": "firmer-reply", "kind": "firmer"},
             ],
             "applied_rule_indexes": [],
             "safety": "ok",
@@ -1414,28 +1406,28 @@ def test_text_reasons_empty_long_and_fence() -> None:
         rule_count=0,
         min_variants=1,
         max_variants=1,
-        require_all_firmness=False,
+        require_all_kinds=False,
         usage=TokenUsage(),
         attempts=1,
         model="m",
         prompt_version="p",
-        operation="soften",
+        operation="rewrite",
     )
     with pytest.raises(InvalidGenerationOutput) as empty:
         validate_variants(
-            [VariantOut.model_construct(text="", firmness=FirmnessOut.GENTLE)],
+            [VariantOut.model_construct(text="", kind=VariantKindOut.SOFTER)],
             single,
         )
     assert empty.value.reasons == (InvalidOutputReason.EMPTY_TEXT,)
     with pytest.raises(InvalidGenerationOutput) as long_text:
         validate_variants(
-            [VariantOut.model_construct(text="x" * 1001, firmness=FirmnessOut.GENTLE)],
+            [VariantOut.model_construct(text="x" * 1001, kind=VariantKindOut.SOFTER)],
             single,
         )
     assert long_text.value.reasons == (InvalidOutputReason.TEXT_TOO_LONG,)
     with pytest.raises(InvalidGenerationOutput) as fence:
         validate_variants(
-            [VariantOut(text="see ```here```", firmness=FirmnessOut.GENTLE)],
+            [VariantOut(text="see ```here```", kind=VariantKindOut.SOFTER)],
             single,
         )
     assert fence.value.reasons == (InvalidOutputReason.MARKUP_FENCE,)
@@ -1462,8 +1454,9 @@ async def test_create_validation_error_retries() -> None:
 
     ache = VEAche()
     with pytest.raises(InvalidGenerationOutput) as exc_info:
-        await _generator(ache).soften(
-            SoftenRequest(
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="draft",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
@@ -1500,17 +1493,17 @@ async def test_decode_crisis_with_underlying_only() -> None:
 
 
 @pytest.mark.unit
-async def test_help_say_timeout_maps_unavailable() -> None:
+async def test_rewrite_goal_timeout_maps_unavailable() -> None:
     class SlowHelpAche(_FakeAche):
         async def create(self, payload: object) -> ChatCompletionResponse:
             await asyncio.Event().wait()
             return _completion()
 
     with pytest.raises(GenerationUnavailable) as exc_info:
-        await _generator(SlowHelpAche()).help_say(
-            HelpSayRequest(
-                intent=HelpSayIntent.DECLINE,
-                details="details",
+        await _generator(SlowHelpAche()).rewrite(
+            RewriteRequest(
+                goal=RewriteGoal.DECLINE,
+                draft="details",
                 rules=(),
                 relationship=RelationshipKind.WORK,
                 deadline_seconds=0.05,
@@ -1543,8 +1536,9 @@ async def test_decode_timeout_maps_unavailable() -> None:
 async def test_network_error_maps_unavailable() -> None:
     ache = _FakeAche(create_error=httpx.ConnectError("boom"))
     with pytest.raises(GenerationUnavailable) as exc_info:
-        await _generator(ache).soften(
-            SoftenRequest(
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="draft",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
@@ -1617,14 +1611,14 @@ async def test_precached_and_cumulative_tokens_on_retry() -> None:
                 raise LengthFinishReasonError(_completion("length", usage=first_usage))
             return _completion(
                 "stop",
-                content=_help_say_payload_no_rules().model_dump_json(),
+                content=_rewrite_payload_no_rules().model_dump_json(),
                 usage=second_usage,
             )
 
-    result = await _generator(LengthThenOkAche()).help_say(
-        HelpSayRequest(
-            intent=HelpSayIntent.DECLINE,
-            details="details",
+    result = await _generator(LengthThenOkAche()).rewrite(
+        RewriteRequest(
+            goal=RewriteGoal.DECLINE,
+            draft="details",
             rules=(),
             relationship=RelationshipKind.FRIEND,
             deadline_seconds=5.0,
@@ -1671,8 +1665,9 @@ async def test_empty_assistant_text_completion_invalid() -> None:
 
     ache = NoTextAche()
     with pytest.raises(InvalidGenerationOutput) as exc_info:
-        await _generator(ache).soften(
-            SoftenRequest(
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="draft",
                 rules=(),
                 relationship=RelationshipKind.OTHER,
@@ -1683,11 +1678,12 @@ async def test_empty_assistant_text_completion_invalid() -> None:
 
 
 @pytest.mark.unit
-async def test_soften_variant_count_invalid() -> None:
-    ache = _FakeAche(create_results=[_soften_payload_no_rules(bad=True)])
+async def test_rewrite_empty_slots_invalid() -> None:
+    ache = _FakeAche(create_results=[_rewrite_payload_no_rules(bad=True)])
     with pytest.raises(InvalidGenerationOutput) as exc_info:
-        await _generator(ache).soften(
-            SoftenRequest(
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="draft",
                 rules=(),
                 relationship=RelationshipKind.FRIEND,
@@ -1725,10 +1721,10 @@ async def test_length_finish_without_typed_completion_usage() -> None:
             raise LengthFinishReasonError(cast(Any, SimpleNamespace()))
 
     with pytest.raises(InvalidGenerationOutput):
-        await _generator(LegacyLengthAche()).help_say(
-            HelpSayRequest(
-                intent=HelpSayIntent.DECLINE,
-                details="details",
+        await _generator(LegacyLengthAche()).rewrite(
+            RewriteRequest(
+                goal=RewriteGoal.DECLINE,
+                draft="details",
                 rules=(),
                 relationship=RelationshipKind.WORK,
                 deadline_seconds=5.0,
@@ -1819,36 +1815,35 @@ async def test_decode_stream_phase_b_timeout_unavailable_combines() -> None:
 
 @pytest.mark.unit
 def test_output_token_caps_cover_validator_maxima() -> None:
-    soften_chars = MAX_VARIANTS * MAX_VARIANT_CHARS
-    soften_json = json.dumps(
+    rewrite_chars = MAX_VARIANTS * MAX_VARIANT_CHARS
+    rewrite_json = json.dumps(
         {
-            "variants": [
-                {"text": "t" * MAX_VARIANT_CHARS, "firmness": "gentle"},
-                {"text": "t" * MAX_VARIANT_CHARS, "firmness": "balanced"},
-                {"text": "t" * MAX_VARIANT_CHARS, "firmness": "firm"},
-            ],
+            "check": "t" * MAX_VARIANT_CHARS,
+            "softer": "t" * MAX_VARIANT_CHARS,
+            "firmer": "t" * MAX_VARIANT_CHARS,
             "applied_rule_indexes": [],
             "safety": "ok",
         },
         ensure_ascii=False,
     )
-    assert chars_to_tokens(soften_json) <= MAX_TOKENS_SOFTEN
-    assert math.ceil(soften_chars / CHARS_PER_TOKEN) + JSON_OVERHEAD_TOKENS == MAX_TOKENS_SOFTEN
+    assert chars_to_tokens(rewrite_json) <= MAX_TOKENS_REWRITE
+    assert math.ceil(rewrite_chars / CHARS_PER_TOKEN) + JSON_OVERHEAD_TOKENS == MAX_TOKENS_REWRITE
 
     analysis = "a" * MAX_ANALYSIS_CHARS
     assert chars_to_tokens(analysis) <= MAX_TOKENS_ANALYSIS
 
     decode_chars = (
-        MAX_VARIANTS * MAX_VARIANT_CHARS + MAX_HYPOTHESES * MAX_VARIANT_CHARS + MAX_VARIANT_CHARS
+        MAX_DECODE_VARIANTS * MAX_VARIANT_CHARS
+        + MAX_HYPOTHESES * MAX_VARIANT_CHARS
+        + MAX_VARIANT_CHARS
     )
     decode_json = json.dumps(
         {
             "hypotheses": ["h" * MAX_VARIANT_CHARS] * MAX_HYPOTHESES,
             "underlying_request": "r" * MAX_VARIANT_CHARS,
             "variants": [
-                {"text": "t" * MAX_VARIANT_CHARS, "firmness": "gentle"},
-                {"text": "t" * MAX_VARIANT_CHARS, "firmness": "balanced"},
-                {"text": "t" * MAX_VARIANT_CHARS, "firmness": "firm"},
+                {"text": "t" * MAX_VARIANT_CHARS, "kind": "softer"},
+                {"text": "t" * MAX_VARIANT_CHARS, "kind": "firmer"},
             ],
             "applied_rule_indexes": [],
             "safety": "ok",
@@ -1862,8 +1857,9 @@ def test_output_token_caps_cover_validator_maxima() -> None:
 @pytest.mark.unit
 async def test_prompt_leak_retries_then_accepts_ordinary_short_overlap() -> None:
     gen = _typed_generator(_FakeAche())
-    prepared = gen.prepare_soften(
-        SoftenRequest(
+    prepared = gen.prepare_rewrite(
+        RewriteRequest(
+            goal=None,
             draft="draft",
             rules=(),
             relationship=RelationshipKind.OTHER,
@@ -1876,33 +1872,34 @@ async def test_prompt_leak_retries_then_accepts_ordinary_short_overlap() -> None
         for index in range(len(normalized) - 39)
         if normalized[index].isalnum() and normalized[index + 39].isalnum()
     )
-    leak = SoftenOutNoRules.model_validate(
+    leak = RewriteOutNoRules.model_validate(
         {
-            "gentle": fragment,
-            "balanced": "variant balanced",
-            "firm": "variant firm",
+            "check": fragment,
+            "softer": "variant softer",
+            "firmer": "variant firmer",
             "safety": "ok",
         }
     )
-    marker = SoftenOutNoRules.model_validate(
+    marker = RewriteOutNoRules.model_validate(
         {
-            "gentle": "see SPBOUND_abc in the instructions",
-            "balanced": "variant balanced",
-            "firm": "variant firm",
+            "check": "see SPBOUND_abc in the instructions",
+            "softer": "variant softer",
+            "firmer": "variant firmer",
             "safety": "ok",
         }
     )
-    ok_retry = SoftenOutNoRules.model_validate(
+    ok_retry = RewriteOutNoRules.model_validate(
         {
-            "gentle": "variant soft",
-            "balanced": "variant balanced",
-            "firm": "variant firm",
+            "check": "variant check",
+            "softer": "variant softer",
+            "firmer": "variant firmer",
             "safety": "ok",
         }
     )
     ache = _FakeAche(create_results=[leak, ok_retry])
-    result = await _generator(ache).soften(
-        SoftenRequest(
+    result = await _generator(ache).rewrite(
+        RewriteRequest(
+            goal=None,
             draft="draft",
             rules=(),
             relationship=RelationshipKind.OTHER,
@@ -1913,8 +1910,9 @@ async def test_prompt_leak_retries_then_accepts_ordinary_short_overlap() -> None
     assert ache.create_calls == 2
     marker_ache = _FakeAche(create_results=[marker, marker])
     with pytest.raises(InvalidGenerationOutput) as exc_info:
-        await _generator(marker_ache).soften(
-            SoftenRequest(
+        await _generator(marker_ache).rewrite(
+            RewriteRequest(
+                goal=None,
                 draft="draft",
                 rules=(),
                 relationship=RelationshipKind.OTHER,

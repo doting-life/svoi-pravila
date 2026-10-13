@@ -189,7 +189,7 @@ class SuggestionItem(BaseModel):
     category: Literal["taboo_topic", "how_to_ask", "apology", "conflict_protocol", "other"]
     text: str
     source: str
-    firmness: Literal["gentle", "balanced", "firm"] | None = None
+    variant_kind: Literal["softer", "firmer"] | None = None
     created_at: datetime
 
 
@@ -222,23 +222,16 @@ class DecodeRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
 
-ComposeIntent = Literal[
-    "soften",
-    "decline",
-    "set_boundary",
-    "admit_fault",
-    "reconnect",
-    "other",
-]
+ComposeGoal = Literal["decline", "set_boundary", "admit_fault", "reconnect"]
 
 
 class ComposeRequest(BaseModel):
-    """POST /compose — draft to soften or help-say (same text bound as inline)."""
+    """POST /compose — draft to rewrite, optional goal (same text bound as inline)."""
 
     model_config = ConfigDict(extra="forbid")
 
     draft: str = Field(min_length=1, max_length=INCOMING_TEXT_MAX_CHARS)
-    intent: ComposeIntent
+    goal: ComposeGoal | None = None
     contact_id: str | None = None
 
 
@@ -246,7 +239,7 @@ class ComposeVariantItem(BaseModel):
     """One compose variant (C1 text; never persisted by the server)."""
 
     text: str = Field(min_length=1, max_length=1000)
-    firmness: Literal["gentle", "balanced", "firm"]
+    kind: Literal["check", "softer", "firmer"]
 
 
 class ComposeAppliedRuleItem(BaseModel):
@@ -268,12 +261,12 @@ class ComposeResponse(BaseModel):
 
 
 class ComposeChoiceRequest(BaseModel):
-    """POST /compose/choice — redeem choice_token + firmness (no scenario, no text)."""
+    """POST /compose/choice — redeem choice_token + kind (no scenario, no text)."""
 
     model_config = ConfigDict(extra="forbid")
 
     token: str = Field(min_length=1, max_length=200)
-    firmness: Literal["gentle", "balanced", "firm"]
+    kind: Literal["check", "softer", "firmer"]
 
 
 class ComposeChoiceResponse(BaseModel):

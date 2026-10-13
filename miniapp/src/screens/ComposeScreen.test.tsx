@@ -70,9 +70,9 @@ const meDone = {
 const okVariants = {
     safety: "ok" as const,
     variants: [
-        { firmness: "gentle" as const, text: "мягкий вариант" },
-        { firmness: "balanced" as const, text: "ровный вариант" },
-        { firmness: "firm" as const, text: "твёрдый вариант" },
+        { kind: "check" as const, text: "исправленный вариант" },
+        { kind: "softer" as const, text: "мягкий вариант" },
+        { kind: "firmer" as const, text: "твёрдый вариант" },
     ],
     applied_rules: [{ index: 0, text: "не перебивать" }],
     choice_token: "c_test_token",
@@ -164,16 +164,16 @@ async function submitDraft(text: string): Promise<void> {
 }
 
 describe("ComposeScreen", () => {
-    it("submits draft with intent and contact, shows editable variants and applied rules", async () => {
+    it("submits draft with goal and contact, shows editable variants and applied rules", async () => {
         const fetchImpl = composeFetch(() => jsonResponse(okVariants));
         await renderCompose(fetchImpl);
         expect(
             await screen.findByText(ru.composeFor.replace("{label}", "Аня")),
         ).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("radio", { name: ru.composeIntents.decline }));
+        fireEvent.click(screen.getByRole("radio", { name: ru.composeGoals.decline }));
         await submitDraft("не могу прийти");
         expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
-        expect(screen.getByDisplayValue("ровный вариант")).toBeInTheDocument();
+        expect(screen.getByDisplayValue("исправленный вариант")).toBeInTheDocument();
         expect(screen.getByDisplayValue("твёрдый вариант")).toBeInTheDocument();
         expect(
             screen.getByText(ru.composeAppliedRule.replace("{text}", "не перебивать")),
@@ -182,7 +182,7 @@ describe("ComposeScreen", () => {
         expect(call).toBeDefined();
         expect(await requestJson(call?.[0] as RequestInfo, call?.[1])).toEqual({
             draft: "не могу прийти",
-            intent: "decline",
+            goal: "decline",
             contact_id: "c1",
         });
         fireEvent.change(screen.getByDisplayValue("мягкий вариант"), {
@@ -194,11 +194,30 @@ describe("ComposeScreen", () => {
         expect(screen.getByRole("textbox")).toHaveValue("");
     });
 
+    it("sends null goal by default and after the chosen goal is cleared", async () => {
+        const fetchImpl = composeFetch(() => jsonResponse(okVariants));
+        await renderCompose(fetchImpl);
+        const decline = await screen.findByRole("radio", { name: ru.composeGoals.decline });
+        expect(decline).not.toBeChecked();
+        fireEvent.click(decline);
+        expect(decline).toBeChecked();
+        fireEvent.click(decline);
+        expect(decline).not.toBeChecked();
+        await submitDraft("не могу прийти");
+        expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
+        const call = fetchImpl.mock.calls.find(([req]) => isComposePost(req));
+        expect(await requestJson(call?.[0] as RequestInfo, call?.[1])).toEqual({
+            draft: "не могу прийти",
+            goal: null,
+            contact_id: "c1",
+        });
+    });
+
     it("allows submit without contact and sends null contact_id", async () => {
         const fetchImpl = composeFetch(() =>
             jsonResponse({
                 safety: "ok",
-                variants: [{ firmness: "gentle", text: "без правил" }],
+                variants: [{ kind: "softer", text: "без правил" }],
                 applied_rules: [],
                 choice_token: "c_none",
             }),
@@ -270,10 +289,10 @@ describe("ComposeScreen", () => {
         await submitDraft("черновик");
         expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
         const cards = screen.getAllByRole("article");
-        const gentle = cards[0];
-        expect(gentle).toBeDefined();
+        const softer = cards[1];
+        expect(softer).toBeDefined();
         fireEvent.click(
-            within(gentle as HTMLElement).getByRole("button", { name: ru.composeCopy }),
+            within(softer as HTMLElement).getByRole("button", { name: ru.composeCopy }),
         );
         await waitFor(() => {
             expect(telegram.copyText).toHaveBeenCalledWith("мягкий вариант");
@@ -299,7 +318,7 @@ describe("ComposeScreen", () => {
         expect(screen.queryByText(ru.composePasteHint)).not.toBeInTheDocument();
     });
 
-    it("copy-and-return records help_say choice then closes", async () => {
+    it("copy-and-return records the firmer choice then closes", async () => {
         const fetchImpl = composeFetch((input) => {
             if (isChoicePost(input)) {
                 return jsonResponse({ outcome: "recorded" });
@@ -307,7 +326,7 @@ describe("ComposeScreen", () => {
             return jsonResponse(okVariants);
         });
         const { telegram } = await renderCompose(fetchImpl);
-        fireEvent.click(screen.getByRole("radio", { name: ru.composeIntents.set_boundary }));
+        fireEvent.click(screen.getByRole("radio", { name: ru.composeGoals.set_boundary }));
         await submitDraft("граница");
         expect(await screen.findByDisplayValue("твёрдый вариант")).toBeInTheDocument();
         const cards = screen.getAllByRole("article");
@@ -324,11 +343,11 @@ describe("ComposeScreen", () => {
         expect(choiceCall).toBeDefined();
         expect(await requestJson(choiceCall?.[0] as RequestInfo, choiceCall?.[1])).toEqual({
             token: "c_test_token",
-            firmness: "firm",
+            kind: "firmer",
         });
     });
 
-    it("copy-and-return sends choice token and firmness then closes", async () => {
+    it("copy-and-return sends choice token and kind then closes", async () => {
         const fetchImpl = composeFetch((input) => {
             if (isChoicePost(input)) {
                 return jsonResponse({ outcome: "recorded" });
@@ -337,12 +356,12 @@ describe("ComposeScreen", () => {
         });
         const { telegram } = await renderCompose(fetchImpl);
         await submitDraft("смягчить это");
-        expect(await screen.findByDisplayValue("ровный вариант")).toBeInTheDocument();
+        expect(await screen.findByDisplayValue("исправленный вариант")).toBeInTheDocument();
         const cards = screen.getAllByRole("article");
-        const balanced = cards[1];
-        expect(balanced).toBeDefined();
+        const check = cards[0];
+        expect(check).toBeDefined();
         fireEvent.click(
-            within(balanced as HTMLElement).getByRole("button", { name: ru.composeCopyAndReturn }),
+            within(check as HTMLElement).getByRole("button", { name: ru.composeCopyAndReturn }),
         );
         await waitFor(() => {
             expect(telegram.close).toHaveBeenCalled();
@@ -350,7 +369,7 @@ describe("ComposeScreen", () => {
         const choiceCall = fetchImpl.mock.calls.find(([req]) => isChoicePost(req));
         expect(await requestJson(choiceCall?.[0] as RequestInfo, choiceCall?.[1])).toEqual({
             token: "c_test_token",
-            firmness: "balanced",
+            kind: "check",
         });
     });
 

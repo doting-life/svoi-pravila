@@ -25,19 +25,17 @@ function sliceCodePoints(text: string, max: number): string {
     return Array.from(text).slice(0, max).join("");
 }
 
-type ComposeIntent = components["schemas"]["ComposeRequest"]["intent"];
-type Firmness = components["schemas"]["ComposeVariantItem"]["firmness"];
+type ComposeGoal = NonNullable<components["schemas"]["ComposeRequest"]["goal"]>;
+type VariantKind = components["schemas"]["ComposeVariantItem"]["kind"];
 
-const INTENT_OPTIONS: readonly { readonly value: ComposeIntent; readonly label: string }[] = [
-    { value: "soften", label: ru.composeIntents.soften },
-    { value: "decline", label: ru.composeIntents.decline },
-    { value: "set_boundary", label: ru.composeIntents.set_boundary },
-    { value: "admit_fault", label: ru.composeIntents.admit_fault },
-    { value: "reconnect", label: ru.composeIntents.reconnect },
-    { value: "other", label: ru.composeIntents.other },
+const GOAL_OPTIONS: readonly { readonly value: ComposeGoal; readonly label: string }[] = [
+    { value: "decline", label: ru.composeGoals.decline },
+    { value: "set_boundary", label: ru.composeGoals.set_boundary },
+    { value: "admit_fault", label: ru.composeGoals.admit_fault },
+    { value: "reconnect", label: ru.composeGoals.reconnect },
 ];
 
-const FIRMNESS_ORDER: readonly Firmness[] = ["gentle", "balanced", "firm"];
+const KIND_ORDER: readonly VariantKind[] = ["check", "softer", "firmer"];
 
 export type ComposePartnerProps =
     | { readonly mode: "fixed" }
@@ -60,7 +58,7 @@ export type ComposeEditorProps = {
 };
 
 type EditableVariant = {
-    readonly firmness: Firmness;
+    readonly kind: VariantKind;
     readonly text: string;
 };
 
@@ -106,12 +104,12 @@ function errorMessageForCode(code: string): string {
 }
 
 function orderedVariants(
-    variants: readonly { readonly firmness: Firmness; readonly text: string }[],
+    variants: readonly { readonly kind: VariantKind; readonly text: string }[],
 ): EditableVariant[] {
-    const byFirmness = new Map(variants.map((item) => [item.firmness, item.text]));
-    return FIRMNESS_ORDER.filter((firmness) => byFirmness.has(firmness)).map((firmness) => ({
-        firmness,
-        text: byFirmness.get(firmness) ?? "",
+    const byKind = new Map(variants.map((item) => [item.kind, item.text]));
+    return KIND_ORDER.filter((kind) => byKind.has(kind)).map((kind) => ({
+        kind,
+        text: byKind.get(kind) ?? "",
     }));
 }
 
@@ -132,7 +130,7 @@ export function ComposeEditor({
     const activeContactId = partner.mode === "selectable" ? partner.activeContactId : null;
     const onActivated = partner.mode === "selectable" ? partner.onActivated : null;
     const showClose = partner.mode === "fixed";
-    const [intent, setIntent] = useState<ComposeIntent>("soften");
+    const [goal, setGoal] = useState<ComposeGoal | null>(null);
     const [contactId, setContactId] = useState<string | null>(initialContactId);
     const [draft, setDraft] = useState(initialDraft);
     const [phase, setPhase] = useState<Phase>({ kind: "idle" });
@@ -207,7 +205,7 @@ export function ComposeEditor({
             await client.POST("/api/v1/compose", {
                 body: {
                     draft: trimmed,
-                    intent,
+                    goal,
                     contact_id: contactId,
                 },
             }),
@@ -255,7 +253,7 @@ export function ComposeEditor({
         });
     };
 
-    const updateVariantText = (firmness: Firmness, text: string) => {
+    const updateVariantText = (kind: VariantKind, text: string) => {
         setPhase((current) => {
             if (current.kind !== "result") {
                 return current;
@@ -263,7 +261,7 @@ export function ComposeEditor({
             return {
                 ...current,
                 variants: current.variants.map((variant) =>
-                    variant.firmness === firmness ? { ...variant, text } : variant,
+                    variant.kind === kind ? { ...variant, text } : variant,
                 ),
             };
         });
@@ -282,11 +280,11 @@ export function ComposeEditor({
         }
     };
 
-    const recordChoiceAndClose = async (firmness: Firmness, choiceToken: string) => {
+    const recordChoiceAndClose = async (kind: VariantKind, choiceToken: string) => {
         setBusyChoice(true);
         const unwrapped = unwrapApiResult(
             await client.POST("/api/v1/compose/choice", {
-                body: { token: choiceToken, firmness },
+                body: { token: choiceToken, kind },
             }),
         );
         setBusyChoice(false);
@@ -296,7 +294,7 @@ export function ComposeEditor({
         telegram.close();
     };
 
-    const copyAndReturn = async (text: string, firmness: Firmness, choiceToken: string) => {
+    const copyAndReturn = async (text: string, kind: VariantKind, choiceToken: string) => {
         if (busyChoice) {
             return;
         }
@@ -305,16 +303,16 @@ export function ComposeEditor({
             return;
         }
         setCopyHint(ru.composePasteHint);
-        await recordChoiceAndClose(firmness, choiceToken);
+        await recordChoiceAndClose(kind, choiceToken);
     };
 
-    const sendAndReturn = async (text: string, firmness: Firmness, choiceToken: string) => {
+    const sendAndReturn = async (text: string, kind: VariantKind, choiceToken: string) => {
         if (busyChoice || partnerUsername == null || displayLabel == null) {
             return;
         }
         telegram.openTelegramLink(partnerSendUrl(partnerUsername, text));
         telegram.hapticNotification("success");
-        await recordChoiceAndClose(firmness, choiceToken);
+        await recordChoiceAndClose(kind, choiceToken);
     };
 
     const reset = () => {
@@ -348,16 +346,16 @@ export function ComposeEditor({
                     </h2>
                     <ul className="rule-list">
                         {phase.variants.map((variant) => (
-                            <li key={variant.firmness}>
+                            <li key={variant.kind}>
                                 <Card as="article" className="variant">
                                     <TextArea
-                                        label={ru.composeFirmness[variant.firmness]}
+                                        label={ru.variantKinds[variant.kind]}
                                         value={variant.text}
                                         maxLength={1000}
                                         rows={4}
                                         large
                                         onChange={(next) => {
-                                            updateVariantText(variant.firmness, next);
+                                            updateVariantText(variant.kind, next);
                                         }}
                                     />
                                     <div className="variant__actions">
@@ -369,7 +367,7 @@ export function ComposeEditor({
                                                 onClick={() => {
                                                     void sendAndReturn(
                                                         variant.text,
-                                                        variant.firmness,
+                                                        variant.kind,
                                                         phase.choiceToken,
                                                     );
                                                 }}
@@ -387,7 +385,7 @@ export function ComposeEditor({
                                             onClick={() => {
                                                 void copyAndReturn(
                                                     variant.text,
-                                                    variant.firmness,
+                                                    variant.kind,
                                                     phase.choiceToken,
                                                 );
                                             }}
@@ -440,10 +438,13 @@ export function ComposeEditor({
             <ScreenHeader title={ru.composeTitle} titleId="compose-title" lead={ru.composeLead} />
 
             <ChipGroup
-                legend={ru.composeIntentLegend}
-                options={INTENT_OPTIONS}
-                value={intent}
-                onChange={setIntent}
+                legend={ru.composeGoalLegend}
+                options={GOAL_OPTIONS}
+                value={goal}
+                onChange={setGoal}
+                onClear={() => {
+                    setGoal(null);
+                }}
             />
 
             {allowContactPicker ? (

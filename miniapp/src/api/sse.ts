@@ -74,7 +74,7 @@ export type DecodeCrisisPayload = {
 export type DecodeCompletedPayload = {
     readonly safety: string;
     readonly variants: readonly {
-        readonly firmness: string;
+        readonly kind: string;
         readonly text: string;
         readonly insert_query: string | null;
     }[];

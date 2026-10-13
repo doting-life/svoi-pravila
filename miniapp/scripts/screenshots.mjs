@@ -106,7 +106,7 @@ const suggestion = {
     category: "apology",
     text: "извиняться спокойно",
     source: "decode",
-    firmness: "soft",
+    variant_kind: "softer",
     created_at: "2026-10-04T12:00:00.000Z",
 };
 
@@ -421,7 +421,7 @@ async function mockApi(page, mode) {
                 headers: { "Cache-Control": "no-store" },
                 body:
                     'event: analysis\ndata: {"chunk":"Собеседник звучит раздражённо, но суть просьбы можно сохранить."}\n\n' +
-                    'event: completed\ndata: {"safety":"ok","variants":[{"firmness":"gentle","text":"Давай спокойно разберём, что важно каждому.","insert_query":"p_demo"},{"firmness":"firm","text":"Мне важно продолжить разговор без повышения тона.","insert_query":null}],"applied_rules":[{"category":"other","text":"не повышать голос","effective_since":"2026-10-03T12:00:00.000Z"}],"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":"tok"}\n\n',
+                    'event: completed\ndata: {"safety":"ok","variants":[{"kind":"softer","text":"Давай спокойно разберём, что важно каждому.","insert_query":"p_demo"},{"kind":"firmer","text":"Мне важно продолжить разговор без повышения тона.","insert_query":null}],"applied_rules":[{"category":"other","text":"не повышать голос","effective_since":"2026-10-03T12:00:00.000Z"}],"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":"tok"}\n\n',
             });
             return;
         }

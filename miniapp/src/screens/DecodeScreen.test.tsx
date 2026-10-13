@@ -92,13 +92,13 @@ function sseResponse(body: string): Response {
 }
 
 function completedSse(options?: {
-    readonly firmness?: string;
+    readonly kind?: string;
     readonly insertQuery?: string | null;
     readonly ruleSourceToken?: string | null;
     readonly appliedRules?: boolean;
     readonly category?: string;
 }): string {
-    const firmness = options?.firmness ?? "gentle";
+    const kind = options?.kind ?? "softer";
     const insertQueryJson =
         options?.insertQuery === undefined ? "null" : JSON.stringify(options.insertQuery);
     const tokenJson =
@@ -112,7 +112,7 @@ function completedSse(options?: {
         : "[]";
     return (
         'event: analysis\ndata: {"chunk":"x"}\n\n' +
-        `event: completed\ndata: {"safety":"ok","variants":[{"firmness":"${firmness}","text":"вариант","insert_query":${insertQueryJson}}],"applied_rules":${rules},"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":${tokenJson}}\n\n`
+        `event: completed\ndata: {"safety":"ok","variants":[{"kind":"${kind}","text":"вариант","insert_query":${insertQueryJson}}],"applied_rules":${rules},"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":${tokenJson}}\n\n`
     );
 }
 
@@ -121,7 +121,7 @@ const okSuggestion = {
     category: "other",
     text: "предложенное",
     source: "decode",
-    firmness: null,
+    variant_kind: null,
     created_at: "2026-01-01T00:00:00Z",
 };
 
@@ -135,7 +135,7 @@ describe("DecodeScreen", () => {
         const sse = [
             'event: analysis\ndata: {"chunk":"часть "}\n\n',
             'event: analysis\ndata: {"chunk":"анализа"}\n\n',
-            'event: completed\ndata: {"safety":"ok","variants":[{"firmness":"gentle","text":"вариант","insert_query":"p_token"}],"applied_rules":[{"category":"other","text":"правило","effective_since":"2026-01-01T00:00:00Z"}],"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":"sn-token"}\n\n',
+            'event: completed\ndata: {"safety":"ok","variants":[{"kind":"softer","text":"вариант","insert_query":"p_token"}],"applied_rules":[{"category":"other","text":"правило","effective_since":"2026-01-01T00:00:00Z"}],"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":"sn-token"}\n\n',
         ].join("");
         const fetchImpl = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
             const url = requestUrl(input);
@@ -261,7 +261,7 @@ describe("DecodeScreen", () => {
             const url = requestUrl(input);
             if (url.includes("/api/v1/decode") && !url.includes("from-decode")) {
                 return Promise.resolve(
-                    sseResponse(completedSse({ firmness: "firm", insertQuery: null })),
+                    sseResponse(completedSse({ kind: "firmer", insertQuery: null })),
                 );
             }
             if (url.includes("/suggestions/from-decode")) {
@@ -380,7 +380,7 @@ describe("DecodeScreen", () => {
             const url = requestUrl(input);
             if (url.includes("/api/v1/decode") && !url.includes("from-decode")) {
                 return Promise.resolve(
-                    sseResponse(completedSse({ firmness: "balanced", insertQuery: null })),
+                    sseResponse(completedSse({ kind: "check", insertQuery: null })),
                 );
             }
             if (url.includes("/suggestions/from-decode")) {
@@ -466,7 +466,7 @@ describe("DecodeScreen", () => {
 
     it("maps suggest non-ok outcomes and accept/dismiss failures", async () => {
         const sse =
-            'event: completed\ndata: {"safety":"ok","variants":[{"firmness":"weird","text":"v","insert_query":""}],"applied_rules":[],"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":"tok"}\n\n';
+            'event: completed\ndata: {"safety":"ok","variants":[{"kind":"weird","text":"v","insert_query":""}],"applied_rules":[],"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":"tok"}\n\n';
         let suggestCalls = 0;
         const fetchImpl = vi.fn((input: RequestInfo | URL) => {
             const url = requestUrl(input);
@@ -559,7 +559,7 @@ describe("DecodeScreen", () => {
             },
         });
         const sse =
-            'event: completed\ndata: {"safety":"ok","variants":[{"firmness":"gentle","text":"вариант","insert_query":null}],"applied_rules":[],"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":null}\n\n';
+            'event: completed\ndata: {"safety":"ok","variants":[{"kind":"softer","text":"вариант","insert_query":null}],"applied_rules":[],"applied_rule_template":"Учтено правило от {date}: «{text}»","rule_source_token":null}\n\n';
         const fetchImpl: typeof fetch = vi.fn(() => Promise.resolve(sseResponse(sse)));
         const { telegram } = renderDecode(fetchImpl);
         fireEvent.change(screen.getByRole("textbox"), { target: { value: "текст" } });

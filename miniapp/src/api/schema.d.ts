@@ -594,14 +594,14 @@ export interface components {
         };
         /**
          * ComposeChoiceRequest
-         * @description POST /compose/choice — redeem choice_token + firmness (no scenario, no text).
+         * @description POST /compose/choice — redeem choice_token + kind (no scenario, no text).
          */
         ComposeChoiceRequest: {
             /**
-             * Firmness
+             * Kind
              * @enum {string}
              */
-            firmness: "gentle" | "balanced" | "firm";
+            kind: "check" | "softer" | "firmer";
             /** Token */
             token: string;
         };
@@ -649,18 +649,15 @@ export interface components {
         };
         /**
          * ComposeRequest
-         * @description POST /compose — draft to soften or help-say (same text bound as inline).
+         * @description POST /compose — draft to rewrite, optional goal (same text bound as inline).
          */
         ComposeRequest: {
             /** Contact Id */
             contact_id?: string | null;
             /** Draft */
             draft: string;
-            /**
-             * Intent
-             * @enum {string}
-             */
-            intent: "soften" | "decline" | "set_boundary" | "admit_fault" | "reconnect" | "other";
+            /** Goal */
+            goal?: ("decline" | "set_boundary" | "admit_fault" | "reconnect") | null;
         };
         /**
          * ComposeResponse
@@ -689,10 +686,10 @@ export interface components {
          */
         ComposeVariantItem: {
             /**
-             * Firmness
+             * Kind
              * @enum {string}
              */
-            firmness: "gentle" | "balanced" | "firm";
+            kind: "check" | "softer" | "firmer";
             /** Text */
             text: string;
         };
@@ -1093,14 +1090,14 @@ export interface components {
              * Format: date-time
              */
             created_at: string;
-            /** Firmness */
-            firmness?: ("gentle" | "balanced" | "firm") | null;
             /** Id */
             id: string;
             /** Source */
             source: string;
             /** Text */
             text: string;
+            /** Variant Kind */
+            variant_kind?: ("softer" | "firmer") | null;
         };
         /**
          * SuggestionListResponse

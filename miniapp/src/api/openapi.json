@@ -88,15 +88,15 @@
       },
       "ComposeChoiceRequest": {
         "additionalProperties": false,
-        "description": "POST /compose/choice — redeem choice_token + firmness (no scenario, no text).",
+        "description": "POST /compose/choice — redeem choice_token + kind (no scenario, no text).",
         "properties": {
-          "firmness": {
+          "kind": {
             "enum": [
-              "gentle",
-              "balanced",
-              "firm"
+              "check",
+              "softer",
+              "firmer"
             ],
-            "title": "Firmness",
+            "title": "Kind",
             "type": "string"
           },
           "token": {
@@ -108,7 +108,7 @@
         },
         "required": [
           "token",
-          "firmness"
+          "kind"
         ],
         "title": "ComposeChoiceRequest",
         "type": "object"
@@ -189,7 +189,7 @@
       },
       "ComposeRequest": {
         "additionalProperties": false,
-        "description": "POST /compose — draft to soften or help-say (same text bound as inline).",
+        "description": "POST /compose — draft to rewrite, optional goal (same text bound as inline).",
         "properties": {
           "contact_id": {
             "anyOf": [
@@ -208,22 +208,26 @@
             "title": "Draft",
             "type": "string"
           },
-          "intent": {
-            "enum": [
-              "soften",
-              "decline",
-              "set_boundary",
-              "admit_fault",
-              "reconnect",
-              "other"
+          "goal": {
+            "anyOf": [
+              {
+                "enum": [
+                  "decline",
+                  "set_boundary",
+                  "admit_fault",
+                  "reconnect"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
             ],
-            "title": "Intent",
-            "type": "string"
+            "title": "Goal"
           }
         },
         "required": [
-          "draft",
-          "intent"
+          "draft"
         ],
         "title": "ComposeRequest",
         "type": "object"
@@ -302,13 +306,13 @@
       "ComposeVariantItem": {
         "description": "One compose variant (C1 text; never persisted by the server).",
         "properties": {
-          "firmness": {
+          "kind": {
             "enum": [
-              "gentle",
-              "balanced",
-              "firm"
+              "check",
+              "softer",
+              "firmer"
             ],
-            "title": "Firmness",
+            "title": "Kind",
             "type": "string"
           },
           "text": {
@@ -320,7 +324,7 @@
         },
         "required": [
           "text",
-          "firmness"
+          "kind"
         ],
         "title": "ComposeVariantItem",
         "type": "object"
@@ -1182,22 +1186,6 @@
             "title": "Created At",
             "type": "string"
           },
-          "firmness": {
-            "anyOf": [
-              {
-                "enum": [
-                  "gentle",
-                  "balanced",
-                  "firm"
-                ],
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Firmness"
-          },
           "id": {
             "title": "Id",
             "type": "string"
@@ -1209,6 +1197,21 @@
           "text": {
             "title": "Text",
             "type": "string"
+          },
+          "variant_kind": {
+            "anyOf": [
+              {
+                "enum": [
+                  "softer",
+                  "firmer"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variant Kind"
           }
         },
         "required": [

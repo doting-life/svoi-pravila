@@ -318,7 +318,6 @@ def _build_miniapp_mount(
                     catalog=ports.catalog,
                     compose_handoffs=wire.decode.compose_handoffs,
                     compose_sessions=wire.decode.compose_sessions,
-                    usernames=AiogramTelegramPublicUsername(wire.bot),
                     rate_limiter=miniapp_rate_limiter,
                     pseudonymizer=ports.pseudonymizer,
                     clock=ports.clock,
@@ -636,7 +635,6 @@ def create_application(settings: Settings) -> FastAPI:
             ),
             welcome_throttle=ValkeyWelcomeThrottle(valkey),
             bot_username=bot_username,
-            clock=clock,
             display_timezone=ZoneInfo(settings.display_timezone),
             deduplicator=ValkeyUpdateDeduplicator(
                 valkey,

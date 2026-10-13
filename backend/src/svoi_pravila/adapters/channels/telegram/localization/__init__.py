@@ -34,9 +34,7 @@ class TelegramStrings:
     inline_button_finish_setup: str
     inline_button_need_support: str
     inline_button_why_no_variants: str
-    inline_button_compose_with_contact: str
-    inline_button_compose_without_contact: str
-    inline_rule_cited_prefix: str
+    inline_button_compose: str
     rate_limited: str
     error_generic: str
     decode_refuse_manipulation: str
@@ -63,9 +61,7 @@ _KEYS: dict[str, str] = {
     "inline.button.finish_setup": "inline_button_finish_setup",
     "inline.button.need_support": "inline_button_need_support",
     "inline.button.why_no_variants": "inline_button_why_no_variants",
-    "inline.button.compose_with_contact": "inline_button_compose_with_contact",
-    "inline.button.compose_without_contact": "inline_button_compose_without_contact",
-    "inline.rule_cited_prefix": "inline_rule_cited_prefix",
+    "inline.button.compose": "inline_button_compose",
     "rate_limited": "rate_limited",
     "error.generic": "error_generic",
     "decode.refuse_manipulation": "decode_refuse_manipulation",

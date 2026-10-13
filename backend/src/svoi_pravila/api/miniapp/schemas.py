@@ -282,14 +282,6 @@ class ComposeChoiceResponse(BaseModel):
     outcome: Literal["recorded"]
 
 
-class ComposeInlinePartner(BaseModel):
-    """Partner bound into an inline compose session (label is C2; never logged)."""
-
-    contact_id: str = Field(min_length=1)
-    label: str = Field(min_length=1)
-    username: str | None = None
-
-
 class ComposeInlineSession(BaseModel):
     """Reusable compose session token and absolute expiry."""
 
@@ -304,10 +296,9 @@ class ComposeInlineLimits(BaseModel):
 
 
 class ComposeInlineContextResponse(BaseModel):
-    """POST /compose/handoff/redeem — draft, partner, limits, and compose session."""
+    """POST /compose/handoff/redeem — draft, limits, and compose session."""
 
     draft: str
-    partner: ComposeInlinePartner | None
     limits: ComposeInlineLimits
     session: ComposeInlineSession
 

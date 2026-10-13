@@ -488,7 +488,6 @@ async def test_inline_compose_crisis_screen_skips_quota_and_generator(world: App
     )
     assert result.safety is SafetyVerdict.CRISIS
     assert result.reuse is None
-    assert result.applied_rules == ()
     assert result.variants == ()
     assert result.scenario is UsageScenario.SOFTEN
     assert generator.soften_calls == []
@@ -577,9 +576,8 @@ async def test_inline_threat_and_hyperbole_still_calls_generator(
     assert sink.events[0].outcome is not UsageOutcome.SCREENED
 
 
-@pytest.mark.unit
-async def test_inline_compose_maps_applied_rule_indexes(world: AppWorld) -> None:
-    user = await world.ensure_granted_user(130)
+async def _user_with_active_contact_and_rule(world: AppWorld, telegram_id: int) -> None:
+    user = await world.ensure_granted_user(telegram_id)
     contact = (
         await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
             CreateContactCommand(user.id, ContactLabel("Sam"), RelationshipKind.FRIEND)
@@ -596,10 +594,18 @@ async def test_inline_compose_maps_applied_rule_indexes(world: AppWorld) -> None
             shared=False,
         )
     )
+    await SetActiveContact(world.uow_factory, world.catalog).execute(
+        SetActiveContactCommand(user.id, contact.id)
+    )
+
+
+@pytest.mark.unit
+async def test_inline_compose_ignores_active_contact_and_rules_soften(world: AppWorld) -> None:
+    await _user_with_active_contact_and_rule(world, 130)
     generator = FakeTextGenerator(
         soften_result=SoftenResult(
             variants=(Variant(text="a", firmness=Firmness.GENTLE),),
-            applied_rule_indexes=(0, 4),
+            applied_rule_indexes=(0,),
             safety=SafetyVerdict.OK,
             meta=GenerationMeta(
                 model="fake",
@@ -611,10 +617,25 @@ async def test_inline_compose_maps_applied_rule_indexes(world: AppWorld) -> None
         )
     )
     use_case, sink, _reuse = _ports(world, _Fakes(generator=generator))
-    result = await use_case.execute(InlineComposeCommand(TelegramUserId(130), "long enough"))
-    assert tuple(view.text for view in result.applied_rules) == ("не повышать голос",)
+    await use_case.execute(InlineComposeCommand(TelegramUserId(130), "long enough"))
+    request = generator.soften_calls[0]
+    assert request.relationship is RelationshipKind.OTHER
+    assert request.rules == ()
     assert isinstance(sink, RecordingUsageEventSink)
     assert "не повышать голос" not in str(sink.events[0])
+
+
+@pytest.mark.unit
+async def test_inline_compose_ignores_active_contact_and_rules_help_say(
+    world: AppWorld,
+) -> None:
+    await _user_with_active_contact_and_rule(world, 131)
+    generator = FakeTextGenerator()
+    use_case, _sink, _reuse = _ports(world, _Fakes(generator=generator))
+    await use_case.execute(InlineComposeCommand(TelegramUserId(131), "помоги: long enough"))
+    request = generator.help_say_calls[0]
+    assert request.relationship is RelationshipKind.OTHER
+    assert request.rules == ()
 
 
 @pytest.mark.unit
@@ -665,21 +686,17 @@ async def test_inline_compose_reuse_join_one_generator_call(world: AppWorld) -> 
 
 
 @pytest.mark.unit
-async def test_inline_compose_reuse_miss_on_context_changes(world: AppWorld) -> None:
+async def test_inline_compose_reuse_key_ignores_contact_state(world: AppWorld) -> None:
     user = await world.ensure_granted_user(140)
     generator = FakeTextGenerator()
     reuse = make_inline_reuse(world.clock)
     use_case, sink, _ = _ports(world, _Fakes(generator=generator, reuse=reuse))
-    await use_case.execute(InlineComposeCommand(TelegramUserId(140), "long enough draft"))
+    first = await use_case.execute(InlineComposeCommand(TelegramUserId(140), "long enough draft"))
     contact = (
         await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
             CreateContactCommand(user.id, ContactLabel("Pat"), RelationshipKind.PARTNER)
         )
     ).contact
-    after_contact = await use_case.execute(
-        InlineComposeCommand(TelegramUserId(140), "long enough draft")
-    )
-    assert after_contact.reuse is InlineReuseStatus.MISS
     await ProposeRule(
         world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
     ).execute(
@@ -691,22 +708,14 @@ async def test_inline_compose_reuse_miss_on_context_changes(world: AppWorld) -> 
             shared=False,
         )
     )
-    after_rule = await use_case.execute(
-        InlineComposeCommand(TelegramUserId(140), "long enough draft")
-    )
-    assert after_rule.reuse is InlineReuseStatus.MISS
-    friend = (
-        await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
-            CreateContactCommand(user.id, ContactLabel("Sam"), RelationshipKind.FRIEND)
-        )
-    ).contact
     await SetActiveContact(world.uow_factory, world.catalog).execute(
-        SetActiveContactCommand(user.id, friend.id)
+        SetActiveContactCommand(user.id, contact.id)
     )
-    after_relationship = await use_case.execute(
+    after_contact = await use_case.execute(
         InlineComposeCommand(TelegramUserId(140), "long enough draft")
     )
-    assert after_relationship.reuse is InlineReuseStatus.MISS
+    assert first.reuse is InlineReuseStatus.MISS
+    assert after_contact.reuse is InlineReuseStatus.HIT
     help_say = await use_case.execute(
         InlineComposeCommand(TelegramUserId(140), "помоги: long enough draft")
     )
@@ -716,7 +725,7 @@ async def test_inline_compose_reuse_miss_on_context_changes(world: AppWorld) -> 
         InlineComposeCommand(TelegramUserId(140), "откажи: long enough draft")
     )
     assert decline.reuse is InlineReuseStatus.MISS
-    assert generator.call_count == 6
+    assert generator.call_count == 3
     assert isinstance(sink, RecordingUsageEventSink)
 
 
@@ -900,7 +909,6 @@ async def test_compose_generation_execute_crisis_before_quota(world: AppWorld) -
     )
     assert result.safety is SafetyVerdict.CRISIS
     assert result.variants == ()
-    assert result.applied_rules == ()
     assert generator.soften_calls == []
     assert quota_gate.reserve_count() == 0
     assert isinstance(sink, RecordingUsageEventSink)

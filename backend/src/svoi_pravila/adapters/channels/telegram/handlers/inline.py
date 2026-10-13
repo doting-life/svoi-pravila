@@ -20,7 +20,6 @@ from aiogram.types import (
     WebAppInfo,
 )
 
-from svoi_pravila.adapters.channels.telegram.dates import format_display_date
 from svoi_pravila.adapters.channels.telegram.deps import TelegramDeps
 from svoi_pravila.adapters.channels.telegram.localization import firmness_label
 from svoi_pravila.application.errors import (
@@ -39,7 +38,7 @@ from svoi_pravila.application.errors import (
 )
 from svoi_pravila.application.inline_result_ref import encode_inline_result_ref
 from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
-from svoi_pravila.application.ports.generation import AppliedRuleView, SafetyVerdict, Variant
+from svoi_pravila.application.ports.generation import SafetyVerdict, Variant
 from svoi_pravila.application.ports.monotonic import MonotonicClock
 from svoi_pravila.application.prepared_ref import is_prepared_ref
 from svoi_pravila.application.use_cases.inline_compose import (
@@ -55,7 +54,6 @@ from svoi_pravila.limits.catalog import format_reset_hhmm
 
 _PREVIEW_MAX = 256
 _INLINE_TITLE_MAX = 64
-_BUTTON_TEXT_MAX = 64
 _LIMIT_CACHE_SECONDS = 10
 _PREPARED_PURPOSE = "prepared"
 
@@ -231,7 +229,6 @@ async def _answer_compose_result(
     result: InlineComposeResult,
 ) -> None:
     reuse = _reuse_label(result.reuse)
-    applied_count = len(result.applied_rules)
     if result.safety is SafetyVerdict.CRISIS:
         telegram_ok = await _answer_empty(
             query,
@@ -261,7 +258,6 @@ async def _answer_compose_result(
             tg_deps,
             result.scenario,
             result.variants,
-            applied_rules=result.applied_rules,
         )
         button = await _compose_handoff_button(query, tg_deps)
         if not articles:
@@ -295,8 +291,8 @@ async def _answer_compose_result(
             scenario=result.scenario,
             outcome=outcome,
             reuse=reuse,
-            rule_count=result.rule_count,
-            applied_count=applied_count,
+            rule_count=0,
+            applied_count=0,
         )
     )
 
@@ -360,26 +356,16 @@ def _articles(
     tg_deps: TelegramDeps,
     scenario: UsageScenario,
     variants: tuple[Variant, ...],
-    applied_rules: tuple[AppliedRuleView, ...] = (),
 ) -> list[InlineQueryResultUnion]:
     articles: list[InlineQueryResultUnion] = []
-    prefix = ""
-    if applied_rules:
-        date = format_display_date(
-            applied_rules[0].effective_since,
-            tg_deps.clock.now(),
-            tg_deps.display_timezone,
-        )
-        prefix = tg_deps.strings.inline_rule_cited_prefix.format(date=date)
     for variant in variants:
         if not variant.text:
             continue
-        description = variant.text if not prefix else f"{prefix} {variant.text}"
         articles.append(
             InlineQueryResultArticle(
                 id=encode_inline_result_ref(scenario, variant.firmness),
                 title=firmness_label(tg_deps.strings, variant.firmness),
-                description=_preview(description),
+                description=_preview(variant.text),
                 input_message_content=InputTextMessageContent(
                     message_text=variant.text,
                     parse_mode=None,
@@ -472,29 +458,13 @@ async def _compose_handoff_button(
     query: InlineQuery,
     tg_deps: TelegramDeps,
 ) -> InlineQueryResultsButton:
-    """Issue a one-time handoff and build the web_app results button (label not logged)."""
+    """Issue a one-time handoff and build the web_app results button (never a contact)."""
     issued = await tg_deps.issue_compose_handoff.execute(
         IssueComposeHandoffCommand(TelegramUserId(query.from_user.id), query.query)
     )
-    if issued.contact_label is not None:
-        text = _button_text_with_label(
-            tg_deps.strings.inline_button_compose_with_contact,
-            issued.contact_label,
-        )
-    else:
-        text = tg_deps.strings.inline_button_compose_without_contact[:_BUTTON_TEXT_MAX]
+    text = tg_deps.strings.inline_button_compose
     url = _compose_handoff_url(tg_deps.miniapp_url, issued.token)
     return _web_app_results_button(url, text)
-
-
-def _button_text_with_label(template: str, label: str) -> str:
-    """Format and clamp button text to Telegram's 64-char limit without logging label."""
-    text = template.format(label=label)
-    if len(text) <= _BUTTON_TEXT_MAX:
-        return text
-    overhead = len(template.format(label=""))
-    max_label = max(1, _BUTTON_TEXT_MAX - overhead)
-    return template.format(label=label[:max_label])[:_BUTTON_TEXT_MAX]
 
 
 def _compose_handoff_url(miniapp_url: str, token: str) -> str:

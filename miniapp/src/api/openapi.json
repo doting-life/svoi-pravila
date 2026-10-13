@@ -129,7 +129,7 @@
         "type": "object"
       },
       "ComposeInlineContextResponse": {
-        "description": "POST /compose/handoff/redeem — draft, partner, limits, and compose session.",
+        "description": "POST /compose/handoff/redeem — draft, limits, and compose session.",
         "properties": {
           "draft": {
             "title": "Draft",
@@ -138,23 +138,12 @@
           "limits": {
             "$ref": "#/components/schemas/ComposeInlineLimits"
           },
-          "partner": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ComposeInlinePartner"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "session": {
             "$ref": "#/components/schemas/ComposeInlineSession"
           }
         },
         "required": [
           "draft",
-          "partner",
           "limits",
           "session"
         ],
@@ -174,38 +163,6 @@
           "incoming_text_max_chars"
         ],
         "title": "ComposeInlineLimits",
-        "type": "object"
-      },
-      "ComposeInlinePartner": {
-        "description": "Partner bound into an inline compose session (label is C2; never logged).",
-        "properties": {
-          "contact_id": {
-            "minLength": 1,
-            "title": "Contact Id",
-            "type": "string"
-          },
-          "label": {
-            "minLength": 1,
-            "title": "Label",
-            "type": "string"
-          },
-          "username": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Username"
-          }
-        },
-        "required": [
-          "contact_id",
-          "label"
-        ],
-        "title": "ComposeInlinePartner",
         "type": "object"
       },
       "ComposeInlineSession": {

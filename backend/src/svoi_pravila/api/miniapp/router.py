@@ -30,7 +30,6 @@ from svoi_pravila.api.miniapp.schemas import (
     ComposeChoiceResponse,
     ComposeInlineContextResponse,
     ComposeInlineLimits,
-    ComposeInlinePartner,
     ComposeInlineSession,
     ComposeRequest,
     ComposeResponse,
@@ -432,7 +431,9 @@ def _register_compose(
             analytics = bindings.pseudonymizer.pseudonymize(
                 "analytics", str(actor.telegram_user_id.value)
             )
-            choice_token = await bindings.compose_choice_tokens.issue(analytics, result.scenario)
+            choice_token = await bindings.compose_choice_tokens.issue(
+                analytics, result.scenario, contact_id
+            )
         payload: dict[str, Any] = {
             "safety": result.safety.value,
             "variants": [
@@ -465,13 +466,14 @@ def _register_compose(
             "analytics", str(actor.telegram_user_id.value)
         )
         try:
-            scenario = await bindings.compose_choice_tokens.redeem_once(analytics, body.token)
+            binding = await bindings.compose_choice_tokens.redeem_once(analytics, body.token)
             await bindings.record_choice.execute(
                 RecordInlineChoiceCommand(
                     telegram_user_id=actor.telegram_user_id,
-                    scenario=scenario,
+                    scenario=binding.scenario,
                     firmness=Firmness(body.firmness),
                     surface=UsageSurface.MINIAPP,
+                    contact_id=binding.contact_id,
                 )
             )
         except (ComposeChoiceTokenInvalid, InvalidInlineResultRef) as exc:
@@ -507,16 +509,8 @@ async def _redeem_inline_context(
     except RateLimited as exc:
         raise MiniappHttpError(MiniappErrorCode.RATE_LIMITED, 429) from exc
     logger.info("compose_handoff_redeemed")
-    partner = None
-    if result.partner is not None:
-        partner = ComposeInlinePartner(
-            contact_id=str(result.partner.contact_id),
-            label=result.partner.label,
-            username=result.partner.username,
-        )
     return ComposeInlineContextResponse(
         draft=result.draft,
-        partner=partner,
         limits=ComposeInlineLimits(incoming_text_max_chars=INCOMING_TEXT_MAX_CHARS),
         session=ComposeInlineSession(
             token=result.session_token,

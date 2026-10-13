@@ -618,13 +618,12 @@ export interface components {
         };
         /**
          * ComposeInlineContextResponse
-         * @description POST /compose/handoff/redeem — draft, partner, limits, and compose session.
+         * @description POST /compose/handoff/redeem — draft, limits, and compose session.
          */
         ComposeInlineContextResponse: {
             /** Draft */
             draft: string;
             limits: components["schemas"]["ComposeInlineLimits"];
-            partner: components["schemas"]["ComposeInlinePartner"] | null;
             session: components["schemas"]["ComposeInlineSession"];
         };
         /**
@@ -634,18 +633,6 @@ export interface components {
         ComposeInlineLimits: {
             /** Incoming Text Max Chars */
             incoming_text_max_chars: number;
-        };
-        /**
-         * ComposeInlinePartner
-         * @description Partner bound into an inline compose session (label is C2; never logged).
-         */
-        ComposeInlinePartner: {
-            /** Contact Id */
-            contact_id: string;
-            /** Label */
-            label: string;
-            /** Username */
-            username?: string | null;
         };
         /**
          * ComposeInlineSession

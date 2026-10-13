@@ -39,14 +39,8 @@ const INTENT_OPTIONS: readonly { readonly value: ComposeIntent; readonly label: 
 
 const FIRMNESS_ORDER: readonly Firmness[] = ["gentle", "balanced", "firm"];
 
-export type FixedPartner = {
-    readonly contactId: string;
-    readonly label: string;
-    readonly username: string | null;
-};
-
 export type ComposePartnerProps =
-    | { readonly mode: "fixed"; readonly partner: FixedPartner | null }
+    | { readonly mode: "fixed" }
     | {
           readonly mode: "selectable";
           readonly contacts: ReturnType<typeof useContacts>;
@@ -134,15 +128,12 @@ export function ComposeEditor({
 }: ComposeEditorProps) {
     const client = useApiClient();
     const allowContactPicker = partner.mode === "selectable";
-    const fixedPartner = partner.mode === "fixed" ? partner.partner : null;
     const contacts = partner.mode === "selectable" ? partner.contacts : null;
     const activeContactId = partner.mode === "selectable" ? partner.activeContactId : null;
     const onActivated = partner.mode === "selectable" ? partner.onActivated : null;
     const showClose = partner.mode === "fixed";
     const [intent, setIntent] = useState<ComposeIntent>("soften");
-    const [contactId, setContactId] = useState<string | null>(
-        fixedPartner?.contactId ?? initialContactId,
-    );
+    const [contactId, setContactId] = useState<string | null>(initialContactId);
     const [draft, setDraft] = useState(initialDraft);
     const [phase, setPhase] = useState<Phase>({ kind: "idle" });
     const [pasteHint, setPasteHint] = useState<string | null>(null);
@@ -151,21 +142,11 @@ export function ComposeEditor({
     const [busyChoice, setBusyChoice] = useState(false);
     const contactList = contacts !== null && contacts.status === "success" ? contacts.data : [];
     const selected = contactList.find((contact) => contact.id === contactId);
-    const displayLabel =
-        partner.mode === "fixed"
-            ? (fixedPartner?.label ?? null)
-            : selected !== undefined
-              ? selected.label
-              : null;
-    const pairedContactId =
-        partner.mode === "fixed"
-            ? (fixedPartner?.contactId ?? null)
-            : selected != null && selected.paired
-              ? selected.id
-              : null;
+    const displayLabel = selected !== undefined ? selected.label : null;
+    const pairedContactId = selected != null && selected.paired ? selected.id : null;
     const partnerUsernameResource = useAsyncResource(
         async () => {
-            if (partner.mode === "fixed" || pairedContactId == null) {
+            if (pairedContactId == null) {
                 return { data: { username: null as string | null } };
             }
             return unwrapApiResult(
@@ -174,20 +155,12 @@ export function ComposeEditor({
                 }),
             );
         },
-        partner.mode === "fixed"
-            ? `partner:fixed:${fixedPartner?.contactId ?? "none"}`
-            : pairedContactId == null
-              ? "partner:none"
-              : `partner:${pairedContactId}`,
+        pairedContactId == null ? "partner:none" : `partner:${pairedContactId}`,
     );
     const partnerUsername =
-        partner.mode === "fixed"
-            ? (fixedPartner?.username ?? null)
-            : pairedContactId == null
-              ? null
-              : partnerUsernameResource.status === "success"
-                ? (partnerUsernameResource.data.username ?? null)
-                : null;
+        pairedContactId != null && partnerUsernameResource.status === "success"
+            ? (partnerUsernameResource.data.username ?? null)
+            : null;
 
     const pasteFromClipboard = async () => {
         setPasteHint(null);

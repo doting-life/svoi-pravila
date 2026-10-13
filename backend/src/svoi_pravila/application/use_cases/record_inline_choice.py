@@ -1,4 +1,4 @@
-"""Record D-9 choice events and append tone signals (D-6)."""
+"""Record D-9 choice events and append tone signals for explicit contacts (D-6)."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ from svoi_pravila.domain.enums import (
     UsageScenario,
     UsageSurface,
 )
-from svoi_pravila.domain.ids import RuleSuggestionId, TelegramUserId, UsageEventId
+from svoi_pravila.domain.ids import ContactId, RuleSuggestionId, TelegramUserId, UsageEventId
 from svoi_pravila.domain.rule_suggestion import RuleSuggestion, dominant_firmness
 from svoi_pravila.domain.usage import UsageEvent
 
@@ -42,6 +42,7 @@ class ToneSignalOutcome(StrEnum):
 
     RECORDED = "recorded"
     SUGGESTION_CREATED = "suggestion_created"
+    SKIPPED_INLINE = "skipped_inline"
     SKIPPED_NO_CONTACT = "skipped_no_contact"
     SKIPPED_NO_ACCESS = "skipped_no_access"
     SKIPPED_CONFLICT = "skipped_conflict"
@@ -52,7 +53,8 @@ class RecordInlineChoiceCommand:
     """Input for RecordInlineChoice. Never includes query text.
 
     Provide either ``result_ref`` (Telegram inline) or both ``scenario`` and
-    ``firmness`` (mini-app compose). ``surface`` defaults to inline.
+    ``firmness`` (mini-app compose). ``surface`` defaults to inline. ``contact_id`` is
+    the contact bound in the redeemed compose choice token (mini-app only).
     """
 
     telegram_user_id: TelegramUserId
@@ -60,6 +62,7 @@ class RecordInlineChoiceCommand:
     scenario: UsageScenario | None = None
     firmness: Firmness | None = None
     surface: UsageSurface = UsageSurface.INLINE
+    contact_id: ContactId | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +89,8 @@ class RecordInlineChoicePorts:
 class RecordInlineChoice:
     """Persist a C0 ``result_chosen`` event and optionally create a tone suggestion.
 
-    The firmness is attributed to the user's **active contact at choice time**.
+    Inline choices never produce a tone signal. A mini-app choice attributes the firmness
+    to the contact the user explicitly chose for that generation (bound in the token).
     Usage-event recording (txn 1 via ``UsageEventSink``) and the tone-signal path
     (txn 2 via its own unit of work) are independent: failure of either does not
     roll back the other. Unexpected signal-path errors propagate after the usage
@@ -127,8 +131,18 @@ class RecordInlineChoice:
         with contextlib.suppress(UsageEventWriteFailed):
             await self._ports.sink.record(event)
 
+        if command.surface is UsageSurface.INLINE:
+            return RecordInlineChoiceResult(
+                tone_outcome=ToneSignalOutcome.SKIPPED_INLINE,
+                suggestion_id=None,
+            )
+        if command.contact_id is None:
+            return RecordInlineChoiceResult(
+                tone_outcome=ToneSignalOutcome.SKIPPED_NO_CONTACT,
+                suggestion_id=None,
+            )
         try:
-            return await self._append_tone_signal(command, firmness)
+            return await self._append_tone_signal(command.contact_id, command, firmness)
         except ConflictError:
             return RecordInlineChoiceResult(
                 tone_outcome=ToneSignalOutcome.SKIPPED_CONFLICT,
@@ -137,12 +151,13 @@ class RecordInlineChoice:
 
     async def _append_tone_signal(
         self,
+        contact_id: ContactId,
         command: RecordInlineChoiceCommand,
         firmness: Firmness,
     ) -> RecordInlineChoiceResult:
         async with self._ports.uow_factory() as uow:
             user = await uow.users.get_by_telegram_id(command.telegram_user_id)
-            if user is None or user.active_contact_id is None:
+            if user is None:
                 return RecordInlineChoiceResult(
                     tone_outcome=ToneSignalOutcome.SKIPPED_NO_CONTACT,
                     suggestion_id=None,
@@ -154,7 +169,6 @@ class RecordInlineChoice:
                     tone_outcome=ToneSignalOutcome.SKIPPED_NO_ACCESS,
                     suggestion_id=None,
                 )
-            contact_id = user.active_contact_id
             contact = await uow.contacts.get(contact_id)
             if contact is None or contact.owner_id != user.id:
                 return RecordInlineChoiceResult(

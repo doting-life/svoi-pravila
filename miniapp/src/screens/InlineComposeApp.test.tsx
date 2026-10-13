@@ -14,11 +14,6 @@ const sessionToken = "cs_" + "b".repeat(64);
 function redeemOk(overrides: Record<string, unknown> = {}) {
     return {
         draft: "черновик из inline",
-        partner: {
-            contact_id: "c1",
-            label: "Аня",
-            username: "anya",
-        },
         limits: { incoming_text_max_chars: 4000 },
         session: { token: sessionToken, expires_at: "2026-06-01T12:15:00Z" },
         ...overrides,
@@ -106,51 +101,16 @@ describe("InlineComposeApp", () => {
         expect(redeemCalls).toHaveLength(1);
     });
 
-    it("opens partner send when username is present", async () => {
-        const fetchImpl = fetchRouter((request) => {
+    it("generates without a contact and offers no partner send", async () => {
+        const captured: { body?: Record<string, unknown> } = {};
+        const fetchImpl = fetchRouter(async (request) => {
             const url = new URL(request.url);
             if (url.pathname.endsWith("/handoff/redeem")) {
                 return jsonResponse(redeemOk());
             }
             if (url.pathname.endsWith("/compose") && request.method === "POST") {
+                captured.body = (await request.json()) as Record<string, unknown>;
                 return jsonResponse(composeOk());
-            }
-            if (url.pathname.endsWith("/compose/choice")) {
-                return jsonResponse({ outcome: "recorded" });
-            }
-            return jsonResponse({ code: "not_found", message: "x" }, 404);
-        });
-        const telegram = inlineTelegram();
-        render(<InlineComposeApp telegram={telegram} handoffToken="h" fetchImpl={fetchImpl} />);
-        await screen.findByDisplayValue("черновик из inline");
-        fireEvent.click(screen.getByRole("button", { name: ru.composeSubmit }));
-        await screen.findByDisplayValue("мягкий");
-        const sendButtons = screen.getAllByRole("button", {
-            name: ru.composeSend.replace("{label}", "Аня"),
-        });
-        const firstSend = sendButtons[0];
-        expect(firstSend).toBeDefined();
-        if (firstSend === undefined) {
-            throw new Error("missing send button");
-        }
-        fireEvent.click(firstSend);
-        await waitFor(() => {
-            expect(telegram.openTelegramLink).toHaveBeenCalled();
-            expect(telegram.close).toHaveBeenCalled();
-        });
-    });
-
-    it("hides partner send when partner is null", async () => {
-        const fetchImpl = fetchRouter((request) => {
-            const url = new URL(request.url);
-            if (url.pathname.endsWith("/handoff/redeem")) {
-                return jsonResponse(redeemOk({ partner: null }));
-            }
-            if (url.pathname.endsWith("/compose") && request.method === "POST") {
-                return jsonResponse(composeOk());
-            }
-            if (url.pathname.endsWith("/compose/choice")) {
-                return jsonResponse({ outcome: "recorded" });
             }
             return jsonResponse({ code: "not_found", message: "x" }, 404);
         });
@@ -160,6 +120,8 @@ describe("InlineComposeApp", () => {
         await screen.findByDisplayValue("черновик из inline");
         fireEvent.click(screen.getByRole("button", { name: ru.composeSubmit }));
         await screen.findByDisplayValue("мягкий");
+        expect(captured.body).toBeDefined();
+        expect(captured.body?.["contact_id"] ?? null).toBeNull();
         expect(
             screen.queryByRole("button", { name: ru.composeSend.replace("{label}", "Аня") }),
         ).not.toBeInTheDocument();
@@ -320,7 +282,7 @@ describe("InlineComposeApp", () => {
         const fetchImpl = fetchRouter((request) => {
             const url = new URL(request.url);
             if (url.pathname.endsWith("/handoff/redeem")) {
-                return jsonResponse(redeemOk({ partner: null }));
+                return jsonResponse(redeemOk());
             }
             return jsonResponse({ code: "not_found", message: "x" }, 404);
         });
@@ -361,7 +323,7 @@ describe("InlineComposeApp", () => {
             const url = new URL(request.url);
             if (url.pathname.endsWith("/handoff/redeem")) {
                 redeemCount += 1;
-                return jsonResponse(redeemOk({ partner: null }));
+                return jsonResponse(redeemOk());
             }
             return jsonResponse({ code: "not_found", message: "x" }, 404);
         });
@@ -371,7 +333,7 @@ describe("InlineComposeApp", () => {
         );
         await screen.findByDisplayValue("черновик из inline");
         expect(redeemCount).toBe(1);
-        const other = fetchRouter(() => jsonResponse(redeemOk({ partner: null })));
+        const other = fetchRouter(() => jsonResponse(redeemOk()));
         rerender(<InlineComposeApp telegram={telegram} handoffToken="h" fetchImpl={other} />);
         await waitFor(() => {
             expect(redeemCount).toBe(1);
@@ -382,14 +344,7 @@ describe("InlineComposeApp", () => {
         const fetchMock = fetchRouter((request) => {
             const url = new URL(request.url);
             if (url.pathname.endsWith("/handoff/redeem")) {
-                return jsonResponse(
-                    redeemOk({
-                        partner: {
-                            contact_id: "c1",
-                            label: "Аня",
-                        },
-                    }),
-                );
+                return jsonResponse(redeemOk());
             }
             return jsonResponse({ code: "not_found", message: "x" }, 404);
         });

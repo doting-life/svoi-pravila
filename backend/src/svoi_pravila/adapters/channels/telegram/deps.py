@@ -8,7 +8,6 @@ from zoneinfo import ZoneInfo
 from svoi_pravila.adapters.channels.telegram.bot_username import BotUsernameCache
 from svoi_pravila.adapters.channels.telegram.inline_scheduler import InlineQueryCoordinator
 from svoi_pravila.adapters.channels.telegram.localization import TelegramStrings
-from svoi_pravila.application.ports.clock import Clock
 from svoi_pravila.application.ports.monotonic import MonotonicClock
 from svoi_pravila.application.ports.prepared_results import PreparedResults
 from svoi_pravila.application.ports.pseudonymizer import Pseudonymizer
@@ -34,7 +33,6 @@ class TelegramDeps:
     inline_queries: InlineQueryCoordinator
     welcome_throttle: WelcomeThrottle
     bot_username: BotUsernameCache
-    clock: Clock
     display_timezone: ZoneInfo
     deduplicator: UpdateDeduplicator
     rate_limiter: RateLimiter

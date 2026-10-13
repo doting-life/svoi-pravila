@@ -10,7 +10,7 @@ import { Skeleton } from "../components/Skeleton";
 import { ru } from "../localization/ru";
 import type { LimitKind } from "../navigation/stack";
 import type { TelegramAdapter } from "../telegram/webapp";
-import { ComposeEditor, type FixedPartner } from "./ComposeScreen";
+import { ComposeEditor } from "./ComposeScreen";
 import { CrisisScreen } from "./CrisisScreen";
 import { LimitScreen } from "./LimitScreen";
 
@@ -50,17 +50,6 @@ function messageForRedeemError(code: string | undefined): string {
 
 function sliceCodePoints(text: string, max: number): string {
     return Array.from(text).slice(0, max).join("");
-}
-
-function fixedPartnerFromContext(context: ComposeInlineContext): FixedPartner | null {
-    if (context.partner == null) {
-        return null;
-    }
-    return {
-        contactId: context.partner.contact_id,
-        label: context.partner.label,
-        username: context.partner.username ?? null,
-    };
 }
 
 export function InlineComposeApp({ telegram, handoffToken, fetchImpl }: InlineComposeAppProps) {
@@ -166,7 +155,6 @@ export function InlineComposeApp({ telegram, handoffToken, fetchImpl }: InlineCo
 
     const context = phase.context;
     const draftMax = context.limits.incoming_text_max_chars;
-    const fixedPartner = fixedPartnerFromContext(context);
 
     return (
         <ApiProvider
@@ -178,8 +166,8 @@ export function InlineComposeApp({ telegram, handoffToken, fetchImpl }: InlineCo
                     telegram={telegram}
                     draftMax={draftMax}
                     initialDraft={sliceCodePoints(context.draft, draftMax)}
-                    initialContactId={fixedPartner?.contactId ?? null}
-                    partner={{ mode: "fixed", partner: fixedPartner }}
+                    initialContactId={null}
+                    partner={{ mode: "fixed" }}
                     onLimit={(kind, message) => {
                         setPhase({ kind: "limit", limitKind: kind, message });
                     }}

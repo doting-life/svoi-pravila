@@ -174,7 +174,6 @@ def build_test_miniapp_bindings(
                 catalog=world.catalog,
                 compose_handoffs=FakeComposeHandoffs(),
                 compose_sessions=FakeComposeSessions(),
-                usernames=FakeTelegramPublicUsername(),
                 rate_limiter=FakeRateLimiter(limit=120),
                 pseudonymizer=FakePseudonymizer(),
                 clock=world.clock,

@@ -6,6 +6,7 @@ from svoi_pravila.application.errors import (
     AnalyticsJobName,
     AnalyticsJobStatus,
     CacheErrorKind,
+    InvalidOutputReason,
 )
 from svoi_pravila.domain.enums import (
     LimitKind,
@@ -39,7 +40,7 @@ KNOWN_MODELS: frozenset[str] = frozenset(
 
 KNOWN_PROMPT_VERSIONS: frozenset[str] = frozenset(
     {
-        "rewrite@v1",
+        "rewrite@v2",
         "decode@v4",
         "decode_analysis@v1",
         "suggest_rule@v1",
@@ -82,6 +83,10 @@ KNOWN_UPDATE_TYPES: frozenset[str] = frozenset(
 SCENARIOS: frozenset[str] = frozenset(m.value for m in UsageScenario)
 VARIANT_KINDS: frozenset[str] = frozenset(m.value for m in VariantKind)
 POLICY_RULES: frozenset[str] = frozenset(m.value for m in PolicyRule)
+INVALID_REASONS: frozenset[str] = frozenset(m.value for m in InvalidOutputReason)
+FINISH_REASONS: frozenset[str] = frozenset(
+    {"stop", "length", "blacklist", "error", "function_call"}
+)
 SURFACES: frozenset[str] = frozenset(m.value for m in UsageSurface)
 OUTCOMES: frozenset[str] = frozenset(m.value for m in UsageOutcome)
 LIMIT_KINDS: frozenset[str] = frozenset(m.value for m in LimitKind) | {NONE}
@@ -113,6 +118,24 @@ def policy_rule_label(value: PolicyRule | str) -> str:
     """Return a policy rule value or ``other``."""
     raw = value.value if isinstance(value, PolicyRule) else value
     return raw if raw in POLICY_RULES else OTHER
+
+
+def invalid_reason_label(value: InvalidOutputReason | str) -> str:
+    """Return an invalid-output reason value or ``other``."""
+    raw = value.value if isinstance(value, InvalidOutputReason) else value
+    return raw if raw in INVALID_REASONS else OTHER
+
+
+def variant_slot_label(value: VariantKind | None) -> str:
+    """Return the defective variant slot, or ``none`` when no slot is named."""
+    return NONE if value is None else variant_kind_label(value)
+
+
+def finish_reason_label(value: str | None) -> str:
+    """Return a known provider finish_reason, ``none`` when absent, else ``other``."""
+    if value is None:
+        return NONE
+    return value if value in FINISH_REASONS else OTHER
 
 
 def surface_label(value: UsageSurface | str) -> str:

@@ -882,6 +882,59 @@ async def test_inline_compose_reports_policy_violations_without_blocking(
 
 
 @pytest.mark.unit
+async def test_inline_compose_substitutes_the_draft_for_an_empty_check(world: AppWorld) -> None:
+    await world.ensure_granted_user(100)
+    monitor = RecordingVariantPolicyMonitor()
+    generator = FakeTextGenerator(
+        rewrite_result=_rewrite_result("", "давай обсудим спокойно", "говорим сегодня")
+    )
+    use_case, _sink, _reuse = _ports(world, _Fakes(generator=generator, policy_monitor=monitor))
+    result = await use_case.execute(InlineComposeCommand(TelegramUserId(100), "нужно поговорить"))
+    by_kind = {variant.kind: variant.text for variant in result.variants}
+    assert by_kind[VariantKind.CHECK] == "нужно поговорить"
+    assert by_kind[VariantKind.SOFTER] == "давай обсудим спокойно"
+    assert monitor.check_empty == 1
+    assert all(kind is not VariantKind.CHECK for kind, _rule in monitor.records)
+
+
+@pytest.mark.unit
+async def test_inline_compose_does_not_count_a_filled_check_as_empty(world: AppWorld) -> None:
+    await world.ensure_granted_user(100)
+    monitor = RecordingVariantPolicyMonitor()
+    generator = FakeTextGenerator(
+        rewrite_result=_rewrite_result(
+            "Нужно поговорить", "давай обсудим спокойно", "говорим сегодня"
+        )
+    )
+    use_case, _sink, _reuse = _ports(world, _Fakes(generator=generator, policy_monitor=monitor))
+    await use_case.execute(InlineComposeCommand(TelegramUserId(100), "нужно поговорить"))
+    assert monitor.check_empty == 0
+
+
+@pytest.mark.unit
+async def test_invalid_output_is_reported_per_attempt_with_slot_and_finish_reason(
+    world: AppWorld,
+) -> None:
+    await world.ensure_granted_user(100)
+    generator = FakeTextGenerator()
+    generator.rewrite_error = InvalidGenerationOutput(
+        (InvalidOutputReason.EMPTY_TEXT, InvalidOutputReason.LENGTH),
+        usage=TokenUsage(),
+        attempts=2,
+        model="fake",
+        prompt_version="rewrite@v1",
+    ).with_diagnostics((VariantKind.FIRMER, None), ("stop", "length"))
+    monitor = RecordingVariantPolicyMonitor()
+    use_case, _sink, _reuse = _ports(world, _Fakes(generator=generator, policy_monitor=monitor))
+    with pytest.raises(InlineComposeFailed):
+        await use_case.execute(InlineComposeCommand(TelegramUserId(100), "long enough"))
+    assert monitor.invalid == [
+        (InvalidOutputReason.EMPTY_TEXT, VariantKind.FIRMER, "stop"),
+        (InvalidOutputReason.LENGTH, None, "length"),
+    ]
+
+
+@pytest.mark.unit
 async def test_policy_path_does_not_log_conversation_text(
     world: AppWorld, capture_log_events: Callable[[], list[dict[str, Any]]]
 ) -> None:

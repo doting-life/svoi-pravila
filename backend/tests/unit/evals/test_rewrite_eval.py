@@ -26,6 +26,7 @@ from svoi_pravila.application.ports.generation import (
     Variant,
 )
 from svoi_pravila.benchmarks.runner import SpendTracker
+from svoi_pravila.config import GigaChatRuntimeSettings
 from svoi_pravila.domain.enums import RelationshipKind, RewriteGoal, VariantKind
 from svoi_pravila.domain.variant_policy import PolicyRule
 from svoi_pravila.evals.rewrite_cases import (
@@ -37,7 +38,9 @@ from svoi_pravila.evals.rewrite_cases import (
 from svoi_pravila.evals.rewrite_cli import async_main, main
 from svoi_pravila.evals.rewrite_report import render_report
 from svoi_pravila.evals.rewrite_run import (
+    ModelEval,
     RewriteEvalParams,
+    RewriteEvalResult,
     RunOutcome,
     run_rewrite_eval,
 )
@@ -85,6 +88,7 @@ def _cli_args(**overrides: object) -> Namespace:
         "dry_run": False,
         "list_models": False,
         "max_tokens": None,
+        "model": None,
     }
     values.update(overrides)
     return Namespace(**values)
@@ -225,8 +229,8 @@ async def test_report_lists_summary_refusals_and_details() -> None:
     )
     refused = await run_rewrite_eval(gen, [_case("b")], _params(), spend)
     result.records.extend(refused.records)
-    report = render_report(result, model="fake-model", spent_billable=spend.spent_billable)
-    assert "- model: fake-model" in report
+    report = render_report([ModelEval("fake-model", result, spend.spent_billable)])
+    assert "## Model: fake-model" in report
     assert "- status: COMPLETE" in report
     assert "- runs: 3" in report
     assert "- ok: 2" in report
@@ -236,18 +240,128 @@ async def test_report_lists_summary_refusals_and_details() -> None:
     assert "| b | 1 |" in report
     assert "| a | 0 |" in report
     assert "Сиди \\| дома и жди, пожалуйста" in report
-    assert "| b | 1 | refused | | |  | |" in report
+    assert "| b | 1 | refused | | | |  | |" in report
+    assert "- check_ok: 0 / 0" in report
     for rule in PolicyRule:
         assert f"| {rule.value} |" in report
 
 
 @pytest.mark.unit
-def test_report_marks_incomplete_runs_with_the_reason() -> None:
-    from svoi_pravila.evals.rewrite_run import RewriteEvalResult
+def test_interview_cases_carry_reference_corrections_for_check() -> None:
+    expected = {case.id: case.check_expected for case in load_rewrite_cases(_DATA)}
+    assert all(expected.values())
+    assert expected["i1"] == ("Сиди дома и жди",)
+    assert len(expected["i3"]) == 2
+    assert len(expected["i6"]) == 2
+    assert not any(text.endswith(".") for text in expected["i1"] + expected["i2"])
 
-    report = render_report(
-        RewriteEvalResult(stop_reason="token_budget"), model="m", spent_billable=0
+
+@pytest.mark.unit
+def test_parse_check_expected_accepts_a_list_and_rejects_other_shapes() -> None:
+    parsed = parse_rewrite_case({"id": "a", "draft": "x", "check_expected": ["X", "Y"]})
+    assert parsed.check_expected == ("X", "Y")
+    assert parse_rewrite_case({"id": "a", "draft": "x"}).check_expected == ()
+    for bad in ("X", ["X", 1], [" "]):
+        with pytest.raises(TypeError, match="check_expected"):
+            parse_rewrite_case({"id": "a", "draft": "x", "check_expected": bad})
+
+
+@pytest.mark.unit
+async def test_run_compares_check_with_references_after_whitespace_normalization() -> None:
+    case = RewriteCase(id="c", draft="ну что ребята", check_expected=("Ну что, ребята",))
+
+    async def run(check_text: str) -> bool | None:
+        gen = FakeTextGenerator(
+            rewrite_result=_result(
+                Variant(text=check_text, kind=VariantKind.CHECK),
+                Variant(text="Ну что, ребята, как вы", kind=VariantKind.SOFTER),
+                Variant(text="Ну что, ребята", kind=VariantKind.FIRMER),
+            )
+        )
+        result = await run_rewrite_eval(gen, [case], _params(), SpendTracker())
+        by_kind = {variant.kind: variant for variant in result.records[0].variants}
+        assert by_kind[VariantKind.SOFTER].check_ok is None
+        assert by_kind[VariantKind.FIRMER].check_ok is None
+        return by_kind[VariantKind.CHECK].check_ok
+
+    assert await run("Ну  что,\nребята") is True
+    assert await run("ну что ребята") is False
+    no_reference = RewriteCase(id="n", draft="ну что ребята")
+    gen = FakeTextGenerator(
+        rewrite_result=_result(
+            Variant(text="ну что ребята", kind=VariantKind.CHECK),
+            Variant(text="Ну что, ребята, как вы", kind=VariantKind.SOFTER),
+            Variant(text="Ну что, ребята", kind=VariantKind.FIRMER),
+        )
     )
+    result = await run_rewrite_eval(gen, [no_reference], _params(), SpendTracker())
+    assert result.records[0].variants[0].check_ok is None
+
+
+@pytest.mark.unit
+async def test_run_substitutes_the_draft_for_an_empty_check_and_counts_it() -> None:
+    case = RewriteCase(id="c", draft="ну что ребята", check_expected=("ну что ребята",))
+    gen = FakeTextGenerator(
+        rewrite_result=_result(
+            Variant(text="", kind=VariantKind.CHECK),
+            Variant(text="Ну что, ребята, как вы", kind=VariantKind.SOFTER),
+            Variant(text="Ну что, ребята", kind=VariantKind.FIRMER),
+        )
+    )
+    result = await run_rewrite_eval(gen, [case], _params(repeat=2), SpendTracker())
+    first, second = result.records
+    assert first.check_empty is True
+    assert first.variants[0].text == "ну что ребята"
+    assert first.variants[0].check_ok is True
+    assert first.variants[0].violations == ()
+    assert second.check_empty is True
+    report = render_report([ModelEval("m", result, 0)])
+    assert "- check_empty (draft substituted): 2" in report
+    assert "| 1 / 2 | 2 |" not in report
+    assert "| 2 / 2 | 2 |" in report
+
+
+@pytest.mark.unit
+async def test_run_does_not_count_a_filled_check_as_empty() -> None:
+    gen = FakeTextGenerator(
+        rewrite_result=_result(
+            Variant(text=_DRAFT, kind=VariantKind.CHECK),
+            Variant(text="Пожалуйста, посиди дома", kind=VariantKind.SOFTER),
+            Variant(text="Жди дома", kind=VariantKind.FIRMER),
+        )
+    )
+    result = await run_rewrite_eval(gen, [_case("a")], _params(), SpendTracker())
+    assert result.records[0].check_empty is False
+    assert "- check_empty (draft substituted): 0" in render_report([ModelEval("m", result, 0)])
+
+
+@pytest.mark.unit
+async def test_run_records_slot_and_finish_reason_of_invalid_attempts() -> None:
+    gen = FakeTextGenerator()
+    gen.rewrite_error = InvalidGenerationOutput(
+        (InvalidOutputReason.EMPTY_TEXT, InvalidOutputReason.EMPTY_TEXT),
+        usage=TokenUsage(output=3),
+        attempts=2,
+        model="m",
+        prompt_version="p",
+    ).with_diagnostics((VariantKind.SOFTER, VariantKind.CHECK), ("stop", None))
+    result = await run_rewrite_eval(gen, [_case("a")], _params(), SpendTracker())
+    (record,) = result.records
+    assert [(d.reason, d.finish_reason) for d in record.diagnostics] == [
+        ("empty_text:softer", "stop"),
+        ("empty_text:check", None),
+    ]
+    report = render_report([ModelEval("m", result, 3)])
+    assert "| a | 1 | 1 | empty_text:softer | stop |" in report
+    assert "| a | 1 | 2 | empty_text:check | none |" in report
+
+
+@pytest.mark.unit
+def test_report_marks_incomplete_runs_with_the_reason() -> None:
+    report = render_report(
+        [ModelEval("m", RewriteEvalResult(stop_reason="token_budget"), 0)], not_run=("n", "o")
+    )
+    assert "- not run: n, o" in report
     assert "- status: INCOMPLETE (token_budget)" in report
     assert "- latency p50 / p95 ms: 0 / 0" in report
 
@@ -267,10 +381,89 @@ async def test_cli_dry_run_prints_plan_and_makes_no_client(
     code = await async_main(_cli_args(dry_run=True, repeat=2, extra_cases=str(extra)))
     assert code == 0
     out = capsys.readouterr().out
+    assert "Models: GigaChat-2\n" in out
     assert "Cases: 7" in out
     assert "Total planned calls: 14" in out
     assert "Total worst-case billable tokens:" in out
     assert "Largest single-call worst-case estimate:" in out
+
+
+@pytest.mark.unit
+async def test_cli_dry_run_multiplies_the_plan_by_distinct_models(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("svoi_pravila.evals.rewrite_cli.LlmToolSettings", make_settings)
+    await async_main(_cli_args(dry_run=True, model=["A", "B", "A"]))
+    out = capsys.readouterr().out
+    assert "Models: A, B\n" in out
+    assert "Total planned calls: 12" in out
+
+
+@pytest.mark.unit
+async def test_cli_live_run_with_models_reports_each_and_stops_at_the_first_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    ok = FakeTextGenerator(
+        rewrite_result=_result(
+            Variant(text="Сиди дома и жди", kind=VariantKind.CHECK),
+            Variant(text="Пожалуйста, посиди дома", kind=VariantKind.SOFTER),
+            Variant(text="Жди дома", kind=VariantKind.FIRMER),
+        )
+    )
+    limited = FakeTextGenerator()
+    limited.rewrite_error = _unavailable(UnavailableKind.RATE_LIMITED)
+    by_model = {"A": ok, "B": limited, "C": ok}
+    used: list[str] = []
+
+    def factory(_client: object, settings: GigaChatRuntimeSettings) -> FakeTextGenerator:
+        model = settings.gigachat_model_rewrite
+        used.append(model)
+        return by_model[model]
+
+    _patch_client(monkeypatch, ok)
+    monkeypatch.setattr("svoi_pravila.evals.rewrite_cli.GigaChatTextGenerator", factory)
+    report = tmp_path / "multi.md"
+    code = await async_main(
+        _cli_args(
+            data=_one_case(tmp_path),
+            max_tokens=1_000_000,
+            out=str(report),
+            model=["A", "B", "C"],
+        )
+    )
+    text = report.read_text(encoding="utf-8")
+    assert code == 1
+    assert used == ["A", "B"]
+    assert "| A | COMPLETE | 1 | 0 | 0 | 0 / 0 |" in text
+    assert "| B | INCOMPLETE (rate_limited) | 1 |" in text
+    assert "## Model: A" in text
+    assert "## Model: B" in text
+    assert "- not run: C" in text
+
+
+@pytest.mark.unit
+async def test_cli_without_model_uses_the_settings_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    gen = FakeTextGenerator(
+        rewrite_result=_result(
+            Variant(text="Сиди дома и жди", kind=VariantKind.CHECK),
+            Variant(text="Пожалуйста, посиди дома", kind=VariantKind.SOFTER),
+            Variant(text="Жди дома", kind=VariantKind.FIRMER),
+        )
+    )
+    used: list[str] = []
+
+    def factory(_client: object, settings: GigaChatRuntimeSettings) -> FakeTextGenerator:
+        used.append(settings.gigachat_model_rewrite)
+        return gen
+
+    _patch_client(monkeypatch, gen)
+    monkeypatch.setattr("svoi_pravila.evals.rewrite_cli.GigaChatTextGenerator", factory)
+    out = tmp_path / "one.md"
+    await async_main(_cli_args(data=_one_case(tmp_path), max_tokens=1_000_000, out=str(out)))
+    assert used == ["GigaChat-2"]
+    assert "## Model: GigaChat-2" in out.read_text(encoding="utf-8")
 
 
 @pytest.mark.unit
@@ -359,12 +552,66 @@ async def test_cli_exit_code_is_one_for_violations_and_early_stops(
     data = _one_case(tmp_path)
     code = await async_main(_cli_args(data=data, max_tokens=1_000_000, out=str(tmp_path / "v.md")))
     assert code == 1
+    invalid = FakeTextGenerator()
+    invalid.rewrite_error = InvalidGenerationOutput(
+        (InvalidOutputReason.EMPTY_TEXT,),
+        usage=TokenUsage(output=1),
+        attempts=1,
+        model="m",
+        prompt_version="p",
+    )
+    _patch_client(monkeypatch, invalid)
+    assert (
+        await async_main(_cli_args(data=data, max_tokens=1_000_000, out=str(tmp_path / "i.md")))
+        == 1
+    )
+    wrong_check = FakeTextGenerator(
+        rewrite_result=_result(
+            Variant(text="Сиди дома и жди", kind=VariantKind.CHECK),
+            Variant(text="Пожалуйста, посиди дома", kind=VariantKind.SOFTER),
+            Variant(text="Жди дома", kind=VariantKind.FIRMER),
+        )
+    )
+    _patch_client(monkeypatch, wrong_check)
+    referenced = tmp_path / "ref.jsonl"
+    referenced.write_text(
+        json.dumps({"id": "r", "draft": _DRAFT, "check_expected": ["Сиди дома, жди"]}) + "\n"
+    )
+    assert (
+        await async_main(
+            _cli_args(data=str(referenced), max_tokens=1_000_000, out=str(tmp_path / "c.md"))
+        )
+        == 1
+    )
     limited = FakeTextGenerator()
     limited.rewrite_error = _unavailable(UnavailableKind.RATE_LIMITED)
     _patch_client(monkeypatch, limited)
     report = tmp_path / "limited.md"
     assert await async_main(_cli_args(data=data, max_tokens=1_000_000, out=str(report))) == 1
     assert "INCOMPLETE (rate_limited)" in report.read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+def test_main_accepts_repeatable_model(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("svoi_pravila.evals.rewrite_cli.LlmToolSettings", make_settings)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "svoi-pravila-eval-rewrite",
+            "--data",
+            str(_DATA),
+            "--dry-run",
+            "--model",
+            "A",
+            "--model",
+            "B",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        main()
+    assert "Models: A, B" in capsys.readouterr().out
 
 
 @pytest.mark.unit

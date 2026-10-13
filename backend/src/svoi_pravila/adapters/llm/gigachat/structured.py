@@ -43,6 +43,7 @@ from svoi_pravila.application.errors import (
     UnavailableKind,
 )
 from svoi_pravila.application.ports.generation import GenerationMeta
+from svoi_pravila.domain.enums import VariantKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,9 +116,13 @@ def _add_length_usage(state: AttemptState, exc: LengthFinishReasonError) -> None
 
 
 def _record_retryable_invalid(
-    state: AttemptState, reason: InvalidOutputReason, *, attempt: int
+    state: AttemptState,
+    reason: InvalidOutputReason,
+    *,
+    attempt: int,
+    slot: VariantKind | None = None,
 ) -> NoReturn:
-    note_invalid_reason(state, reason)
+    note_invalid_reason(state, reason, slot)
     if should_retry_invalid(attempt=attempt, yielded=None):
         raise _RetryAttemptError
     raise finalize_invalid(state) from None
@@ -162,6 +167,7 @@ async def _create_once[ModelT: BaseModel](
         ),
     }
     completion = await params.client.achat.create(payload)
+    state.finish_reason = completion.finish_reason
     add_usage(state, completion.usage)
     return _parse_completion(completion, params.response_format, state=state)
 
@@ -185,6 +191,7 @@ async def _run_attempt[ModelT: BaseModel](
     attempt: int,
 ) -> ModelT:
     state.attempts = attempt + 1
+    state.finish_reason = None
     try:
         return await _create_once(params, state)
     except GenerationRefusedByProvider:
@@ -197,6 +204,7 @@ async def _run_attempt[ModelT: BaseModel](
         _record_retryable_invalid(state, InvalidOutputReason.JSON_DECODE, attempt=attempt)
     except LengthFinishReasonError as exc:
         _add_length_usage(state, exc)
+        state.finish_reason = "length"
         _record_retryable_invalid(state, InvalidOutputReason.LENGTH, attempt=attempt)
     except ATTEMPT_PROVIDER_EXCEPTIONS as exc:
         mapped = map_provider_exception(
@@ -226,7 +234,7 @@ async def _build_result[ModelT: BaseModel, ResultT](
     try:
         return build(parsed, _meta_from_state(params, state))
     except InvalidGenerationOutput as exc:
-        _record_retryable_invalid(state, last_reason(exc), attempt=attempt)
+        _record_retryable_invalid(state, last_reason(exc), attempt=attempt, slot=exc.slots[-1])
 
 
 async def structured_call[ModelT: BaseModel, ResultT](

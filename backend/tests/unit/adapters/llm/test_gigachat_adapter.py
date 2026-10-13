@@ -337,7 +337,7 @@ async def test_rewrite_no_rules_payload_ok() -> None:
     )
     assert len(result.variants) == 3
     assert result.applied_rule_indexes == ()
-    assert result.meta.prompt_version == "rewrite@v1"
+    assert result.meta.prompt_version == "rewrite@v2"
 
 
 @pytest.mark.unit
@@ -378,7 +378,7 @@ async def test_rewrite_goal_no_rules_payload_ok() -> None:
     )
     assert len(result.variants) == 3
     assert result.applied_rule_indexes == ()
-    assert result.meta.prompt_version == "rewrite@v1"
+    assert result.meta.prompt_version == "rewrite@v2"
 
 
 @pytest.mark.unit
@@ -393,7 +393,7 @@ def test_prepare_no_rules_omits_applied_rule_indexes() -> None:
             deadline_seconds=5.0,
         )
     )
-    assert prepared.prompt_version == "rewrite@v1"
+    assert prepared.prompt_version == "rewrite@v2"
     assert "applied_rule_indexes" not in prepared.system
     help_prepared = gen.prepare_rewrite(
         RewriteRequest(
@@ -404,7 +404,7 @@ def test_prepare_no_rules_omits_applied_rule_indexes() -> None:
             deadline_seconds=5.0,
         )
     )
-    assert help_prepared.prompt_version == "rewrite@v1"
+    assert help_prepared.prompt_version == "rewrite@v2"
     assert "applied_rule_indexes" not in help_prepared.system
 
 
@@ -454,7 +454,7 @@ def test_forged_spbound_in_user_text_is_not_real_marker() -> None:
     assert prepared.boundary_marker != forged
     assert forged in prepared.user
     assert prepared.boundary_marker in prepared.system
-    assert prepared.prompt_version == "rewrite@v1"
+    assert prepared.prompt_version == "rewrite@v2"
     assert "applied_rule_indexes" not in prepared.system
 
 
@@ -852,7 +852,7 @@ async def test_rewrite_goal_and_decode_valid() -> None:
             deadline_seconds=5.0,
         )
     )
-    assert help_result.meta.prompt_version == "rewrite@v1"
+    assert help_result.meta.prompt_version == "rewrite@v2"
     decode_result = await _decode_via_stream(
         _FakeAche(stream_parts=["valid analysis"], create_results=[_decode_payload()]),
         incoming="incoming text",
@@ -1678,7 +1678,9 @@ async def test_empty_assistant_text_completion_invalid() -> None:
 
 
 @pytest.mark.unit
-async def test_rewrite_empty_slots_invalid() -> None:
+async def test_rewrite_empty_slots_invalid(
+    capture_log_events: Callable[[], list[dict[str, Any]]],
+) -> None:
     ache = _FakeAche(create_results=[_rewrite_payload_no_rules(bad=True)])
     with pytest.raises(InvalidGenerationOutput) as exc_info:
         await _generator(ache).rewrite(
@@ -1691,6 +1693,81 @@ async def test_rewrite_empty_slots_invalid() -> None:
             )
         )
     assert InvalidOutputReason.EMPTY_TEXT in exc_info.value.reasons
+    error = exc_info.value
+    assert error.slots == (VariantKind.SOFTER, VariantKind.SOFTER)
+    assert error.finish_reasons == ("stop", "stop")
+    assert error.labelled_reasons() == ("empty_text:softer", "empty_text:softer")
+    (call,) = [e for e in capture_log_events() if e.get("event") == "generation_call"]
+    assert list(call["reasons"]) == ["empty_text:softer", "empty_text:softer"]
+    assert list(call["finish_reasons"]) == ["stop", "stop"]
+
+
+def _rewrite_request() -> RewriteRequest:
+    return RewriteRequest(
+        goal=None,
+        draft="draft",
+        rules=(),
+        relationship=RelationshipKind.FRIEND,
+        deadline_seconds=5.0,
+    )
+
+
+def _slots_payload(check: str, softer: str, firmer: str) -> RewriteOutNoRules:
+    return RewriteOutNoRules.model_validate(
+        {"check": check, "softer": softer, "firmer": firmer, "safety": "ok"}
+    )
+
+
+@pytest.mark.unit
+async def test_rewrite_empty_check_is_accepted_as_no_corrections() -> None:
+    ache = _FakeAche(create_results=[_slots_payload("", "variant softer", "variant firmer")])
+    result = await _generator(ache).rewrite(_rewrite_request())
+    assert [(v.kind, v.text) for v in result.variants] == [
+        (VariantKind.CHECK, ""),
+        (VariantKind.SOFTER, "variant softer"),
+        (VariantKind.FIRMER, "variant firmer"),
+    ]
+    assert result.meta.attempts == 1
+
+
+@pytest.mark.unit
+async def test_rewrite_empty_softer_or_firmer_stays_invalid_even_with_empty_check() -> None:
+    for payload, slot in (
+        (_slots_payload("", "", "variant firmer"), VariantKind.SOFTER),
+        (_slots_payload("", "variant softer", ""), VariantKind.FIRMER),
+    ):
+        with pytest.raises(InvalidGenerationOutput) as exc_info:
+            await _generator(_FakeAche(create_results=[payload, payload])).rewrite(
+                _rewrite_request()
+            )
+        assert exc_info.value.slots == (slot, slot)
+        assert exc_info.value.reasons == (InvalidOutputReason.EMPTY_TEXT,) * 2
+
+
+@pytest.mark.unit
+async def test_length_finish_reason_is_recorded_per_attempt() -> None:
+    ache = _FakeAche(finish="length")
+    with pytest.raises(InvalidGenerationOutput) as exc_info:
+        await _generator(ache).rewrite(
+            RewriteRequest(
+                goal=None,
+                draft="chernovik",
+                rules=(),
+                relationship=RelationshipKind.OTHER,
+                deadline_seconds=5.0,
+            )
+        )
+    assert exc_info.value.finish_reasons == ("length", "length")
+    assert exc_info.value.slots == (None, None)
+    assert exc_info.value.labelled_reasons() == ("length", "length")
+
+
+@pytest.mark.unit
+async def test_decode_stream_invalid_keeps_slot_and_finish_reason_defaults() -> None:
+    with pytest.raises(InvalidGenerationOutput) as exc_info:
+        await _collect_decode_stream(_FakeAche(stream_parts=["   "]))
+    assert exc_info.value.slots == (None,) * len(exc_info.value.reasons)
+    assert exc_info.value.finish_reasons == (None,) * len(exc_info.value.reasons)
 
 
 @pytest.mark.unit

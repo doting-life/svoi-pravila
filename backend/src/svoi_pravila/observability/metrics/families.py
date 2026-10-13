@@ -36,6 +36,17 @@ VARIANT_POLICY_VIOLATIONS = Counter(
     ("kind", "rule"),
 )
 
+VARIANT_INVALID_OUTPUT = Counter(
+    "sp_variant_invalid_output_total",
+    "Rewrite attempts whose output failed validation, by reason, defective slot and finish_reason",
+    ("reason", "slot", "finish_reason"),
+)
+
+VARIANT_CHECK_EMPTY = Counter(
+    "sp_variant_check_empty_total",
+    "Rewrite answers whose check slot was empty and replaced with the draft (no text)",
+)
+
 USAGE_EVENTS = Counter(
     "sp_usage_events_total",
     "Persisted usage events",

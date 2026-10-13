@@ -22,6 +22,7 @@ from svoi_pravila.application.errors import (
     UnavailableKind,
 )
 from svoi_pravila.application.ports.generation import TokenUsage
+from svoi_pravila.domain.enums import VariantKind
 
 logger = structlog.get_logger(__name__)
 
@@ -53,7 +54,11 @@ class AttemptState:
     precached_prompt_tokens: int = field(default=0)
     log_reasons: tuple[str, ...] = ()
     unavailable_kind: str | None = None
+    finish_reason: str | None = None
+    log_finish_reasons: tuple[str | None, ...] = ()
     collected_reasons: list[InvalidOutputReason] = field(default_factory=list)
+    collected_slots: list[VariantKind | None] = field(default_factory=list)
+    collected_finish_reasons: list[str | None] = field(default_factory=list)
 
 
 def token_usage_from_state(state: AttemptState) -> TokenUsage:
@@ -86,22 +91,28 @@ def should_retry_invalid(*, attempt: int, yielded: bool | None) -> bool:
     return attempt < MAX_ATTEMPTS - 1
 
 
-def note_invalid_reason(state: AttemptState, reason: InvalidOutputReason) -> None:
-    """Record one attempt's InvalidOutputReason."""
+def note_invalid_reason(
+    state: AttemptState, reason: InvalidOutputReason, slot: VariantKind | None = None
+) -> None:
+    """Record one attempt's InvalidOutputReason, the defective slot and the finish_reason."""
     state.collected_reasons.append(reason)
+    state.collected_slots.append(slot)
+    state.collected_finish_reasons.append(state.finish_reason)
 
 
 def finalize_invalid(state: AttemptState) -> InvalidGenerationOutput:
     """Mark invalid_output and build the multi-reason application error."""
     state.outcome = "invalid_output"
-    state.log_reasons = tuple(r.value for r in state.collected_reasons)
-    return InvalidGenerationOutput(
+    error = InvalidGenerationOutput(
         tuple(state.collected_reasons),
         usage=token_usage_from_state(state),
         attempts=len(state.collected_reasons),
         model=state.model,
         prompt_version=state.prompt_version,
-    )
+    ).with_diagnostics(tuple(state.collected_slots), tuple(state.collected_finish_reasons))
+    state.log_reasons = error.labelled_reasons()
+    state.log_finish_reasons = error.finish_reasons
+    return error
 
 
 def mark_refused(state: AttemptState) -> None:
@@ -135,6 +146,7 @@ def log_generation_call(
         "outcome": state.outcome,
         "attempts": state.attempts,
         "reasons": state.log_reasons,
+        "finish_reasons": state.log_finish_reasons,
         "unavailable_kind": state.unavailable_kind,
     }
     if phase is not None:

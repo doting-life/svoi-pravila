@@ -32,8 +32,8 @@ def test_empty_answer_json_matches_schema_shapes() -> None:
 
 @pytest.mark.unit
 def test_compose_rewrite_matches_fixtures() -> None:
-    rules_fixture = (_FIXTURES / "rewrite_v1_rules.md").read_text(encoding="utf-8")
-    no_rules = (_FIXTURES / "rewrite_v1_no_rules.md").read_text(encoding="utf-8")
+    rules_fixture = (_FIXTURES / "rewrite_v2_rules.md").read_text(encoding="utf-8")
+    no_rules = (_FIXTURES / "rewrite_v2_no_rules.md").read_text(encoding="utf-8")
     assert compose_rewrite_template(has_rules=True) == rules_fixture
     assert compose_rewrite_template(has_rules=False) == no_rules
     assert "applied_rule_indexes" not in no_rules

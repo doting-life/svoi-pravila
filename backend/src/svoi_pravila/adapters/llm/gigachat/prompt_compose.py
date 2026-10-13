@@ -55,8 +55,8 @@ def _fill(skeleton: str, parts: _ComposeParts) -> str:
 
 
 def compose_rewrite_template(*, has_rules: bool) -> str:
-    """Return the rewrite@v1 system template for the given rule shape."""
-    skeleton, _version = load_prompt_template("rewrite", "v1")
+    """Return the rewrite@v2 system template for the given rule shape."""
+    skeleton, _version = load_prompt_template("rewrite", "v2")
     schema: type[BaseModel] = RewriteOut if has_rules else RewriteOutNoRules
     return _fill(
         skeleton,

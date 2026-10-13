@@ -35,7 +35,7 @@ def prepare_rewrite(request: RewriteRequest) -> PreparedMessages:
         untrusted_texts(request.draft, goal, request.relationship.value, rules=request.rules)
     )
     template = compose_rewrite_template(has_rules=bool(request.rules))
-    prompt_version = "rewrite@v1"
+    prompt_version = "rewrite@v2"
     system = render_system_prompt(template, boundary_marker=marker)
     user = wrap_untrusted_payload(
         marker,

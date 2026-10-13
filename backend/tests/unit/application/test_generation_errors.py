@@ -12,6 +12,7 @@ from svoi_pravila.application.errors import (
     UnavailableKind,
 )
 from svoi_pravila.application.ports.generation import TokenUsage
+from svoi_pravila.domain.enums import VariantKind
 
 
 @pytest.mark.unit
@@ -29,6 +30,53 @@ def test_invalid_generation_output_carries_reasons() -> None:
     assert err.usage.billable == 8
     assert err.attempts == 2
     assert str(err) == "invalid generation output"
+
+
+@pytest.mark.unit
+def test_invalid_generation_output_defaults_diagnostics_to_none_per_reason() -> None:
+    err = InvalidGenerationOutput(
+        (InvalidOutputReason.EMPTY_TEXT, InvalidOutputReason.LENGTH),
+        usage=TokenUsage(),
+        attempts=2,
+        model="m",
+        prompt_version="p",
+    )
+    assert err.slots == (None, None)
+    assert err.finish_reasons == (None, None)
+    assert err.labelled_reasons() == ("empty_text", "length")
+
+
+@pytest.mark.unit
+def test_invalid_generation_output_names_the_slot_and_finish_reason() -> None:
+    err = InvalidGenerationOutput(
+        (InvalidOutputReason.EMPTY_TEXT, InvalidOutputReason.EMPTY_TEXT),
+        usage=TokenUsage(),
+        attempts=2,
+        model="m",
+        prompt_version="p",
+    ).with_diagnostics((VariantKind.CHECK, VariantKind.FIRMER), ("stop", "length"))
+    assert err.labelled_reasons() == ("empty_text:check", "empty_text:firmer")
+    assert err.finish_reasons == ("stop", "length")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("slots", "finish_reasons"),
+    [((VariantKind.CHECK,), ("stop", "stop")), ((None, None), ("stop",))],
+)
+def test_invalid_generation_output_rejects_diagnostics_of_the_wrong_length(
+    slots: tuple[VariantKind | None, ...], finish_reasons: tuple[str | None, ...]
+) -> None:
+    err = InvalidGenerationOutput(
+        (InvalidOutputReason.EMPTY_TEXT, InvalidOutputReason.EMPTY_TEXT),
+        usage=TokenUsage(),
+        attempts=2,
+        model="m",
+        prompt_version="p",
+    )
+    with pytest.raises(ValueError, match="one entry per reason"):
+        err.with_diagnostics(slots, finish_reasons)
+    assert err.slots == (None, None)
 
 
 @pytest.mark.unit

@@ -16,6 +16,7 @@ from svoi_pravila.application.ports.generation import (
     SafetyVerdict,
     TextGenerator,
 )
+from svoi_pravila.application.rewrite_variants import fill_empty_check
 from svoi_pravila.benchmarks.runner import SpendTracker
 from svoi_pravila.domain.enums import VariantKind
 from svoi_pravila.domain.typography import humanize_typography
@@ -42,6 +43,15 @@ class RunVariant:
     kind: VariantKind
     text: str
     violations: tuple[PolicyRule, ...]
+    check_ok: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class InvalidDiagnostic:
+    """C0 diagnostics of one failed attempt: ``reason[:slot]`` and the provider finish_reason."""
+
+    reason: str
+    finish_reason: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +64,8 @@ class RewriteRunRecord:
     variants: tuple[RunVariant, ...]
     latency_ms: int | None
     billable_tokens: int
+    diagnostics: tuple[InvalidDiagnostic, ...] = ()
+    check_empty: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,10 +85,28 @@ class RewriteEvalResult:
     stop_reason: str | None = None
 
 
-def _finish(draft: str, kind: VariantKind, raw_text: str) -> RunVariant:
-    text = humanize_typography(draft, raw_text)
-    rules = tuple(violation.rule for violation in check_variant_policy(draft, kind, text))
-    return RunVariant(kind=kind, text=text, violations=rules)
+@dataclass(frozen=True, slots=True)
+class ModelEval:
+    """One model's pass over the cases and the billable tokens it spent."""
+
+    model: str
+    result: RewriteEvalResult
+    spent_billable: int
+
+
+def _normalized(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _finish(case: RewriteCase, kind: VariantKind, raw_text: str) -> RunVariant:
+    text = humanize_typography(case.draft, raw_text)
+    rules = tuple(violation.rule for violation in check_variant_policy(case.draft, kind, text))
+    check_ok = (
+        _normalized(text) in {_normalized(expected) for expected in case.check_expected}
+        if kind is VariantKind.CHECK and case.check_expected
+        else None
+    )
+    return RunVariant(kind=kind, text=text, violations=rules, check_ok=check_ok)
 
 
 async def _call(
@@ -89,10 +119,23 @@ async def _call(
             case.id, run_index, RunOutcome.REFUSED, (), None, exc.usage.billable
         )
     except InvalidGenerationOutput as exc:
-        return RewriteRunRecord(
-            case.id, run_index, RunOutcome.INVALID_OUTPUT, (), None, exc.usage.billable
+        diagnostics = tuple(
+            InvalidDiagnostic(reason, finish_reason)
+            for reason, finish_reason in zip(
+                exc.labelled_reasons(), exc.finish_reasons, strict=True
+            )
         )
-    variants = tuple(_finish(case.draft, variant.kind, variant.text) for variant in result.variants)
+        return RewriteRunRecord(
+            case.id,
+            run_index,
+            RunOutcome.INVALID_OUTPUT,
+            (),
+            None,
+            exc.usage.billable,
+            diagnostics,
+        )
+    filled, check_empty = fill_empty_check(case.draft, result.variants)
+    variants = tuple(_finish(case, variant.kind, variant.text) for variant in filled)
     outcome = RunOutcome.OK if result.safety is SafetyVerdict.OK else RunOutcome.NOT_OK_SAFETY
     return RewriteRunRecord(
         case.id,
@@ -101,6 +144,7 @@ async def _call(
         variants,
         result.meta.latency_ms,
         result.meta.usage.billable,
+        check_empty=check_empty,
     )
 
 

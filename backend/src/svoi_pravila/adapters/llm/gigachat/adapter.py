@@ -77,7 +77,7 @@ def _combine_invalid(
         attempts=phase_a_attempts + exc.attempts,
         model=exc.model,
         prompt_version=exc.prompt_version,
-    )
+    ).with_diagnostics(exc.slots, exc.finish_reasons)
 
 
 def _combine_refused(

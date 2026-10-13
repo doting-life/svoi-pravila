@@ -71,7 +71,7 @@ async function openPeople() {
 }
 
 async function chooseHomeContact(label: RegExp) {
-    fireEvent.click(await screen.findByRole("button", { name: ru.homeForWhomNone }));
+    fireEvent.click(await screen.findByRole("button", { name: ru.contactChipNone }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: label }));
 }
 
@@ -2060,7 +2060,7 @@ describe("Home and navigation", () => {
         ]);
     }
 
-    it("shows three modes, the contact chip, the draft field and the inline hint", async () => {
+    it("shows three modes, the contact chip and the draft field, without the old inline hint", async () => {
         render(<App adapter={fakeAdapter()} fetchImpl={homeFetch()} />);
         expect(await screen.findByRole("heading", { name: ru.homeTitle })).toBeInTheDocument();
         const modes = screen.getAllByRole("radio");
@@ -2072,10 +2072,13 @@ describe("Home and navigation", () => {
         expect(
             screen.getByRole("radio", { name: new RegExp(ru.homeModeDecode) }),
         ).toBeInTheDocument();
-        expect(screen.getByRole("button", { name: ru.homeForWhomNone })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: ru.contactChipNone })).toBeInTheDocument();
         expect(screen.getByLabelText(ru.homeDraftLabel)).toBeInTheDocument();
         expect(screen.getByRole("button", { name: ru.homeSubmitVariants })).toBeDisabled();
-        expect(screen.getByText("@svoi_test_bot")).toBeInTheDocument();
+        expect(
+            screen.queryByText(ru.introInlineHintBefore, { exact: false }),
+        ).not.toBeInTheDocument();
+        expect(screen.queryByText("@svoi_test_bot")).not.toBeInTheDocument();
         expect(screen.getByRole("navigation", { name: ru.tabsLabel })).toBeInTheDocument();
         expect(screen.getByRole("button", { name: ru.tabHome })).toHaveAttribute(
             "aria-current",
@@ -2150,24 +2153,24 @@ describe("Home and navigation", () => {
         const first = render(<App adapter={fakeAdapter()} fetchImpl={homeFetch()} />);
         await chooseHomeContact(/Аня/);
         expect(
-            screen.getByRole("button", { name: ru.homeForWhom.replace("{label}", "Аня") }),
+            screen.getByRole("button", { name: ru.contactChipFor.replace("{label}", "Аня") }),
         ).toBeInTheDocument();
         first.unmount();
         render(<App adapter={fakeAdapter()} fetchImpl={homeFetch()} />);
-        expect(await screen.findByRole("button", { name: ru.homeForWhomNone })).toBeInTheDocument();
+        expect(await screen.findByRole("button", { name: ru.contactChipNone })).toBeInTheDocument();
     });
 
     it("returns to no contact from the picker", async () => {
         render(<App adapter={fakeAdapter()} fetchImpl={homeFetch()} />);
         await chooseHomeContact(/Аня/);
         fireEvent.click(
-            screen.getByRole("button", { name: ru.homeForWhom.replace("{label}", "Аня") }),
+            screen.getByRole("button", { name: ru.contactChipFor.replace("{label}", "Аня") }),
         );
         fireEvent.click(
-            within(screen.getByRole("dialog")).getByRole("button", { name: ru.pickerNone }),
+            within(screen.getByRole("dialog")).getByRole("button", { name: ru.contactNoneItem }),
         );
-        expect(screen.getByRole("button", { name: ru.homeForWhomNone })).toBeInTheDocument();
-        fireEvent.click(screen.getByRole("button", { name: ru.homeForWhomNone }));
+        expect(screen.getByRole("button", { name: ru.contactChipNone })).toBeInTheDocument();
+        fireEvent.click(screen.getByRole("button", { name: ru.contactChipNone }));
         fireEvent.click(
             within(screen.getByRole("dialog")).getByRole("button", { name: ru.cancel }),
         );
@@ -2268,13 +2271,31 @@ describe("Onboarding intro", () => {
         expect(cloud.setItem).toHaveBeenCalledWith("intro_seen", "1");
     });
 
-    it("writes the flag and runs the example with exactly one compose and no contact", async () => {
+    it("runs the example in check mode with the draft block and no goals", async () => {
         const cloud = storage("");
         const log: RecordedRequest[] = [];
+        const base = mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact] } },
+            {
+                method: "POST",
+                path: "/api/v1/compose",
+                body: {
+                    safety: "ok",
+                    applied_rules: [],
+                    choice_token: "choice",
+                    variants: [
+                        { kind: "softer", text: "мягкий" },
+                        { kind: "firmer", text: "твёрже" },
+                        { kind: "check", text: "проверенный" },
+                    ],
+                },
+            },
+        ]);
         render(
             <App
                 adapter={fakeAdapter({ cloudStorage: cloud })}
-                fetchImpl={recordRequests(introFetch(), log)}
+                fetchImpl={recordRequests(base, log)}
             />,
         );
         fireEvent.click(await screen.findByRole("button", { name: ru.introTryExample }));
@@ -2282,15 +2303,19 @@ describe("Onboarding intro", () => {
             await screen.findByRole("heading", { name: ru.introExampleTitle }),
         ).toBeInTheDocument();
         expect(cloud.setItem).toHaveBeenCalledWith("intro_seen", "1");
-        await waitFor(() => {
-            expect(log.filter((entry) => entry.path === "/api/v1/compose")).toHaveLength(1);
-        });
-        const compose = log.find((entry) => entry.path === "/api/v1/compose");
-        expect(compose?.body).toMatchObject({
+        expect(await screen.findByDisplayValue("проверенный")).toBeInTheDocument();
+        const quote = screen.getByText(ru.composeYourDraft).closest(".quote");
+        expect(quote).toHaveTextContent(ru.introExampleDraft);
+        const [first] = screen.getAllByRole("article");
+        expect(first).toHaveTextContent(ru.variantKinds.check);
+        expect(screen.queryByText(ru.composeGoalLegend)).not.toBeInTheDocument();
+        const composeCalls = log.filter((entry) => entry.path === "/api/v1/compose");
+        expect(composeCalls).toHaveLength(1);
+        expect(composeCalls[0]?.body).toEqual({
             draft: ru.introExampleDraft,
+            goal: null,
             contact_id: null,
         });
-        expect(compose?.body).toMatchObject({ goal: null });
         expect(log.some((entry) => entry.path.includes("activate"))).toBe(false);
     });
 });

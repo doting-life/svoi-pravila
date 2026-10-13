@@ -719,7 +719,7 @@ describe("DecodeScreen", () => {
             await screen.findByRole("button", { name: ru.decodeFrom.replace("{name}", "Аня") }),
         );
         fireEvent.click(
-            within(screen.getByRole("dialog")).getByRole("button", { name: ru.pickerNone }),
+            within(screen.getByRole("dialog")).getByRole("button", { name: ru.contactNoneItem }),
         );
         expect(screen.getByRole("button", { name: ru.decodeFromNone })).toBeInTheDocument();
     });

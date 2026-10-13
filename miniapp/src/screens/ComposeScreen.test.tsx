@@ -145,7 +145,7 @@ describe("ComposeScreen", () => {
         const fetchImpl = composeFetch(() => jsonResponse(okVariants));
         await renderCompose(fetchImpl, { mode: "soften" });
         expect(
-            await screen.findByText(ru.composeFor.replace("{label}", "Аня")),
+            await screen.findByText(ru.contactChipFor.replace("{label}", "Аня")),
         ).toBeInTheDocument();
         fireEvent.click(screen.getByRole("radio", { name: ru.composeGoals.decline }));
         await submitDraft("не могу прийти");
@@ -200,7 +200,7 @@ describe("ComposeScreen", () => {
             }),
         );
         await renderCompose(fetchImpl, { contactId: null });
-        expect(await screen.findByText(ru.pickerNone)).toBeInTheDocument();
+        expect(await screen.findByText(ru.contactChipNone)).toBeInTheDocument();
         await submitDraft("черновик без контакта");
         expect(await screen.findByDisplayValue("без правил")).toBeInTheDocument();
         const call = fetchImpl.mock.calls.find(([req]) => isComposePost(req));
@@ -212,21 +212,66 @@ describe("ComposeScreen", () => {
 
     it("picks none contact from the picker", async () => {
         await renderCompose(mockFetch([]));
-        fireEvent.click(await screen.findByText(ru.composeFor.replace("{label}", "Аня")));
+        fireEvent.click(await screen.findByText(ru.contactChipFor.replace("{label}", "Аня")));
         const dialog = await screen.findByRole("dialog");
-        fireEvent.click(within(dialog).getByRole("button", { name: ru.pickerNone }));
-        expect(screen.getByText(ru.pickerNone)).toBeInTheDocument();
+        fireEvent.click(within(dialog).getByRole("button", { name: ru.contactNoneItem }));
+        expect(screen.getByText(ru.contactChipNone)).toBeInTheDocument();
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    it("shows the submitted draft above the variants in check and soften modes", async () => {
+        for (const mode of ["check", "soften"] as const) {
+            const fetchImpl = composeFetch(() => jsonResponse(okVariants));
+            await renderCompose(fetchImpl, { mode });
+            await submitDraft("  мой исходный текст  ");
+            expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
+            const block = screen.getByText(ru.composeYourDraft).closest(".quote");
+            expect(block).not.toBeNull();
+            expect(
+                within(block as HTMLElement).getByText("мой исходный текст"),
+            ).toBeInTheDocument();
+            cleanup();
+        }
+    });
+
+    it("keeps the draft block on the example screen with the check order and no goals", async () => {
+        const fetchImpl = composeFetch(() => jsonResponse(okVariants));
+        await renderCompose(fetchImpl, {
+            mode: "check",
+            title: ru.introExampleTitle,
+            draft: ru.introExampleDraft,
+        });
+        expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
+        expect(screen.getByRole("heading", { name: ru.introExampleTitle })).toBeInTheDocument();
+        expect(screen.getByText(ru.composeYourDraft)).toBeInTheDocument();
+        expect(screen.getByText(ru.introExampleDraft)).toBeInTheDocument();
+        expect(screen.queryByText(ru.composeGoalLegend)).not.toBeInTheDocument();
+    });
+
+    it("shows an initial and truncates a long name in the chip", async () => {
+        const long = { ...anya, label: "Очень длинное имя контакта для проверки обрезки" };
+        await renderCompose(mockFetch([]), { contacts: [long] });
+        const chip = await screen.findByRole("button", {
+            name: ru.contactChipFor.replace("{label}", long.label),
+        });
+        expect(chip.querySelector(".contact-chip__label")).toHaveTextContent(long.label);
+        expect(chip.querySelector(".avatar")).toHaveTextContent("О");
+    });
+
+    it("shows a dash avatar in the chip without a contact", async () => {
+        await renderCompose(mockFetch([]), { contactId: null });
+        const chip = await screen.findByRole("button", { name: ru.contactChipNone });
+        expect(chip.querySelector(".avatar--empty")).toHaveTextContent("–");
     });
 
     it("selects another contact from the picker as local state only", async () => {
         const fetchImpl = composeFetch(() => jsonResponse(okVariants));
         await renderCompose(fetchImpl, { contacts: [anya, borya] });
-        fireEvent.click(await screen.findByText(ru.composeFor.replace("{label}", "Аня")));
+        fireEvent.click(await screen.findByText(ru.contactChipFor.replace("{label}", "Аня")));
         const dialog = await screen.findByRole("dialog");
         fireEvent.click(within(dialog).getByRole("button", { name: /Боря/ }));
         expect(
-            await screen.findByText(ru.composeFor.replace("{label}", "Боря")),
+            await screen.findByText(ru.contactChipFor.replace("{label}", "Боря")),
         ).toBeInTheDocument();
         await submitDraft("черновик");
         expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
@@ -507,7 +552,7 @@ describe("ComposeScreen", () => {
             partnerUsername: "anya_tg",
         });
         expect(
-            await screen.findByText(ru.composeFor.replace("{label}", "Аня")),
+            await screen.findByText(ru.contactChipFor.replace("{label}", "Аня")),
         ).toBeInTheDocument();
         await submitDraft("черновик");
         expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();

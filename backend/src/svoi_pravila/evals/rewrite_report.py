@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Callable
 
 from svoi_pravila.benchmarks.report import percentile
+from svoi_pravila.domain.enums import VariantKind
 from svoi_pravila.domain.variant_policy import PolicyRule
+from svoi_pravila.evals.rewrite_gates import (
+    Baseline,
+    compute_metrics,
+    evaluate_gates,
+)
 from svoi_pravila.evals.rewrite_run import ModelEval, RewriteRunRecord, RunOutcome
 
 
@@ -18,7 +25,10 @@ def _summary(item: ModelEval) -> list[str]:
     latencies = [float(r.latency_ms) for r in records if r.latency_ms is not None]
     outcomes = Counter(record.outcome for record in records)
     by_rule = Counter(
-        rule for record in records for variant in record.variants for rule in variant.violations
+        (variant.kind, rule)
+        for record in records
+        for variant in record.variants
+        for rule in variant.violations
     )
     checks = [v.check_ok for r in records for v in r.variants if v.check_ok is not None]
     p50 = percentile(latencies, 50)
@@ -33,9 +43,84 @@ def _summary(item: ModelEval) -> list[str]:
         f"- latency p50 / p95 ms: {p50:.0f} / {p95:.0f}",
         f"- billable tokens: {item.spent_billable}",
         "",
-        "| policy rule | violations |",
-        "|---|---:|",
-        *(f"| {rule.value} | {by_rule.get(rule, 0)} |" for rule in PolicyRule),
+        "| policy rule | check | softer | firmer |",
+        "|---|---:|---:|---:|",
+        *(
+            f"| {rule.value} | "
+            + " | ".join(str(by_rule.get((kind, rule), 0)) for kind in VariantKind)
+            + " |"
+            for rule in PolicyRule
+        ),
+        "",
+    ]
+
+
+def _group_table(title: str, label: str, groups: dict[str, list[RewriteRunRecord]]) -> list[str]:
+    lines = [
+        f"### {title}",
+        "",
+        f"| {label} | runs | ok | invalid_output | runs with a violation | stem leaks |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    for name, records in groups.items():
+        violating = sum(any(v.violations for v in r.variants) for r in records)
+        leaks = sum(bool(v.stem_leak) for r in records for v in r.variants)
+        ok = sum(r.outcome is RunOutcome.OK for r in records)
+        invalid = sum(r.outcome is RunOutcome.INVALID_OUTPUT for r in records)
+        lines.append(f"| {name} | {len(records)} | {ok} | {invalid} | {violating} | {leaks} |")
+    lines.append("")
+    return lines
+
+
+def _grouped(
+    records: list[RewriteRunRecord], key: Callable[[RewriteRunRecord], str]
+) -> dict[str, list[RewriteRunRecord]]:
+    groups: dict[str, list[RewriteRunRecord]] = {}
+    for record in records:
+        groups.setdefault(key(record), []).append(record)
+    return groups
+
+
+def _closing_ask_rate(records: list[RewriteRunRecord]) -> str:
+    flags = [
+        v.closing_ask_ok
+        for r in records
+        if r.outcome is RunOutcome.OK
+        for v in r.variants
+        if v.closing_ask_ok is not None
+    ]
+    return f"{sum(flags)} / {len(flags)}"
+
+
+def _effect(records: list[RewriteRunRecord]) -> list[str]:
+    return [
+        "### Closing-ask rule effect",
+        "",
+        f"- with the rule: {_closing_ask_rate([r for r in records if r.had_rules])}",
+        f"- without the rule: {_closing_ask_rate([r for r in records if not r.had_rules])}",
+        "",
+    ]
+
+
+def _gates(item: ModelEval, baseline: Baseline | None) -> list[str]:
+    metrics = compute_metrics(item.result.records)
+    results = evaluate_gates(metrics, baseline)
+    return [
+        "### Gates",
+        "",
+        "Denominators (ADR-0016 §10): G1-G4, G6, G7, G8 edit_ratio: usable calls (outcome ok); "
+        "G5: usable calls without contact rules; G8 check_ok: check variants with a reference; "
+        "G9: all calls except unavailable.",
+        "",
+        f"- usable calls: {metrics.ok_runs} of {metrics.runs}",
+        f"- unavailable calls (in no denominator): {metrics.unavailable_runs}",
+        "",
+        "| gate | check | measured | threshold | status |",
+        "|---|---|---|---|---|",
+        *(
+            f"| {r.gate} | {r.name} | {r.value} | {r.threshold} | {r.status.value} |"
+            for r in results
+        ),
         "",
     ]
 
@@ -126,11 +211,16 @@ def _comparison(evals: list[ModelEval]) -> list[str]:
     return lines
 
 
-def render_report(evals: list[ModelEval], *, not_run: tuple[str, ...] = ()) -> str:
+def render_report(
+    evals: list[ModelEval],
+    *,
+    not_run: tuple[str, ...] = (),
+    baseline: Baseline | None = None,
+) -> str:
     """Render the local report: a model comparison, then one section per model.
 
     An early stop marks the model ``INCOMPLETE`` with its reason; models after it are
-    listed as not run.
+    listed as not run. Each model section ends its summary with the gates G1-G9.
     """
     lines = ["# Rewrite eval", "", *_comparison(evals)]
     if not_run:
@@ -144,6 +234,16 @@ def render_report(evals: list[ModelEval], *, not_run: tuple[str, ...] = ()) -> s
                 f"- status: {_status(item)}",
                 "",
                 *_summary(item),
+                *_group_table(
+                    "Per category", "category", _grouped(records, lambda r: r.category.value)
+                ),
+                *_group_table(
+                    "Per goal",
+                    "goal",
+                    _grouped(records, lambda r: "none" if r.goal is None else r.goal.value),
+                ),
+                *_effect(records),
+                *_gates(item, baseline),
                 *_refusals(records),
                 *_invalid_diagnostics(records),
                 *_details(records),

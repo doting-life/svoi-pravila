@@ -1,0 +1,20 @@
+# Softening (hedge) markers (ru/v1). One regex per line.
+# Scope: forms that soften a request or a statement. «давай» is not a hedge: it carries
+# «давай мириться».
+# Applied to normalized text (lowercase, ё→е, collapsed space, edge punctuation stripped).
+# Every pattern is anchored at a word start. Overlapping matches count once («не мог бы»).
+\bпожалуйста\b
+\bесли (?:бы )?можно\b
+\bесли не (?:сложно|трудно)\b
+\bесли получится\b
+\bесли (?:тебе|вам) не трудно\b
+\bможет быть\b
+\bвозможно\b
+\b(?:не )?мог(?:ла|ли)? бы\b
+\bбыло бы\b
+\bхотелось бы\b
+\bк сожалению\b
+\b(?:мне )?кажется\b
+\bнаверное\b
+\bможешь\b
+\bможете\b

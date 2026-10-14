@@ -1,0 +1,71 @@
+{"id": "i1", "category": "base", "draft": "Сиди дома и жди", "check_expected": ["Сиди дома и жди"]}
+{"id": "i2", "category": "base", "draft": "Ты уже не в первый раз мне говоришь одно а делаешь другое. Завязывай давай", "check_expected": ["Ты уже не в первый раз мне говоришь одно, а делаешь другое. Завязывай давай"], "smoke": true}
+{"id": "i3", "category": "base", "draft": "ну что ребята готовы? Или хуй с ними", "check_expected": ["Ну что, ребята, готовы? Или хуй с ними?", "Ну что, ребята, готовы? Или хуй с ними"]}
+{"id": "i4", "category": "base", "draft": "Деньги не дам. Ты взрослый мужик, выходи на работу", "check_expected": ["Деньги не дам. Ты взрослый мужик, выходи на работу"], "smoke": true}
+{"id": "i5", "category": "base", "draft": "Добрый день. Кандидат не подходит под задачу, результатов на испытательном не будет. Предлагаю закрыть вопрос", "check_expected": ["Добрый день. Кандидат не подходит под задачу, результатов на испытательном не будет. Предлагаю закрыть вопрос"]}
+{"id": "i6", "category": "base", "draft": "Привет, по проекту есть 3 вопроса: сроки сдвигаются? кто согласует бюджет? когда созвон", "check_expected": ["Привет, по проекту есть 3 вопроса: сроки сдвигаются? Кто согласует бюджет? Когда созвон?", "Привет, по проекту есть 3 вопроса: сроки сдвигаются? кто согласует бюджет? когда созвон?"]}
+{"id": "prof-01", "category": "profanity", "draft": "Ты просто мудак, опять забыл про встречу", "relationship": "friend", "smoke": true}
+{"id": "prof-02", "category": "profanity", "draft": "Я нахуй устал от этих переносов, давай решим уже", "relationship": "partner"}
+{"id": "prof-03", "category": "profanity", "draft": "Пошёл нахуй", "relationship": "other"}
+{"id": "prof-04", "category": "profanity", "draft": "Уважаемые коллеги, этот отчёт — полная хуйня, прошу переделать до пятницы", "relationship": "work", "smoke": true}
+{"id": "prof-05", "category": "profanity", "draft": "Ты вообще ох*ел так со мной разговаривать", "relationship": "partner"}
+{"id": "prof-06", "category": "profanity", "draft": "Это п*здец, а не работа, переделывай всё", "relationship": "work"}
+{"id": "prof-07", "category": "profanity", "draft": "Хватит пиздеть, ты сам обещал вернуть деньги", "relationship": "friend"}
+{"id": "prof-08", "category": "profanity", "draft": "Вы заебали переносить сроки, мы так не работаем", "relationship": "work"}
+{"id": "prof-09", "category": "profanity", "draft": "Вы там совсем бл*дь не понимаете, что сроки горят", "relationship": "work", "smoke": true}
+{"id": "prof-10", "category": "profanity", "draft": "Ты заебал, сколько можно опаздывать, бля", "relationship": "friend"}
+{"id": "prof-11", "category": "profanity", "draft": "Охуенно ты придумал, спасибо, теперь всё сорвалось", "relationship": "partner"}
+{"id": "prof-12", "category": "profanity", "draft": "Ребята, давайте без хуйни: кто отвечает за сроки?", "relationship": "work"}
+{"id": "prof-13", "category": "profanity", "draft": "Мам, не звони мне постоянно, ты меня заебала", "relationship": "family"}
+{"id": "prof-14", "category": "profanity", "draft": "Ты хуев помощник, лучше бы вообще не лез", "relationship": "friend"}
+{"id": "prof-15", "category": "profanity", "draft": "Блядь, я забыл про твой день рождения, моя вина", "goal": "admit_fault", "relationship": "partner"}
+{"id": "prof-16", "category": "profanity", "draft": "Мы поссорились, ты мудак, но давай уже мириться", "goal": "reconnect", "relationship": "partner"}
+{"id": "prof-17", "category": "profanity", "draft": "Нет, денег не дам, пошёл ты нахуй со своими просьбами", "goal": "decline", "relationship": "friend"}
+{"id": "prof-18", "category": "profanity", "draft": "Хватит звонить мне по ночам, это пиздец какой-то", "goal": "set_boundary", "relationship": "friend"}
+{"id": "prof-19", "category": "profanity", "draft": "Ты сука, опять оставил меня одного с этим разговором", "relationship": "partner"}
+{"id": "prof-20", "category": "profanity", "draft": "Ну ты и долбоёб, снова перепутал даты", "relationship": "friend"}
+{"id": "prof-21", "category": "profanity", "draft": "Это полная херня, что ты сейчас говоришь", "relationship": "family"}
+{"id": "goal-reconnect-01", "category": "goal", "draft": "Уважаемые коллеги, ваше предложение не подходит по срокам и бюджету. Мы отказываемся от сотрудничества", "goal": "reconnect", "relationship": "work", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"], "smoke": true}
+{"id": "goal-reconnect-02", "category": "goal", "draft": "Ну всё, хватит", "goal": "reconnect", "relationship": "partner", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-reconnect-03", "category": "goal", "draft": "Ты опять наорал на меня при всех, это было отвратительно, я до сих пор злюсь", "goal": "reconnect", "relationship": "partner", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-reconnect-04", "category": "goal", "draft": "Прошу считать вопрос закрытым. Условия договора остаются прежними", "goal": "reconnect", "relationship": "work", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-reconnect-05", "category": "goal", "draft": "Хватит, достали уже ссориться", "goal": "reconnect", "relationship": "family", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-reconnect-06", "category": "goal", "draft": "Ты была неправа, но спорить дальше смысла нет", "goal": "reconnect", "relationship": "friend", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-admit-01", "category": "goal", "draft": "Я не виноват, ты сам не предупредил меня про изменение времени", "goal": "admit_fault", "relationship": "partner", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"], "smoke": true}
+{"id": "goal-admit-02", "category": "goal", "draft": "Да, я не позвонил, но у меня был тяжёлый день, ты же знаешь", "goal": "admit_fault", "relationship": "family", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-admit-03", "category": "goal", "draft": "Извини, пожалуйста, что я забыл про твой день рождения. Мне правда жаль", "goal": "admit_fault", "relationship": "friend", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-admit-04", "category": "goal", "draft": "Я сорвал сроки по проекту. Это моя ошибка", "goal": "admit_fault", "relationship": "work", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-admit-05", "category": "goal", "draft": "Я накричал на тебя вчера, это было лишним", "goal": "admit_fault", "relationship": "partner", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-admit-06", "category": "goal", "draft": "Я забыл купить продукты, закрутился с делами", "goal": "admit_fault", "relationship": "family", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-decline-01", "category": "goal", "draft": "Не смогу приехать в субботу, у меня дела и я устал за неделю", "goal": "decline", "relationship": "friend", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"], "smoke": true}
+{"id": "goal-decline-02", "category": "goal", "draft": "Денег одолжить не могу, самому не хватает до зарплаты", "goal": "decline", "relationship": "friend", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-decline-03", "category": "goal", "draft": "Нет, с проектом помогать не буду, у меня и так завал", "goal": "decline", "relationship": "work", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-decline-04", "category": "goal", "draft": "Не пойду на ужин к родителям, у меня болит голова", "goal": "decline", "relationship": "family", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-decline-05", "category": "goal", "draft": "Одолжить машину не получится, она нужна мне самому", "goal": "decline", "relationship": "friend", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-decline-06", "category": "goal", "draft": "Отпуск в эти даты не согласую, у нас сдача проекта", "goal": "decline", "relationship": "work", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-boundary-01", "category": "goal", "draft": "Ты постоянно звонишь мне во время работы, это мешает", "goal": "set_boundary", "relationship": "partner", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-boundary-02", "category": "goal", "draft": "Мне не нравится, когда ты читаешь мои сообщения без спроса", "goal": "set_boundary", "relationship": "partner", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-boundary-03", "category": "goal", "draft": "Вы стали присылать задачи после десяти вечера, у меня нерабочее время", "goal": "set_boundary", "relationship": "work", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-boundary-04", "category": "goal", "draft": "Меня раздражает, что ты перебиваешь меня при гостях", "goal": "set_boundary", "relationship": "friend", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-boundary-05", "category": "goal", "draft": "Не обсуждай мою зарплату с друзьями, мне это неприятно", "goal": "set_boundary", "relationship": "family", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "goal-boundary-06", "category": "goal", "draft": "Хватит приходить без предупреждения, я не всегда дома", "goal": "set_boundary", "relationship": "family", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "rule-ask-01-with", "category": "rule", "draft": "Мне нужно, чтобы ты предупреждал заранее, если задерживаешься", "relationship": "partner", "rules": [{"category": "how_to_ask", "text": "Каждый вариант заканчивать одним конкретным вопросом или просьбой", "effective_since": "2026-01-01T00:00:00+00:00"}], "effect_pair": "ask-01", "smoke": true}
+{"id": "rule-ask-01-without", "category": "rule", "draft": "Мне нужно, чтобы ты предупреждал заранее, если задерживаешься", "relationship": "partner", "effect_pair": "ask-01"}
+{"id": "rule-ask-02-with", "category": "rule", "draft": "Я не смогу забрать детей в среду из-за совещания", "relationship": "partner", "rules": [{"category": "how_to_ask", "text": "Каждый вариант заканчивать одним конкретным вопросом или просьбой", "effective_since": "2026-01-01T00:00:00+00:00"}], "effect_pair": "ask-02"}
+{"id": "rule-ask-02-without", "category": "rule", "draft": "Я не смогу забрать детей в среду из-за совещания", "relationship": "partner", "effect_pair": "ask-02"}
+{"id": "rule-apology-with", "category": "rule", "draft": "Я забыл про нашу годовщину, это вышло плохо", "goal": "admit_fault", "relationship": "partner", "rules": [{"category": "apology", "text": "Если я виноват, говорю об этом прямо и один раз прошу прощения", "effective_since": "2026-01-01T00:00:00+00:00"}], "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"], "smoke": true}
+{"id": "rule-apology-without", "category": "rule", "draft": "Я забыл про нашу годовщину, это вышло плохо", "goal": "admit_fault", "relationship": "partner", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
+{"id": "rule-taboo-with", "category": "rule", "draft": "Хочу поговорить о том, как мы делим расходы на дачу", "relationship": "family", "rules": [{"category": "taboo_topic", "text": "Не упоминать развод и прошлые отношения", "effective_since": "2026-01-01T00:00:00+00:00"}], "forbidden_stems": ["развод", "бывш", "прошлых отношен"]}
+{"id": "rule-taboo-without", "category": "rule", "draft": "Хочу поговорить о том, как мы делим расходы на дачу", "relationship": "family", "forbidden_stems": ["развод", "бывш", "прошлых отношен"]}
+{"id": "ladder-01", "category": "ladder", "draft": "Пожалуйста, если не сложно, не мог бы ты, возможно, перезвонить мне сегодня вечером, было бы очень хорошо", "relationship": "friend", "smoke": true}
+{"id": "ladder-02", "category": "ladder", "draft": "Верни деньги до пятницы", "relationship": "friend"}
+{"id": "ladder-03", "category": "ladder", "draft": "Ты идиот и тупица, опять всё сломал", "relationship": "family"}
+{"id": "ladder-04", "category": "ladder", "draft": "Ну конечно, ты же у нас самый занятой, куда нам до твоих дел", "relationship": "partner"}
+{"id": "ladder-05", "category": "ladder", "draft": "Извини, пожалуйста, прости, что отвлекаю, мне так неловко, извини, можно ли мне получить ответ", "relationship": "work"}
+{"id": "ladder-06", "category": "ladder", "draft": "Добрый день. Вчера снова сорвали поставку, это уже не первый случай. Просим принять меры", "relationship": "work"}
+{"id": "ladder-07", "category": "ladder", "draft": "Не смогу помочь с переездом, у меня работа и вообще я плохо себя чувствую", "relationship": "friend"}
+{"id": "ladder-08", "category": "ladder", "draft": "Позвони мне", "relationship": "partner"}
+{"id": "ladder-09", "category": "ladder", "draft": "Я хочу, чтобы мы наконец договорились о том, как делим домашние дела. Последние две недели я готовлю, убираю и закупаю продукты, а ты приходишь поздно и ничего не делаешь. Мне это кажется несправедливым, и я устал говорить об этом каждый раз заново", "relationship": "partner", "smoke": true}
+{"id": "ladder-10", "category": "ladder", "draft": "Вы опять не прислали документы, мы ждём их с понедельника. Пришлите сегодня", "relationship": "work"}
+{"id": "ladder-11", "category": "ladder", "draft": "Ты всегда опаздываешь, вечно ты всё забываешь", "relationship": "friend"}
+{"id": "ladder-12", "category": "ladder", "draft": "Не трогай мои вещи", "relationship": "family"}

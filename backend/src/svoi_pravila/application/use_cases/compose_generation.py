@@ -64,9 +64,10 @@ from svoi_pravila.domain.enums import (
 )
 from svoi_pravila.domain.ids import ContactId, TelegramUserId, UsageEventId
 from svoi_pravila.domain.product_day import product_day
+from svoi_pravila.domain.tone import ToneLexicons
 from svoi_pravila.domain.typography import humanize_typography
 from svoi_pravila.domain.usage import UsageEvent
-from svoi_pravila.domain.variant_policy import check_variant_policy
+from svoi_pravila.domain.variant_policy import PolicyContext, check_variant_set
 
 _QUOTA_PURPOSE = "inline_quota"
 _ANALYTICS_PURPOSE = "analytics"
@@ -122,6 +123,7 @@ class ComposeGenerationPorts:
     ids: IdGenerator
     pseudonymizer: Pseudonymizer
     crisis_screen: CrisisScreen
+    tone_lexicons: ToneLexicons
     deadline_seconds: float
     analytics_timezone: str
 
@@ -278,7 +280,7 @@ class ComposeGeneration:
         await self._budget_add(day, generated.meta.usage.billable)
         return InlineReuseValue(
             scenario=material.scenario,
-            variants=self._finish_variants(material.draft, generated),
+            variants=self._finish_variants(material, generated),
             safety=generated.safety,
             applied_rules=applied_rule_views(material.rules, generated.applied_rule_indexes),
         )
@@ -295,8 +297,11 @@ class ComposeGeneration:
     async def _call_generator(self, material: ComposeProduceMaterial) -> RewriteResult:
         return await self._ports.generator.rewrite(self._generation_request(material))
 
-    def _finish_variants(self, draft: str, generated: RewriteResult) -> tuple[Variant, ...]:
+    def _finish_variants(
+        self, material: ComposeProduceMaterial, generated: RewriteResult
+    ) -> tuple[Variant, ...]:
         """Fill an empty ``check`` with the draft, apply typography, report policy violations."""
+        draft = material.draft
         variants, check_empty = fill_empty_check(draft, generated.variants)
         if check_empty:
             self._ports.policy_monitor.record_check_empty()
@@ -304,9 +309,13 @@ class ComposeGeneration:
             Variant(text=humanize_typography(draft, variant.text), kind=variant.kind)
             for variant in variants
         )
-        for variant in finished:
-            for violation in check_variant_policy(draft, variant.kind, variant.text):
-                self._ports.policy_monitor.record(variant.kind, violation.rule)
+        context = PolicyContext(
+            goal=material.goal,
+            rule_categories=frozenset(rule.category for rule in material.rules),
+        )
+        texts = {variant.kind: variant.text for variant in finished}
+        for violation in check_variant_set(draft, texts, context, self._ports.tone_lexicons):
+            self._ports.policy_monitor.record(violation.kind, violation.rule)
         return finished
 
     async def _budget_add(self, day: date, billable_tokens: int) -> None:

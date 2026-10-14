@@ -1,4 +1,4 @@
-"""Run the rewrite eval: N calls per case, policy checked on every variant."""
+"""Run the rewrite eval: N calls per case, the policy checked on the whole variant set."""
 
 from __future__ import annotations
 
@@ -15,13 +15,16 @@ from svoi_pravila.application.ports.generation import (
     RewriteRequest,
     SafetyVerdict,
     TextGenerator,
+    Variant,
 )
 from svoi_pravila.application.rewrite_variants import fill_empty_check
 from svoi_pravila.benchmarks.runner import SpendTracker
-from svoi_pravila.domain.enums import VariantKind
+from svoi_pravila.domain.enums import RewriteGoal, VariantKind
+from svoi_pravila.domain.tone import ToneLexicons
 from svoi_pravila.domain.typography import humanize_typography
-from svoi_pravila.domain.variant_policy import PolicyRule, check_variant_policy
-from svoi_pravila.evals.rewrite_cases import RewriteCase
+from svoi_pravila.domain.variant_policy import PolicyContext, PolicyRule, check_variant_set
+from svoi_pravila.evals.rewrite_cases import RewriteCase, RewriteCategory
+from svoi_pravila.evals.rule_checks import variant_complies_with_closing_ask, variant_leaks_stems
 
 _STOP_KINDS = frozenset({UnavailableKind.RATE_LIMITED, UnavailableKind.AUTH})
 
@@ -38,12 +41,18 @@ class RunOutcome(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class RunVariant:
-    """One variant after typography, with the policy rules it broke."""
+    """One variant after typography: the policy rules it broke and the case-level checks.
+
+    ``stem_leak`` is set on ``softer`` and ``firmer`` of a case with forbidden stems;
+    ``closing_ask_ok`` on every variant of a case that belongs to an effect pair.
+    """
 
     kind: VariantKind
     text: str
     violations: tuple[PolicyRule, ...]
     check_ok: bool | None = None
+    stem_leak: bool | None = None
+    closing_ask_ok: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +68,9 @@ class RewriteRunRecord:
     """One call for one case. Texts exist only for the local report."""
 
     case_id: str
+    category: RewriteCategory
+    goal: RewriteGoal | None
+    had_rules: bool
     run_index: int
     outcome: RunOutcome
     variants: tuple[RunVariant, ...]
@@ -75,6 +87,7 @@ class RewriteEvalParams:
     repeat: int
     deadline_seconds: float
     max_tokens: int
+    lexicons: ToneLexicons
 
 
 @dataclass(slots=True)
@@ -98,26 +111,79 @@ def _normalized(text: str) -> str:
     return " ".join(text.split())
 
 
-def _finish(case: RewriteCase, kind: VariantKind, raw_text: str) -> RunVariant:
-    text = humanize_typography(case.draft, raw_text)
-    rules = tuple(violation.rule for violation in check_variant_policy(case.draft, kind, text))
-    check_ok = (
-        _normalized(text) in {_normalized(expected) for expected in case.check_expected}
-        if kind is VariantKind.CHECK and case.check_expected
-        else None
+_TONED = (VariantKind.SOFTER, VariantKind.FIRMER)
+
+
+def _finish_set(
+    case: RewriteCase,
+    raw: tuple[Variant, ...],
+    lexicons: ToneLexicons,
+) -> tuple[RunVariant, ...]:
+    texts = {variant.kind: humanize_typography(case.draft, variant.text) for variant in raw}
+    context = PolicyContext(
+        goal=case.goal,
+        rule_categories=frozenset(rule.category for rule in case.rules),
     )
-    return RunVariant(kind=kind, text=text, violations=rules, check_ok=check_ok)
+    violations = check_variant_set(case.draft, texts, context, lexicons)
+    expected = {_normalized(item) for item in case.check_expected}
+    return tuple(
+        RunVariant(
+            kind=kind,
+            text=text,
+            violations=tuple(item.rule for item in violations if item.kind is kind),
+            check_ok=(
+                _normalized(text) in expected
+                if kind is VariantKind.CHECK and case.check_expected
+                else None
+            ),
+            stem_leak=(
+                variant_leaks_stems(
+                    draft=case.draft, variants=(text,), stop_stems=case.forbidden_stems
+                )
+                if kind in _TONED and case.forbidden_stems
+                else None
+            ),
+            closing_ask_ok=(
+                variant_complies_with_closing_ask(text) if case.effect_pair is not None else None
+            ),
+        )
+        for kind, text in texts.items()
+    )
+
+
+def _failed(
+    case: RewriteCase,
+    run_index: int,
+    outcome: RunOutcome,
+    billable_tokens: int,
+    diagnostics: tuple[InvalidDiagnostic, ...] = (),
+) -> RewriteRunRecord:
+    """A call that produced no variants (refusal, invalid output, unavailable)."""
+    return RewriteRunRecord(
+        case_id=case.id,
+        category=case.category,
+        goal=case.goal,
+        had_rules=bool(case.rules),
+        run_index=run_index,
+        outcome=outcome,
+        variants=(),
+        latency_ms=None,
+        billable_tokens=billable_tokens,
+        diagnostics=diagnostics,
+    )
 
 
 async def _call(
-    gen: TextGenerator, case: RewriteCase, run_index: int, request: RewriteRequest
+    gen: TextGenerator,
+    case: RewriteCase,
+    run_index: int,
+    request: RewriteRequest,
+    lexicons: ToneLexicons,
 ) -> RewriteRunRecord:
     try:
         result = await gen.rewrite(request)
     except GenerationRefusedByProvider as exc:
-        return RewriteRunRecord(
-            case.id, run_index, RunOutcome.REFUSED, (), None, exc.usage.billable
-        )
+        return _failed(case, run_index, RunOutcome.REFUSED, exc.usage.billable)
     except InvalidGenerationOutput as exc:
         diagnostics = tuple(
             InvalidDiagnostic(reason, finish_reason)
@@ -125,25 +191,19 @@ async def _call(
                 exc.labelled_reasons(), exc.finish_reasons, strict=True
             )
         )
-        return RewriteRunRecord(
-            case.id,
-            run_index,
-            RunOutcome.INVALID_OUTPUT,
-            (),
-            None,
-            exc.usage.billable,
-            diagnostics,
-        )
+        return _failed(case, run_index, RunOutcome.INVALID_OUTPUT, exc.usage.billable, diagnostics)
     filled, check_empty = fill_empty_check(case.draft, result.variants)
-    variants = tuple(_finish(case, variant.kind, variant.text) for variant in filled)
     outcome = RunOutcome.OK if result.safety is SafetyVerdict.OK else RunOutcome.NOT_OK_SAFETY
     return RewriteRunRecord(
-        case.id,
-        run_index,
-        outcome,
-        variants,
-        result.meta.latency_ms,
-        result.meta.usage.billable,
+        case_id=case.id,
+        category=case.category,
+        goal=case.goal,
+        had_rules=bool(case.rules),
+        run_index=run_index,
+        outcome=outcome,
+        variants=_finish_set(case, filled, lexicons),
+        latency_ms=result.meta.latency_ms,
+        billable_tokens=result.meta.usage.billable,
         check_empty=check_empty,
     )
 
@@ -164,7 +224,7 @@ async def run_rewrite_eval(
         request = RewriteRequest(
             draft=case.draft,
             goal=case.goal,
-            rules=(),
+            rules=case.rules,
             relationship=case.relationship,
             deadline_seconds=params.deadline_seconds,
         )
@@ -174,13 +234,11 @@ async def run_rewrite_eval(
                 result.stop_reason = "token_budget"
                 return result
             try:
-                record = await _call(gen, case, run_index, request)
+                record = await _call(gen, case, run_index, request, params.lexicons)
             except GenerationUnavailable as exc:
                 spend.add(exc.usage.billable)
                 result.records.append(
-                    RewriteRunRecord(
-                        case.id, run_index, RunOutcome.UNAVAILABLE, (), None, exc.usage.billable
-                    )
+                    _failed(case, run_index, RunOutcome.UNAVAILABLE, exc.usage.billable)
                 )
                 if exc.kind in _STOP_KINDS:
                     result.stop_reason = exc.kind.value

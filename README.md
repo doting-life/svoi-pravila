@@ -6,7 +6,7 @@ AI helper for difficult conversations: a Telegram inline bot and mini-app that r
 
 - [uv](https://docs.astral.sh/uv/) at `[tool.uv] required-version` in `backend/pyproject.toml` (Python from `backend/.python-version`)
 - Node from `miniapp/.nvmrc`
-- pnpm on PATH at the `packageManager` version in `miniapp/package.json` (any installer; for example a one-time `corepack enable` done by the developer, not by make). `make toolchain-check` enforces it.
+- pnpm on PATH at the `packageManager` version in `miniapp/package.json` (any installer; for example a one-time `corepack enable` done by the developer, not by make). `make toolchain-check` enforces it. If it reports a pnpm version mismatch, `corepack prepare pnpm@12.9.1 --activate` installs the pinned version (use the version currently in `packageManager`).
 - Docker (Compose v2) for the local stack (API, one-shot migrations, PostgreSQL 18, Valkey)
 
 ## Local setup

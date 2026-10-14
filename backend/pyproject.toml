@@ -56,7 +56,7 @@ required-version = "==0.12.22"
 packages = ["src/svoi_pravila"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"src/svoi_pravila/adapters/llm/prompts/rewrite/v2.md" = "svoi_pravila/adapters/llm/prompts/rewrite/v2.md"
+"src/svoi_pravila/adapters/llm/prompts/rewrite/v3.md" = "svoi_pravila/adapters/llm/prompts/rewrite/v3.md"
 "src/svoi_pravila/adapters/llm/prompts/rewrite/binding.md" = "svoi_pravila/adapters/llm/prompts/rewrite/binding.md"
 "src/svoi_pravila/adapters/llm/prompts/rewrite/refuse_extra.md" = "svoi_pravila/adapters/llm/prompts/rewrite/refuse_extra.md"
 "src/svoi_pravila/adapters/llm/prompts/rewrite/json_close_rules.md" = "svoi_pravila/adapters/llm/prompts/rewrite/json_close_rules.md"

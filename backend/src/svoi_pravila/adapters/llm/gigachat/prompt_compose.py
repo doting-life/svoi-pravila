@@ -15,6 +15,8 @@ from svoi_pravila.adapters.llm.gigachat.schemas import (
 )
 from svoi_pravila.adapters.llm.registry import load_prompt_template
 
+REWRITE_PROMPT_VERSION = "v3"
+
 
 @dataclass(frozen=True, slots=True)
 class _ComposeParts:
@@ -55,8 +57,8 @@ def _fill(skeleton: str, parts: _ComposeParts) -> str:
 
 
 def compose_rewrite_template(*, has_rules: bool) -> str:
-    """Return the rewrite@v2 system template for the given rule shape."""
-    skeleton, _version = load_prompt_template("rewrite", "v2")
+    """Return the rewrite system template (``REWRITE_PROMPT_VERSION``) for the given rule shape."""
+    skeleton, _version = load_prompt_template("rewrite", REWRITE_PROMPT_VERSION)
     schema: type[BaseModel] = RewriteOut if has_rules else RewriteOutNoRules
     return _fill(
         skeleton,

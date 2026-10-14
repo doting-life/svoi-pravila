@@ -8,7 +8,10 @@ from svoi_pravila.adapters.llm.gigachat.boundaries import (
     allocate_boundary_marker,
     wrap_untrusted_payload,
 )
-from svoi_pravila.adapters.llm.gigachat.prompt_compose import compose_rewrite_template
+from svoi_pravila.adapters.llm.gigachat.prompt_compose import (
+    REWRITE_PROMPT_VERSION,
+    compose_rewrite_template,
+)
 from svoi_pravila.adapters.llm.gigachat.validation import rules_text, untrusted_texts
 from svoi_pravila.adapters.llm.registry import load_prompt_template, render_system_prompt
 from svoi_pravila.application.ports.generation import (
@@ -35,7 +38,7 @@ def prepare_rewrite(request: RewriteRequest) -> PreparedMessages:
         untrusted_texts(request.draft, goal, request.relationship.value, rules=request.rules)
     )
     template = compose_rewrite_template(has_rules=bool(request.rules))
-    prompt_version = "rewrite@v2"
+    prompt_version = f"rewrite@{REWRITE_PROMPT_VERSION}"
     system = render_system_prompt(template, boundary_marker=marker)
     user = wrap_untrusted_payload(
         marker,

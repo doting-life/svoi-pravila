@@ -13,8 +13,8 @@ from svoi_pravila.application.errors import InvalidGenerationOutput
 @pytest.mark.unit
 def test_render_rewrite_prompt() -> None:
     template = compose_rewrite_template(has_rules=True)
-    _, version = load_prompt("rewrite", "v2")
-    assert version == "rewrite@v2"
+    _, version = load_prompt("rewrite", "v3")
+    assert version == "rewrite@v3"
     rendered = render_system_prompt(template, boundary_marker="SPBOUND_ABC")
     assert "SPBOUND_ABC" in rendered
     assert "{{BOUNDARY_MARKER}}" not in rendered

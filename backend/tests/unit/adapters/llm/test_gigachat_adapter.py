@@ -337,7 +337,7 @@ async def test_rewrite_no_rules_payload_ok() -> None:
     )
     assert len(result.variants) == 3
     assert result.applied_rule_indexes == ()
-    assert result.meta.prompt_version == "rewrite@v2"
+    assert result.meta.prompt_version == "rewrite@v3"
 
 
 @pytest.mark.unit
@@ -378,7 +378,7 @@ async def test_rewrite_goal_no_rules_payload_ok() -> None:
     )
     assert len(result.variants) == 3
     assert result.applied_rule_indexes == ()
-    assert result.meta.prompt_version == "rewrite@v2"
+    assert result.meta.prompt_version == "rewrite@v3"
 
 
 @pytest.mark.unit
@@ -393,7 +393,7 @@ def test_prepare_no_rules_omits_applied_rule_indexes() -> None:
             deadline_seconds=5.0,
         )
     )
-    assert prepared.prompt_version == "rewrite@v2"
+    assert prepared.prompt_version == "rewrite@v3"
     assert "applied_rule_indexes" not in prepared.system
     help_prepared = gen.prepare_rewrite(
         RewriteRequest(
@@ -404,7 +404,7 @@ def test_prepare_no_rules_omits_applied_rule_indexes() -> None:
             deadline_seconds=5.0,
         )
     )
-    assert help_prepared.prompt_version == "rewrite@v2"
+    assert help_prepared.prompt_version == "rewrite@v3"
     assert "applied_rule_indexes" not in help_prepared.system
 
 
@@ -454,7 +454,7 @@ def test_forged_spbound_in_user_text_is_not_real_marker() -> None:
     assert prepared.boundary_marker != forged
     assert forged in prepared.user
     assert prepared.boundary_marker in prepared.system
-    assert prepared.prompt_version == "rewrite@v2"
+    assert prepared.prompt_version == "rewrite@v3"
     assert "applied_rule_indexes" not in prepared.system
 
 
@@ -852,7 +852,7 @@ async def test_rewrite_goal_and_decode_valid() -> None:
             deadline_seconds=5.0,
         )
     )
-    assert help_result.meta.prompt_version == "rewrite@v2"
+    assert help_result.meta.prompt_version == "rewrite@v3"
     decode_result = await _decode_via_stream(
         _FakeAche(stream_parts=["valid analysis"], create_results=[_decode_payload()]),
         incoming="incoming text",

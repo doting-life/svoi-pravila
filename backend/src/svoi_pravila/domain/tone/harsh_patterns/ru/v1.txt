@@ -1,0 +1,35 @@
+# Harsh tone markers without obscenity (ru/v1). One regex per line.
+# Scope: non-obscene insults, aggressive imperatives, contempt in pejorative constructions,
+# generalizations. Obscene vocabulary lives in the profanity lexicon.
+# Applied to normalized text (lowercase, ё→е, collapsed space, edge punctuation stripped).
+# Every pattern is anchored at a word start; neutral uses (тупик, дурман, «достал книгу»,
+# «всегда рад», «никогда не поздно») must not match.
+# Insults.
+\bидиот
+\bдебил
+\bтуп(?:ой|ая|ое|ые|ого|ую|ым|ому|ых)\b
+\bтупиц
+\bкретин
+\bурод(?:ы|ина|ка|ов|ам|ом|у|е|ище)?\b
+\bпридур(?:ок|ки|ка|ков)\b
+\bдур(?:а|ы|у|ой|е|ак|аки|ака|аку|аком|аков|ачок|очка)\b
+\bдурацк
+\bскотин
+\bтварь\b
+# Aggressive imperatives.
+\bзаткни(?:сь|тесь)\b
+\bотвали(?:те)?\b
+# Contempt in pejorative constructions only.
+\bбеси(?:шь|те)\b
+\bзадолбал(?:а|и)?\b
+\bты (?:меня )?(?:уже )?достал(?:а)?(?= (?:уже|меня|всех|нас|своим|своими|этим|этими|постоянно|вечно|совсем)\b|$)
+\bвы (?:меня )?(?:уже )?достали(?= (?:уже|меня|всех|нас|своим|своими|этим|этими|постоянно|вечно|совсем)\b|$)
+\bдостали уже\b
+# Generalizations.
+\bты всегда\b
+\bты никогда\b
+\bвы всегда\b
+\bвы никогда\b
+\bвечно ты\b
+\bвечно вы\b
+\bсколько можно\b

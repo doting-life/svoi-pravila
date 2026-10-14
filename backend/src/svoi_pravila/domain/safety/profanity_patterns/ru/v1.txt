@@ -1,0 +1,33 @@
+# Core Russian obscene roots (ru/v1). One regex per line.
+# Scope: obscene vocabulary only. General insults (идиот, дурак, ...) live in the harsh tone lexicon.
+# Applied to normalized text (lowercase, ё→е, collapsed space, edge punctuation stripped);
+# an asterisk inside a word is kept, so masked forms (х*й, бл*дь) are matched.
+# Every pattern is anchored at a word start; prefixes come from closed lists; no bare substring roots.
+# Excluded on purpose: бляха, бляшка (the root needs д/т after бля), ребята, небо, требуй, психуй.
+# Family х*й: closed prefixes на-, по-, о-, ни-, за-, до-, рас-, от-.
+\b(?:на|по|о|ни|за|до|рас|от)?х[у*](?:[йяе]|и\b)
+\bхул[иея]\b
+# Family п*зд-: closed prefix list.
+\b(?:с|на|по|о|за|вы|до|от|рас|раз|при|у|ис|про|под)?п[и*][з*]д
+# Family бл*дь / бл*.
+\bбля\b
+\bбл\b
+\bбл[я*][дт]
+# Family е*/ё* (ё is normalized to е): closed prefixes за-, вы-, у-, до-, на-, от-, по-, при-, раз-, съ-.
+\b(?:за|вы|у|до|на|от|по|при|раз|съ)?е[б*][а*][тлншр]
+\b(?:за|вы|у|до|на|от|по|при|раз|съ)?е[б*]л[оаеиы]
+\b(?:за|вы|у|до|на|от|по|при|раз|съ)?е[б*][у*](?:\b|т|щ|н)
+\b(?:за|вы|у|до|на|от|по|при|раз|съ)?е[б*]е[тмшн]
+\b(?:за|вы|у|до|на|от|по|при|раз|съ)?еб(?:[и*]сь|ите|н[уи])
+\b(?:за|вы|у|до|на|от|по|при|раз|съ)?еби\b
+\b(?:за|вы|у|до|на|от|по|при|раз|съ)?е[б*]ыв
+\b(?:за|вы|у|до|на|от|по|при|раз|съ)?е[б*]ок
+# Family муд*к.
+\bм[у*][д*][а*][кч]
+\bм[у*][д*][иы*]л
+\bмудозвон
+# Obscene insults: пид*р family, г*ндон, з*луп-, шл*х-.
+\bп[ие*][д*][оае*]р
+\bг[ао*]н[д*][оа*]н
+\bз[а*]л[у*]п
+\bш[л*][юу*]х

@@ -6,8 +6,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from svoi_pravila.application.crisis_screen import CrisisScreen, load_crisis_pattern_sources
-from svoi_pravila.domain.safety import crisis_hit, load_data_lines, normalize_crisis_text
+from svoi_pravila.application.crisis_screen import CrisisScreen
+from svoi_pravila.domain.lexicon import lexicon_hit, load_data_lines, normalize_lexicon_text
 
 _SCREEN = CrisisScreen.load_ru_v2()
 
@@ -105,14 +105,14 @@ _NEGATIVE: tuple[str, ...] = (
 
 @pytest.mark.unit
 def test_v2_pattern_count_is_stable() -> None:
-    sources = load_crisis_pattern_sources()
+    sources = [pattern.pattern for pattern in _SCREEN.lexicon.patterns]
     assert len(sources) >= 30
     assert all(source.startswith("\\b") for source in sources)
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize("phrase", _POSITIVE)
-def test_explicit_crisis_hits(phrase: str) -> None:
+def test_explicit_crisis_phrases_match(phrase: str) -> None:
     assert _SCREEN.hit(phrase)
 
 
@@ -124,7 +124,7 @@ def test_mild_and_idiom_misses(phrase: str) -> None:
 
 @pytest.mark.unit
 def test_normalize_maps_yo_and_strips_edge_punct() -> None:
-    assert normalize_crisis_text("  Ёлка, «Жить!!!»  ") == "елка жить"
+    assert normalize_lexicon_text("  Ёлка, «Жить!!!»  ") == "елка жить"
 
 
 @pytest.mark.unit
@@ -134,7 +134,7 @@ def test_load_data_lines_skips_comments() -> None:
 
 @pytest.mark.unit
 def test_empty_normalized_text_misses() -> None:
-    assert not crisis_hit("!!!", _SCREEN.patterns)
+    assert not lexicon_hit("!!!", _SCREEN.lexicon)
 
 
 @given(st.sampled_from(_POSITIVE))

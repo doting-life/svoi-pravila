@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from importlib import resources
 
-from svoi_pravila.domain.safety import load_data_lines
+from svoi_pravila.domain.lexicon import load_data_lines
 
 _SAFETY_PACKAGE = "svoi_pravila.domain.safety"
 

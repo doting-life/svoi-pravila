@@ -174,13 +174,43 @@ def test_g8_compares_check_ok_with_the_baseline_and_limits_edit_ratio() -> None:
 
 
 @pytest.mark.unit
-def test_g9_limits_invalid_output_to_three_percent_of_all_calls() -> None:
-    invalid = _record(outcome=RunOutcome.INVALID_OUTPUT)
-    assert _by_gate([*_clean(99), invalid])["G9"].status is GateStatus.PASSED
+@pytest.mark.parametrize(
+    "outcome", [RunOutcome.INVALID_OUTPUT, RunOutcome.NOT_OK_SAFETY, RunOutcome.REFUSED]
+)
+def test_g9_limits_unusable_answers_to_three_percent_of_calls(outcome: RunOutcome) -> None:
+    unusable = _record(outcome=outcome)
+    assert _by_gate([*_clean(99), unusable])["G9"].status is GateStatus.PASSED
     assert (
-        _by_gate([*_clean(96), invalid, invalid, invalid, invalid])["G9"].status
+        _by_gate([*_clean(96), unusable, unusable, unusable, unusable])["G9"].status
         is GateStatus.FAILED
     )
+
+
+@pytest.mark.unit
+def test_g9_leaves_unavailable_calls_out_of_the_denominator_and_counts_them() -> None:
+    unusable = _record(outcome=RunOutcome.REFUSED)
+    unavailable = _record(outcome=RunOutcome.UNAVAILABLE)
+    records = [*_clean(99), unusable, *([unavailable] * 50)]
+    metrics = compute_metrics(records)
+    assert metrics.unavailable_runs == 50
+    assert metrics.runs == 150
+    assert metrics.unusable_share == 0.01
+    assert _by_gate(records)["G9"].status is GateStatus.PASSED
+    only_unavailable = _by_gate([unavailable, unavailable])["G9"]
+    assert only_unavailable.status is GateStatus.FAILED
+    assert only_unavailable.value == "no data"
+
+
+@pytest.mark.unit
+def test_refusing_every_profanity_case_keeps_g1_at_zero_but_fails_g9() -> None:
+    refused = _record(outcome=RunOutcome.REFUSED)
+    records = [*_clean(62), *([refused] * 18)]
+    gates = _by_gate(records)
+    assert compute_metrics(records).profanity_runs == 0
+    assert gates["G1"].value == "0 of 62 calls"
+    assert gates["G1"].status is GateStatus.PASSED
+    assert gates["G9"].status is GateStatus.FAILED
+    assert gates_failed(tuple(gates.values()))
 
 
 @pytest.mark.unit
@@ -190,7 +220,7 @@ def test_a_pass_without_ok_calls_fails_every_gate_that_needs_data() -> None:
     assert statuses["G1"] is statuses["G5"] is statuses["G7"] is GateStatus.FAILED
     assert gates["G1"].value == "no data"
     assert statuses["G8"] is GateStatus.NOT_APPLICABLE
-    assert statuses["G9"] is GateStatus.PASSED
+    assert statuses["G9"] is GateStatus.FAILED
     empty = _by_gate([])
     assert empty["G9"].status is GateStatus.FAILED
     assert empty["G9"].value == "no data"
@@ -203,11 +233,13 @@ def test_metrics_count_runs_and_ignore_non_ok_calls_in_the_ok_shares() -> None:
             _record(softer=(PolicyRule.PROFANITY,), stem_leak=True, check_ok=True),
             _record(outcome=RunOutcome.NOT_OK_SAFETY),
             _record(outcome=RunOutcome.INVALID_OUTPUT),
+            _record(outcome=RunOutcome.UNAVAILABLE),
         ]
     )
     assert metrics == GateMetrics(
-        runs=3,
+        runs=4,
         ok_runs=1,
+        unavailable_runs=1,
         profanity_runs=1,
         harsh_runs=0,
         stem_leak_runs=1,
@@ -217,7 +249,7 @@ def test_metrics_count_runs_and_ignore_non_ok_calls_in_the_ok_shares() -> None:
         ladder_similar_share=1.0,
         check_ok_rate=1.0,
         edit_ratio_share=0.0,
-        invalid_share=0.3333,
+        unusable_share=0.6667,
     )
 
 
@@ -230,6 +262,10 @@ def test_baseline_file_holds_rates_only_and_round_trips(tmp_path: Path) -> None:
     assert payload == baseline_payload(metrics)
     assert all(isinstance(value, int | float) or value is None for value in payload.values())
     assert read_baseline(path) == Baseline(check_ok_rate=0.75)
+    assert payload["version"] == 2
+    assert payload["unusable_share"] == 0.0
+    assert payload["unavailable_runs"] == 0
+    assert "invalid_share" not in payload
 
 
 @pytest.mark.unit
@@ -239,11 +275,19 @@ def test_baseline_cannot_be_written_without_check_data_or_read_in_a_bad_shape(
     with pytest.raises(ValueError, match="no check_ok data"):
         write_baseline(tmp_path / "b.json", compute_metrics([_record()]))
     bad = tmp_path / "bad.json"
-    for content in ("[]", '{"version": 2}', '{"version": 1}', '{"version": 1, "check_ok_rate": 2}'):
+    for content in (
+        "[]",
+        '{"version": 3}',
+        '{"version": 1, "check_ok_rate": 0.5}',
+        '{"version": 2}',
+    ):
         bad.write_text(content, encoding="utf-8")
         with pytest.raises(ValueError, match="baseline"):
             read_baseline(bad)
-    bad.write_text('{"version": 1, "check_ok_rate": true}', encoding="utf-8")
+    bad.write_text('{"version": 2, "check_ok_rate": 2}', encoding="utf-8")
+    with pytest.raises(ValueError, match="check_ok_rate"):
+        read_baseline(bad)
+    bad.write_text('{"version": 2, "check_ok_rate": true}', encoding="utf-8")
     with pytest.raises(ValueError, match="check_ok_rate"):
         read_baseline(bad)
 
@@ -253,6 +297,8 @@ def test_report_has_a_gates_section_and_group_summaries() -> None:
     result = RewriteEvalResult(records=[*_clean(3), _record(softer=(PolicyRule.PROFANITY,))])
     report = render_report([ModelEval("m", result, 4)], baseline=_BASELINE)
     assert "### Gates" in report
+    assert "Denominators (ADR-0016 §10)" in report
+    assert "- unavailable calls (in no denominator): 0" in report
     assert "| G1 | profanity in softer/firmer | 1 of 4 calls | 0 | FAIL |" in report
     assert "| G8 | " in report
     assert "### Per category" in report

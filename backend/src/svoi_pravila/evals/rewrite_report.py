@@ -103,9 +103,17 @@ def _effect(records: list[RewriteRunRecord]) -> list[str]:
 
 
 def _gates(item: ModelEval, baseline: Baseline | None) -> list[str]:
-    results = evaluate_gates(compute_metrics(item.result.records), baseline)
+    metrics = compute_metrics(item.result.records)
+    results = evaluate_gates(metrics, baseline)
     return [
         "### Gates",
+        "",
+        "Denominators (ADR-0016 §10): G1-G4, G6, G7, G8 edit_ratio: usable calls (outcome ok); "
+        "G5: usable calls without contact rules; G8 check_ok: check variants with a reference; "
+        "G9: all calls except unavailable.",
+        "",
+        f"- usable calls: {metrics.ok_runs} of {metrics.runs}",
+        f"- unavailable calls (in no denominator): {metrics.unavailable_runs}",
         "",
         "| gate | check | measured | threshold | status |",
         "|---|---|---|---|---|",

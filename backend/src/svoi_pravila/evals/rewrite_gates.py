@@ -2,6 +2,13 @@
 
 Every number here is a count or a share of calls; no text enters this module, so the
 metrics can be written to a committed baseline file.
+
+Denominators (ADR-0016 §10). A usable call has outcome ``ok``: safety ``ok`` and all three
+variants returned. G1-G4, G6, G7 and the G8 ``edit_ratio`` share are measured over usable calls;
+G5 over usable calls without contact rules; the G8 ``check_ok`` rate over the ``check``
+variants that have a reference text. G9 is the share of unusable answers (``invalid_output``,
+``not_ok_safety``, ``refused``) over all calls except ``unavailable``. ``unavailable`` calls
+(provider failures) leave every denominator and are reported as a count.
 """
 
 from __future__ import annotations
@@ -19,10 +26,11 @@ G5_MAX_HEDGE_SHARE = 0.05
 G6_MIN_LADDER_LENGTH_SHARE = 0.90
 G7_MIN_LADDER_SIMILAR_SHARE = 0.95
 G8_MAX_EDIT_RATIO_SHARE = 0.05
-G9_MAX_INVALID_SHARE = 0.03
+G9_MAX_UNUSABLE_SHARE = 0.03
 
 _RATE_DIGITS = 4
-_BASELINE_VERSION = 1
+_BASELINE_VERSION = 2
+_UNUSABLE = (RunOutcome.INVALID_OUTPUT, RunOutcome.NOT_OK_SAFETY, RunOutcome.REFUSED)
 _TONED = (VariantKind.SOFTER, VariantKind.FIRMER)
 
 
@@ -40,6 +48,7 @@ class GateMetrics:
 
     runs: int
     ok_runs: int
+    unavailable_runs: int
     profanity_runs: int
     harsh_runs: int
     stem_leak_runs: int
@@ -49,7 +58,7 @@ class GateMetrics:
     ladder_similar_share: float | None
     check_ok_rate: float | None
     edit_ratio_share: float | None
-    invalid_share: float | None
+    unusable_share: float | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +90,8 @@ def _has_rule(record: RewriteRunRecord, rule: PolicyRule, kinds: tuple[VariantKi
 def compute_metrics(records: list[RewriteRunRecord]) -> GateMetrics:
     """Reduce the records of one model to the numbers the gates read."""
     ok = [record for record in records if record.outcome is RunOutcome.OK]
+    unavailable = sum(record.outcome is RunOutcome.UNAVAILABLE for record in records)
+    unusable = sum(record.outcome in _UNUSABLE for record in records)
     plain = [record for record in ok if not record.had_rules]
     checks = [
         variant.check_ok
@@ -91,6 +102,7 @@ def compute_metrics(records: list[RewriteRunRecord]) -> GateMetrics:
     return GateMetrics(
         runs=len(records),
         ok_runs=len(ok),
+        unavailable_runs=unavailable,
         profanity_runs=sum(_has_rule(r, PolicyRule.PROFANITY, _TONED) for r in ok),
         harsh_runs=sum(_has_rule(r, PolicyRule.HARSH, _TONED) for r in ok),
         stem_leak_runs=sum(
@@ -113,9 +125,7 @@ def compute_metrics(records: list[RewriteRunRecord]) -> GateMetrics:
         edit_ratio_share=_share(
             sum(_has_rule(r, PolicyRule.EDIT_RATIO, (VariantKind.CHECK,)) for r in ok), len(ok)
         ),
-        invalid_share=_share(
-            sum(record.outcome is RunOutcome.INVALID_OUTPUT for record in records), len(records)
-        ),
+        unusable_share=_share(unusable, len(records) - unavailable),
     )
 
 
@@ -185,7 +195,7 @@ def evaluate_gates(metrics: GateMetrics, baseline: Baseline | None) -> tuple[Gat
             G7_MIN_LADDER_SIMILAR_SHARE,
         ),
         _baseline_gate(metrics, baseline),
-        _max_gate("G9", "invalid output", metrics.invalid_share, G9_MAX_INVALID_SHARE),
+        _max_gate("G9", "unusable answers", metrics.unusable_share, G9_MAX_UNUSABLE_SHARE),
     )
 
 
@@ -200,6 +210,7 @@ def baseline_payload(metrics: GateMetrics) -> dict[str, object]:
         "version": _BASELINE_VERSION,
         "runs": metrics.runs,
         "ok_runs": metrics.ok_runs,
+        "unavailable_runs": metrics.unavailable_runs,
         "profanity_runs": metrics.profanity_runs,
         "harsh_runs": metrics.harsh_runs,
         "stem_leak_runs": metrics.stem_leak_runs,
@@ -209,7 +220,7 @@ def baseline_payload(metrics: GateMetrics) -> dict[str, object]:
         "ladder_similar_share": metrics.ladder_similar_share,
         "check_ok_rate": metrics.check_ok_rate,
         "edit_ratio_share": metrics.edit_ratio_share,
-        "invalid_share": metrics.invalid_share,
+        "unusable_share": metrics.unusable_share,
     }
 
 

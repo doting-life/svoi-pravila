@@ -16,6 +16,7 @@ from svoi_pravila.application.ports.generation import (
     RewriteRequest,
     SuggestRuleRequest,
 )
+from svoi_pravila.application.ports.rewrite_judge import JudgeRequest
 
 
 @dataclass(frozen=True, slots=True)
@@ -110,6 +111,32 @@ def prepare_suggest_rule(request: SuggestRuleRequest) -> PreparedMessages:
             ("incoming", request.incoming),
             ("rules", rules_text(request.rules)),
             ("relationship", request.relationship.value),
+        ),
+    )
+    return PreparedMessages(
+        system=system, user=user, prompt_version=prompt_version, boundary_marker=marker
+    )
+
+
+def prepare_judge(request: JudgeRequest) -> PreparedMessages:
+    """Build rendered system/user messages for the eval rewrite judge.
+
+    The variants are model output and are delimited like every other untrusted field.
+    """
+    goal = "none" if request.goal is None else request.goal.value
+    marker = allocate_boundary_marker(
+        untrusted_texts(request.draft, goal, request.softer, request.firmer, rules=request.rules)
+    )
+    template, prompt_version = load_prompt_template("judge_rewrite", "v1")
+    system = render_system_prompt(template, boundary_marker=marker)
+    user = wrap_untrusted_payload(
+        marker,
+        (
+            ("draft", request.draft),
+            ("goal", goal),
+            ("rules", rules_text(request.rules)),
+            ("softer", request.softer),
+            ("firmer", request.firmer),
         ),
     )
     return PreparedMessages(

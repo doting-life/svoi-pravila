@@ -78,3 +78,40 @@ class SuggestRuleOut(BaseModel):
     verdict: SuggestRuleVerdictOut
     category: RuleCategoryOut | None = None
     text: str | None = Field(default=None, max_length=RULE_TEXT_MAX_CHARS)
+
+
+class YesNo(StrEnum):
+    """A judge verdict that always applies."""
+
+    YES = "yes"
+    NO = "no"
+
+
+class YesNoNa(StrEnum):
+    """A judge verdict of a criterion that may not apply (no goal, no applicable rule)."""
+
+    YES = "yes"
+    NO = "no"
+    NA = "na"
+
+
+class SlotJudgeOut(BaseModel):
+    """Judge verdicts for one variant (rubric ``judge_rewrite@v1``)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    clean: YesNo
+    meaning_kept: YesNo
+    invented: YesNo
+    goal_done: YesNoNa
+    rule_done: YesNoNa
+
+
+class JudgeOut(BaseModel):
+    """Judge output: verdicts per toned variant plus the pair verdict."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    softer: SlotJudgeOut
+    firmer: SlotJudgeOut
+    ladder_ok: YesNo

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import math
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 
 from svoi_pravila.application.errors import (
@@ -17,12 +18,22 @@ from svoi_pravila.application.ports.generation import (
     TextGenerator,
     Variant,
 )
+from svoi_pravila.application.ports.rewrite_judge import (
+    JudgeRequest,
+    RewriteJudge,
+    SlotVerdicts,
+    Verdict,
+)
 from svoi_pravila.application.rewrite_variants import fill_empty_check
 from svoi_pravila.benchmarks.runner import SpendTracker
 from svoi_pravila.domain.enums import RewriteGoal, VariantKind
-from svoi_pravila.domain.tone import ToneLexicons
 from svoi_pravila.domain.typography import humanize_typography
-from svoi_pravila.domain.variant_policy import PolicyContext, PolicyRule, check_variant_set
+from svoi_pravila.domain.variant_policy import (
+    LENGTH_FACTOR,
+    PolicyContext,
+    PolicyRule,
+    check_variant_set,
+)
 from svoi_pravila.evals.rewrite_cases import RewriteCase, RewriteCategory
 from svoi_pravila.evals.rule_checks import variant_complies_with_closing_ask, variant_leaks_stems
 
@@ -64,8 +75,22 @@ class InvalidDiagnostic:
 
 
 @dataclass(frozen=True, slots=True)
+class RunJudgement:
+    """The judge's verdicts for one usable call; verdicts only, no text."""
+
+    softer: SlotVerdicts
+    firmer: SlotVerdicts
+    ladder_ok: Verdict
+
+
+@dataclass(frozen=True, slots=True)
 class RewriteRunRecord:
-    """One call for one case. Texts exist only for the local report."""
+    """One call for one case. Texts exist only for the local report.
+
+    A usable call is judged when a judge is configured: ``judgement`` holds its verdicts, or
+    ``judge_failed`` is set when the judge call produced none. ``billable_tokens`` covers both
+    calls.
+    """
 
     case_id: str
     category: RewriteCategory
@@ -78,6 +103,8 @@ class RewriteRunRecord:
     billable_tokens: int
     diagnostics: tuple[InvalidDiagnostic, ...] = ()
     check_empty: bool = False
+    judgement: RunJudgement | None = None
+    judge_failed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +114,7 @@ class RewriteEvalParams:
     repeat: int
     deadline_seconds: float
     max_tokens: int
-    lexicons: ToneLexicons
+    judge: RewriteJudge | None = None
 
 
 @dataclass(slots=True)
@@ -117,14 +144,13 @@ _TONED = (VariantKind.SOFTER, VariantKind.FIRMER)
 def _finish_set(
     case: RewriteCase,
     raw: tuple[Variant, ...],
-    lexicons: ToneLexicons,
 ) -> tuple[RunVariant, ...]:
     texts = {variant.kind: humanize_typography(case.draft, variant.text) for variant in raw}
     context = PolicyContext(
         goal=case.goal,
         rule_categories=frozenset(rule.category for rule in case.rules),
     )
-    violations = check_variant_set(case.draft, texts, context, lexicons)
+    violations = check_variant_set(case.draft, texts, context)
     expected = {_normalized(item) for item in case.check_expected}
     return tuple(
         RunVariant(
@@ -178,7 +204,6 @@ async def _call(
     case: RewriteCase,
     run_index: int,
     request: RewriteRequest,
-    lexicons: ToneLexicons,
 ) -> RewriteRunRecord:
     try:
         result = await gen.rewrite(request)
@@ -201,10 +226,59 @@ async def _call(
         had_rules=bool(case.rules),
         run_index=run_index,
         outcome=outcome,
-        variants=_finish_set(case, filled, lexicons),
+        variants=_finish_set(case, filled),
         latency_ms=result.meta.latency_ms,
         billable_tokens=result.meta.usage.billable,
         check_empty=check_empty,
+    )
+
+
+async def _judged(
+    judge: RewriteJudge,
+    case: RewriteCase,
+    record: RewriteRunRecord,
+    deadline_seconds: float,
+) -> tuple[RewriteRunRecord, UnavailableKind | None]:
+    """Add the judge's verdicts to a usable call; the second item is a stop kind, if any."""
+    texts = {variant.kind: variant.text for variant in record.variants}
+    request = JudgeRequest(
+        draft=case.draft,
+        goal=case.goal,
+        rules=case.rules,
+        softer=texts[VariantKind.SOFTER],
+        firmer=texts[VariantKind.FIRMER],
+        deadline_seconds=deadline_seconds,
+    )
+    try:
+        verdicts = await judge.judge(request)
+    except (GenerationRefusedByProvider, InvalidGenerationOutput, GenerationUnavailable) as exc:
+        stop = (
+            exc.kind if isinstance(exc, GenerationUnavailable) and exc.kind in _STOP_KINDS else None
+        )
+        failed = replace(
+            record, judge_failed=True, billable_tokens=record.billable_tokens + exc.usage.billable
+        )
+        return failed, stop
+    judged = replace(
+        record,
+        billable_tokens=record.billable_tokens + verdicts.meta.usage.billable,
+        judgement=RunJudgement(
+            softer=verdicts.softer, firmer=verdicts.firmer, ladder_ok=verdicts.ladder_ok
+        ),
+    )
+    return judged, None
+
+
+def worst_case_judge_request(case: RewriteCase, deadline_seconds: float) -> JudgeRequest:
+    """A worst-case-sized judge request: both variants as long as the length rule allows."""
+    longest = (case.draft * 2)[: math.ceil(LENGTH_FACTOR * len(case.draft))]
+    return JudgeRequest(
+        draft=case.draft,
+        goal=case.goal,
+        rules=case.rules,
+        softer=longest,
+        firmer=longest,
+        deadline_seconds=deadline_seconds,
     )
 
 
@@ -214,10 +288,10 @@ async def run_rewrite_eval(
     params: RewriteEvalParams,
     spend: SpendTracker,
 ) -> RewriteEvalResult:
-    """Run every case ``repeat`` times, case by case.
+    """Run every case ``repeat`` times, case by case; judge every usable call if asked.
 
-    Stops before a call whose worst case would cross ``max_tokens`` (``token_budget``)
-    and at the first rate-limit or auth failure; never retries.
+    Stops before a call whose worst case (rewrite plus judge) would cross ``max_tokens``
+    (``token_budget``) and at the first rate-limit or auth failure; never retries.
     """
     result = RewriteEvalResult()
     for case in cases:
@@ -229,12 +303,16 @@ async def run_rewrite_eval(
             deadline_seconds=params.deadline_seconds,
         )
         worst_case = gen.max_billable(request)
+        if params.judge is not None:
+            worst_case += params.judge.max_billable(
+                worst_case_judge_request(case, params.deadline_seconds)
+            )
         for run_index in range(1, params.repeat + 1):
             if spend.spent_billable + worst_case > params.max_tokens:
                 result.stop_reason = "token_budget"
                 return result
             try:
-                record = await _call(gen, case, run_index, request, params.lexicons)
+                record = await _call(gen, case, run_index, request)
             except GenerationUnavailable as exc:
                 spend.add(exc.usage.billable)
                 result.records.append(
@@ -244,6 +322,12 @@ async def run_rewrite_eval(
                     result.stop_reason = exc.kind.value
                     return result
                 continue
+            stop: UnavailableKind | None = None
+            if params.judge is not None and record.outcome is RunOutcome.OK:
+                record, stop = await _judged(params.judge, case, record, params.deadline_seconds)
             spend.add(record.billable_tokens)
             result.records.append(record)
+            if stop is not None:
+                result.stop_reason = stop.value
+                return result
     return result

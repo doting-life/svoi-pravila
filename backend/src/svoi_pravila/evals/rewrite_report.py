@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 
+from svoi_pravila.application.ports.rewrite_judge import SlotVerdicts, Verdict
 from svoi_pravila.benchmarks.report import percentile
 from svoi_pravila.domain.enums import VariantKind
 from svoi_pravila.domain.variant_policy import PolicyRule
@@ -102,18 +103,20 @@ def _effect(records: list[RewriteRunRecord]) -> list[str]:
     ]
 
 
-def _gates(item: ModelEval, baseline: Baseline | None) -> list[str]:
+def _gates(item: ModelEval, baseline: Baseline | None, *, judge_calibrated: bool) -> list[str]:
     metrics = compute_metrics(item.result.records)
-    results = evaluate_gates(metrics, baseline)
+    results = evaluate_gates(metrics, baseline, judge_calibrated=judge_calibrated)
     return [
         "### Gates",
         "",
-        "Denominators (ADR-0016 §10): G1-G4, G6, G7, G8 edit_ratio: usable calls (outcome ok); "
-        "G5: usable calls without contact rules; G8 check_ok: check variants with a reference; "
-        "G9: all calls except unavailable.",
+        "Denominators (ADR-0016 §10): G3, G4, G6, G7, G8 edit_ratio: usable calls (outcome ok); "
+        "G8 check_ok: check variants with a reference; G9: all calls except unavailable; "
+        "J1-J6: usable calls the judge was asked about (a judge failure is never a pass).",
         "",
         f"- usable calls: {metrics.ok_runs} of {metrics.runs}",
         f"- unavailable calls (in no denominator): {metrics.unavailable_runs}",
+        f"- judge: {metrics.judge.judged_calls} judged, {metrics.judge.failed_calls} failed",
+        f"- judge calibrated for this model and rubric: {'yes' if judge_calibrated else 'no'}",
         "",
         "| gate | check | measured | threshold | status |",
         "|---|---|---|---|---|",
@@ -123,6 +126,31 @@ def _gates(item: ModelEval, baseline: Baseline | None) -> list[str]:
         ),
         "",
     ]
+
+
+def _flagged(records: list[RewriteRunRecord]) -> list[str]:
+    """J6 listing: every slot the judge flagged as not clean, with its text."""
+    lines = [
+        "### Judge: slots flagged not clean (J6)",
+        "",
+        "| slot | text |",
+        "|---|---|",
+    ]
+    for record in records:
+        if record.judgement is None:
+            continue
+        verdicts: dict[VariantKind, SlotVerdicts] = {
+            VariantKind.SOFTER: record.judgement.softer,
+            VariantKind.FIRMER: record.judgement.firmer,
+        }
+        texts = {variant.kind: variant.text for variant in record.variants}
+        lines.extend(
+            f"| {record.case_id}:{record.run_index}:{kind.value} | {_cell(texts[kind])} |"
+            for kind, verdict in verdicts.items()
+            if verdict.clean is Verdict.NO
+        )
+    lines.append("")
+    return lines
 
 
 def _refusals(records: list[RewriteRunRecord]) -> list[str]:
@@ -216,11 +244,13 @@ def render_report(
     *,
     not_run: tuple[str, ...] = (),
     baseline: Baseline | None = None,
+    judge_calibrated: bool = False,
 ) -> str:
     """Render the local report: a model comparison, then one section per model.
 
     An early stop marks the model ``INCOMPLETE`` with its reason; models after it are
-    listed as not run. Each model section ends its summary with the gates G1-G9.
+    listed as not run. Each model section lists the gates G3, G4, G6-G9 and J1-J6, then the
+    slots flagged by J6.
     """
     lines = ["# Rewrite eval", "", *_comparison(evals)]
     if not_run:
@@ -243,7 +273,8 @@ def render_report(
                     _grouped(records, lambda r: "none" if r.goal is None else r.goal.value),
                 ),
                 *_effect(records),
-                *_gates(item, baseline),
+                *_gates(item, baseline, judge_calibrated=judge_calibrated),
+                *_flagged(records),
                 *_refusals(records),
                 *_invalid_diagnostics(records),
                 *_details(records),

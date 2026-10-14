@@ -64,7 +64,6 @@ from svoi_pravila.domain.enums import (
 )
 from svoi_pravila.domain.ids import ContactId, TelegramUserId, UsageEventId
 from svoi_pravila.domain.product_day import product_day
-from svoi_pravila.domain.tone import ToneLexicons
 from svoi_pravila.domain.typography import humanize_typography
 from svoi_pravila.domain.usage import UsageEvent
 from svoi_pravila.domain.variant_policy import PolicyContext, check_variant_set
@@ -123,7 +122,6 @@ class ComposeGenerationPorts:
     ids: IdGenerator
     pseudonymizer: Pseudonymizer
     crisis_screen: CrisisScreen
-    tone_lexicons: ToneLexicons
     deadline_seconds: float
     analytics_timezone: str
 
@@ -314,7 +312,7 @@ class ComposeGeneration:
             rule_categories=frozenset(rule.category for rule in material.rules),
         )
         texts = {variant.kind: variant.text for variant in finished}
-        for violation in check_variant_set(draft, texts, context, self._ports.tone_lexicons):
+        for violation in check_variant_set(draft, texts, context):
             self._ports.policy_monitor.record(violation.kind, violation.rule)
         return finished
 

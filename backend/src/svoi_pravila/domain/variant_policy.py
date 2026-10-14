@@ -3,8 +3,8 @@
 See ADR-0016 §5 and §10.
 
 The policy never rewrites or blocks a text: it only reports which rules a variant broke.
-Stop phrases and second-person forms are closed lists here; profanity and tone markers are
-versioned lexicons passed in.
+Stop phrases and second-person forms are closed lists here. Vulgar language, harsh wording and
+new hedges or apologies are not checked by word lists (ADR-0016 §15): the eval judge decides.
 """
 
 from __future__ import annotations
@@ -17,11 +17,9 @@ from difflib import SequenceMatcher
 from enum import StrEnum
 
 from svoi_pravila.domain.enums import RewriteGoal, RuleCategory, VariantKind
-from svoi_pravila.domain.lexicon import lexicon_count, lexicon_hit
-from svoi_pravila.domain.tone import ToneLexicons
 
 # Version of the rules and closed lists below; bump on every change.
-POLICY_VERSION = 3
+POLICY_VERSION = 4
 
 STOP_PHRASES: tuple[str, ...] = (
     "давай обсудим спокойно",
@@ -78,14 +76,11 @@ SOFTER_EXTRA_WORDS = 6
 LENGTH_FACTOR = 1.2
 LICENSED_EXTRA_WORDS = 8
 CHECK_MAX_EDIT_RATIO = 0.15
-UNLICENSED_NEW_APOLOGIES = 0
-LICENSED_NEW_APOLOGIES = 1
 LADDER_MIN_DISTANCE = 0.10
 _DISTANCE_DIGITS = 9
 
 _WORD_RE = re.compile(r"[\u0430-\u044f\u0451a-z0-9]+")
 _ORDER: tuple[VariantKind, ...] = (VariantKind.CHECK, VariantKind.SOFTER, VariantKind.FIRMER)
-_TONED: frozenset[VariantKind] = frozenset({VariantKind.SOFTER, VariantKind.FIRMER})
 
 
 class PolicyRule(StrEnum):
@@ -95,10 +90,6 @@ class PolicyRule(StrEnum):
     LENGTH = "length"
     EDIT_RATIO = "edit_ratio"
     REGISTER = "register"
-    PROFANITY = "profanity"
-    HARSH = "harsh"
-    HEDGE = "hedge"
-    APOLOGY = "apology"
     LADDER_LENGTH = "ladder_length"
     LADDER_SIMILAR = "ladder_similar"
 
@@ -115,11 +106,6 @@ class PolicyContext:
         """True when a goal or any rule may add a phrase to the variants."""
         return self.goal is not None or bool(self.rule_categories)
 
-    @property
-    def apology_licensed(self) -> bool:
-        """True when one new apology is allowed (admit-fault goal or an apology rule)."""
-        return self.goal is RewriteGoal.ADMIT_FAULT or RuleCategory.APOLOGY in self.rule_categories
-
 
 @dataclass(frozen=True, slots=True)
 class PolicyViolation:
@@ -133,7 +119,6 @@ def check_variant_set(
     draft: str,
     texts: Mapping[VariantKind, str],
     context: PolicyContext,
-    lexicons: ToneLexicons,
 ) -> tuple[PolicyViolation, ...]:
     """Return every rule that the variants in ``texts`` break, ladder rules included."""
     violations: list[PolicyViolation] = []
@@ -141,8 +126,7 @@ def check_variant_set(
         text = texts.get(kind)
         if text is not None:
             violations.extend(
-                PolicyViolation(rule, kind)
-                for rule in _variant_rules(draft, kind, text, context, lexicons)
+                PolicyViolation(rule, kind) for rule in _variant_rules(draft, kind, text, context)
             )
     softer = texts.get(VariantKind.SOFTER)
     firmer = texts.get(VariantKind.FIRMER)
@@ -158,7 +142,6 @@ def _variant_rules(
     kind: VariantKind,
     text: str,
     context: PolicyContext,
-    lexicons: ToneLexicons,
 ) -> list[PolicyRule]:
     rules: list[PolicyRule] = []
     if _has_new_stop_phrase(draft, text):
@@ -169,32 +152,6 @@ def _variant_rules(
         rules.append(PolicyRule.EDIT_RATIO)
     if _register_changed(draft, text):
         rules.append(PolicyRule.REGISTER)
-    if kind in _TONED:
-        rules.extend(_tone_rules(draft, kind, text, context, lexicons))
-    return rules
-
-
-def _tone_rules(
-    draft: str,
-    kind: VariantKind,
-    text: str,
-    context: PolicyContext,
-    lexicons: ToneLexicons,
-) -> list[PolicyRule]:
-    rules: list[PolicyRule] = []
-    if lexicon_hit(text, lexicons.profanity):
-        rules.append(PolicyRule.PROFANITY)
-    if lexicon_hit(text, lexicons.harsh):
-        rules.append(PolicyRule.HARSH)
-    if (
-        kind is VariantKind.FIRMER
-        and not context.rule_categories
-        and lexicon_count(text, lexicons.hedge) > lexicon_count(draft, lexicons.hedge)
-    ):
-        rules.append(PolicyRule.HEDGE)
-    allowed = LICENSED_NEW_APOLOGIES if context.apology_licensed else UNLICENSED_NEW_APOLOGIES
-    if lexicon_count(text, lexicons.apology) - lexicon_count(draft, lexicons.apology) > allowed:
-        rules.append(PolicyRule.APOLOGY)
     return rules
 
 

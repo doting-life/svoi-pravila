@@ -9,20 +9,28 @@ from pathlib import Path
 from svoi_pravila.adapters.llm.gigachat.adapter import GigaChatTextGenerator
 from svoi_pravila.adapters.llm.gigachat.client import close_gigachat_client, create_gigachat_client
 from svoi_pravila.adapters.llm.gigachat.estimate import max_billable_for_request
+from svoi_pravila.application.lexicons import load_tone_lexicons_ru_v1
 from svoi_pravila.application.ports.generation import RewriteRequest
 from svoi_pravila.benchmarks.llm import _print_available_models
 from svoi_pravila.benchmarks.runner import SpendTracker
 from svoi_pravila.config import LlmToolSettings
 from svoi_pravila.evals.rewrite_cases import RewriteCase, load_rewrite_cases, merge_cases
+from svoi_pravila.evals.rewrite_gates import (
+    Baseline,
+    compute_metrics,
+    evaluate_gates,
+    gates_failed,
+    read_baseline,
+    write_baseline,
+)
 from svoi_pravila.evals.rewrite_report import render_report
 from svoi_pravila.evals.rewrite_run import (
     ModelEval,
     RewriteEvalParams,
-    RunOutcome,
     run_rewrite_eval,
 )
 
-_DEFAULT_DATA = "/app/evals/data/interview_v1.jsonl"
+_DEFAULT_DATA = "/app/evals/data/rewrite_v2.jsonl"
 _ESTIMATE_HELP = (
     "Worst case per call: ceil(rendered system+user characters / 3) + the output cap, "
     "times the maximum attempts."
@@ -41,7 +49,7 @@ def _worst_case(case: RewriteCase) -> int:
         RewriteRequest(
             draft=case.draft,
             goal=case.goal,
-            rules=(),
+            rules=case.rules,
             relationship=case.relationship,
             deadline_seconds=1.0,
         )
@@ -70,6 +78,10 @@ def _write_report(out: Path, report: str) -> None:
     out.write_text(report, encoding="utf-8")
 
 
+def _read_baseline(args: argparse.Namespace) -> Baseline | None:
+    return None if args.baseline is None else read_baseline(Path(args.baseline))
+
+
 async def async_main(args: argparse.Namespace) -> int:
     """Run the rewrite eval and write the local Markdown report to ``--out``."""
     settings = LlmToolSettings()
@@ -79,6 +91,7 @@ async def async_main(args: argparse.Namespace) -> int:
     if not args.list_models and (args.max_tokens is None or args.out is None):
         msg = "--max-tokens and --out are required for live runs (or use --dry-run / --list-models)"
         raise SystemExit(msg)
+    baseline = _read_baseline(args)
     client = create_gigachat_client(settings)
     try:
         await _print_available_models(client, list_only=True)
@@ -86,8 +99,14 @@ async def async_main(args: argparse.Namespace) -> int:
             return 0
         cases = _load_cases(args)
         models = _models(args, settings)
+        if args.write_baseline is not None and len(models) != 1:
+            msg = "--write-baseline needs exactly one --model"
+            raise SystemExit(msg)
         params = RewriteEvalParams(
-            repeat=args.repeat, deadline_seconds=args.deadline, max_tokens=args.max_tokens
+            repeat=args.repeat,
+            deadline_seconds=args.deadline,
+            max_tokens=args.max_tokens,
+            lexicons=load_tone_lexicons_ru_v1(),
         )
         spend = SpendTracker()
         evals: list[ModelEval] = []
@@ -104,14 +123,15 @@ async def async_main(args: argparse.Namespace) -> int:
             evals.append(ModelEval(model, result, spend.spent_billable - before))
             if result.stop_reason is not None:
                 break
-        report = render_report(evals, not_run=tuple(models[len(evals) :]))
+        report = render_report(evals, not_run=tuple(models[len(evals) :]), baseline=baseline)
         await asyncio.to_thread(_write_report, Path(args.out), report)
         print(f"Report written. Spent billable tokens: {spend.spent_billable}")
+        if args.write_baseline is not None:
+            write_baseline(Path(args.write_baseline), compute_metrics(evals[0].result.records))
+            print("Baseline written.")
         failed = any(
-            r.outcome is not RunOutcome.OK
-            or any(v.violations or v.check_ok is False for v in r.variants)
+            gates_failed(evaluate_gates(compute_metrics(item.result.records), baseline))
             for item in evals
-            for r in item.result.records
         )
         return 1 if evals[-1].result.stop_reason is not None or failed else 0
     finally:
@@ -121,11 +141,21 @@ async def async_main(args: argparse.Namespace) -> int:
 def main() -> None:
     """CLI entrypoint for ``svoi-pravila-eval-rewrite``."""
     parser = argparse.ArgumentParser(description="GigaChat rewrite eval", epilog=_ESTIMATE_HELP)
-    parser.add_argument("--data", default=_DEFAULT_DATA, help="Path to the JSONL interview cases")
+    parser.add_argument("--data", default=_DEFAULT_DATA, help="Path to the JSONL rewrite cases")
     parser.add_argument(
         "--extra-cases",
         default=None,
         help="Extra JSONL cases kept outside the repository (never committed)",
+    )
+    parser.add_argument(
+        "--baseline",
+        default=None,
+        help="Baseline JSON of an earlier pass; gate G8 compares check_ok with it",
+    )
+    parser.add_argument(
+        "--write-baseline",
+        default=None,
+        help="Write the pass numbers (rates only, no text) as a baseline JSON; one --model only",
     )
     parser.add_argument(
         "--model",

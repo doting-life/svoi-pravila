@@ -85,7 +85,8 @@ class EvalCase:
         return False
 
 
-def _rules(raw: object) -> tuple[RuleContext, ...]:
+def parse_rules(raw: object) -> tuple[RuleContext, ...]:
+    """Parse the ``rules`` field of a JSONL case into rule contexts."""
     if raw is None:
         return ()
     if not isinstance(raw, list):
@@ -125,7 +126,7 @@ def parse_case(raw: object) -> EvalCase:
         raise ValueError(msg)
     expected = parse_expected(raw.get("expected"))
     relationship = RelationshipKind(str(raw.get("relationship", "other")))
-    rules = _rules(raw.get("rules"))
+    rules = parse_rules(raw.get("rules"))
     smoke = bool(raw.get("smoke", False))
     stop_stems = _stop_stems(raw.get("stop_stems"))
     effect_pair_raw = raw.get("effect_pair")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from argparse import Namespace
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,19 +19,22 @@ from svoi_pravila.application.errors import (
     InvalidOutputReason,
     UnavailableKind,
 )
+from svoi_pravila.application.lexicons import load_tone_lexicons_ru_v1
 from svoi_pravila.application.ports.generation import (
     GenerationMeta,
     RewriteResult,
+    RuleContext,
     SafetyVerdict,
     TokenUsage,
     Variant,
 )
 from svoi_pravila.benchmarks.runner import SpendTracker
 from svoi_pravila.config import GigaChatRuntimeSettings
-from svoi_pravila.domain.enums import RelationshipKind, RewriteGoal, VariantKind
+from svoi_pravila.domain.enums import RelationshipKind, RewriteGoal, RuleCategory, VariantKind
 from svoi_pravila.domain.variant_policy import PolicyRule
 from svoi_pravila.evals.rewrite_cases import (
     RewriteCase,
+    RewriteCategory,
     load_rewrite_cases,
     merge_cases,
     parse_rewrite_case,
@@ -45,16 +49,21 @@ from svoi_pravila.evals.rewrite_run import (
     run_rewrite_eval,
 )
 
-_DATA = Path(__file__).resolve().parents[3] / "evals" / "data" / "interview_v1.jsonl"
+_DATA = Path(__file__).resolve().parents[3] / "evals" / "data" / "rewrite_v2.jsonl"
 _DRAFT = "Сиди дома и жди"
 
 
 def _case(case_id: str = "c1", *, goal: RewriteGoal | None = None) -> RewriteCase:
-    return RewriteCase(id=case_id, draft=_DRAFT, goal=goal)
+    return RewriteCase(id=case_id, category=RewriteCategory.BASE, draft=_DRAFT, goal=goal)
 
 
 def _params(*, repeat: int = 1, max_tokens: int = 100_000) -> RewriteEvalParams:
-    return RewriteEvalParams(repeat=repeat, deadline_seconds=5.0, max_tokens=max_tokens)
+    return RewriteEvalParams(
+        repeat=repeat,
+        deadline_seconds=5.0,
+        max_tokens=max_tokens,
+        lexicons=load_tone_lexicons_ru_v1(),
+    )
 
 
 def _result(*variants: Variant, safety: SafetyVerdict = SafetyVerdict.OK) -> RewriteResult:
@@ -82,6 +91,8 @@ def _cli_args(**overrides: object) -> Namespace:
     values: dict[str, object] = {
         "data": str(_DATA),
         "extra_cases": None,
+        "baseline": None,
+        "write_baseline": None,
         "repeat": 1,
         "deadline": 5.0,
         "out": None,
@@ -95,26 +106,43 @@ def _cli_args(**overrides: object) -> Namespace:
 
 
 @pytest.mark.unit
-def test_interview_cases_are_committed_and_valid() -> None:
+def test_base_cases_keep_the_interview_ids() -> None:
     cases = load_rewrite_cases(_DATA)
-    assert [case.id for case in cases] == ["i1", "i2", "i3", "i4", "i5", "i6"]
-    assert all(case.goal is None for case in cases)
+    base = [case for case in cases if case.category is RewriteCategory.BASE]
+    assert [case.id for case in base] == ["i1", "i2", "i3", "i4", "i5", "i6"]
+    assert all(case.goal is None for case in base)
 
 
 @pytest.mark.unit
 def test_parse_rewrite_case_and_errors(tmp_path: Path) -> None:
     parsed = parse_rewrite_case(
-        {"id": "g", "draft": "x", "goal": "decline", "relationship": "work"}
+        {
+            "id": "g",
+            "category": "goal",
+            "draft": "x",
+            "goal": "decline",
+            "relationship": "work",
+            "forbidden_stems": ["иначе"],
+            "effect_pair": "p1",
+            "smoke": True,
+        }
     )
     assert parsed == RewriteCase(
-        id="g", draft="x", goal=RewriteGoal.DECLINE, relationship=RelationshipKind.WORK
+        id="g",
+        category=RewriteCategory.GOAL,
+        draft="x",
+        goal=RewriteGoal.DECLINE,
+        relationship=RelationshipKind.WORK,
+        forbidden_stems=("иначе",),
+        effect_pair="p1",
+        smoke=True,
     )
     with pytest.raises(TypeError):
         parse_rewrite_case([])
-    with pytest.raises(ValueError, match="case id"):
-        parse_rewrite_case({"id": "", "draft": "x"})
+    with pytest.raises(ValueError, match="id must be a non-empty string"):
+        parse_rewrite_case({"id": "", "category": "base", "draft": "x"})
     bad = tmp_path / "bad.jsonl"
-    bad.write_text('{"id": "a", "draft": "x"}\n{\n', encoding="utf-8")
+    bad.write_text('{"id": "a", "category": "base", "draft": "x"}\n{\n', encoding="utf-8")
     with pytest.raises(ValueError, match=r"bad\.jsonl:2: invalid case"):
         load_rewrite_cases(bad)
     empty = tmp_path / "empty.jsonl"
@@ -152,6 +180,117 @@ async def test_run_applies_typography_and_reports_policy_violations() -> None:
     assert by_kind[VariantKind.SOFTER].violations == (PolicyRule.STOP_PHRASE,)
     assert by_kind[VariantKind.FIRMER].violations == ()
     assert spend.spent_billable == record.billable_tokens == 7
+
+
+@pytest.mark.unit
+def test_parse_rewrite_case_is_strict() -> None:
+    base = {"id": "a", "category": "base", "draft": "x"}
+    for bad, message in (
+        ({**base, "extra": 1}, "unknown fields: extra"),
+        ({**base, "category": "nope"}, "nope"),
+        ({"id": "a", "draft": "x"}, "category must be"),
+        ({"id": "a", "category": "goal", "draft": "x"}, "goal cases require a goal"),
+        ({**base, "goal": "nope"}, "nope"),
+        ({**base, "draft": " "}, "draft must be"),
+        ({**base, "effect_pair": 3}, "effect_pair must be"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            parse_rewrite_case(bad)
+    with pytest.raises(TypeError, match="smoke"):
+        parse_rewrite_case({**base, "smoke": "yes"})
+    with pytest.raises(TypeError, match="forbidden_stems"):
+        parse_rewrite_case({**base, "forbidden_stems": "иначе"})
+    with pytest.raises(ValueError, match="isoformat"):
+        parse_rewrite_case(
+            {**base, "rules": [{"category": "how_to_ask", "text": "t", "effective_since": 1}]}
+        )
+
+
+@pytest.mark.unit
+def test_parse_rewrite_case_reads_rules_and_goal_null() -> None:
+    parsed = parse_rewrite_case(
+        {
+            "id": "r",
+            "category": "rule",
+            "draft": "x",
+            "goal": None,
+            "rules": [
+                {
+                    "category": "how_to_ask",
+                    "text": "Заканчивать вопросом",
+                    "effective_since": "2026-01-01T00:00:00+00:00",
+                }
+            ],
+        }
+    )
+    assert parsed.goal is None
+    assert [rule.category for rule in parsed.rules] == [RuleCategory.HOW_TO_ASK]
+
+
+@pytest.mark.unit
+def test_load_rewrite_cases_rejects_a_repeated_id_with_its_line(tmp_path: Path) -> None:
+    path = tmp_path / "dup.jsonl"
+    line = json.dumps({"id": "a", "category": "base", "draft": "x"})
+    path.write_text(f"{line}\n\n{line}\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"dup\.jsonl:3: duplicate case id: a"):
+        load_rewrite_cases(path)
+
+
+@pytest.mark.unit
+async def test_run_passes_rules_and_applies_the_set_policy_stems_and_closing_ask() -> None:
+    rule = RuleContext(
+        category=RuleCategory.HOW_TO_ASK,
+        text="Заканчивать вопросом",
+        effective_since=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    case = RewriteCase(
+        id="rule-with",
+        category=RewriteCategory.RULE,
+        draft="Мне нужно чтобы ты предупреждал заранее",
+        rules=(rule,),
+        forbidden_stems=("иначе",),
+        effect_pair="p",
+    )
+    gen = FakeTextGenerator(
+        rewrite_result=_result(
+            Variant(text="Мне нужно, чтобы ты предупреждал заранее", kind=VariantKind.CHECK),
+            Variant(text="Прошу, предупреждай заранее. Можешь?", kind=VariantKind.SOFTER),
+            Variant(text="Предупреждай заранее, иначе пеняй на себя", kind=VariantKind.FIRMER),
+        )
+    )
+    result = await run_rewrite_eval(gen, [case], _params(), SpendTracker())
+    assert gen.rewrite_calls[0].rules == (rule,)
+    (record,) = result.records
+    assert record.had_rules is True
+    assert record.category is RewriteCategory.RULE
+    by_kind = {variant.kind: variant for variant in record.variants}
+    assert by_kind[VariantKind.CHECK].stem_leak is None
+    assert by_kind[VariantKind.SOFTER].stem_leak is False
+    assert by_kind[VariantKind.FIRMER].stem_leak is True
+    assert [v.closing_ask_ok for v in record.variants] == [False, True, False]
+    assert by_kind[VariantKind.FIRMER].violations == (PolicyRule.LADDER_LENGTH,)
+
+
+@pytest.mark.unit
+async def test_run_reports_ladder_and_tone_rules_on_the_variant_set() -> None:
+    case = RewriteCase(id="l", category=RewriteCategory.LADDER, draft="Верни деньги")
+    gen = FakeTextGenerator(
+        rewrite_result=_result(
+            Variant(text="Верни деньги", kind=VariantKind.CHECK),
+            Variant(text="Верни деньги, пожалуйста", kind=VariantKind.SOFTER),
+            Variant(text="Верни деньги, пожалуйста, хуй", kind=VariantKind.FIRMER),
+        )
+    )
+    result = await run_rewrite_eval(gen, [case], _params(), SpendTracker())
+    firmer = result.records[0].variants[2]
+    assert firmer.violations == (
+        PolicyRule.LENGTH,
+        PolicyRule.PROFANITY,
+        PolicyRule.HEDGE,
+        PolicyRule.LADDER_LENGTH,
+    )
+    assert firmer.stem_leak is None
+    assert firmer.closing_ask_ok is None
 
 
 @pytest.mark.unit
@@ -248,7 +387,11 @@ async def test_report_lists_summary_refusals_and_details() -> None:
 
 @pytest.mark.unit
 def test_interview_cases_carry_reference_corrections_for_check() -> None:
-    expected = {case.id: case.check_expected for case in load_rewrite_cases(_DATA)}
+    expected = {
+        case.id: case.check_expected
+        for case in load_rewrite_cases(_DATA)
+        if case.category is RewriteCategory.BASE
+    }
     assert all(expected.values())
     assert expected["i1"] == ("Сиди дома и жди",)
     assert len(expected["i3"]) == 2
@@ -258,17 +401,23 @@ def test_interview_cases_carry_reference_corrections_for_check() -> None:
 
 @pytest.mark.unit
 def test_parse_check_expected_accepts_a_list_and_rejects_other_shapes() -> None:
-    parsed = parse_rewrite_case({"id": "a", "draft": "x", "check_expected": ["X", "Y"]})
+    base = {"id": "a", "category": "base", "draft": "x"}
+    parsed = parse_rewrite_case({**base, "check_expected": ["X", "Y"]})
     assert parsed.check_expected == ("X", "Y")
-    assert parse_rewrite_case({"id": "a", "draft": "x"}).check_expected == ()
+    assert parse_rewrite_case(base).check_expected == ()
     for bad in ("X", ["X", 1], [" "]):
         with pytest.raises(TypeError, match="check_expected"):
-            parse_rewrite_case({"id": "a", "draft": "x", "check_expected": bad})
+            parse_rewrite_case({**base, "check_expected": bad})
 
 
 @pytest.mark.unit
 async def test_run_compares_check_with_references_after_whitespace_normalization() -> None:
-    case = RewriteCase(id="c", draft="ну что ребята", check_expected=("Ну что, ребята",))
+    case = RewriteCase(
+        id="c",
+        category=RewriteCategory.BASE,
+        draft="ну что ребята",
+        check_expected=("Ну что, ребята",),
+    )
 
     async def run(check_text: str) -> bool | None:
         gen = FakeTextGenerator(
@@ -286,7 +435,7 @@ async def test_run_compares_check_with_references_after_whitespace_normalization
 
     assert await run("Ну  что,\nребята") is True
     assert await run("ну что ребята") is False
-    no_reference = RewriteCase(id="n", draft="ну что ребята")
+    no_reference = RewriteCase(id="n", category=RewriteCategory.BASE, draft="ну что ребята")
     gen = FakeTextGenerator(
         rewrite_result=_result(
             Variant(text="ну что ребята", kind=VariantKind.CHECK),
@@ -300,7 +449,12 @@ async def test_run_compares_check_with_references_after_whitespace_normalization
 
 @pytest.mark.unit
 async def test_run_substitutes_the_draft_for_an_empty_check_and_counts_it() -> None:
-    case = RewriteCase(id="c", draft="ну что ребята", check_expected=("ну что ребята",))
+    case = RewriteCase(
+        id="c",
+        category=RewriteCategory.BASE,
+        draft="ну что ребята",
+        check_expected=("ну что ребята",),
+    )
     gen = FakeTextGenerator(
         rewrite_result=_result(
             Variant(text="", kind=VariantKind.CHECK),
@@ -377,13 +531,16 @@ async def test_cli_dry_run_prints_plan_and_makes_no_client(
 
     monkeypatch.setattr("svoi_pravila.evals.rewrite_cli.create_gigachat_client", forbid)
     extra = tmp_path / "extra.jsonl"
-    extra.write_text(json.dumps({"id": "x1", "draft": "Привет", "goal": "reconnect"}) + "\n")
+    extra.write_text(
+        json.dumps({"id": "x1", "category": "goal", "draft": "Привет", "goal": "reconnect"}) + "\n"
+    )
     code = await async_main(_cli_args(dry_run=True, repeat=2, extra_cases=str(extra)))
     assert code == 0
     out = capsys.readouterr().out
     assert "Models: GigaChat-2\n" in out
-    assert "Cases: 7" in out
-    assert "Total planned calls: 14" in out
+    total = len(load_rewrite_cases(_DATA)) + 1
+    assert f"Cases: {total}\n" in out
+    assert f"Total planned calls: {total * 2}\n" in out
     assert "Total worst-case billable tokens:" in out
     assert "Largest single-call worst-case estimate:" in out
 
@@ -396,7 +553,7 @@ async def test_cli_dry_run_multiplies_the_plan_by_distinct_models(
     await async_main(_cli_args(dry_run=True, model=["A", "B", "A"]))
     out = capsys.readouterr().out
     assert "Models: A, B\n" in out
-    assert "Total planned calls: 12" in out
+    assert f"Total planned calls: {len(load_rewrite_cases(_DATA)) * 2}\n" in out
 
 
 @pytest.mark.unit
@@ -479,7 +636,9 @@ async def test_cli_live_run_requires_max_tokens_and_out(
 
 def _one_case(tmp_path: Path) -> str:
     path = tmp_path / "one.jsonl"
-    path.write_text(json.dumps({"id": "one", "draft": _DRAFT}, ensure_ascii=False) + "\n")
+    path.write_text(
+        json.dumps({"id": "one", "category": "base", "draft": _DRAFT}, ensure_ascii=False) + "\n"
+    )
     return str(path)
 
 
@@ -538,20 +697,33 @@ async def test_cli_live_run_writes_report_and_exit_code(
 
 
 @pytest.mark.unit
-async def test_cli_exit_code_is_one_for_violations_and_early_stops(
+async def test_cli_exit_code_follows_the_gates_and_early_stops(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    violating = FakeTextGenerator(
+    passing = _result(
+        Variant(text="Сиди дома и жди", kind=VariantKind.CHECK),
+        Variant(text="Пожалуйста, посиди дома", kind=VariantKind.SOFTER),
+        Variant(text="Жди дома", kind=VariantKind.FIRMER),
+    )
+    data = _one_case(tmp_path)
+
+    async def code_for(generator: FakeTextGenerator, name: str, **overrides: object) -> int:
+        _patch_client(monkeypatch, generator)
+        args = _cli_args(data=data, max_tokens=1_000_000, out=str(tmp_path / name), **overrides)
+        return await async_main(args)
+
+    assert await code_for(FakeTextGenerator(rewrite_result=passing), "ok.md") == 0
+    profane = FakeTextGenerator(
         rewrite_result=_result(
-            Variant(text="Совсем другой текст про ничего общего.", kind=VariantKind.CHECK),
-            Variant(text="Пожалуйста, посиди дома", kind=VariantKind.SOFTER),
+            Variant(text="Сиди дома и жди", kind=VariantKind.CHECK),
+            Variant(text="Посиди дома, хуй с ним", kind=VariantKind.SOFTER),
             Variant(text="Жди дома", kind=VariantKind.FIRMER),
         )
     )
-    _patch_client(monkeypatch, violating)
-    data = _one_case(tmp_path)
-    code = await async_main(_cli_args(data=data, max_tokens=1_000_000, out=str(tmp_path / "v.md")))
-    assert code == 1
+    assert await code_for(profane, "g1.md") == 1
+    assert "| G1 | profanity in softer/firmer | 1 of 1 calls | 0 | FAIL |" in (
+        tmp_path / "g1.md"
+    ).read_text(encoding="utf-8")
     invalid = FakeTextGenerator()
     invalid.rewrite_error = InvalidGenerationOutput(
         (InvalidOutputReason.EMPTY_TEXT,),
@@ -560,35 +732,84 @@ async def test_cli_exit_code_is_one_for_violations_and_early_stops(
         model="m",
         prompt_version="p",
     )
-    _patch_client(monkeypatch, invalid)
-    assert (
-        await async_main(_cli_args(data=data, max_tokens=1_000_000, out=str(tmp_path / "i.md")))
-        == 1
+    assert await code_for(invalid, "g9.md") == 1
+    limited = FakeTextGenerator(rewrite_result=passing)
+    limited.rewrite_error = _unavailable(UnavailableKind.RATE_LIMITED)
+    assert await code_for(limited, "limited.md") == 1
+    assert "INCOMPLETE (rate_limited)" in (tmp_path / "limited.md").read_text(encoding="utf-8")
+
+
+@pytest.mark.unit
+async def test_cli_baseline_decides_gate_g8_and_write_baseline_stores_rates_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    referenced = tmp_path / "ref.jsonl"
+    referenced.write_text(
+        json.dumps(
+            {
+                "id": "r",
+                "category": "base",
+                "draft": _DRAFT,
+                "check_expected": ["Сиди дома и жди"],
+            },
+            ensure_ascii=False,
+        )
+        + "\n",
+        encoding="utf-8",
     )
-    wrong_check = FakeTextGenerator(
+    gen = FakeTextGenerator(
         rewrite_result=_result(
             Variant(text="Сиди дома и жди", kind=VariantKind.CHECK),
             Variant(text="Пожалуйста, посиди дома", kind=VariantKind.SOFTER),
             Variant(text="Жди дома", kind=VariantKind.FIRMER),
         )
     )
-    _patch_client(monkeypatch, wrong_check)
-    referenced = tmp_path / "ref.jsonl"
-    referenced.write_text(
-        json.dumps({"id": "r", "draft": _DRAFT, "check_expected": ["Сиди дома, жди"]}) + "\n"
+    _patch_client(monkeypatch, gen)
+    written = tmp_path / "out" / "baseline.json"
+    args = _cli_args(
+        data=str(referenced),
+        max_tokens=1_000_000,
+        out=str(tmp_path / "first.md"),
+        write_baseline=str(written),
     )
-    assert (
-        await async_main(
-            _cli_args(data=str(referenced), max_tokens=1_000_000, out=str(tmp_path / "c.md"))
+    assert await async_main(args) == 0
+    payload = json.loads(written.read_text(encoding="utf-8"))
+    assert payload["check_ok_rate"] == 1.0
+    assert payload["runs"] == 1
+    assert "Сиди" not in written.read_text(encoding="utf-8")
+    again = _cli_args(
+        data=str(referenced),
+        max_tokens=1_000_000,
+        out=str(tmp_path / "second.md"),
+        baseline=str(written),
+    )
+    assert await async_main(again) == 0
+    assert "| G8 |" in (tmp_path / "second.md").read_text(encoding="utf-8")
+    worse = FakeTextGenerator(
+        rewrite_result=_result(
+            Variant(text="Сиди дома, жди", kind=VariantKind.CHECK),
+            Variant(text="Пожалуйста, посиди дома", kind=VariantKind.SOFTER),
+            Variant(text="Жди дома", kind=VariantKind.FIRMER),
         )
-        == 1
     )
-    limited = FakeTextGenerator()
-    limited.rewrite_error = _unavailable(UnavailableKind.RATE_LIMITED)
-    _patch_client(monkeypatch, limited)
-    report = tmp_path / "limited.md"
-    assert await async_main(_cli_args(data=data, max_tokens=1_000_000, out=str(report))) == 1
-    assert "INCOMPLETE (rate_limited)" in report.read_text(encoding="utf-8")
+    _patch_client(monkeypatch, worse)
+    assert await async_main(again) == 1
+
+
+@pytest.mark.unit
+async def test_cli_write_baseline_needs_one_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_client(monkeypatch, FakeTextGenerator())
+    args = _cli_args(
+        data=_one_case(tmp_path),
+        max_tokens=1000,
+        out=str(tmp_path / "r.md"),
+        write_baseline=str(tmp_path / "b.json"),
+        model=["A", "B"],
+    )
+    with pytest.raises(SystemExit, match="exactly one --model"):
+        await async_main(args)
 
 
 @pytest.mark.unit
@@ -625,4 +846,4 @@ def test_main_parses_arguments_and_exits_with_the_run_code(
     with pytest.raises(SystemExit) as exit_info:
         main()
     assert exit_info.value.code == 0
-    assert "Total planned calls: 18" in capsys.readouterr().out
+    assert f"Total planned calls: {len(load_rewrite_cases(_DATA)) * 3}\n" in capsys.readouterr().out

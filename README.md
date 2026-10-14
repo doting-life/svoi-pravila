@@ -1,15 +1,79 @@
 # Svoi Pravila
 
-AI helper for difficult conversations: a Telegram inline bot and mini-app that remembers the agreements between two people. This repository holds the backend service and the mini-app; see `AGENTS.md` for executor workflow and ownership boundaries.
+An AI helper for difficult conversations in Telegram: an inline bot that rewrites a hard message before you send it, and a mini-app that keeps the agreements («rules») two people made — so the next hard message already respects them.
 
-## Prerequisites
+**Production:** running on a VPS (Docker Compose, HTTPS webhook) as the Telegram bot [@Svoi_PravilaBot](https://t.me/Svoi_PravilaBot). Open source; the maintainers' documentation (Russian) is in [`docs/maintainers/`](docs/maintainers/).
+
+## Core product loop
+
+1. In any chat, the user types `@bot <draft>`.
+2. After a typing pause the bot offers three variants — «Мягче» (softer), «Твёрже» (firmer), «Проверить» (the author's words, spelling fixed). One LLM call; the pair's rules are part of the prompt.
+3. The user picks a variant and sends it. This is an **appeal** — the unit of product analytics (DAU, appeals per DAU).
+4. For a hard incoming message the mini-app offers «Расшифровать»: what may be meant and reply options, streamed.
+5. «Сделать правилом» turns an insight into a rule proposal; it becomes active when both people accept it and shapes step 2 from then on.
+
+## Architecture
+
+Hexagonal Python service (`domain` ← `application` ← `adapters`/`api` ← `bootstrap`, enforced by import-linter) plus a React mini-app, deployed as one Compose stack:
+
+```mermaid
+flowchart LR
+    TG[Telegram] -- "webhook · Mini App HTTPS" --> CADDY["Caddy<br/>TLS, SPA, CSP"]
+    CADDY --> API["api<br/>FastAPI + aiogram"]
+    API -- "Bot API" --> TG
+    API -- "TLS" --> LLM[GigaChat API]
+    API --> PG[("PostgreSQL<br/>encrypted rules, events, aggregates")]
+    API --> VK[("Valkey<br/>quotas, budget, dedup")]
+    PROM[(Prometheus)] -- scrape --> API
+    GRAF[Grafana] --> PROM
+    GRAF --> PG
+```
+
+More diagrams — system context, containers and networks, the inline sequence, «Расшифровать» over SSE, data and observability flows, the load-test stand — in [`02-architecture.md` §11](docs/maintainers/02-architecture.md#11-диаграммы-ред-112). Decisions: [`docs/maintainers/adr/`](docs/maintainers/adr/).
+
+| Layer | Technology |
+|---|---|
+| Backend | Python, FastAPI, aiogram 3, SQLAlchemy 2 (async) + Alembic, Pydantic, structlog |
+| LLM | GigaChat (Lightning for rewrite, Pro for decode) behind a `TextGenerator` port; versioned prompts with eval |
+| Storage | PostgreSQL (application-level AES-256-GCM for special-category fields), Valkey |
+| Mini-app | React + TypeScript (Vite), API types generated from OpenAPI |
+| Edge | Caddy built from source (TLS, strict CSP) |
+| Observability | Prometheus, Grafana (provisioned dashboards), daily SQL aggregates |
+| Delivery | Docker images (non-root, read-only FS), Compose on a Debian VPS, encrypted daily backups, image scanning (Trivy), hermetic `make ci` |
+
+## Privacy by design
+
+- Conversation texts (drafts, incoming messages, LLM prompts and outputs) are never stored — not in the database, cache, logs, metrics or traces.
+- Rules and contact labels are encrypted with a per-user (per-pair) data key; deleting the account destroys the key.
+- Analytics events carry an HMAC pseudonym, never the Telegram id or text. Metric labels come only from domain enums.
+- Details: [`03-privacy-and-security.md`](docs/maintainers/03-privacy-and-security.md), ADR-0002, ADR-0004.
+
+## Metrics, logs and analytics
+
+| What | Where | Retention |
+|---|---|---|
+| Usage events: scenario, surface, outcome (ok, refused, limited, invalid output, unavailable), model, prompt version, tokens, latency | PostgreSQL `usage_events` | 13 months |
+| Daily aggregates: DAU, appeals, new users, generations and errors, limits hit, tokens; per scenario × surface: outcomes, p50/p95 latency and time to first chunk, tokens; D1/D7 cohorts | `analytics_daily`, `analytics_daily_scenario`, `analytics_cohorts` | unlimited (not personal data) |
+| Service metrics: HTTP, Telegram updates, LLM duration and tokens, budget, cache errors, event-loop lag | Prometheus | 15 days |
+| Application logs: JSON with PII redaction | container stdout (rotated) | 50 MB per container |
+
+Grafana ships two dashboards (operations and analytics) and is reachable only through an SSH tunnel. Grafana reads the aggregates through a dedicated read-only database role, which is also how the next stage can connect.
+
+## Load test and LLM cost
+
+- Load test — up to 10 RPS on the core loop and the mini-app API, stress to the first failure, tokens per minute and per second, with Telegram and the LLM mocked inside the stand: task 0045, report in `loadtest/reports/`.
+- LLM cost per daily active user in the context of the core loop: [`07-llm-cost-model.md`](docs/maintainers/07-llm-cost-model.md) — a typical user (6 messages through the bot and one «Расшифровать» a day) costs about 2.5 ₽ a day.
+
+## Development
+
+### Prerequisites
 
 - [uv](https://docs.astral.sh/uv/) at `[tool.uv] required-version` in `backend/pyproject.toml` (Python from `backend/.python-version`)
 - Node from `miniapp/.nvmrc`
 - pnpm on PATH at the `packageManager` version in `miniapp/package.json` (any installer; for example a one-time `corepack enable` done by the developer, not by make). `make toolchain-check` enforces it.
 - Docker (Compose v2) for the local stack (API, one-shot migrations, PostgreSQL 18, Valkey)
 
-## Local setup
+### Local setup
 
 ```bash
 cp .env.example .env
@@ -24,13 +88,13 @@ make ci
 
 `make infra-up` starts only PostgreSQL and Valkey (for gates and tests). Use the Local stack section below to run the application itself.
 
-## Checks
+### Checks
 
 While working, run `make quick` (ruff, mypy, unit pytest; mini-app `tsc` plus eslint/prettier/vitest on files changed vs `origin/master`). Aim for under a minute on a warm cache.
 
 Before each review push, the pre-push hook runs full hermetic `make ci` once on the exact commit. Console lines look like `ci: <job> <stage> PASS|FAIL <s>`. Full stage output is under `.ci-logs/<job>-<stage>.log` (gitignored, cleared at the start of each `make ci`). On `FAIL`, the console also prints the last 40 lines of that log and its path.
 
-## Fresh environment check
+### Fresh environment check
 
 Never delete, move, or overwrite an existing repo-root `.env` (it holds credentials that cannot be restored from the repository). To run gates against a generated file:
 
@@ -40,7 +104,7 @@ make dev-env ENV_FILE=/tmp/sp-fresh.env && make check ENV_FILE=/tmp/sp-fresh.env
 
 `make dev-env ENV_FILE=/path/outside/repo.env` creates or updates that file only.
 
-## Local stack
+### Local stack
 
 The supported way to run the application locally is the Docker stack (same images intended for the VPS): one-shot migrations, then the API, plus PostgreSQL and Valkey.
 
@@ -53,7 +117,7 @@ make ps      # compose status
 make down    # stop the full stack; keep named volumes
 ```
 
-### Telegram setup (BotFather)
+#### Telegram setup (BotFather)
 
 Configure the bot once in [@BotFather](https://t.me/BotFather):
 
@@ -68,7 +132,7 @@ Configure the bot once in [@BotFather](https://t.me/BotFather):
 
 There is no command menu. The chat menu button is the mini-app («Мои правила»). Private messages get a single throttled welcome with an «Открыть приложение» button.
 
-### Mini-app over HTTPS (Telegram menu button)
+#### Mini-app over HTTPS (Telegram menu button)
 
 Telegram requires HTTPS for the Main Mini App and the menu button. For local checks, use the Compose `tunnel` profile (Cloudflare quick tunnel to the `miniapp` service):
 
@@ -81,7 +145,7 @@ In the tunnel logs, copy the printed `https://….trycloudflare.com` origin into
 
 The trycloudflare URL **changes every run**. Stop the tunnel with `make miniapp-tunnel-down`. The executor never edits the owner’s `.env`.
 
-### Analytics dashboard
+#### Analytics dashboard
 
 Grafana reads only the aggregate tables (`analytics_daily`, `analytics_daily_scenario`, `analytics_cohorts`) via the configured Grafana DB user (`SP_GRAFANA_DB_USER`, default `grafana_reader`), a member of `svoi_analytics_read`. It is never exposed on a public interface — only `127.0.0.1`, on an internal compose network shared with Postgres.
 
@@ -116,7 +180,7 @@ Tests never write to the manual-testing database: they use a dedicated PostgreSQ
 
 The integration suite connects to Postgres as the compose admin role (`POSTGRES_USER`) and requires that role to be a **superuser** (the default `postgres` image user is). At session start it asserts `rolsuper`; otherwise it fails with a clear message naming that requirement. A non-superuser admin cannot create/drop the temporary databases and roles the suite needs.
 
-## Make targets
+### Make targets
 
 | Target | Purpose |
 |--------|---------|

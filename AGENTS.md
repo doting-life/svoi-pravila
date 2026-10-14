@@ -44,6 +44,7 @@ Stop, post the report with `Status: BLOCKED` in the PR (or the issue, if there i
 - a clean implementation needs a decision outside the task (new dependency, schema change, API contract change, security trade-off);
 - a library does not support what the task requires;
 - a gate cannot be made green without a suppression or without work outside the task's scope.
+- the requirements produce two controls on one screen with the same result, or the implementation would differ from the task's "User-visible behaviour" table.
 Ask one concrete question per blocker and describe the options you see.
 
 ## Honesty
@@ -86,6 +87,7 @@ Status: DONE | BLOCKED
 Branch: task/NNNN-slug · Commits: <short hashes>
 Done: <one line per task section>
 Deviations: <none | each with justification>
+Behaviour: <each row of the task's "User-visible behaviour" table: done | differs (why) — or n/a>
 Dependencies: <package — exact version — reason | none>
 Data classes: <new persisted fields with C0/C1/C2 | none>
 make ci (hook, <sha>): <one-line summary>

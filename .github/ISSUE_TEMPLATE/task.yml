@@ -33,6 +33,14 @@ body:
     validations:
       required: true
   - type: textarea
+    id: behaviour
+    attributes:
+      label: User-visible behaviour (after this task)
+      description: "One row per control the task adds or changes: where | control | action | result. No two controls on one screen may lead to the same result. Write `none` if nothing user-visible changes."
+      value: "| Where | Control | Action | Result |\n|---|---|---|---|\n"
+    validations:
+      required: true
+  - type: textarea
     id: requirements
     attributes:
       label: Requirements

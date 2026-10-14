@@ -18,10 +18,8 @@ export const ru = {
     tabPrivacy: "Приватность",
 
     homeTitle: "Что сделать с сообщением?",
-    homeModeCheck: "Проверить",
-    homeModeCheckHint: "Ошибки, ясность",
-    homeModeSoften: "Смягчить",
-    homeModeSoftenHint: "Мягче / твёрже",
+    homeModeWrite: "Написать",
+    homeModeWriteHint: "Ошибки, мягче, твёрже",
     homeModeDecode: "Расшифровать",
     homeModeDecodeHint: "Понять чужое",
     contactChipFor: "Для кого: {label}",
@@ -199,8 +197,7 @@ export const ru = {
     decodeSuggestUnavailable: "Предложение больше недоступно.",
     decodeSuggestPending: "Уже есть предложение из расшифровки.",
 
-    composeTitle: "Смягчить",
-    composeTitleCheck: "Проверить",
+    composeTitle: "Написать",
     composeRegenerate: "Переделать с этой целью",
     composeLead: "Напишите черновик — проверим, смягчим или сделаем твёрже.",
     composeGoalLegend: "Зачем (необязательно)",

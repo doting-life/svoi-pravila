@@ -75,14 +75,9 @@ async function chooseHomeContact(label: RegExp) {
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: label }));
 }
 
-async function submitFromHome(
-    mode: "check" | "soften" | "decode",
-    text: string,
-    contactLabel?: RegExp,
-) {
+async function submitFromHome(mode: "write" | "decode", text: string, contactLabel?: RegExp) {
     const title = {
-        check: ru.homeModeCheck,
-        soften: ru.homeModeSoften,
+        write: ru.homeModeWrite,
         decode: ru.homeModeDecode,
     }[mode];
     fireEvent.click(await screen.findByRole("radio", { name: new RegExp(title) }));
@@ -1451,7 +1446,7 @@ describe("App", () => {
             { path: "/api/v1/contacts/c1/suggestions", body: { suggestions: [] } },
         ]);
         render(<App adapter={fakeAdapter()} fetchImpl={fetchImpl} />);
-        await submitFromHome("soften", "черновик");
+        await submitFromHome("write", "черновик");
         expect(await screen.findByRole("heading", { name: ru.composeTitle })).toBeInTheDocument();
     });
 
@@ -2060,18 +2055,17 @@ describe("Home and navigation", () => {
         ]);
     }
 
-    it("shows three modes, the contact chip and the draft field, without the old inline hint", async () => {
+    it("shows two modes, the contact chip and the draft field, without the old inline hint", async () => {
         render(<App adapter={fakeAdapter()} fetchImpl={homeFetch()} />);
         expect(await screen.findByRole("heading", { name: ru.homeTitle })).toBeInTheDocument();
         const modes = screen.getAllByRole("radio");
-        expect(modes).toHaveLength(3);
-        expect(screen.getByRole("radio", { name: new RegExp(ru.homeModeCheck) })).toBeChecked();
-        expect(
-            screen.getByRole("radio", { name: new RegExp(ru.homeModeSoften) }),
-        ).toBeInTheDocument();
-        expect(
-            screen.getByRole("radio", { name: new RegExp(ru.homeModeDecode) }),
-        ).toBeInTheDocument();
+        expect(modes).toHaveLength(2);
+        const write = screen.getByRole("radio", { name: new RegExp(ru.homeModeWrite) });
+        expect(write).toBeChecked();
+        expect(write.closest("label")).toHaveTextContent(ru.homeModeWriteHint);
+        const decode = screen.getByRole("radio", { name: new RegExp(ru.homeModeDecode) });
+        expect(decode).not.toBeChecked();
+        expect(decode.closest("label")).toHaveTextContent(ru.homeModeDecodeHint);
         expect(screen.getByRole("button", { name: ru.contactChipNone })).toBeInTheDocument();
         expect(screen.getByLabelText(ru.homeDraftLabel)).toBeInTheDocument();
         expect(screen.getByRole("button", { name: ru.homeSubmitVariants })).toBeDisabled();
@@ -2093,25 +2087,57 @@ describe("Home and navigation", () => {
         expect(screen.getByRole("button", { name: ru.homeSubmitDecode })).toBeInTheDocument();
     });
 
-    it("opens the check variants screen and sends no contact without one", async () => {
+    function writeFetch() {
+        return mockFetch([
+            { path: "/api/v1/me", body: meDone },
+            { path: "/api/v1/contacts", body: { contacts: [contact, boris] } },
+            {
+                method: "POST",
+                path: "/api/v1/compose",
+                body: {
+                    safety: "ok",
+                    applied_rules: [],
+                    choice_token: "choice",
+                    variants: [
+                        { kind: "firmer", text: "твёрже" },
+                        { kind: "check", text: "проверенный" },
+                        { kind: "softer", text: "мягче" },
+                    ],
+                },
+            },
+        ]);
+    }
+
+    it("opens the rewrite variants in the fixed order with goal chips and no contact", async () => {
         const log: RecordedRequest[] = [];
-        render(<App adapter={fakeAdapter()} fetchImpl={recordRequests(homeFetch(), log)} />);
-        await submitFromHome("check", "  черновик  ");
-        expect(
-            await screen.findByRole("heading", { name: ru.composeTitleCheck }),
-        ).toBeInTheDocument();
+        render(<App adapter={fakeAdapter()} fetchImpl={recordRequests(writeFetch(), log)} />);
+        await submitFromHome("write", "  черновик  ");
+        expect(await screen.findByRole("heading", { name: ru.composeTitle })).toBeInTheDocument();
+        expect(await screen.findByDisplayValue("проверенный")).toBeInTheDocument();
         expect(screen.queryByRole("navigation", { name: ru.tabsLabel })).not.toBeInTheDocument();
-        await waitFor(() => {
-            expect(log.filter((entry) => entry.path === "/api/v1/compose")).toHaveLength(1);
+        expect(
+            screen.getAllByRole("article").map((card) => within(card).getByRole("textbox")),
+        ).toHaveLength(3);
+        expect(
+            screen.getAllByRole("textbox").map((box) => (box as HTMLTextAreaElement).value),
+        ).toEqual(["проверенный", "мягче", "твёрже"]);
+        expect(screen.getByText(ru.composeGoalLegend)).toBeInTheDocument();
+        expect(
+            screen.getAllByRole("radio").every((radio) => !(radio as HTMLInputElement).checked),
+        ).toBe(true);
+        const composeCalls = log.filter((entry) => entry.path === "/api/v1/compose");
+        expect(composeCalls).toHaveLength(1);
+        expect(composeCalls[0]?.body).toMatchObject({
+            draft: "черновик",
+            goal: null,
+            contact_id: null,
         });
-        const compose = log.find((entry) => entry.path === "/api/v1/compose");
-        expect(compose?.body).toMatchObject({ draft: "черновик", contact_id: null });
     });
 
-    it("opens the soften variants screen with the chosen contact", async () => {
+    it("opens the rewrite variants with the chosen contact", async () => {
         const log: RecordedRequest[] = [];
-        render(<App adapter={fakeAdapter()} fetchImpl={recordRequests(homeFetch(), log)} />);
-        await submitFromHome("soften", "черновик", /Боря/);
+        render(<App adapter={fakeAdapter()} fetchImpl={recordRequests(writeFetch(), log)} />);
+        await submitFromHome("write", "черновик", /Боря/);
         expect(await screen.findByRole("heading", { name: ru.composeTitle })).toBeInTheDocument();
         await waitFor(() => {
             expect(log.filter((entry) => entry.path === "/api/v1/compose")).toHaveLength(1);
@@ -2271,7 +2297,7 @@ describe("Onboarding intro", () => {
         expect(cloud.setItem).toHaveBeenCalledWith("intro_seen", "1");
     });
 
-    it("runs the example in check mode with the draft block and no goals", async () => {
+    it("runs the example in the fixed order with the draft block and unselected goals", async () => {
         const cloud = storage("");
         const log: RecordedRequest[] = [];
         const base = mockFetch([
@@ -2306,9 +2332,13 @@ describe("Onboarding intro", () => {
         expect(await screen.findByDisplayValue("проверенный")).toBeInTheDocument();
         const quote = screen.getByText(ru.composeYourDraft).closest(".quote");
         expect(quote).toHaveTextContent(ru.introExampleDraft);
-        const [first] = screen.getAllByRole("article");
-        expect(first).toHaveTextContent(ru.variantKinds.check);
-        expect(screen.queryByText(ru.composeGoalLegend)).not.toBeInTheDocument();
+        expect(
+            screen.getAllByRole("textbox").map((box) => (box as HTMLTextAreaElement).value),
+        ).toEqual(["проверенный", "мягкий", "твёрже"]);
+        expect(screen.getByText(ru.composeGoalLegend)).toBeInTheDocument();
+        expect(
+            screen.getAllByRole("radio").every((radio) => !(radio as HTMLInputElement).checked),
+        ).toBe(true);
         const composeCalls = log.filter((entry) => entry.path === "/api/v1/compose");
         expect(composeCalls).toHaveLength(1);
         expect(composeCalls[0]?.body).toEqual({

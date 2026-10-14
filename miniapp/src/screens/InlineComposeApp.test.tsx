@@ -128,6 +128,42 @@ describe("InlineComposeApp", () => {
         ).not.toBeInTheDocument();
     });
 
+    it("keeps the rewrite title in every phase, the fixed order and no goal chips", async () => {
+        let releaseRedeem: () => void = () => undefined;
+        const redeemGate = new Promise<void>((resolve) => {
+            releaseRedeem = resolve;
+        });
+        const fetchImpl = fetchRouter(async (request) => {
+            const url = new URL(request.url);
+            if (url.pathname.endsWith("/handoff/redeem")) {
+                await redeemGate;
+                return jsonResponse(redeemOk());
+            }
+            if (url.pathname.endsWith("/compose") && request.method === "POST") {
+                return jsonResponse(composeOk());
+            }
+            return jsonResponse({ code: "not_found", message: "x" }, 404);
+        });
+        render(
+            <InlineComposeApp telegram={inlineTelegram()} handoffToken="h" fetchImpl={fetchImpl} />,
+        );
+        expect(
+            await screen.findByRole("heading", { level: 1, name: ru.composeTitle }),
+        ).toBeVisible();
+        releaseRedeem();
+        await screen.findByDisplayValue("черновик из inline");
+        expect(screen.getByRole("heading", { level: 1, name: ru.composeTitle })).toBeVisible();
+        expect(screen.queryByText(ru.composeGoalLegend)).not.toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole("button", { name: ru.composeSubmit }));
+        await screen.findByDisplayValue("мягкий");
+        expect(screen.getByRole("heading", { level: 1, name: ru.composeTitle })).toBeVisible();
+        expect(
+            screen.getAllByRole("textbox").map((box) => (box as HTMLTextAreaElement).value),
+        ).toEqual(["проверенный", "мягкий", "твёрдый"]);
+        expect(screen.queryByText(ru.composeGoalLegend)).not.toBeInTheDocument();
+    });
+
     it("shows expired handoff error and closes", async () => {
         const fetchImpl = fetchRouter(() =>
             jsonResponse({ code: "handoff_expired", message: "expired" }, 401),

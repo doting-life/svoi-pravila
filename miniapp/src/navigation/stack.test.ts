@@ -72,7 +72,6 @@ describe("navigation stack", () => {
     it("pushes and pops the compose overlay", () => {
         const compose = {
             name: "compose",
-            mode: "soften",
             draft: "Черновик",
             contactId: null,
         } as const;

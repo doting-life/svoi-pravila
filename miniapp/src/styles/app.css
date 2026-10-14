@@ -1067,17 +1067,19 @@ a:hover {
 
 .mode-cards {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
 }
 
 .mode-card {
     position: relative;
     display: flex;
+    min-width: 0;
 }
 
 .mode-card__body {
     flex: 1;
+    min-width: 0;
     min-height: 76px;
     padding: 12px 10px;
     display: flex;
@@ -1095,9 +1097,11 @@ a:hover {
 .mode-card__title {
     font-size: 15px;
     font-weight: 600;
+    overflow-wrap: anywhere;
 }
 
 .mode-card__hint {
+    overflow-wrap: anywhere;
     font-size: 12px;
     line-height: 16px;
     color: var(--ink-3);

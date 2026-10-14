@@ -4,8 +4,6 @@ export const ROOT_TABS: readonly RootTab[] = ["home", "people", "privacy"];
 
 export type LimitKind = "quota" | "budget";
 
-export type ComposeMode = "check" | "soften";
-
 export type OverlayScreen =
     | {
           readonly name: "contactDetail";
@@ -29,7 +27,6 @@ export type OverlayScreen =
       }
     | {
           readonly name: "compose";
-          readonly mode: ComposeMode;
           readonly draft: string;
           readonly contactId: string | null;
           readonly title?: string;

@@ -17,7 +17,7 @@ import { partnerSendUrl } from "../compose/partnerSendUrl";
 import { useAsyncResource } from "../hooks/useAsyncResource";
 import { useContacts, type Contact } from "../hooks/useContacts";
 import { ru } from "../localization/ru";
-import type { ComposeMode, LimitKind } from "../navigation/stack";
+import type { LimitKind } from "../navigation/stack";
 import { codePointLength } from "../rules/ruleText";
 import type { TelegramAdapter } from "../telegram/webapp";
 
@@ -35,10 +35,7 @@ const GOAL_OPTIONS: readonly { readonly value: ComposeGoal; readonly label: stri
     { value: "reconnect", label: ru.composeGoals.reconnect },
 ];
 
-const KIND_ORDER: Readonly<Record<ComposeMode, readonly VariantKind[]>> = {
-    check: ["check", "softer", "firmer"],
-    soften: ["softer", "firmer", "check"],
-};
+const VARIANT_ORDER: readonly VariantKind[] = ["check", "softer", "firmer"];
 
 export type ComposePartnerProps =
     | { readonly mode: "inline" }
@@ -46,7 +43,6 @@ export type ComposePartnerProps =
 
 export type ComposeEditorProps = {
     readonly telegram: TelegramAdapter;
-    readonly mode: ComposeMode;
     readonly title?: string;
     /** Request variants once on mount when a draft is already provided. */
     readonly autoRun?: boolean;
@@ -109,21 +105,17 @@ function errorMessageForCode(code: string): string {
 
 function orderedVariants(
     variants: readonly { readonly kind: VariantKind; readonly text: string }[],
-    mode: ComposeMode,
 ): EditableVariant[] {
     const byKind = new Map(variants.map((item) => [item.kind, item.text]));
-    return KIND_ORDER[mode]
-        .filter((kind) => byKind.has(kind))
-        .map((kind) => ({
-            kind,
-            text: byKind.get(kind) ?? "",
-        }));
+    return VARIANT_ORDER.filter((kind) => byKind.has(kind)).map((kind) => ({
+        kind,
+        text: byKind.get(kind) ?? "",
+    }));
 }
 
 /** Presentational compose editor shared by full-app and inline launches. */
 export function ComposeEditor({
     telegram,
-    mode,
     title,
     autoRun = false,
     draftMax,
@@ -138,8 +130,8 @@ export function ComposeEditor({
     const allowContactPicker = partner.mode === "selectable";
     const contacts = partner.mode === "selectable" ? partner.contacts : null;
     const showClose = partner.mode === "inline";
-    const screenTitle = title ?? (mode === "soften" ? ru.composeTitle : ru.composeTitleCheck);
-    const showGoals = mode === "soften";
+    const screenTitle = title ?? ru.composeTitle;
+    const showGoals = partner.mode === "selectable";
     const [goal, setGoal] = useState<ComposeGoal | null>(null);
     const [contactId, setContactId] = useState<string | null>(initialContactId);
     const [draft, setDraft] = useState(initialDraft);
@@ -250,7 +242,7 @@ export function ComposeEditor({
         telegram.hapticNotification("success");
         setPhase({
             kind: "result",
-            variants: orderedVariants(data.variants, mode),
+            variants: orderedVariants(data.variants),
             appliedRules: data.applied_rules,
             choiceToken: data.choice_token,
             goal,
@@ -586,7 +578,6 @@ export function ComposeEditor({
 
 export type ComposeScreenProps = {
     readonly telegram: TelegramAdapter;
-    readonly mode: ComposeMode;
     readonly title?: string;
     readonly draft: string;
     readonly contactId: string | null;
@@ -601,7 +592,6 @@ export function ComposeScreen(props: ComposeScreenProps) {
     return (
         <ComposeEditor
             telegram={props.telegram}
-            mode={props.mode}
             {...(props.title !== undefined ? { title: props.title } : {})}
             autoRun
             draftMax={props.draftMax}

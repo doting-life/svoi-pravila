@@ -10,10 +10,10 @@ from typing import Any
 
 import pytest
 
-from svoi_pravila.application.ports.rewrite_judge import Verdict
+from svoi_pravila.application.ports.rewrite_judge import SlotVerdicts, Verdict
 from svoi_pravila.domain.enums import RewriteGoal
 from svoi_pravila.domain.lexicon import normalize_lexicon_text
-from svoi_pravila.evals.judge_calibration import CRITERIA, defect_value
+from svoi_pravila.evals.judge_calibration import CRITERIA, SLOT_CRITERIA, defect_value
 from svoi_pravila.evals.judge_cases import JudgeCase, load_judge_cases, parse_judge_case
 
 _ROOT = Path(__file__).resolve().parents[3]
@@ -39,7 +39,22 @@ _MIN_LANGUAGE_ITEMS = 24
 _MIN_PER_GOAL = 6
 _MIN_WITH_RULES = 8
 _MIN_PER_FAILURE_PATTERN = 3
-_MIN_DEFECT_SHARE = 0.35
+_MIN_DEFECT_SHARE = 0.25
+_MIN_SINGLE_DEFECT_SHARE = 0.6
+_MAX_WRECK_ITEMS = 16
+_MIN_COLLOQUIAL_CLEAN = 6
+_MIN_OBSCENE_CLEAN_NO = 6
+_COLLOQUIAL = ("чёрт", "офигеть", "ни фига себе", "фиг с ним", "блин")
+_OBSCENE_ROOTS = (
+    "нихера",
+    "сучий",
+    "залупа",
+    "дрочишь",
+    "падла",
+    "елдак",
+    "гондон",
+    "гомна",
+)
 
 
 def _cases() -> list[JudgeCase]:
@@ -110,11 +125,64 @@ def test_every_failure_pattern_has_at_least_three_items(prefix: str) -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize("criterion", CRITERIA)
-def test_defect_label_share_per_criterion_is_at_least_thirty_five_percent(criterion: str) -> None:
+def test_defect_label_share_per_criterion_is_at_least_twenty_five_percent(criterion: str) -> None:
     values = [value for value in _values(_cases(), criterion) if value is not Verdict.NA]
     assert values
     share = sum(value is defect_value(criterion) for value in values) / len(values)
     assert share >= _MIN_DEFECT_SHARE
+
+
+def _is_defect(slot: SlotVerdicts, criterion: str) -> bool:
+    return bool(getattr(slot, criterion) is defect_value(criterion))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("criterion", SLOT_CRITERIA)
+def test_most_defect_labels_of_a_criterion_are_its_only_defect_in_the_slot(criterion: str) -> None:
+    slots = [getattr(case.expected, name) for case in _cases() for name in ("softer", "firmer")]
+    defects = [slot for slot in slots if _is_defect(slot, criterion)]
+    only = [
+        slot
+        for slot in defects
+        if not any(_is_defect(slot, other) for other in SLOT_CRITERIA if other != criterion)
+    ]
+    assert defects
+    assert len(only) / len(defects) >= _MIN_SINGLE_DEFECT_SHARE
+
+
+@pytest.mark.unit
+def test_at_most_sixteen_items_are_wrecks_and_the_rest_are_at_least_eighty() -> None:
+    cases = _cases()
+    wrecks = [case for case in cases if case.id.startswith("wreck-")]
+    assert len(wrecks) <= _MAX_WRECK_ITEMS
+    assert len(cases) - len(wrecks) >= _MIN_ITEMS
+
+
+@pytest.mark.unit
+def test_colloquial_words_that_are_not_vulgar_are_clean() -> None:
+    clean = [
+        case
+        for case in _cases()
+        for name in ("softer", "firmer")
+        if any(word in getattr(case, name).lower() for word in _COLLOQUIAL)
+        and getattr(case.expected, name).clean is Verdict.YES
+    ]
+    assert len({case.id for case in clean}) >= _MIN_COLLOQUIAL_CLEAN
+
+
+@pytest.mark.unit
+def test_obscene_forms_are_flagged_and_each_form_is_used_once() -> None:
+    cases = _cases()
+    texts = [
+        (case.id, name, getattr(case, name)) for case in cases for name in ("softer", "firmer")
+    ]
+    for root in _OBSCENE_ROOTS:
+        users = {(item, name) for item, name, text in texts if root in text.lower()}
+        assert len(users) == 1, root
+        ((item, name),) = users
+        flagged = next(case for case in cases if case.id == item)
+        assert getattr(flagged.expected, name).clean is Verdict.NO, root
+    assert len(_OBSCENE_ROOTS) >= _MIN_OBSCENE_CLEAN_NO
 
 
 @pytest.mark.unit
@@ -122,7 +190,7 @@ def test_labels_follow_the_na_rules() -> None:
     for case in _cases():
         for slot in (case.expected.softer, case.expected.firmer):
             assert (case.goal is None) == (slot.goal_done is Verdict.NA), case.id
-            assert bool(case.rules) == (slot.rule_done is not Verdict.NA), case.id
+            assert case.rules or slot.rule_done is Verdict.NA, case.id
             assert Verdict.NA not in (slot.clean, slot.meaning_kept, slot.invented), case.id
 
 

@@ -1,4 +1,31 @@
-"""Calibration items of the rewrite judge: a committed synthetic JSONL file (ADR-0016 §13)."""
+"""Calibration items of the rewrite judge: a committed synthetic JSONL file (ADR-0016 §13).
+
+Labelling contract. Every label of ``evals/data/judge_calibration_v1.jsonl`` follows these
+rules, which restate the judge prompt; a label that breaks one is a defect of the set:
+
+* R1 ``meaning_kept`` is ``no`` only when the draft's action or position is lost, inverted or
+  weakened: a refusal becomes "cannot", "maybe", "probably" or conditional; a demand becomes a
+  wish or a suggestion; a boundary becomes a wish; regret becomes blame; the addressee or the
+  subject changes. Additions alone do not change meaning: insults go to ``clean``, new content
+  to ``invented``, a broken goal to ``goal_done``.
+* R2 ``invented`` is ``yes`` for new facts, motives ("on purpose", "you do not care about me"),
+  conditions, deadlines, promises, threats, prohibitions, ultimatums and participants. It is not
+  ``yes`` for softeners and hedges, a named feeling in place of a rude word, insults (they are
+  ``clean``), the one sentence that performs the goal, or content a rule requires.
+* R3 ``clean`` is ``no`` only for vulgar or obscene words in any form, insults and accusatory
+  generalizations. Threats, taunts and coldness without such words are ``clean`` = ``yes``.
+* R4 ``goal_done``: a hedged or conditional refusal is ``no``; a boundary as a wish or a
+  question is ``no``; a boundary with an added threat is ``yes`` (the threat is ``invented``);
+  ``reconnect`` with a prohibition, reproach or ultimatum is ``no``; ``admit_fault`` with an
+  excuse or self-humiliation is ``no``.
+* R5 ``rule_done`` is ``na`` when the rule's subject has nothing to do with the draft (and
+  always when there are no rules).
+* R6 ``ladder_ok`` is ``no`` when ``firmer`` has softeners or excuses or adds new pressure
+  (a threat, an ultimatum, a jab), when ``softer`` is not warmer, or when the two differ only by
+  punctuation. ``clean`` does not affect ``ladder_ok``.
+
+Quotas are enforced by ``tests/unit/evals/test_judge_calibration_dataset.py``.
+"""
 
 from __future__ import annotations
 

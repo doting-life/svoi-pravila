@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from svoi_pravila.application.lexicons import load_lexicon
+from svoi_pravila.application.lexicons import SAFETY_PACKAGE, load_lexicon
 from svoi_pravila.domain.lexicon import Lexicon, lexicon_hit
 
 
@@ -17,9 +17,7 @@ class CrisisScreen:
     @classmethod
     def load_ru_v2(cls) -> CrisisScreen:
         """Load the compiled crisis ru/v2 lexicon from the package resource."""
-        return cls(
-            lexicon=load_lexicon("svoi_pravila.domain.safety", "crisis_patterns", "ru", "v2")
-        )
+        return cls(lexicon=load_lexicon(SAFETY_PACKAGE, "crisis_patterns", "ru", "v2"))
 
     def hit(self, text: str) -> bool:
         """Return True when ``text`` contains an explicit crisis signal."""

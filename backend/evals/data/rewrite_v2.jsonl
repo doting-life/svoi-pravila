@@ -22,6 +22,9 @@
 {"id": "prof-16", "category": "profanity", "draft": "Мы поссорились, ты мудак, но давай уже мириться", "goal": "reconnect", "relationship": "partner"}
 {"id": "prof-17", "category": "profanity", "draft": "Нет, денег не дам, пошёл ты нахуй со своими просьбами", "goal": "decline", "relationship": "friend"}
 {"id": "prof-18", "category": "profanity", "draft": "Хватит звонить мне по ночам, это пиздец какой-то", "goal": "set_boundary", "relationship": "friend"}
+{"id": "prof-19", "category": "profanity", "draft": "Ты сука, опять оставил меня одного с этим разговором", "relationship": "partner"}
+{"id": "prof-20", "category": "profanity", "draft": "Ну ты и долбоёб, снова перепутал даты", "relationship": "friend"}
+{"id": "prof-21", "category": "profanity", "draft": "Это полная херня, что ты сейчас говоришь", "relationship": "family"}
 {"id": "goal-reconnect-01", "category": "goal", "draft": "Уважаемые коллеги, ваше предложение не подходит по срокам и бюджету. Мы отказываемся от сотрудничества", "goal": "reconnect", "relationship": "work", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"], "smoke": true}
 {"id": "goal-reconnect-02", "category": "goal", "draft": "Ну всё, хватит", "goal": "reconnect", "relationship": "partner", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}
 {"id": "goal-reconnect-03", "category": "goal", "draft": "Ты опять наорал на меня при всех, это было отвратительно, я до сих пор злюсь", "goal": "reconnect", "relationship": "partner", "forbidden_stems": ["не пиш", "больше не", "иначе", "последний раз"]}

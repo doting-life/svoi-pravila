@@ -1,33 +1,50 @@
 # Core Russian obscene roots (ru/v1). One regex per line.
-# Scope: obscene vocabulary only. General insults (идиот, дурак, ...) live in the harsh tone lexicon.
+# Scope: obscene vocabulary and the vulgar words users perceive as мат (ADR-0016 §10): the сука
+# and хер families as well as the obscene roots. General insults (идиот, дурак, ...) live in
+# the harsh tone lexicon. Accepted ambiguity: сучья, сучки also mean branches and knots; this is
+# rare in messages and is not worth a gap in the lexicon.
 # Applied to normalized text (lowercase, ё→е, collapsed space, edge punctuation stripped);
 # an asterisk inside a word is kept, so masked forms (х*й, бл*дь) are matched.
 # Every pattern is anchored at a word start; prefixes come from closed lists; no bare substring roots.
 # Excluded on purpose: бляха, бляшка (the root needs д/т after бля), ребята, небо, требуй, психуй.
 # Family х*й: closed prefixes на-, по-, о-, ни-, за-, до-, рас-, от-.
-\b(?:на|по|о|ни|за|до|рас|от)?х[у*](?:[йяе]|и\b)
+\b(?:на|по|о|ни|за|до|рас|от)?х[у*](?:[йяею]|и\b)
 \bхул[иея]\b
 # Family п*зд-: closed prefix list.
 \b(?:с|на|по|о|за|вы|до|от|рас|раз|при|у|ис|про|под)?п[и*][з*]д
-# Family бл*дь / бл*.
+# Family бл*дь / бл*; closed prefixes вы-, по-, рас-, от-, на- before бляд-.
 \bбля\b
 \bбл\b
 \bбл[я*][дт]
+\b(?:вы|по|рас|от|на)бл[я*]д
 # Family е*/ё* (ё is normalized to е): closed prefixes за-, вы-, у-, до-, на-, от-, по-, при-, раз-, съ-.
 \b(?:за|вы|у|до|на|от|по|при|раз|съ)?е[б*][а*][тлншр]
 \b(?:за|вы|у|до|на|от|по|при|раз|съ)?е[б*]л[оаеиы]
-\b(?:за|вы|у|до|на|от|по|при|раз|съ)?е[б*][у*](?:\b|т|щ|н)
+\b(?:за|вы|у|до|на|от|по|при|раз|съ)?е[б*][у*](?:\b|т|щ|н|ч)
 \b(?:за|вы|у|до|на|от|по|при|раз|съ)?е[б*]е[тмшн]
 \b(?:за|вы|у|до|на|от|по|при|раз|съ)?еб(?:[и*]сь|ите|н[уи])
 \b(?:за|вы|у|до|на|от|по|при|раз|съ)?еби\b
 \b(?:за|вы|у|до|на|от|по|при|раз|съ)?е[б*]ыв
 \b(?:за|вы|у|до|на|от|по|при|раз|съ)?е[б*]ок
+# Family е*/ё* with a hard-sign prefix (the sign stays in normalized text), ебуч-, уёбищ-.
+\b(?:раз|в|об|под|из|с|от|над)ъе[б*]
+\bуе[б*]ищ
 # Family муд*к.
 \bм[у*][д*][а*][кч]
 \bм[у*][д*][иы*]л
 \bмудозвон
 # Obscene insults: пид*р family, г*ндон, з*луп-, шл*х-.
-\bп[ие*][д*][оае*]р
+\bп[ие*][д*][оае*]р(?:[аыуео]|ом|ов|ам|ами|ах)?\b
+\bп[ие*][д*][оае*]р(?:ас|аст|ск)
 \bг[ао*]н[д*][оа*]н
 \bз[а*]л[у*]п
 \bш[л*][юу*]х
+# Family долбоёб.
+\bдолб[ао][е*][б*]
+# Family сука (also masked): сука, суки, сучка, сучара, сучье, сукин.
+\bс[у*][к*](?:а|и|е|у|ой|ою|ам|ами|ах)\b
+\bсукин(?:а|о|ы|ого|ому|ым|ых)?\b
+\bсуч(?:ка|ки|ке|ку|кой|ек|ар(?:а|ы|е|у|ой|ам|ами)|ь(?:я|и|е|ю|ей|им|их|ему|ими))\b
+# Family хер: хер, хера, нахер, похер, херня, херов-.
+\b(?:на|по|за|до|от)?х[е*]р(?:а|у|ом|е|ы|ам|ами|ах)?\b
+\b(?:на|по|ни)?х[е*]р(?:н(?:я|ю|и|е|ей)|ов[а-я*]*)\b

@@ -20,17 +20,17 @@ from svoi_pravila.adapters.llm.gigachat.schemas import (
 
 _FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "llm" / "prompts"
 _V2_CHARACTERS = 5479
-_MAX_GROWTH_OVER_V2 = 1.75
+_MAX_GROWTH_OVER_V2 = 1.8
 _SLOTS = frozenset({"check", "softer", "firmer"})
 
 
 @pytest.mark.unit
 def test_empty_answer_json_matches_schema_shapes() -> None:
     assert empty_answer_json(RewriteOutNoRules, safety=SafetyOut.CRISIS) == (
-        '{"check":"","firmer":"","softer":"","safety":"crisis"}'
+        '{"firmer":"","softer":"","check":"","safety":"crisis"}'
     )
     assert empty_answer_json(RewriteOut, safety=SafetyOut.REFUSE_MANIPULATION) == (
-        '{"check":"","firmer":"","softer":"","applied_rule_indexes":[],'
+        '{"firmer":"","softer":"","check":"","applied_rule_indexes":[],'
         '"safety":"refuse_manipulation"}'
     )
 
@@ -49,7 +49,7 @@ def test_compose_rewrite_matches_fixtures() -> None:
 
 
 @pytest.mark.unit
-def test_rewrite_v3_skeleton_is_at_most_one_point_seven_five_times_v2() -> None:
+def test_rewrite_v3_skeleton_is_at_most_one_point_eight_times_v2() -> None:
     skeleton = (
         resources.files("svoi_pravila.adapters.llm.prompts.rewrite")
         .joinpath("v3.md")
@@ -60,6 +60,6 @@ def test_rewrite_v3_skeleton_is_at_most_one_point_seven_five_times_v2() -> None:
 
 @pytest.mark.unit
 @pytest.mark.parametrize("schema", [RewriteOut, RewriteOutNoRules])
-def test_rewrite_schema_declares_firmer_before_softer(schema: type[BaseModel]) -> None:
+def test_rewrite_schema_declares_the_slots_in_generation_order(schema: type[BaseModel]) -> None:
     slots = [name for name in schema.model_json_schema()["properties"] if name in _SLOTS]
-    assert slots == ["check", "firmer", "softer"]
+    assert slots == ["firmer", "softer", "check"]

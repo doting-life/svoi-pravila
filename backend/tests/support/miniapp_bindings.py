@@ -8,6 +8,7 @@ from svoi_pravila.adapters.channels.telegram.bot_username import BotUsernameCach
 from svoi_pravila.adapters.system.tone_suggestion_catalog import StaticToneSuggestionCatalog
 from svoi_pravila.api.miniapp import MiniappDeps, MiniappRouterBindings
 from svoi_pravila.application.crisis_screen import CrisisScreen
+from svoi_pravila.application.lexicons import load_tone_lexicons_ru_v1
 from svoi_pravila.application.ports.pair_notifier import PairNotifier
 from svoi_pravila.application.ports.rate_limiter import RateLimiter
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
@@ -152,6 +153,7 @@ def build_test_miniapp_bindings(
                 ids=world.ids,
                 pseudonymizer=decode_bundle.pseudonymizer,
                 crisis_screen=CrisisScreen.load_ru_v2(),
+                tone_lexicons=load_tone_lexicons_ru_v1(),
                 deadline_seconds=8.0,
                 analytics_timezone=display_timezone,
             )

@@ -41,6 +41,7 @@ from svoi_pravila.application.errors import (
     InvalidOutputReason,
     UnavailableKind,
 )
+from svoi_pravila.application.lexicons import load_tone_lexicons_ru_v1
 from svoi_pravila.application.ports.generation import (
     GenerationMeta,
     RewriteResult,
@@ -127,6 +128,7 @@ def _build_compose_app(
             ids=world.ids,
             pseudonymizer=decode_bundle.pseudonymizer,
             crisis_screen=CrisisScreen.load_ru_v2(),
+            tone_lexicons=load_tone_lexicons_ru_v1(),
             deadline_seconds=8.0,
             analytics_timezone="Europe/Moscow",
         )

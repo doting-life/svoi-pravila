@@ -38,6 +38,14 @@ def test_record_increments_the_counter_for_kind_and_rule() -> None:
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("rule", list(PolicyRule))
+def test_every_policy_rule_has_its_own_label_value(rule: PolicyRule) -> None:
+    before = _count("firmer", rule.value)
+    MetricsVariantPolicyMonitor().record(VariantKind.FIRMER, rule)
+    assert _count("firmer", rule.value) == before + 1
+
+
+@pytest.mark.unit
 def test_record_invalid_labels_reason_slot_and_finish_reason() -> None:
     before = _invalid_count("empty_text", "softer", "stop")
     other = _invalid_count("empty_text", "check", "stop")

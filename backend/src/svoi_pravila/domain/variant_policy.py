@@ -1,21 +1,27 @@
-"""Variant policy: code-checked quality rules for rewrite variants (ADR-0015 §6).
+"""Variant policy v3: code-checked quality rules over the set of rewrite variants.
+
+See ADR-0016 §5 and §10.
 
 The policy never rewrites or blocks a text: it only reports which rules a variant broke.
-Word lists are closed and versioned here, in the domain.
+Stop phrases and second-person forms are closed lists here; profanity and tone markers are
+versioned lexicons passed in.
 """
 
 from __future__ import annotations
 
 import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from enum import StrEnum
 
-from svoi_pravila.domain.enums import VariantKind
+from svoi_pravila.domain.enums import RewriteGoal, RuleCategory, VariantKind
+from svoi_pravila.domain.lexicon import lexicon_count, lexicon_hit
+from svoi_pravila.domain.tone import ToneLexicons
 
-# Version of the stop-phrase and register lists below; bump on every list change.
-POLICY_VERSION = 2
+# Version of the rules and closed lists below; bump on every change.
+POLICY_VERSION = 3
 
 STOP_PHRASES: tuple[str, ...] = (
     "давай обсудим спокойно",
@@ -70,9 +76,16 @@ VY_FORMS: frozenset[str] = frozenset(
 
 SOFTER_EXTRA_WORDS = 6
 LENGTH_FACTOR = 1.2
+LICENSED_EXTRA_WORDS = 8
 CHECK_MAX_EDIT_RATIO = 0.15
+UNLICENSED_NEW_APOLOGIES = 0
+LICENSED_NEW_APOLOGIES = 1
+LADDER_MIN_DISTANCE = 0.10
+_DISTANCE_DIGITS = 9
 
 _WORD_RE = re.compile(r"[\u0430-\u044f\u0451a-z0-9]+")
+_ORDER: tuple[VariantKind, ...] = (VariantKind.CHECK, VariantKind.SOFTER, VariantKind.FIRMER)
+_TONED: frozenset[VariantKind] = frozenset({VariantKind.SOFTER, VariantKind.FIRMER})
 
 
 class PolicyRule(StrEnum):
@@ -82,27 +95,119 @@ class PolicyRule(StrEnum):
     LENGTH = "length"
     EDIT_RATIO = "edit_ratio"
     REGISTER = "register"
+    PROFANITY = "profanity"
+    HARSH = "harsh"
+    HEDGE = "hedge"
+    APOLOGY = "apology"
+    LADDER_LENGTH = "ladder_length"
+    LADDER_SIMILAR = "ladder_similar"
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyContext:
+    """What the request licenses: the goal and the categories of the supplied rules."""
+
+    goal: RewriteGoal | None
+    rule_categories: frozenset[RuleCategory]
+
+    @property
+    def addition_licensed(self) -> bool:
+        """True when a goal or any rule may add a phrase to the variants."""
+        return self.goal is not None or bool(self.rule_categories)
+
+    @property
+    def apology_licensed(self) -> bool:
+        """True when one new apology is allowed (admit-fault goal or an apology rule)."""
+        return self.goal is RewriteGoal.ADMIT_FAULT or RuleCategory.APOLOGY in self.rule_categories
 
 
 @dataclass(frozen=True, slots=True)
 class PolicyViolation:
-    """One broken rule; carries no text."""
+    """One broken rule of one variant; carries no text."""
 
     rule: PolicyRule
+    kind: VariantKind
 
 
-def check_variant_policy(draft: str, kind: VariantKind, text: str) -> tuple[PolicyViolation, ...]:
-    """Return every rule that ``text`` (a ``kind`` variant of ``draft``) breaks."""
+def check_variant_set(
+    draft: str,
+    texts: Mapping[VariantKind, str],
+    context: PolicyContext,
+    lexicons: ToneLexicons,
+) -> tuple[PolicyViolation, ...]:
+    """Return every rule that the variants in ``texts`` break, ladder rules included."""
     violations: list[PolicyViolation] = []
-    if _has_new_stop_phrase(draft, text):
-        violations.append(PolicyViolation(PolicyRule.STOP_PHRASE))
-    if _too_long(draft, kind, text):
-        violations.append(PolicyViolation(PolicyRule.LENGTH))
-    if kind is VariantKind.CHECK and _edit_ratio(draft, text) > CHECK_MAX_EDIT_RATIO:
-        violations.append(PolicyViolation(PolicyRule.EDIT_RATIO))
-    if _register_changed(draft, text):
-        violations.append(PolicyViolation(PolicyRule.REGISTER))
+    for kind in _ORDER:
+        text = texts.get(kind)
+        if text is not None:
+            violations.extend(
+                PolicyViolation(rule, kind)
+                for rule in _variant_rules(draft, kind, text, context, lexicons)
+            )
+    softer = texts.get(VariantKind.SOFTER)
+    firmer = texts.get(VariantKind.FIRMER)
+    if softer is not None and firmer is not None:
+        violations.extend(
+            PolicyViolation(rule, VariantKind.FIRMER) for rule in _ladder_rules(softer, firmer)
+        )
     return tuple(violations)
+
+
+def _variant_rules(
+    draft: str,
+    kind: VariantKind,
+    text: str,
+    context: PolicyContext,
+    lexicons: ToneLexicons,
+) -> list[PolicyRule]:
+    rules: list[PolicyRule] = []
+    if _has_new_stop_phrase(draft, text):
+        rules.append(PolicyRule.STOP_PHRASE)
+    if _too_long(draft, kind, text, licensed=context.addition_licensed):
+        rules.append(PolicyRule.LENGTH)
+    if kind is VariantKind.CHECK and _edit_ratio(draft, text) > CHECK_MAX_EDIT_RATIO:
+        rules.append(PolicyRule.EDIT_RATIO)
+    if _register_changed(draft, text):
+        rules.append(PolicyRule.REGISTER)
+    if kind in _TONED:
+        rules.extend(_tone_rules(draft, kind, text, context, lexicons))
+    return rules
+
+
+def _tone_rules(
+    draft: str,
+    kind: VariantKind,
+    text: str,
+    context: PolicyContext,
+    lexicons: ToneLexicons,
+) -> list[PolicyRule]:
+    rules: list[PolicyRule] = []
+    if lexicon_hit(text, lexicons.profanity):
+        rules.append(PolicyRule.PROFANITY)
+    if lexicon_hit(text, lexicons.harsh):
+        rules.append(PolicyRule.HARSH)
+    if (
+        kind is VariantKind.FIRMER
+        and not context.rule_categories
+        and lexicon_count(text, lexicons.hedge) > lexicon_count(draft, lexicons.hedge)
+    ):
+        rules.append(PolicyRule.HEDGE)
+    allowed = LICENSED_NEW_APOLOGIES if context.apology_licensed else UNLICENSED_NEW_APOLOGIES
+    if lexicon_count(text, lexicons.apology) - lexicon_count(draft, lexicons.apology) > allowed:
+        rules.append(PolicyRule.APOLOGY)
+    return rules
+
+
+def _ladder_rules(softer: str, firmer: str) -> list[PolicyRule]:
+    rules: list[PolicyRule] = []
+    if len(firmer.split()) > len(softer.split()):
+        rules.append(PolicyRule.LADDER_LENGTH)
+    softer_words = _words(softer)
+    firmer_words = _words(firmer)
+    distance = 1 - SequenceMatcher(None, softer_words, firmer_words).ratio()
+    if round(distance, _DISTANCE_DIGITS) < LADDER_MIN_DISTANCE:
+        rules.append(PolicyRule.LADDER_SIMILAR)
+    return rules
 
 
 def _words(value: str) -> tuple[str, ...]:
@@ -129,14 +234,15 @@ def _has_new_stop_phrase(draft: str, text: str) -> bool:
     return False
 
 
-def _too_long(draft: str, kind: VariantKind, text: str) -> bool:
+def _too_long(draft: str, kind: VariantKind, text: str, *, licensed: bool) -> bool:
     draft_words = len(draft.split())
     text_words = len(text.split())
     scaled = math.ceil(LENGTH_FACTOR * draft_words)
+    extra = LICENSED_EXTRA_WORDS if licensed else 0
     if kind is VariantKind.SOFTER:
-        return text_words > max(scaled, draft_words + SOFTER_EXTRA_WORDS)
+        return text_words > max(scaled, draft_words + SOFTER_EXTRA_WORDS + extra)
     if kind is VariantKind.FIRMER:
-        return text_words > scaled
+        return text_words > scaled + extra
     return False
 
 

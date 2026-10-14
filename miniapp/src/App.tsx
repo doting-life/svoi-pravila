@@ -229,7 +229,6 @@ function MiniappShell({
                                 intro.markSeen();
                                 push({
                                     name: "compose",
-                                    mode: "check",
                                     draft: ru.introExampleDraft,
                                     contactId: null,
                                     title: ru.introExampleTitle,
@@ -248,7 +247,7 @@ function MiniappShell({
                                 push({ name: "decode", draft, contactId });
                                 return;
                             }
-                            push({ name: "compose", mode, draft, contactId });
+                            push({ name: "compose", draft, contactId });
                         }}
                     />
                 </Page>
@@ -334,7 +333,6 @@ function MiniappShell({
                 <Page>
                     <ComposeScreen
                         telegram={telegram}
-                        mode={screen.mode}
                         {...(screen.title !== undefined ? { title: screen.title } : {})}
                         draft={screen.draft}
                         contactId={screen.contactId}

@@ -77,7 +77,6 @@ function composeFetch(
 async function renderCompose(
     fetchImpl: typeof fetch,
     options: {
-        readonly mode?: "check" | "soften";
         readonly title?: string;
         readonly draft?: string;
         readonly contactId?: string | null;
@@ -109,7 +108,6 @@ async function renderCompose(
         <ApiProvider credential={{ scheme: "tma", value: telegram.initData }} client={client}>
             <ComposeScreen
                 telegram={telegram}
-                mode={options.mode ?? "check"}
                 {...(options.title !== undefined ? { title: options.title } : {})}
                 draft={options.draft ?? ""}
                 contactId={options.contactId === undefined ? "c1" : options.contactId}
@@ -143,7 +141,7 @@ async function submitDraft(text: string): Promise<void> {
 describe("ComposeScreen", () => {
     it("submits draft with goal and contact, shows editable variants and applied rules", async () => {
         const fetchImpl = composeFetch(() => jsonResponse(okVariants));
-        await renderCompose(fetchImpl, { mode: "soften" });
+        await renderCompose(fetchImpl);
         expect(
             await screen.findByText(ru.contactChipFor.replace("{label}", "Аня")),
         ).toBeInTheDocument();
@@ -173,7 +171,7 @@ describe("ComposeScreen", () => {
 
     it("sends null goal by default and after the chosen goal is cleared", async () => {
         const fetchImpl = composeFetch(() => jsonResponse(okVariants));
-        await renderCompose(fetchImpl, { mode: "soften" });
+        await renderCompose(fetchImpl);
         const decline = await screen.findByRole("radio", { name: ru.composeGoals.decline });
         expect(decline).not.toBeChecked();
         fireEvent.click(decline);
@@ -219,25 +217,19 @@ describe("ComposeScreen", () => {
         expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
 
-    it("shows the submitted draft above the variants in check and soften modes", async () => {
-        for (const mode of ["check", "soften"] as const) {
-            const fetchImpl = composeFetch(() => jsonResponse(okVariants));
-            await renderCompose(fetchImpl, { mode });
-            await submitDraft("  мой исходный текст  ");
-            expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
-            const block = screen.getByText(ru.composeYourDraft).closest(".quote");
-            expect(block).not.toBeNull();
-            expect(
-                within(block as HTMLElement).getByText("мой исходный текст"),
-            ).toBeInTheDocument();
-            cleanup();
-        }
+    it("shows the submitted draft above the variants", async () => {
+        const fetchImpl = composeFetch(() => jsonResponse(okVariants));
+        await renderCompose(fetchImpl);
+        await submitDraft("  мой исходный текст  ");
+        expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
+        const block = screen.getByText(ru.composeYourDraft).closest(".quote");
+        expect(block).not.toBeNull();
+        expect(within(block as HTMLElement).getByText("мой исходный текст")).toBeInTheDocument();
     });
 
-    it("keeps the draft block on the example screen with the check order and no goals", async () => {
+    it("keeps the draft block on the example screen with the fixed order and unselected goals", async () => {
         const fetchImpl = composeFetch(() => jsonResponse(okVariants));
         await renderCompose(fetchImpl, {
-            mode: "check",
             title: ru.introExampleTitle,
             draft: ru.introExampleDraft,
         });
@@ -245,7 +237,13 @@ describe("ComposeScreen", () => {
         expect(screen.getByRole("heading", { name: ru.introExampleTitle })).toBeInTheDocument();
         expect(screen.getByText(ru.composeYourDraft)).toBeInTheDocument();
         expect(screen.getByText(ru.introExampleDraft)).toBeInTheDocument();
-        expect(screen.queryByText(ru.composeGoalLegend)).not.toBeInTheDocument();
+        expect(screen.getByText(ru.composeGoalLegend)).toBeInTheDocument();
+        expect(
+            screen.getAllByRole("radio").every((radio) => !(radio as HTMLInputElement).checked),
+        ).toBe(true);
+        expect(
+            screen.getAllByRole("textbox").map((box) => (box as HTMLTextAreaElement).value),
+        ).toEqual(["исправленный вариант", "мягкий вариант", "твёрдый вариант"]);
     });
 
     it("shows an initial and truncates a long name in the chip", async () => {
@@ -328,12 +326,12 @@ describe("ComposeScreen", () => {
             }
             return jsonResponse(okVariants);
         });
-        const { telegram } = await renderCompose(fetchImpl, { mode: "soften" });
+        const { telegram } = await renderCompose(fetchImpl);
         fireEvent.click(screen.getByRole("radio", { name: ru.composeGoals.set_boundary }));
         await submitDraft("граница");
         expect(await screen.findByDisplayValue("твёрдый вариант")).toBeInTheDocument();
         const cards = screen.getAllByRole("article");
-        const firm = cards[1];
+        const firm = cards[2];
         expect(firm).toBeDefined();
         fireEvent.click(
             within(firm as HTMLElement).getByRole("button", { name: ru.composeCopyAndReturn }),
@@ -601,7 +599,7 @@ describe("ComposeScreen", () => {
 
     it("sends no contact when opened without one", async () => {
         const fetchImpl = composeFetch(() => jsonResponse(okVariants));
-        await renderCompose(fetchImpl, { draft: "Привет", contactId: null, mode: "soften" });
+        await renderCompose(fetchImpl, { draft: "Привет", contactId: null });
         expect(await screen.findByDisplayValue("мягкий вариант")).toBeInTheDocument();
         const call = fetchImpl.mock.calls.find(([req]) => isComposePost(req));
         expect(await requestJson(call?.[0] as RequestInfo, call?.[1])).toEqual({
@@ -611,9 +609,9 @@ describe("ComposeScreen", () => {
         });
     });
 
-    it("orders variants check-first in check mode and softer-first in soften mode", async () => {
+    it("orders variants check, softer, firmer under the rewrite title with goal chips", async () => {
         const fetchImpl = composeFetch(() => jsonResponse(okVariants));
-        await renderCompose(fetchImpl, { draft: "текст", mode: "check" });
+        await renderCompose(fetchImpl, { draft: "текст" });
         await screen.findByDisplayValue("мягкий вариант");
         expect(
             screen.getAllByRole("article").map((card) => within(card).getByRole("textbox")),
@@ -621,28 +619,20 @@ describe("ComposeScreen", () => {
         expect(
             screen.getAllByRole("textbox").map((box) => (box as HTMLTextAreaElement).value),
         ).toEqual(["исправленный вариант", "мягкий вариант", "твёрдый вариант"]);
-        expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(ru.composeTitleCheck);
-        expect(screen.queryByRole("radio", { name: ru.composeGoals.decline })).toBeNull();
-        cleanup();
-
-        await renderCompose(fetchImpl, { draft: "текст", mode: "soften" });
-        await screen.findByDisplayValue("мягкий вариант");
-        expect(
-            screen.getAllByRole("textbox").map((box) => (box as HTMLTextAreaElement).value),
-        ).toEqual(["мягкий вариант", "твёрдый вариант", "исправленный вариант"]);
         expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent(ru.composeTitle);
+        expect(screen.getByRole("radio", { name: ru.composeGoals.decline })).toBeInTheDocument();
     });
 
     it("uses the given title", async () => {
         const fetchImpl = composeFetch(() => jsonResponse(okVariants));
-        await renderCompose(fetchImpl, { draft: "текст", mode: "soften", title: "Пример" });
+        await renderCompose(fetchImpl, { draft: "текст", title: "Пример" });
         await screen.findByDisplayValue("мягкий вариант");
         expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Пример");
     });
 
     it("regenerates with the chosen goal only after the goal changes", async () => {
         const fetchImpl = composeFetch(() => jsonResponse(okVariants));
-        await renderCompose(fetchImpl, { draft: "текст", mode: "soften" });
+        await renderCompose(fetchImpl, { draft: "текст" });
         await screen.findByDisplayValue("мягкий вариант");
         expect(
             screen.getAllByRole("radio").every((radio) => !(radio as HTMLInputElement).checked),

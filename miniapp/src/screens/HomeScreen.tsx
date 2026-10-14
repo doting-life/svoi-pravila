@@ -8,9 +8,8 @@ import { ClipboardIcon } from "../components/icons";
 import { hapticSelection, readClipboardText } from "../telegram/webapp";
 import { useContacts } from "../hooks/useContacts";
 import { ru } from "../localization/ru";
-import type { ComposeMode } from "../navigation/stack";
 
-export type HomeMode = ComposeMode | "decode";
+export type HomeMode = "write" | "decode";
 
 export type HomeSubmission = {
     readonly mode: HomeMode;
@@ -28,8 +27,7 @@ const MODES: readonly {
     readonly title: string;
     readonly hint: string;
 }[] = [
-    { value: "check", title: ru.homeModeCheck, hint: ru.homeModeCheckHint },
-    { value: "soften", title: ru.homeModeSoften, hint: ru.homeModeSoftenHint },
+    { value: "write", title: ru.homeModeWrite, hint: ru.homeModeWriteHint },
     { value: "decode", title: ru.homeModeDecode, hint: ru.homeModeDecodeHint },
 ];
 
@@ -43,7 +41,7 @@ function sliceCodePoints(text: string, max: number): string {
  */
 export function HomeScreen({ textMax, onSubmit }: HomeScreenProps) {
     const contacts = useContacts();
-    const [mode, setMode] = useState<HomeMode>("check");
+    const [mode, setMode] = useState<HomeMode>("write");
     const [contactId, setContactId] = useState<string | null>(null);
     const [draft, setDraft] = useState("");
     const [pickerOpen, setPickerOpen] = useState(false);

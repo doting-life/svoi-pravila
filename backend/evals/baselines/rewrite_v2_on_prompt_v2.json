@@ -1,15 +1,16 @@
 {
   "check_ok_rate": 0.6667,
   "edit_ratio_share": 0.0,
-  "harsh_runs": 1,
-  "hedge_share": 0.0159,
-  "invalid_share": 0.0294,
-  "ladder_length_share": 0.4615,
-  "ladder_similar_share": 0.9846,
-  "ok_runs": 65,
-  "profanity_runs": 1,
+  "harsh_runs": 2,
+  "hedge_share": 0.0152,
+  "ladder_length_share": 0.5362,
+  "ladder_similar_share": 1.0,
+  "ok_runs": 69,
+  "profanity_runs": 3,
   "register_runs": 0,
-  "runs": 68,
-  "stem_leak_runs": 2,
-  "version": 1
+  "runs": 71,
+  "stem_leak_runs": 1,
+  "unavailable_runs": 0,
+  "unusable_share": 0.0282,
+  "version": 2
 }

@@ -1,7 +1,7 @@
 # Архитектура «Свои Правила»
 
 Владелец документа: Claude (CTO). Исполнители этот документ не редактируют; изменения архитектуры фиксируются через ADR в `adr/`.
-Редакция: 1.11 · 2026-10-08 (сервер: Debian 13, бэкапы локально на сервере; ред. 1.10 — эксплуатационные метрики Prometheus; ред. 1.9 — квоты и дневной бюджет LLM, ADR-0009; ред. 1.8 — продуктовая аналитика: определения D-9, агрегаты, когорты, ежедневные задания; ред. 1.7 — мини-приложение: «Расшифровать» потоком SSE, каталог текстов приватности; ред. 1.6 — API мини-приложения: проверка `initData`, `/api/v1`; ред. 1.5 — кнопка «Сделать правилом»: одноразовый токен с ключом, операция `suggest_rule`; ред. 1.4 — кандидаты правил: `RuleSuggestion`, `ToneSignal` — D-6; ред. 1.3 — inline: определение p95, повторное использование результата для одинакового запроса; ред. 1.2 — debounce и отмена до провайдера, prepared results с ключом в токене)
+Редакция: 1.12 · 2026-10-14 (ред. 1.12 — §11 диаграммы: контекст, контейнеры и сети, основной цикл inline, «Расшифровать», данные и наблюдаемость, нагрузочный стенд; ред. 1.11 — сервер: Debian 13, бэкапы локально на сервере; ред. 1.10 — эксплуатационные метрики Prometheus; ред. 1.9 — квоты и дневной бюджет LLM, ADR-0009; ред. 1.8 — продуктовая аналитика: определения D-9, агрегаты, когорты, ежедневные задания; ред. 1.7 — мини-приложение: «Расшифровать» потоком SSE, каталог текстов приватности; ред. 1.6 — API мини-приложения: проверка `initData`, `/api/v1`; ред. 1.5 — кнопка «Сделать правилом»: одноразовый токен с ключом, операция `suggest_rule`; ред. 1.4 — кандидаты правил: `RuleSuggestion`, `ToneSignal` — D-6; ред. 1.3 — inline: определение p95, повторное использование результата для одинакового запроса; ред. 1.2 — debounce и отмена до провайдера, prepared results с ключом в токене)
 
 ---
 
@@ -159,3 +159,176 @@ domain  ←  application  ←  adapters / api  ←  bootstrap
 - Переносимость: развёртывание на любом Linux-сервере с Docker по runbook, без привязки к API провайдера.
 - Окружения: `local`, `staging` (свой бот), `production` (свой бот). Данные между окружениями не переносятся.
 - Порядок выхода (ADR-0005): полный стек собирается и вручную тестируется локально в Docker теми же образами; на VPS — только после полной приёмки. Обновления Telegram: `polling` локально, `webhook` на VPS, один обработчик.
+
+## 11. Диаграммы (ред. 1.12)
+
+Диаграммы — в Mermaid: GitHub рисует их прямо в документе, исходник правится вместе с текстом. Они показывают то, что описано в §2–§10, и не вводят новых решений.
+
+### 11.1 Контекст
+
+```mermaid
+flowchart LR
+    U["Пользователь<br/>(Telegram, телефон и компьютер)"]
+    P["Собеседник<br/>(второй участник свода)"]
+    TG["Telegram<br/>Bot API, inline, Mini App"]
+    SP["«Свои Правила»<br/>сервис на VPS"]
+    LLM["GigaChat API<br/>(LLM-провайдер)"]
+
+    U -- "@бот черновик · мини-приложение" --> TG
+    P -- "приглашение · правила" --> TG
+    TG -- "webhook (HTTPS, секрет)" --> SP
+    SP -- "answerInlineQuery · сообщения" --> TG
+    TG -- "Mini App: HTTPS + initData" --> SP
+    SP -- "промпт + текст как блок данных (TLS, НУЦ)" --> LLM
+```
+
+### 11.2 Контейнеры и сети на сервере
+
+Один VPS, Docker Compose (`deploy/compose.prod.yaml`). Наружу открыты только 80/443 (Caddy); Grafana — только `127.0.0.1` через SSH-туннель. Сети `data`, `metrics`, `observability` — `internal`, без выхода наружу.
+
+```mermaid
+flowchart TB
+    subgraph Internet
+        TG[Telegram]
+        GC[GigaChat API]
+    end
+
+    subgraph VPS["VPS · Debian 13 · Docker Compose"]
+        subgraph edge["сеть edge"]
+            CADDY["miniapp — Caddy<br/>TLS, статика SPA, CSP, прокси /api и webhook<br/>:80 :443"]
+            API["api — FastAPI + aiogram<br/>webhook, /api/v1, фоновые задания"]
+        end
+        subgraph data["сеть data (internal)"]
+            PG[("PostgreSQL 18<br/>правила C2 шифр., usage_events, агрегаты")]
+            VK[("Valkey<br/>квоты, бюджет, дедупликация, токены")]
+            MIG["migrate — Alembic<br/>один запуск на релиз"]
+            BK["backup — age, ежедневно"]
+        end
+        subgraph metrics["сеть metrics (internal)"]
+            PROM[("Prometheus<br/>хранение 15 дн.")]
+        end
+        subgraph obs["сеть observability (internal)"]
+            GRAF["Grafana<br/>127.0.0.1:3000"]
+        end
+    end
+
+    TG -- "HTTPS webhook" --> CADDY
+    CADDY --> API
+    API -- "Bot API" --> TG
+    API -- "TLS" --> GC
+    API --> PG
+    API --> VK
+    MIG --> PG
+    BK --> PG
+    PROM -- "scrape api:9100" --> API
+    GRAF --> PROM
+    GRAF -- "роль только для агрегатов" --> PG
+```
+
+### 11.3 Основной цикл продукта: inline «Мягче / Твёрже / Проверить»
+
+Core Product Loop: человек пишет трудное сообщение в любом чате → получает три варианта → выбирает и отправляет; договорённости пары подмешиваются в промпт. Обращение (D-9) — выбранный вариант (`result_chosen`).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as Пользователь
+    participant TG as Telegram
+    participant API as api (webhook)
+    participant VK as Valkey
+    participant UC as Сценарий rewrite
+    participant LLM as GigaChat
+    participant PG as PostgreSQL
+
+    U->>TG: @бот черновик (набор)
+    TG->>API: inline_query (секрет в заголовке)
+    API-->>TG: 200 сразу, обработка в фоне
+    API->>VK: дедупликация update_id, лимит частоты
+    API->>API: пауза набора (debounce), отмена устаревшего запроса
+    API->>UC: текст + контакт (метаданные отброшены)
+    UC->>UC: кризис-скрининг (до квот, всегда доступен)
+    UC->>UC: повтор того же запроса → готовый результат без LLM
+    UC->>VK: дневной бюджет → резерв квоты пользователя
+    UC->>PG: правила контакта (расшифровка DEK)
+    UC->>LLM: промпт rewrite + правила + черновик как блок данных
+    LLM-->>UC: JSON по схеме: проверить / мягче / твёрже
+    UC->>UC: валидация схемы, длины, политики вариантов (1 повтор при браке)
+    UC->>PG: usage_event без текста (сценарий, исход, токены, задержка)
+    UC->>VK: фактические токены → бюджет
+    API->>TG: answerInlineQuery: «Мягче», «Твёрже», «Проверить»
+    U->>TG: выбирает вариант и отправляет
+    TG->>API: chosen_inline_result
+    API->>PG: result_chosen — обращение (D-9)
+```
+
+### 11.4 «Расшифровать» в мини-приложении (SSE)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as Пользователь
+    participant MA as Мини-приложение
+    participant API as api /api/v1/decode
+    participant LLM as GigaChat
+    participant VK as Valkey
+
+    U->>MA: вставляет входящее сообщение
+    MA->>API: POST (Authorization: tma initData)
+    API->>API: HMAC и свежесть initData, согласия, кризис, квота decode, бюджет
+    API->>LLM: фаза A — анализ подтекста (поток)
+    LLM-->>API: фрагменты
+    API-->>MA: SSE: анализ по мере генерации
+    API->>LLM: фаза B — варианты ответа (JSON по схеме)
+    LLM-->>API: варианты
+    API->>VK: шифртекст вариантов под токеном (минуты) и источник правила (10 мин)
+    API-->>MA: SSE: варианты + токены «Вставить в чат» и «Сделать правилом»
+```
+
+### 11.5 Данные, приватность и наблюдаемость
+
+```mermaid
+flowchart LR
+    T["Тексты переписки<br/>(черновики, входящие, ответы LLM)"]
+    R["Правила, метки контактов (C2)"]
+    E["usage_events (C0 + псевдоним)<br/>сценарий, поверхность, исход, модель,<br/>версия промпта, токены, задержка"]
+    A["Агрегаты (не ПДн)<br/>analytics_daily, _scenario, cohorts"]
+    M["Prometheus<br/>метки только из перечислений"]
+    L["Логи stdout JSON<br/>редактирование ПДн"]
+    G["Grafana<br/>дашборды Ops и Analytics"]
+
+    T -. "не сохраняются нигде" .-> X(("∅"))
+    R -- "AES-256-GCM, DEK на пользователя/пару" --> PG[(PostgreSQL)]
+    E --> PG
+    PG -- "ежедневное задание, advisory lock" --> A
+    E -- "декоратор приёмника событий" --> M
+    A --> G
+    M --> G
+    E -- "удаление старше 13 мес." --> X
+```
+
+### 11.6 Нагрузочный стенд (задача 0045)
+
+Те же образы, что на сервере, лимиты памяти прода; Telegram и GigaChat заменены моками внутри стенда — живых вызовов 0. Отдельный замер внешнего OpenAI-совместимого шлюза LLM — только с бюджетом в задаче.
+
+```mermaid
+flowchart LR
+    K6["k6<br/>S1 inline, S2 мини-приложение<br/>ramp · steady 10 RPS · stress"]
+    API["api (образ релиза)"]
+    MOCK["mock<br/>Bot API + GigaChat (TLS)<br/>модель задержек и токенов"]
+    PG[(PostgreSQL)]
+    VK[(Valkey)]
+    PROM[(Prometheus)]
+    REP["REPORT.md + HTML k6"]
+    GW["Внешний LLM-шлюз<br/>(отдельный прогон, бюджет)"]
+
+    K6 -- "webhook updates, /api/v1" --> API
+    API -- "answerInlineQuery" --> MOCK
+    API -- "chat/completions" --> MOCK
+    API --> PG
+    API --> VK
+    PROM --> API
+    K6 --> REP
+    MOCK -- "/stats" --> REP
+    PROM --> REP
+    K6 -. "llm_gateway.js" .-> GW
+```

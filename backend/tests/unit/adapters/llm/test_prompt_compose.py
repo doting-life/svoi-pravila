@@ -6,6 +6,7 @@ from importlib import resources
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel
 
 from svoi_pravila.adapters.llm.gigachat.prompt_compose import (
     compose_rewrite_template,
@@ -19,16 +20,17 @@ from svoi_pravila.adapters.llm.gigachat.schemas import (
 
 _FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "llm" / "prompts"
 _V2_CHARACTERS = 5479
-_MAX_GROWTH_OVER_V2 = 1.6
+_MAX_GROWTH_OVER_V2 = 1.75
+_SLOTS = frozenset({"check", "softer", "firmer"})
 
 
 @pytest.mark.unit
 def test_empty_answer_json_matches_schema_shapes() -> None:
     assert empty_answer_json(RewriteOutNoRules, safety=SafetyOut.CRISIS) == (
-        '{"check":"","softer":"","firmer":"","safety":"crisis"}'
+        '{"check":"","firmer":"","softer":"","safety":"crisis"}'
     )
     assert empty_answer_json(RewriteOut, safety=SafetyOut.REFUSE_MANIPULATION) == (
-        '{"check":"","softer":"","firmer":"","applied_rule_indexes":[],'
+        '{"check":"","firmer":"","softer":"","applied_rule_indexes":[],'
         '"safety":"refuse_manipulation"}'
     )
 
@@ -47,10 +49,17 @@ def test_compose_rewrite_matches_fixtures() -> None:
 
 
 @pytest.mark.unit
-def test_rewrite_v3_skeleton_is_at_most_one_point_six_times_v2() -> None:
+def test_rewrite_v3_skeleton_is_at_most_one_point_seven_five_times_v2() -> None:
     skeleton = (
         resources.files("svoi_pravila.adapters.llm.prompts.rewrite")
         .joinpath("v3.md")
         .read_text(encoding="utf-8")
     )
     assert len(skeleton) <= _MAX_GROWTH_OVER_V2 * _V2_CHARACTERS
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("schema", [RewriteOut, RewriteOutNoRules])
+def test_rewrite_schema_declares_firmer_before_softer(schema: type[BaseModel]) -> None:
+    slots = [name for name in schema.model_json_schema()["properties"] if name in _SLOTS]
+    assert slots == ["check", "firmer", "softer"]

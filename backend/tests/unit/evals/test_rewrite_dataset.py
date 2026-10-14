@@ -15,7 +15,9 @@ from svoi_pravila.evals.rewrite_cases import RewriteCase, RewriteCategory, load_
 _ROOT = Path(__file__).resolve().parents[3]
 _DATA = _ROOT / "evals" / "data" / "rewrite_v2.jsonl"
 _PROMPTS = _ROOT / "src" / "svoi_pravila" / "adapters" / "llm" / "prompts" / "rewrite"
-_REQUIRED_STEMS = ("не пиш", "больше не", "иначе", "последний раз")
+_REQUIRED_STEMS = ("иначе", "последний раз", "разговор окончен", "нет, значит нет")
+_PROHIBITION_STEM = "не пиш"
+_RETIRED_STEM = "больше не"
 _DRAFT_LINE = re.compile(r"^draft:\s*(.+)$", re.MULTILINE)
 
 
@@ -56,7 +58,10 @@ def test_every_goal_has_five_cases_with_the_required_forbidden_stems() -> None:
     assert set(per_goal) == set(RewriteGoal)
     assert all(count >= 5 for count in per_goal.values())
     for case in cases:
-        assert set(_REQUIRED_STEMS) <= set(case.forbidden_stems), case.id
+        stems = set(case.forbidden_stems)
+        assert set(_REQUIRED_STEMS) <= stems, case.id
+        assert _RETIRED_STEM not in stems, case.id
+        assert (_PROHIBITION_STEM in stems) is (case.goal is not RewriteGoal.SET_BOUNDARY), case.id
 
 
 @pytest.mark.unit

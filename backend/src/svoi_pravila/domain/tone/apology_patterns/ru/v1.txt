@@ -1,9 +1,0 @@
-# Apology markers (ru/v1). One regex per line.
-# Scope: explicit apologies. The adjective «простой» and the noun «прощание» must not match.
-# Applied to normalized text (lowercase, ё→е, collapsed space, edge punctuation stripped).
-# Every pattern is anchored at a word start.
-\bизвини(?:те)?\b
-\bпрости(?:те)?\b
-\bпрошу прощения\b
-\bмне жаль\b
-\bсожалею\b

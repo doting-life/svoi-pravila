@@ -68,24 +68,5 @@ def compile_lexicon(pattern_sources: Sequence[str]) -> Lexicon:
 
 def lexicon_hit(text: str, lexicon: Lexicon) -> bool:
     """Return True when the normalized text matches any pattern of ``lexicon``."""
-    return lexicon_count(text, lexicon) > 0
-
-
-def lexicon_count(text: str, lexicon: Lexicon) -> int:
-    """Return the number of matches in the normalized text.
-
-    Overlapping matches of different patterns count once.
-    """
     normalized = normalize_lexicon_text(text)
-    spans = sorted(
-        match.span() for pattern in lexicon.patterns for match in pattern.finditer(normalized)
-    )
-    count = 0
-    covered_until = -1
-    for start, end in spans:
-        if start >= covered_until:
-            count += 1
-            covered_until = end
-        else:
-            covered_until = max(covered_until, end)
-    return count
+    return any(pattern.search(normalized) for pattern in lexicon.patterns)

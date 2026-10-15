@@ -1,10 +1,9 @@
-"""Variant policy v3: per-variant rules, licences and the ladder between softer and firmer."""
+"""Variant policy v4: per-variant rules, licences and the ladder between softer and firmer."""
 
 from __future__ import annotations
 
 import pytest
 
-from svoi_pravila.application.lexicons import load_tone_lexicons_ru_v1
 from svoi_pravila.domain.enums import RewriteGoal, RuleCategory, VariantKind
 from svoi_pravila.domain.variant_policy import (
     POLICY_VERSION,
@@ -15,7 +14,6 @@ from svoi_pravila.domain.variant_policy import (
     check_variant_set,
 )
 
-_LEXICONS = load_tone_lexicons_ru_v1()
 _PLAIN = PolicyContext(goal=None, rule_categories=frozenset())
 
 
@@ -30,7 +28,7 @@ def _rules(
     context: PolicyContext = _PLAIN,
 ) -> tuple[PolicyRule, ...]:
     """Rules broken by a single variant (the set holds only that variant)."""
-    violations = check_variant_set(draft, {kind: text}, context, _LEXICONS)
+    violations = check_variant_set(draft, {kind: text}, context)
     assert all(violation.kind is kind for violation in violations)
     return tuple(violation.rule for violation in violations)
 
@@ -45,12 +43,12 @@ def _set(
     texts = {VariantKind.SOFTER: softer, VariantKind.FIRMER: firmer}
     if check is not None:
         texts[VariantKind.CHECK] = check
-    return check_variant_set(draft, texts, context, _LEXICONS)
+    return check_variant_set(draft, texts, context)
 
 
 @pytest.mark.unit
-def test_policy_version_is_three() -> None:
-    assert POLICY_VERSION == 3
+def test_policy_version_is_four() -> None:
+    assert POLICY_VERSION == 4
 
 
 @pytest.mark.unit
@@ -112,7 +110,7 @@ def test_violation_is_a_value_without_text() -> None:
 
 @pytest.mark.unit
 def test_empty_set_has_no_violations() -> None:
-    assert check_variant_set("Ты опять опоздал", {}, _PLAIN, _LEXICONS) == ()
+    assert check_variant_set("Ты опять опоздал", {}, _PLAIN) == ()
 
 
 @pytest.mark.unit
@@ -191,7 +189,7 @@ def test_check_with_small_correction_passes() -> None:
 
 
 @pytest.mark.unit
-def test_check_keeps_profanity_harsh_hedge_and_apology_of_the_author() -> None:
+def test_check_keeps_the_words_of_the_author() -> None:
     draft = "Ты всегда мудак, извини, пожалуйста"
     assert _rules(draft, VariantKind.CHECK, "Ты всегда мудак, извини, пожалуйста.") == ()
 
@@ -212,110 +210,6 @@ def test_check_keeps_profanity_harsh_hedge_and_apology_of_the_author() -> None:
 )
 def test_register_rule(draft: str, text: str, *, violates: bool) -> None:
     assert (PolicyRule.REGISTER in _rules(draft, VariantKind.SOFTER, text)) is violates
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("kind", [VariantKind.SOFTER, VariantKind.FIRMER])
-def test_profanity_in_softer_or_firmer_is_reported(kind: VariantKind) -> None:
-    assert PolicyRule.PROFANITY in _rules("Ну что, ребята, готовы?", kind, "Ну что, хуй с ними")
-    assert PolicyRule.PROFANITY in _rules("Ну что, ребята, готовы?", kind, "Ну что, бл*дь")
-    assert PolicyRule.PROFANITY not in _rules("Ну что, ребята, готовы?", kind, "Ну что, готовы?")
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("kind", [VariantKind.SOFTER, VariantKind.FIRMER])
-def test_profanity_is_reported_even_when_the_draft_has_it(kind: VariantKind) -> None:
-    assert PolicyRule.PROFANITY in _rules("Это пиздец", kind, "Это пиздец")
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("kind", [VariantKind.SOFTER, VariantKind.FIRMER])
-def test_harsh_markers_in_softer_or_firmer_are_reported(kind: VariantKind) -> None:
-    assert PolicyRule.HARSH in _rules("Ты опоздал", kind, "Ты всегда опаздываешь")
-    assert PolicyRule.HARSH in _rules("Ты опоздал", kind, "Не будь идиотом")
-    assert PolicyRule.HARSH not in _rules("Ты опоздал", kind, "Я ждал тебя")
-
-
-@pytest.mark.unit
-def test_check_is_not_measured_for_profanity_or_harsh() -> None:
-    rules = _rules("Ты тупой", VariantKind.CHECK, "Ты тупой, хуй.")
-    assert PolicyRule.PROFANITY not in rules
-    assert PolicyRule.HARSH not in rules
-
-
-@pytest.mark.unit
-def test_new_hedge_in_firmer_is_reported_without_rules() -> None:
-    assert PolicyRule.HEDGE in _rules(
-        "Верни деньги", VariantKind.FIRMER, "Верни деньги, пожалуйста"
-    )
-
-
-@pytest.mark.unit
-def test_hedge_already_in_the_draft_is_not_new() -> None:
-    draft = "Пожалуйста, верни деньги"
-    assert PolicyRule.HEDGE not in _rules(draft, VariantKind.FIRMER, "Пожалуйста, верни деньги")
-    assert PolicyRule.HEDGE in _rules(draft, VariantKind.FIRMER, "Пожалуйста, можешь вернуть")
-
-
-@pytest.mark.unit
-def test_hedge_is_checked_on_firmer_only() -> None:
-    assert PolicyRule.HEDGE not in _rules("Верни деньги", VariantKind.SOFTER, "Верни, пожалуйста")
-
-
-@pytest.mark.unit
-def test_hedge_is_not_checked_when_the_context_has_rules() -> None:
-    context = _ctx(None, RuleCategory.OTHER)
-    text = "Верни деньги, пожалуйста"
-    assert PolicyRule.HEDGE not in _rules("Верни деньги", VariantKind.FIRMER, text, context)
-
-
-@pytest.mark.unit
-def test_hedge_is_checked_when_only_a_goal_is_set() -> None:
-    context = _ctx(RewriteGoal.DECLINE)
-    text = "Верни деньги, пожалуйста"
-    assert PolicyRule.HEDGE in _rules("Верни деньги", VariantKind.FIRMER, text, context)
-
-
-@pytest.mark.unit
-def test_davai_is_not_a_hedge() -> None:
-    assert PolicyRule.HEDGE not in _rules("Помиримся", VariantKind.FIRMER, "Давай мириться")
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("kind", [VariantKind.SOFTER, VariantKind.FIRMER])
-def test_new_apology_without_licence_is_reported(kind: VariantKind) -> None:
-    assert PolicyRule.APOLOGY in _rules("Я опоздал", kind, "Извини, я опоздал")
-    assert PolicyRule.APOLOGY not in _rules("Я опоздал", kind, "Я опоздал")
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("kind", [VariantKind.SOFTER, VariantKind.FIRMER])
-@pytest.mark.parametrize(
-    "licence",
-    [_ctx(RewriteGoal.ADMIT_FAULT), _ctx(None, RuleCategory.APOLOGY)],
-    ids=["goal", "rule"],
-)
-def test_one_new_apology_is_allowed_by_a_licence(kind: VariantKind, licence: PolicyContext) -> None:
-    assert PolicyRule.APOLOGY not in _rules("Я опоздал", kind, "Извини, я опоздал", licence)
-    assert PolicyRule.APOLOGY in _rules("Я опоздал", kind, "Извини, я опоздал, мне жаль", licence)
-
-
-@pytest.mark.unit
-def test_an_apology_already_in_the_draft_is_not_new() -> None:
-    assert PolicyRule.APOLOGY not in _rules("Извини, я опоздал", VariantKind.SOFTER, "Извини")
-    assert PolicyRule.APOLOGY in _rules(
-        "Извини, я опоздал", VariantKind.SOFTER, "Извини, прости, мне жаль"
-    )
-
-
-@pytest.mark.unit
-def test_other_goals_and_categories_do_not_license_an_apology() -> None:
-    assert PolicyRule.APOLOGY in _rules(
-        "Я опоздал",
-        VariantKind.SOFTER,
-        "Извини, я опоздал",
-        _ctx(RewriteGoal.RECONNECT, RuleCategory.HOW_TO_ASK),
-    )
 
 
 @pytest.mark.unit
@@ -374,12 +268,8 @@ def test_ladder_similar_distance_boundary(words: int, changed: int, *, violates:
 
 @pytest.mark.unit
 def test_ladder_rules_need_both_variants() -> None:
-    only_softer = check_variant_set(
-        "Верни деньги", {VariantKind.SOFTER: "Верни деньги"}, _PLAIN, _LEXICONS
-    )
-    only_firmer = check_variant_set(
-        "Верни деньги", {VariantKind.FIRMER: "Верни деньги"}, _PLAIN, _LEXICONS
-    )
+    only_softer = check_variant_set("Верни деньги", {VariantKind.SOFTER: "Верни деньги"}, _PLAIN)
+    only_firmer = check_variant_set("Верни деньги", {VariantKind.FIRMER: "Верни деньги"}, _PLAIN)
     ladder = {PolicyRule.LADDER_LENGTH, PolicyRule.LADDER_SIMILAR}
     assert not ladder & {v.rule for v in only_softer}
     assert not ladder & {v.rule for v in only_firmer}
@@ -395,35 +285,36 @@ def test_a_clean_ladder_has_no_violations() -> None:
             VariantKind.FIRMER: "Отвечай на мои сообщения",
         },
         _PLAIN,
-        _LEXICONS,
     )
     assert violations == ()
 
 
 @pytest.mark.unit
 def test_violations_are_listed_per_kind_then_ladder_rules() -> None:
+    draft = "Верни мне деньги за билеты до пятницы"
     violations = check_variant_set(
-        "Верни деньги",
+        draft,
         {
-            VariantKind.FIRMER: "Верни деньги, идиот",
-            VariantKind.SOFTER: "Верни деньги, хуй",
+            VariantKind.FIRMER: "Верни деньги за билеты без давления",
+            VariantKind.SOFTER: "Верни мне деньги за билеты, я ценю",
         },
         _PLAIN,
-        _LEXICONS,
     )
     assert violations == (
-        PolicyViolation(PolicyRule.PROFANITY, VariantKind.SOFTER),
-        PolicyViolation(PolicyRule.HARSH, VariantKind.FIRMER),
+        PolicyViolation(PolicyRule.STOP_PHRASE, VariantKind.SOFTER),
+        PolicyViolation(PolicyRule.STOP_PHRASE, VariantKind.FIRMER),
     )
     same = check_variant_set(
-        "Верни деньги",
-        {VariantKind.FIRMER: "Верни, хуй", VariantKind.SOFTER: "Верни, хуй"},
+        draft,
+        {
+            VariantKind.FIRMER: "Верни деньги за билеты, я ценю",
+            VariantKind.SOFTER: "Верни деньги за билеты, я ценю",
+        },
         _PLAIN,
-        _LEXICONS,
     )
     assert same == (
-        PolicyViolation(PolicyRule.PROFANITY, VariantKind.SOFTER),
-        PolicyViolation(PolicyRule.PROFANITY, VariantKind.FIRMER),
+        PolicyViolation(PolicyRule.STOP_PHRASE, VariantKind.SOFTER),
+        PolicyViolation(PolicyRule.STOP_PHRASE, VariantKind.FIRMER),
         PolicyViolation(PolicyRule.LADDER_SIMILAR, VariantKind.FIRMER),
     )
 
@@ -431,10 +322,5 @@ def test_violations_are_listed_per_kind_then_ladder_rules() -> None:
 @pytest.mark.unit
 def test_context_licences() -> None:
     assert not _PLAIN.addition_licensed
-    assert not _PLAIN.apology_licensed
     assert _ctx(RewriteGoal.RECONNECT).addition_licensed
     assert _ctx(None, RuleCategory.TABOO_TOPIC).addition_licensed
-    assert not _ctx(RewriteGoal.RECONNECT).apology_licensed
-    assert _ctx(RewriteGoal.ADMIT_FAULT).apology_licensed
-    assert _ctx(None, RuleCategory.APOLOGY).apology_licensed
-    assert not _ctx(None, RuleCategory.OTHER).apology_licensed

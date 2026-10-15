@@ -1,4 +1,4 @@
-"""Shared lexicon mechanism: normalization, loading, matching and counting."""
+"""Shared lexicon mechanism: normalization, loading and matching."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from hypothesis import strategies as st
 from svoi_pravila.domain.lexicon import (
     Lexicon,
     compile_lexicon,
-    lexicon_count,
     lexicon_hit,
     load_data_lines,
     normalize_lexicon_text,
@@ -51,26 +50,15 @@ def test_hit_matches_on_normalized_text() -> None:
 
 @pytest.mark.unit
 def test_empty_lexicon_and_empty_text_never_match() -> None:
-    assert lexicon_count("слово", Lexicon(patterns=())) == 0
-    assert lexicon_count("!!!", compile_lexicon([r"\bа"])) == 0
+    assert not lexicon_hit("слово", Lexicon(patterns=()))
+    assert not lexicon_hit("!!!", compile_lexicon([r"\bа"]))
 
 
 @pytest.mark.unit
-def test_count_counts_every_separate_match() -> None:
+def test_hit_matches_any_pattern_of_the_lexicon() -> None:
     lexicon = compile_lexicon([r"\bда\b", r"\bнет\b"])
-    assert lexicon_count("да нет да", lexicon) == 3
-
-
-@pytest.mark.unit
-def test_count_counts_overlapping_matches_once() -> None:
-    lexicon = compile_lexicon([r"\bмог бы\b", r"\bне мог бы\b", r"\bбы\b"])
-    assert lexicon_count("он не мог бы", lexicon) == 1
-
-
-@pytest.mark.unit
-def test_count_counts_adjacent_matches_separately() -> None:
-    lexicon = compile_lexicon([r"\bда\b"])
-    assert lexicon_count("да да", lexicon) == 2
+    assert lexicon_hit("ну нет", lexicon)
+    assert not lexicon_hit("ну может", lexicon)
 
 
 @given(st.text(max_size=80))

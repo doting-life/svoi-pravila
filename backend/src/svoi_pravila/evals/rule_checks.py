@@ -1,4 +1,4 @@
-"""Deterministic rule-leak and rule-effect checks (no LLM judge)."""
+"""Deterministic rule-leak and closing-ask checks (no LLM judge)."""
 
 from __future__ import annotations
 
@@ -44,10 +44,3 @@ def variant_complies_with_closing_ask(text: str) -> bool:
         return True
     folded = last.casefold()
     return any(marker in folded for marker in _REQUEST_MARKERS)
-
-
-def variants_comply_with_closing_ask(variants: tuple[str, ...]) -> bool:
-    """True when every variant complies with the closing-ask form rule."""
-    if not variants:
-        return False
-    return all(variant_complies_with_closing_ask(item) for item in variants)

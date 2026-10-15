@@ -40,24 +40,14 @@ from tests.unit.adapters.llm.test_gigachat_adapter import (
 )
 
 
-def _observations(**changes: object) -> dict[str, object]:
-    return {
-        "softer_rude": changes.get("softer_rude", []),
-        "firmer_rude": changes.get("firmer_rude", []),
-    }
-
-
-def _out(**changes: object) -> JudgeOut:
-    return JudgeOut.model_validate(_observations(**changes))
+def _out(rude: list[str] | None = None) -> JudgeOut:
+    return JudgeOut.model_validate({"rude": rude or []})
 
 
 def _request(
-    *,
-    deadline_seconds: float = 5.0,
-    softer: str = "Мне нужно время подумать",
-    firmer: str = "Мне нужно время",
+    *, deadline_seconds: float = 5.0, text: str = "Мне нужно время подумать"
 ) -> JudgeRequest:
-    return JudgeRequest(softer=softer, firmer=firmer, deadline_seconds=deadline_seconds)
+    return JudgeRequest(text=text, deadline_seconds=deadline_seconds)
 
 
 def _judge(ache: _FakeAche) -> GigaChatRewriteJudge:
@@ -81,13 +71,12 @@ class _RecordingAche(_FakeAche):
 
 
 @pytest.mark.unit
-async def test_judge_maps_the_quotes_of_each_variant_and_the_meta() -> None:
-    out = _out(softer_rude=["блин"], firmer_rude=["ты вечно", "как всегда"])
+async def test_judge_maps_the_quotes_and_the_meta() -> None:
+    out = _out(["ты вечно", "как всегда"])
     seen = await _judge(_FakeAche(create_results=[out])).judge(_request())
-    assert seen.softer_rude == ("блин",)
-    assert seen.firmer_rude == ("ты вечно", "как всегда")
+    assert seen.rude == ("ты вечно", "как всегда")
     assert seen.meta.model == "judge-model"
-    assert seen.meta.prompt_version == "judge_clean@v1"
+    assert seen.meta.prompt_version == "judge_clean@v2"
     assert seen.meta.attempts == 1
     assert seen.meta.usage.billable == 8
 
@@ -117,7 +106,7 @@ async def test_judge_sends_only_the_low_top_p_and_other_calls_send_none() -> Non
 
 @pytest.mark.unit
 async def test_judge_retries_once_on_a_schema_violation() -> None:
-    bad = json.dumps({"softer_rude": "блин", "firmer_rude": []})
+    bad = json.dumps({"rude": "блин"})
     ache = _FakeAche(create_results=[bad, _out()])
     seen = await _judge(ache).judge(_request())
     assert ache.create_calls == 2
@@ -129,19 +118,17 @@ async def test_judge_retries_once_on_a_schema_violation() -> None:
 @pytest.mark.parametrize(
     "bad",
     [
-        json.dumps({**_observations(), "extra": "yes"}),
-        json.dumps({"softer_rude": []}),
-        json.dumps(_observations(softer_rude=["а"] * 5)),
-        json.dumps(_observations(firmer_rude=["а"] * 5)),
-        json.dumps(_observations(firmer_rude=[""])),
-        json.dumps(_observations(softer_rude=["я" * 121])),
+        json.dumps({"rude": [], "extra": "yes"}),
+        json.dumps({}),
+        json.dumps({"rude": ["а"] * 5}),
+        json.dumps({"rude": [""]}),
+        json.dumps({"rude": ["я" * 121]}),
         "not json",
     ],
     ids=[
         "extra-field",
         "missing-field",
-        "five-softer-quotes",
-        "five-firmer-quotes",
+        "five-quotes",
         "empty-quote",
         "long-quote",
         "not-json",
@@ -153,19 +140,18 @@ async def test_judge_invalid_twice_raises_with_the_reasons(bad: str) -> None:
         await _judge(ache).judge(_request())
     assert len(exc_info.value.reasons) == MAX_ATTEMPTS
     assert exc_info.value.usage.billable == 16
-    assert exc_info.value.prompt_version == "judge_clean@v1"
+    assert exc_info.value.prompt_version == "judge_clean@v2"
 
 
 @pytest.mark.unit
 def test_the_schema_accepts_the_bounds() -> None:
     quote = "я" * 120
-    out = _out(softer_rude=[quote] * 4, firmer_rude=[quote] * 4)
-    assert len(out.softer_rude) == len(out.firmer_rude) == 4
+    assert len(_out([quote] * 4).rude) == 4
 
 
 @pytest.mark.unit
-def test_the_schema_orders_softer_before_firmer() -> None:
-    assert list(JudgeOut.model_fields) == ["softer_rude", "firmer_rude"]
+def test_the_schema_has_one_list_of_quotes() -> None:
+    assert list(JudgeOut.model_fields) == ["rude"]
 
 
 @pytest.mark.unit
@@ -191,42 +177,46 @@ async def test_judge_timeout_is_unavailable_with_the_kind() -> None:
     with pytest.raises(GenerationUnavailable) as exc_info:
         await _judge(SlowAche()).judge(_request(deadline_seconds=0.05))
     assert exc_info.value.kind is UnavailableKind.TIMEOUT
-    assert exc_info.value.prompt_version == "judge_clean@v1"
+    assert exc_info.value.prompt_version == "judge_clean@v2"
 
 
 @pytest.mark.unit
 def test_the_prompt_is_block_jc_with_the_boundary_paragraph() -> None:
-    template, version = load_prompt_template("judge_clean", "v1")
-    assert version == "judge_clean@v1"
+    template, version = load_prompt_template("judge_clean", "v2")
+    assert version == "judge_clean@v2"
     assert template.startswith("Ты — проверяющий в сервисе «Свои правила».")
     assert "Грубое:" in template
     assert "Не грубое:" in template
-    assert "`softer:`" in template
-    assert "`firmer:`" in template
+    assert "`text:`" in template
+    assert "softer" not in template
+    assert "firmer" not in template
+    assert "Мягче" not in template
+    assert "Твёрже" not in template
     assert template.count("{{BOUNDARY_MARKER}}") == 2
     assert "ответ другой модели" in template
 
 
 @pytest.mark.unit
-def test_the_payload_delimits_both_variants_with_one_marker() -> None:
-    prepared = _judge(_FakeAche()).prepare(_request(softer="ВАРИАНТ-МЯГЧЕ", firmer="ВАРИАНТ"))
+def test_the_payload_delimits_the_text_with_one_marker_and_names_no_variant() -> None:
+    prepared = _judge(_FakeAche()).prepare(_request(text="ТЕКСТ"))
     marker = prepared.boundary_marker
     assert marker.startswith(BOUNDARY_PREFIX)
     lines = prepared.user.splitlines()
     assert lines[0] == f"{marker} payload"
     assert lines[-1] == marker
     assert prepared.user.count(marker) == 2
-    assert "softer:\nВАРИАНТ-МЯГЧЕ" in prepared.user
-    assert "firmer:\nВАРИАНТ" in prepared.user
+    assert "text:\nТЕКСТ" in prepared.user
+    assert "softer" not in prepared.user
+    assert "firmer" not in prepared.user
     assert "draft:" not in prepared.user
     assert prepared.system.count(marker) == 2
-    assert prepared.prompt_version == "judge_clean@v1"
+    assert prepared.prompt_version == "judge_clean@v2"
 
 
 @pytest.mark.unit
-def test_a_marker_is_allocated_that_is_not_in_either_variant() -> None:
+def test_a_marker_is_allocated_that_is_not_in_the_text() -> None:
     clash = f"{BOUNDARY_PREFIX}fixed"
-    prepared = _judge(_FakeAche()).prepare(_request(softer=clash, firmer=clash))
+    prepared = _judge(_FakeAche()).prepare(_request(text=clash))
     assert prepared.boundary_marker != clash
 
 

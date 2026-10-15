@@ -1,14 +1,15 @@
 """Calibrate the clean judge against approved labels (ADR-0016 §13).
 
-The judge checks every calibration item once; each item has two labelled values, one per variant.
-The numbers are:
+The judge checks every text once and is not told which variant it is: each calibration item is two
+judge calls, one per variant, and has two labelled values. The numbers are:
 
 - ``accuracy``: the share of labelled values the judge reproduced exactly;
 - ``defect_recall``: among the values labelled ``clean = no``, the share the judge also called
   ``no``.
 
-A judge call without verdicts reproduces nothing and finds no defect. The numbers are given
-overall and per source of the items (``synthetic``, ``eval_output``). The calibration is
+A judge call without a verdict reproduces nothing and finds no defect. The numbers are given
+overall, per source of the items (``synthetic``, ``eval_output``) and per variant (``softer``,
+``firmer``); the per-variant numbers are not thresholded. The calibration is
 ``passed`` when, overall, accuracy >= 0.90 and defect recall >= 0.95, and on ``eval_output``
 accuracy >= 0.85 and defect recall >= 0.95. The committed file holds numbers only, never text.
 """
@@ -35,31 +36,39 @@ from svoi_pravila.application.ports.rewrite_judge import (
 )
 from svoi_pravila.benchmarks.runner import SpendTracker
 from svoi_pravila.evals.judge_cases import SOURCE_EVAL_OUTPUT, SOURCE_SYNTHETIC, SOURCES, JudgeCase
-from svoi_pravila.evals.judge_verdicts import derive_result, evidence, ungrounded_counts
+from svoi_pravila.evals.judge_verdicts import derive_result, evidence, ungrounded
 
-RUBRIC_VERSION = "judge_clean@v1"
+RUBRIC_VERSION = "judge_clean@v2"
 MIN_ACCURACY = 0.90
 MIN_DEFECT_RECALL = 0.95
 MIN_REAL_ACCURACY = 0.85
 MIN_REAL_DEFECT_RECALL = 0.95
 
-_FILE_VERSION = 4
+_FILE_VERSION = 5
 _RATE_DIGITS = 4
 _MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _STOP_KINDS = frozenset({UnavailableKind.RATE_LIMITED, UnavailableKind.AUTH})
-_SLOTS = ("softer", "firmer")
+SLOTS = ("softer", "firmer")
 
 
 @dataclass(frozen=True, slots=True)
-class ItemOutcome:
-    """The judge's answer for one item; ``result`` is ``None`` when the call gave no verdicts.
+class SlotOutcome:
+    """The judge's answer for one text; ``result`` is ``None`` when the call gave no verdict.
 
     ``observation`` holds the judge's quotes for the local report; it is never committed.
     """
 
-    case: JudgeCase
     result: JudgeResult | None
     observation: JudgeObservation | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ItemOutcome:
+    """The judge's answers for the two variants of one item."""
+
+    case: JudgeCase
+    softer: SlotOutcome
+    firmer: SlotOutcome
 
 
 @dataclass(slots=True)
@@ -97,9 +106,10 @@ class Calibration:
     model: str
     rubric: str
     items: int
-    failed_items: int
+    failed_calls: int
     overall: CleanStats
     by_source: tuple[tuple[str, CleanStats], ...]
+    by_slot: tuple[tuple[str, CleanStats], ...]
     ungrounded_softer: int
     ungrounded_firmer: int
 
@@ -132,74 +142,102 @@ def _share(part: int, whole: int) -> float | None:
     return None if whole == 0 else round(part / whole, _RATE_DIGITS)
 
 
-def _values(outcome: ItemOutcome) -> list[tuple[str, Verdict, Verdict | None]]:
-    """(slot, expected, got) for the two values of one item."""
-    expected = outcome.case.expected
-    result = outcome.result
-    return [
-        (
-            slot,
-            getattr(expected, slot),
-            None if result is None else getattr(result, f"{slot}_clean"),
-        )
-        for slot in _SLOTS
-    ]
+def _slot_outcome(outcome: ItemOutcome, slot: str) -> SlotOutcome:
+    return outcome.softer if slot == "softer" else outcome.firmer
 
 
-def clean_stats(outcomes: list[ItemOutcome]) -> CleanStats:
-    """Accuracy and defect recall of ``clean`` over the outcomes."""
-    values = [value for outcome in outcomes for value in _values(outcome)]
-    defects = [got for _, expected, got in values if expected is Verdict.NO]
+def _values(
+    outcomes: list[ItemOutcome], slots: tuple[str, ...] = SLOTS
+) -> list[tuple[ItemOutcome, str, Verdict, Verdict | None]]:
+    """(outcome, slot, expected, got) for every labelled value of the outcomes."""
+    values = []
+    for outcome in outcomes:
+        for slot in slots:
+            result = _slot_outcome(outcome, slot).result
+            values.append(
+                (
+                    outcome,
+                    slot,
+                    getattr(outcome.case.expected, slot),
+                    None if result is None else result.clean,
+                )
+            )
+    return values
+
+
+def clean_stats(outcomes: list[ItemOutcome], slots: tuple[str, ...] = SLOTS) -> CleanStats:
+    """Accuracy and defect recall of ``clean`` over the values of ``slots`` of the outcomes."""
+    values = _values(outcomes, slots)
+    defects = [got for _, _, expected, got in values if expected is Verdict.NO]
     return CleanStats(
         labels=len(values),
-        accuracy=_share(sum(expected is got for _, expected, got in values), len(values)),
+        accuracy=_share(sum(expected is got for _, _, expected, got in values), len(values)),
         defects=len(defects),
         defect_recall=_share(sum(got is Verdict.NO for got in defects), len(defects)),
     )
 
 
+def slot_request(case: JudgeCase, slot: str, deadline_seconds: float) -> JudgeRequest:
+    """The judge request of one variant of an item; it carries the text only."""
+    return JudgeRequest(text=getattr(case, slot), deadline_seconds=deadline_seconds)
+
+
+def _ungrounded(outcomes: list[ItemOutcome], slot: str) -> int:
+    return sum(
+        ungrounded(slot_request(outcome.case, slot, 1.0), observation)
+        for outcome in outcomes
+        if (observation := _slot_outcome(outcome, slot).observation) is not None
+    )
+
+
 def calibrate(model: str, outcomes: list[ItemOutcome]) -> Calibration:
     """Reduce the outcomes of a complete run to the committed numbers."""
-    counts = [
-        ungrounded_counts(judge_request(outcome.case, 1.0), outcome.observation)
-        for outcome in outcomes
-        if outcome.observation is not None
-    ]
     return Calibration(
         model=model,
         rubric=RUBRIC_VERSION,
         items=len(outcomes),
-        failed_items=sum(outcome.result is None for outcome in outcomes),
+        failed_calls=sum(got is None for _, _, _, got in _values(outcomes)),
         overall=clean_stats(outcomes),
         by_source=tuple(
             (source, clean_stats([item for item in outcomes if item.case.source == source]))
             for source in SOURCES
         ),
-        ungrounded_softer=sum(count.softer for count in counts),
-        ungrounded_firmer=sum(count.firmer for count in counts),
+        by_slot=tuple((slot, clean_stats(outcomes, (slot,))) for slot in SLOTS),
+        ungrounded_softer=_ungrounded(outcomes, "softer"),
+        ungrounded_firmer=_ungrounded(outcomes, "firmer"),
     )
 
 
 def disagreements(outcomes: list[ItemOutcome]) -> list[Disagreement]:
     """Every value the judge did not reproduce, in item order."""
-    return [
-        Disagreement(
-            outcome.case,
-            slot,
-            expected,
-            got,
+    found = []
+    for outcome, slot, expected, got in _values(outcomes):
+        if expected is got:
+            continue
+        observation = _slot_outcome(outcome, slot).observation
+        quotes = (
             "-"
-            if outcome.observation is None
-            else evidence(judge_request(outcome.case, 1.0), outcome.observation, slot),
+            if observation is None
+            else evidence(slot_request(outcome.case, slot, 1.0), observation)
         )
-        for outcome in outcomes
-        for slot, expected, got in _values(outcome)
-        if expected is not got
-    ]
+        found.append(Disagreement(outcome.case, slot, expected, got, quotes))
+    return found
 
 
-def judge_request(case: JudgeCase, deadline_seconds: float) -> JudgeRequest:
-    return JudgeRequest(softer=case.softer, firmer=case.firmer, deadline_seconds=deadline_seconds)
+async def _judge_text(
+    judge: RewriteJudge, request: JudgeRequest, spend: SpendTracker
+) -> tuple[SlotOutcome, UnavailableKind | None]:
+    """Judge one text; the second item is the stop kind of a rate-limit or auth failure."""
+    try:
+        observation = await judge.judge(request)
+    except (GenerationRefusedByProvider, InvalidGenerationOutput, GenerationUnavailable) as exc:
+        spend.add(exc.usage.billable)
+        stop = (
+            exc.kind if isinstance(exc, GenerationUnavailable) and exc.kind in _STOP_KINDS else None
+        )
+        return SlotOutcome(None), stop
+    spend.add(observation.meta.usage.billable)
+    return SlotOutcome(derive_result(request, observation), observation), None
 
 
 async def run_calibration(
@@ -210,28 +248,29 @@ async def run_calibration(
     max_tokens: int,
     spend: SpendTracker,
 ) -> CalibrationRun:
-    """Judge every item once; stop before a call that could cross ``max_tokens``.
+    """Judge both variants of every item, one call each; stop before an item that could cross
+    ``max_tokens``.
 
-    Stops at the first rate-limit or auth failure; never retries. Other failures are items
-    without verdicts.
+    Stops at the first rate-limit or auth failure; never retries. Other failures are calls
+    without a verdict.
     """
     run = CalibrationRun()
     for case in cases:
-        request = judge_request(case, deadline_seconds)
-        if spend.spent_billable + judge.max_billable(request) > max_tokens:
+        requests = [slot_request(case, slot, deadline_seconds) for slot in SLOTS]
+        if (
+            spend.spent_billable + sum(judge.max_billable(request) for request in requests)
+            > max_tokens
+        ):
             run.stop_reason = "token_budget"
             break
-        try:
-            observation = await judge.judge(request)
-        except (GenerationRefusedByProvider, InvalidGenerationOutput, GenerationUnavailable) as exc:
-            spend.add(exc.usage.billable)
-            run.outcomes.append(ItemOutcome(case, None))
-            if isinstance(exc, GenerationUnavailable) and exc.kind in _STOP_KINDS:
-                run.stop_reason = exc.kind.value
-                break
-            continue
-        spend.add(observation.meta.usage.billable)
-        run.outcomes.append(ItemOutcome(case, derive_result(request, observation), observation))
+        softer, stop = await _judge_text(judge, requests[0], spend)
+        firmer = SlotOutcome(None)
+        if stop is None:
+            firmer, stop = await _judge_text(judge, requests[1], spend)
+        run.outcomes.append(ItemOutcome(case, softer, firmer))
+        if stop is not None:
+            run.stop_reason = stop.value
+            break
     run.spent_billable = spend.spent_billable
     return run
 
@@ -269,9 +308,10 @@ def calibration_payload(calibration: Calibration) -> dict[str, object]:
         "rubric": calibration.rubric,
         "model": calibration.model,
         "items": calibration.items,
-        "failed_items": calibration.failed_items,
+        "failed_calls": calibration.failed_calls,
         "clean": _stats_payload(calibration.overall),
         "sources": {source: _stats_payload(stats) for source, stats in calibration.by_source},
+        "slots": {slot: _stats_payload(stats) for slot, stats in calibration.by_slot},
         "ungrounded": {
             "softer": calibration.ungrounded_softer,
             "firmer": calibration.ungrounded_firmer,
@@ -340,7 +380,7 @@ def render_calibration_report(
         "",
         f"- model: {calibration.model}",
         f"- rubric: {calibration.rubric}",
-        f"- items: {calibration.items} ({calibration.failed_items} without verdicts)",
+        f"- items: {calibration.items}; judge calls without a verdict: {calibration.failed_calls}",
         f"- billable tokens: {spent_billable}",
         f"- ungrounded quotes: {calibration.ungrounded} "
         f"(softer {calibration.ungrounded_softer}, firmer {calibration.ungrounded_firmer})",
@@ -353,16 +393,17 @@ def render_calibration_report(
         _stats_row(
             SOURCE_EVAL_OUTPUT, by_source[SOURCE_EVAL_OUTPUT], "PASS" if real_ok else "FAIL"
         ),
+        *(_stats_row(slot, stats, "-") for slot, stats in calibration.by_slot),
         "",
         "## Disagreements",
         "",
-        "| item | slot | expected | judge | evidence | softer | firmer |",
-        "|---|---|---|---|---|---|---|",
+        "| item | slot | expected | judge | evidence | text |",
+        "|---|---|---|---|---|---|",
     ]
     lines.extend(
         f"| {item.case.id} | {item.slot} | {item.expected.value} "
         f"| {'none' if item.got is None else item.got.value} | {_cell(item.evidence)} "
-        f"| {_cell(item.case.softer)} | {_cell(item.case.firmer)} |"
+        f"| {_cell(getattr(item.case, item.slot))} |"
         for item in disagreements(outcomes)
     )
     lines.append("")

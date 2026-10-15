@@ -12,11 +12,12 @@ from svoi_pravila.benchmarks.llm import _print_available_models
 from svoi_pravila.benchmarks.runner import SpendTracker
 from svoi_pravila.config import LlmToolSettings
 from svoi_pravila.evals.judge_calibration import (
+    SLOTS,
     calibrate,
-    judge_request,
     render_calibration_report,
     report_name,
     run_calibration,
+    slot_request,
     write_calibration,
 )
 from svoi_pravila.evals.judge_cases import JudgeCase, load_judge_cases
@@ -31,12 +32,12 @@ _ESTIMATE_HELP = (
 
 
 def _print_dry_run(cases: list[JudgeCase], *, model: str) -> None:
-    worst = [max_judge_billable(judge_request(case, 1.0)) for case in cases]
+    worst = [max_judge_billable(slot_request(case, slot, 1.0)) for case in cases for slot in SLOTS]
     print("Dry-run (no network calls).")
     print(_ESTIMATE_HELP)
     print(f"Model: {model}")
     print(f"Items: {len(cases)}")
-    print(f"Total planned calls: {len(cases)}")
+    print(f"Total planned calls: {len(worst)} (one per variant of each item)")
     print(f"Total worst-case billable tokens: {sum(worst)}")
     print(f"Largest single-call worst-case estimate: {max(worst)}")
 
@@ -89,8 +90,8 @@ async def async_main(args: argparse.Namespace) -> int:
             return 1
         if args.limit is not None:
             print(
-                f"Smoke run of {calibration.items} items: {calibration.failed_items} without "
-                "verdicts; no calibration file written."
+                f"Smoke run of {calibration.items} items: {calibration.failed_calls} calls without "
+                "a verdict; no calibration file written."
             )
             return 0
         path = await asyncio.to_thread(write_calibration, Path(args.baselines_dir), calibration)

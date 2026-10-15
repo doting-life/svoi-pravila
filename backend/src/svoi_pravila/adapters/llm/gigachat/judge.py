@@ -24,7 +24,7 @@ from svoi_pravila.application.errors import GenerationUnavailable, UnavailableKi
 from svoi_pravila.application.ports.generation import GenerationMeta
 from svoi_pravila.application.ports.rewrite_judge import JudgeObservation, JudgeRequest
 
-# Up to four quotes per variant, one list each.
+# Up to four quotes of one text.
 MAX_TOKENS_JUDGE = 384
 # Sampling of judge calls only: low, to make the observations repeatable.
 JUDGE_TOP_P = 0.1
@@ -32,8 +32,7 @@ JUDGE_TOP_P = 0.1
 
 def _to_observation(parsed: JudgeOut, meta: GenerationMeta) -> JudgeObservation:
     return JudgeObservation(
-        softer_rude=tuple(parsed.softer_rude),
-        firmer_rude=tuple(parsed.firmer_rude),
+        rude=tuple(parsed.rude),
         meta=meta,
     )
 

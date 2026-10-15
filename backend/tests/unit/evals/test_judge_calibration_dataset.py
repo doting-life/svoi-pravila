@@ -117,7 +117,7 @@ def test_the_firmer_trailing_insult_pattern_is_used_at_most_six_times() -> None:
 
 @pytest.mark.unit
 def test_no_quoted_example_of_the_judge_rubric_is_a_dataset_text() -> None:
-    rubric = (_PROMPTS / "judge_clean" / "v1.md").read_text(encoding="utf-8")
+    rubric = (_PROMPTS / "judge_clean" / "v2.md").read_text(encoding="utf-8")
     examples = {
         normalize_lexicon_text(match.replace("\u2026", " "))
         for match in re.findall("\u00ab([^\u00bb]+)\u00bb", rubric)

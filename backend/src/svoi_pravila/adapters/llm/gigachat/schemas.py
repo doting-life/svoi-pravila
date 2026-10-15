@@ -90,9 +90,8 @@ _Quotes = Annotated[
 
 
 class JudgeOut(BaseModel):
-    """Clean-judge output (rubric ``judge_clean@v1``): the rude quotes of each variant."""
+    """Clean-judge output (rubric ``judge_clean@v2``): the rude quotes of one text."""
 
     model_config = ConfigDict(extra="forbid")
 
-    softer_rude: _Quotes
-    firmer_rude: _Quotes
+    rude: _Quotes

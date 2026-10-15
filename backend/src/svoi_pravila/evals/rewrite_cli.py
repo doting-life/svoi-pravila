@@ -26,6 +26,7 @@ from svoi_pravila.evals.rewrite_gates import (
 )
 from svoi_pravila.evals.rewrite_report import render_report
 from svoi_pravila.evals.rewrite_run import (
+    JUDGED_VARIANTS,
     ModelEval,
     RewriteEvalParams,
     run_rewrite_eval,
@@ -57,7 +58,9 @@ def _worst_case(case: RewriteCase, *, judged: bool) -> int:
             deadline_seconds=1.0,
         )
     )
-    return rewrite + (max_judge_billable(worst_case_judge_request(case, 1.0)) if judged else 0)
+    return rewrite + (
+        JUDGED_VARIANTS * max_judge_billable(worst_case_judge_request(case, 1.0)) if judged else 0
+    )
 
 
 def _models(args: argparse.Namespace, settings: LlmToolSettings) -> list[str]:

@@ -20,16 +20,13 @@ JudgeError = GenerationRefusedByProvider | InvalidGenerationOutput | GenerationU
 JUDGE_USAGE = TokenUsage(input=5, output=6)
 
 
-def judge_result(
-    softer_clean: Verdict = Verdict.YES, firmer_clean: Verdict = Verdict.YES
-) -> JudgeResult:
-    """A judge answer with a fixed usage of 11 billable tokens."""
+def judge_result(clean: Verdict = Verdict.YES) -> JudgeResult:
+    """A judge answer for one text with a fixed usage of 11 billable tokens."""
     return JudgeResult(
-        softer_clean=softer_clean,
-        firmer_clean=firmer_clean,
+        clean=clean,
         meta=GenerationMeta(
             model="fake-judge",
-            prompt_version="judge_clean@v1",
+            prompt_version="judge_clean@v2",
             latency_ms=3,
             attempts=1,
             usage=JUDGE_USAGE,
@@ -38,19 +35,17 @@ def judge_result(
 
 
 def observation_of(result: JudgeResult, request: JudgeRequest) -> JudgeObservation:
-    """The observation a judge would give for ``request`` so that the verdicts are ``result``.
+    """The observation a judge would give for ``request`` so that the verdict is ``result``.
 
-    A rude variant is quoted whole: the quote is in its text, so it counts.
+    A rude text is quoted whole: the quote is in the text, so it counts.
     """
     return JudgeObservation(
-        softer_rude=(request.softer,) if result.softer_clean is Verdict.NO else (),
-        firmer_rude=(request.firmer,) if result.firmer_clean is Verdict.NO else (),
-        meta=result.meta,
+        rude=(request.text,) if result.clean is Verdict.NO else (), meta=result.meta
     )
 
 
 class FakeRewriteJudge:
-    """Answers the scripted outcomes in order; the last one repeats.
+    """Answers the scripted outcomes in order, one per judged text; the last one repeats.
 
     A scripted ``JudgeResult`` is turned into an observation that derives to it.
     """

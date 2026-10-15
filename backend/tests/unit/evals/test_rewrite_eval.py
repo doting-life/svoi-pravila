@@ -195,7 +195,7 @@ _GOOD_VARIANTS = (
 @pytest.mark.unit
 async def test_run_judges_every_usable_call_with_the_finished_texts() -> None:
     gen = FakeTextGenerator(rewrite_result=_result(*_GOOD_VARIANTS))
-    judge = FakeRewriteJudge(judge_result(softer_clean=Verdict.NO))
+    judge = FakeRewriteJudge(judge_result(Verdict.NO), judge_result(Verdict.YES))
     rule = RuleContext(
         category=RuleCategory.APOLOGY,
         text="Извиняться первым",
@@ -210,17 +210,16 @@ async def test_run_judges_every_usable_call_with_the_finished_texts() -> None:
     )
     spend = SpendTracker()
     result = await run_rewrite_eval(gen, [case], _params(repeat=2, judge=judge), spend)
-    assert len(judge.calls) == 2
-    request = judge.calls[0]
-    assert (request.softer, request.firmer) == ("Пожалуйста, посиди дома", "Жди дома")
-    assert request.deadline_seconds == 5.0
+    assert len(judge.calls) == 4
+    assert [request.text for request in judge.calls[:2]] == ["Пожалуйста, посиди дома", "Жди дома"]
+    assert {request.deadline_seconds for request in judge.calls} == {5.0}
     first = result.records[0]
     assert first.judgement is not None
     assert first.judgement.softer_clean is Verdict.NO
     assert first.judgement.firmer_clean is Verdict.YES
     assert not first.judge_failed
-    assert first.billable_tokens == 7 + 11
-    assert spend.spent_billable == 2 * (7 + 11)
+    assert first.billable_tokens == 7 + 2 * 11
+    assert spend.spent_billable == 2 * (7 + 2 * 11)
 
 
 @pytest.mark.unit
@@ -293,14 +292,15 @@ async def test_run_budget_covers_the_rewrite_and_the_judge_worst_case() -> None:
     gen.max_billable_value = 100
     judge = FakeRewriteJudge()
     judge.max_billable_value = 50
+    # The rewrite plus one judge call per variant: 100 + 2 x 50.
     stopped = await run_rewrite_eval(
-        gen, [_case()], _params(max_tokens=149, judge=judge), SpendTracker()
+        gen, [_case()], _params(max_tokens=199, judge=judge), SpendTracker()
     )
     assert stopped.stop_reason == "token_budget"
     assert stopped.records == []
     assert judge.calls == []
     fits = await run_rewrite_eval(
-        gen, [_case()], _params(max_tokens=150, judge=judge), SpendTracker()
+        gen, [_case()], _params(max_tokens=200, judge=judge), SpendTracker()
     )
     assert fits.stop_reason is None
     assert len(fits.records) == 1

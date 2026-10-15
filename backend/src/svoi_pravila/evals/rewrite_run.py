@@ -37,6 +37,8 @@ from svoi_pravila.evals.judge_verdicts import derive_result
 from svoi_pravila.evals.rewrite_cases import RewriteCase, RewriteCategory
 from svoi_pravila.evals.rule_checks import variant_complies_with_closing_ask, variant_leaks_stems
 
+# The judge gets each toned variant as a separate call.
+JUDGED_VARIANTS = 2
 _STOP_KINDS = frozenset({UnavailableKind.RATE_LIMITED, UnavailableKind.AUTH})
 
 
@@ -238,42 +240,45 @@ async def _judged(
     record: RewriteRunRecord,
     deadline_seconds: float,
 ) -> tuple[RewriteRunRecord, UnavailableKind | None]:
-    """Add the judge's verdicts to a usable call; the second item is a stop kind, if any."""
+    """Add the judge's verdicts to a usable call; the second item is a stop kind, if any.
+
+    The judge gets each variant as a separate call. A failure of either call leaves the call
+    unverified (``judge_failed``); the tokens of the calls made are counted.
+    """
     texts = {variant.kind: variant.text for variant in record.variants}
-    request = JudgeRequest(
-        softer=texts[VariantKind.SOFTER],
-        firmer=texts[VariantKind.FIRMER],
-        deadline_seconds=deadline_seconds,
-    )
-    try:
-        observation = await judge.judge(request)
-    except (GenerationRefusedByProvider, InvalidGenerationOutput, GenerationUnavailable) as exc:
-        stop = (
-            exc.kind if isinstance(exc, GenerationUnavailable) and exc.kind in _STOP_KINDS else None
-        )
-        failed = replace(
-            record, judge_failed=True, billable_tokens=record.billable_tokens + exc.usage.billable
-        )
-        return failed, stop
-    verdicts = derive_result(request, observation)
+    billable = record.billable_tokens
+    verdicts: dict[VariantKind, Verdict] = {}
+    for kind in (VariantKind.SOFTER, VariantKind.FIRMER):
+        request = JudgeRequest(text=texts[kind], deadline_seconds=deadline_seconds)
+        try:
+            observation = await judge.judge(request)
+        except (GenerationRefusedByProvider, InvalidGenerationOutput, GenerationUnavailable) as exc:
+            stop = (
+                exc.kind
+                if isinstance(exc, GenerationUnavailable) and exc.kind in _STOP_KINDS
+                else None
+            )
+            failed = replace(
+                record, judge_failed=True, billable_tokens=billable + exc.usage.billable
+            )
+            return failed, stop
+        result = derive_result(request, observation)
+        billable += result.meta.usage.billable
+        verdicts[kind] = result.clean
     judged = replace(
         record,
-        billable_tokens=record.billable_tokens + verdicts.meta.usage.billable,
+        billable_tokens=billable,
         judgement=RunJudgement(
-            softer_clean=verdicts.softer_clean, firmer_clean=verdicts.firmer_clean
+            softer_clean=verdicts[VariantKind.SOFTER], firmer_clean=verdicts[VariantKind.FIRMER]
         ),
     )
     return judged, None
 
 
 def worst_case_judge_request(case: RewriteCase, deadline_seconds: float) -> JudgeRequest:
-    """A worst-case-sized judge request: both variants as long as the length rule allows."""
+    """A worst-case-sized judge request: one variant as long as the length rule allows."""
     longest = (case.draft * 2)[: math.ceil(LENGTH_FACTOR * len(case.draft))]
-    return JudgeRequest(
-        softer=longest,
-        firmer=longest,
-        deadline_seconds=deadline_seconds,
-    )
+    return JudgeRequest(text=longest, deadline_seconds=deadline_seconds)
 
 
 async def run_rewrite_eval(
@@ -298,7 +303,7 @@ async def run_rewrite_eval(
         )
         worst_case = gen.max_billable(request)
         if params.judge is not None:
-            worst_case += params.judge.max_billable(
+            worst_case += JUDGED_VARIANTS * params.judge.max_billable(
                 worst_case_judge_request(case, params.deadline_seconds)
             )
         for run_index in range(1, params.repeat + 1):

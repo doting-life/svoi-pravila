@@ -70,7 +70,11 @@ def _reader_url(admin_url: str, role_name: str, password: str) -> str:
 
 def _is_privilege_error(exc: BaseException) -> bool:
     text_repr = str(exc).lower()
-    return "permission denied" in text_repr or "insufficientprivilege" in text_repr
+    return (
+        "permission denied" in text_repr
+        or "insufficientprivilege" in text_repr
+        or "must be owner" in text_repr
+    )
 
 
 def _is_read_only_error(exc: BaseException) -> bool:
@@ -319,12 +323,19 @@ async def test_grafana_reader_ddl_denied(
     migrated_schema: Settings,
     grafana_test_reader: str,
 ) -> None:
+    """With read-only lifted, only the privilege set stops DDL (no CREATE on public, not owner)."""
     reader = await _provisioned_reader(engine, migrated_schema, grafana_test_reader)
     try:
         for sql in ("CREATE TABLE grafana_reader_probe (id integer)", "DROP TABLE users"):
             async with reader.connect() as conn:
-                with pytest.raises((DBAPIError, ProgrammingError)):
+                await conn.execute(text("SET default_transaction_read_only = off"))
+                await conn.commit()
+                assert (await conn.execute(text("SHOW transaction_read_only"))).scalar() == "off"
+                await conn.rollback()
+                with pytest.raises((DBAPIError, ProgrammingError)) as caught:
                     await conn.execute(text(sql))
+                assert _is_privilege_error(caught.value)
+                assert not _is_read_only_error(caught.value)
     finally:
         await reader.dispose()
 

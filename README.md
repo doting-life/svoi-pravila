@@ -59,7 +59,7 @@ More diagrams — system context, containers and networks, the inline sequence, 
 
 Grafana ships two dashboards (operations and analytics). In production it is served at its own subdomain with personal accounts and the Viewer role for non-owners (no tunnel). It reads the aggregates through a dedicated database role limited to the aggregate tables, which is also how the next stage can connect.
 
-Prometheus evaluates the alert rules and Alertmanager sends them to a private Telegram group of the owners through a separate alert bot. Alerts cover availability, LLM budget and errors, latency, 5xx, cache, analytics jobs and backups. Host metrics (CPU, memory, disk, network) come from node-exporter; the daily backup writes its result as a metrics file. Alert catalogue and first steps: `deploy/RUNBOOK.md`.
+Prometheus evaluates the alert rules and Alertmanager sends them to a private Telegram group of the owners through a separate alert bot. Alerts cover availability, LLM budget and errors, latency, 5xx, cache, analytics jobs and backups. Host metrics (CPU, memory, disk) come from node-exporter; the daily backup writes its result as a metrics file. Alert catalogue and first steps: `deploy/RUNBOOK.md`.
 
 ## Load test and LLM cost
 

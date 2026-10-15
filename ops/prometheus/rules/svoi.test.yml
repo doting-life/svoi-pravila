@@ -446,7 +446,7 @@ tests:
   - name: SpAnalyticsJobFailed fires on a failed run
     interval: 1m
     input_series:
-      - series: 'sp_analytics_job_runs_total{job="daily_aggregates",status="failed"}'
+      - series: 'sp_analytics_job_runs_total{job="api",instance="api:9100",analytics_job="daily_aggregates",status="failed"}'
         values: '0x5 1x60'
     alert_rule_test:
       - eval_time: 10m
@@ -454,7 +454,9 @@ tests:
         exp_alerts:
           - exp_labels:
               severity: warning
-              job: daily_aggregates
+              job: api
+              instance: api:9100
+              analytics_job: daily_aggregates
               status: failed
             exp_annotations:
               summary: "Сбой расчёта аналитики"
@@ -464,9 +466,9 @@ tests:
   - name: SpAnalyticsJobFailed stays quiet on successful runs
     interval: 1m
     input_series:
-      - series: 'sp_analytics_job_runs_total{job="daily_aggregates",status="failed"}'
+      - series: 'sp_analytics_job_runs_total{job="api",instance="api:9100",analytics_job="daily_aggregates",status="failed"}'
         values: '1x65'
-      - series: 'sp_analytics_job_runs_total{job="daily_aggregates",status="succeeded"}'
+      - series: 'sp_analytics_job_runs_total{job="api",instance="api:9100",analytics_job="daily_aggregates",status="succeeded"}'
         values: '0+1x65'
     alert_rule_test:
       - eval_time: 10m

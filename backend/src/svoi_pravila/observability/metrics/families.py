@@ -92,7 +92,7 @@ CACHE_ERRORS = Counter(
 ANALYTICS_JOB_RUNS = Counter(
     "sp_analytics_job_runs_total",
     "Analytics job_runs terminal statuses",
-    ("job", "status"),
+    ("analytics_job", "status"),
 )
 
 EVENT_LOOP_LAG = Histogram(

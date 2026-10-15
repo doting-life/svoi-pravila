@@ -162,7 +162,8 @@ def check_anonymous(client: Client) -> None:
     if login.headers.get("strict-transport-security") != EXPECTED_HSTS:
         fail("grafana HSTS header mismatch")
     csp = login.headers.get("content-security-policy", "")
-    if "script-src 'self'" not in csp or "grafana.com" in csp or "wss://" not in csp:
+    wide_open = ("grafana.com", "cartocdn", "img-src *")
+    if "script-src 'self'" not in csp or "wss://" not in csp or any(w in csp for w in wide_open):
         fail(f"grafana Content-Security-Policy is not the expected one: {csp!r}")
     if login.headers.get("x-frame-options", "").lower() != "deny":
         fail("grafana must forbid framing (X-Frame-Options: deny)")

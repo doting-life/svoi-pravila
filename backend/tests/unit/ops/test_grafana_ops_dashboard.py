@@ -37,6 +37,7 @@ _SERVER_METRICS = frozenset(
 )
 _BACKUP_AGE = '(time() - sp_backup_last_success_timestamp_seconds{kind="daily"}) / 3600'
 _REAL_FILESYSTEMS = 'fstype=~"ext4|xfs|btrfs"'
+_PROCESS_PANEL = "Процесс: RSS и CPU"
 
 _PROMQL_FUNCS = frozenset(
     {
@@ -119,3 +120,14 @@ def test_ops_dashboard_server_row_queries() -> None:
     assert row["Последний успешный бэкап: возраст, ч"] == [_BACKUP_AGE]
     (alerts,) = row["Сработавшие алерты"]
     assert 'ALERTS{alertstate="firing"}' in alerts
+
+
+@pytest.mark.unit
+def test_ops_dashboard_process_panel_is_limited_to_the_api_job() -> None:
+    panels = json.loads(_DASHBOARD.read_text())["panels"]
+    (panel,) = [panel for panel in panels if panel["title"] == _PROCESS_PANEL]
+    exprs = [target["expr"] for target in panel["targets"]]
+    assert exprs == [
+        'process_resident_memory_bytes{job="api"}',
+        'rate(process_cpu_seconds_total{job="api"}[1m])',
+    ]

@@ -522,8 +522,8 @@
             "type": "prometheus",
             "uid": "svoi-metrics"
           },
-          "expr": "sum by (job, status) (increase(sp_analytics_job_runs_total[1h]))",
-          "legendFormat": "{{job}}/{{status}}",
+          "expr": "sum by (analytics_job, status) (increase(sp_analytics_job_runs_total[1h]))",
+          "legendFormat": "{{analytics_job}} · {{status}}",
           "range": true
         }
       ]
@@ -621,7 +621,7 @@
             "type": "prometheus",
             "uid": "svoi-metrics"
           },
-          "expr": "process_resident_memory_bytes",
+          "expr": "process_resident_memory_bytes{job=\"api\"}",
           "legendFormat": "RSS",
           "range": true
         },
@@ -631,7 +631,7 @@
             "type": "prometheus",
             "uid": "svoi-metrics"
           },
-          "expr": "rate(process_cpu_seconds_total[1m])",
+          "expr": "rate(process_cpu_seconds_total{job=\"api\"}[1m])",
           "legendFormat": "CPU",
           "range": true
         }

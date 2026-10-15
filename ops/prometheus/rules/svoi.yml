@@ -140,7 +140,7 @@ groups:
           severity: warning
         annotations:
           summary: "Сбой расчёта аналитики"
-          description: "Задача {{ $labels.job }} завершилась с ошибкой за последние 2 часа."
+          description: "Задача {{ $labels.analytics_job }} завершилась с ошибкой за последние 2 часа."
           runbook: SpAnalyticsJobFailed
 
   - name: svoi-backup

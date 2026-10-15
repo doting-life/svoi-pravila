@@ -63,6 +63,9 @@ from svoi_pravila.adapters.system.metrics_variant_policy_monitor import (
     MetricsVariantPolicyMonitor,
 )
 from svoi_pravila.adapters.system.monotonic import SystemMonotonicClock
+from svoi_pravila.adapters.system.noop_generation_attempt_observer import (
+    NoopGenerationAttemptObserver,
+)
 from svoi_pravila.adapters.system.tokens import SecretsInviteTokenGenerator
 from svoi_pravila.adapters.system.tone_suggestion_catalog import StaticToneSuggestionCatalog
 from svoi_pravila.api.app import AppLifecycleHooks, DisposeHook, create_app
@@ -481,7 +484,7 @@ def create_application(settings: Settings) -> FastAPI:
     clock, monotonic, ids = SystemClock(), SystemMonotonicClock(), Uuid7IdGenerator()
     catalog = PackageConsentCatalog()
     tone_catalog = StaticToneSuggestionCatalog()
-    generator = GigaChatTextGenerator(gigachat, settings)
+    generator = GigaChatTextGenerator(gigachat, settings, NoopGenerationAttemptObserver())
     sink = MetricsUsageEventSink(UnitOfWorkUsageEventSink(uow_factory))
     pseudonymizer = HmacPseudonymizer(settings.pseudonym_pepper_bytes())
     crisis_screen = CrisisScreen.load_ru_v2()

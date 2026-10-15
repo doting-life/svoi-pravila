@@ -66,7 +66,7 @@ from svoi_pravila.domain.ids import ContactId, TelegramUserId, UsageEventId
 from svoi_pravila.domain.product_day import product_day
 from svoi_pravila.domain.typography import humanize_typography
 from svoi_pravila.domain.usage import UsageEvent
-from svoi_pravila.domain.variant_policy import PolicyContext, check_variant_set
+from svoi_pravila.domain.variant_policy import PolicyContext, PolicyRule, check_variant_set
 
 _QUOTA_PURPOSE = "inline_quota"
 _ANALYTICS_PURPOSE = "analytics"
@@ -305,6 +305,8 @@ class ComposeGeneration:
             self._ports.policy_monitor.record_check_empty()
         for defect in generated.meta.repaired:
             self._ports.policy_monitor.record_repaired(defect)
+        for slot in generated.meta.residual:
+            self._ports.policy_monitor.record(slot, PolicyRule.GENERALIZATION)
         finished = tuple(
             Variant(text=humanize_typography(draft, variant.text), kind=variant.kind)
             for variant in variants

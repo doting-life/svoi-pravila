@@ -70,3 +70,20 @@ def lexicon_hit(text: str, lexicon: Lexicon) -> bool:
     """Return True when the normalized text matches any pattern of ``lexicon``."""
     normalized = normalize_lexicon_text(text)
     return any(pattern.search(normalized) for pattern in lexicon.patterns)
+
+
+def lexicon_matches(text: str, lexicon: Lexicon) -> tuple[str, ...]:
+    """Return the distinct whole words of the normalized text that ``lexicon`` matches.
+
+    A match that covers only part of a word is widened to the whole word; the order is the order
+    of the patterns, then of the text. The words are conversation text: callers keep them in
+    memory only.
+    """
+    normalized = normalize_lexicon_text(text)
+    found: dict[str, None] = {}
+    for pattern in lexicon.patterns:
+        for match in pattern.finditer(normalized):
+            start = normalized.rfind(" ", 0, match.start()) + 1
+            end = normalized.find(" ", match.end())
+            found[normalized[start : len(normalized) if end == -1 else end]] = None
+    return tuple(found)

@@ -967,6 +967,22 @@ async def test_repaired_defects_are_counted_by_label(
 
 
 @pytest.mark.unit
+async def test_a_surviving_generalization_is_recorded_as_a_policy_violation(
+    world: AppWorld,
+) -> None:
+    await world.ensure_granted_user(100)
+    base = _rewrite_result("Нужно поговорить", "давай обсудим спокойно", "говорим сегодня")
+    generator = FakeTextGenerator(
+        rewrite_result=replace(base, meta=replace(base.meta, residual=(VariantKind.FIRMER,)))
+    )
+    monitor = RecordingVariantPolicyMonitor()
+    use_case, _sink, _reuse = _ports(world, _Fakes(generator=generator, policy_monitor=monitor))
+    result = await use_case.execute(InlineComposeCommand(TelegramUserId(100), "нужно поговорить"))
+    assert len(result.variants) == 3
+    assert (VariantKind.FIRMER, PolicyRule.GENERALIZATION) in monitor.records
+
+
+@pytest.mark.unit
 async def test_nothing_is_counted_as_repaired_for_a_first_attempt_answer(
     world: AppWorld,
 ) -> None:

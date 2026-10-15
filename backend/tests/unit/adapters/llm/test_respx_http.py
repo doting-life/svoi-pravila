@@ -21,6 +21,9 @@ from svoi_pravila.adapters.llm.gigachat.validation import (
     MAX_TOKENS_DECODE,
     MAX_TOKENS_REWRITE,
 )
+from svoi_pravila.adapters.system.noop_generation_attempt_observer import (
+    NoopGenerationAttemptObserver,
+)
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
     GenerationUnavailable,
@@ -57,7 +60,7 @@ def _client() -> GigaChat:
 
 
 def _generator() -> GigaChatTextGenerator:
-    return GigaChatTextGenerator(_client(), make_settings())
+    return GigaChatTextGenerator(_client(), make_settings(), NoopGenerationAttemptObserver())
 
 
 _AUTH_URL = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"

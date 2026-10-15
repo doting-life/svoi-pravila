@@ -15,6 +15,9 @@ from svoi_pravila.adapters.llm.gigachat.validation import (
     MAX_RULE_CHARS,
     to_suggest_rule_result,
 )
+from svoi_pravila.adapters.system.noop_generation_attempt_observer import (
+    NoopGenerationAttemptObserver,
+)
 from svoi_pravila.application.errors import (
     GenerationUnavailable,
     InvalidGenerationOutput,
@@ -42,7 +45,9 @@ def _request(*, deadline_seconds: float = 30.0) -> SuggestRuleRequest:
 
 
 def _gen(ache: _FakeAche) -> GigaChatTextGenerator:
-    return GigaChatTextGenerator(cast(Any, _FakeClient(ache)), make_settings())
+    return GigaChatTextGenerator(
+        cast(Any, _FakeClient(ache)), make_settings(), NoopGenerationAttemptObserver()
+    )
 
 
 def _meta() -> GenerationMeta:

@@ -83,13 +83,18 @@ def test_adapter_max_billable_delegates_to_estimate() -> None:
     from typing import Any, cast
 
     from svoi_pravila.adapters.llm.gigachat.adapter import GigaChatTextGenerator
+    from svoi_pravila.adapters.system.noop_generation_attempt_observer import (
+        NoopGenerationAttemptObserver,
+    )
     from tests.factories import make_settings
 
     class _Client:
         async def acheck_connectivity(self) -> None:
             return None
 
-    generator = GigaChatTextGenerator(cast(Any, _Client()), make_settings())
+    generator = GigaChatTextGenerator(
+        cast(Any, _Client()), make_settings(), NoopGenerationAttemptObserver()
+    )
     request = RewriteRequest(
         draft="пожалуйста говори спокойнее",
         goal=None,

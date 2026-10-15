@@ -47,6 +47,8 @@ class InvalidOutputReason(StrEnum):
     HYPOTHESIS_COUNT = "hypothesis_count"
     BOUNDARY_COLLISION = "boundary_collision"
     PROMPT_LEAK = "prompt_leak"
+    PROFANITY = "profanity"
+    GENERALIZATION = "generalization"
 
 
 class ApplicationError(Exception):

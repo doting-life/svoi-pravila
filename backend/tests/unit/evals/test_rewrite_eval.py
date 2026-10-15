@@ -34,6 +34,7 @@ from svoi_pravila.benchmarks.runner import SpendTracker
 from svoi_pravila.config import GigaChatRuntimeSettings
 from svoi_pravila.domain.enums import RelationshipKind, RewriteGoal, RuleCategory, VariantKind
 from svoi_pravila.domain.variant_policy import PolicyRule
+from svoi_pravila.evals.attempt_recorder import AttemptRecorder
 from svoi_pravila.evals.rewrite_cases import (
     RewriteCase,
     RewriteCategory,
@@ -745,7 +746,9 @@ async def test_cli_live_run_with_models_reports_each_and_stops_at_the_first_fail
     by_model = {"A": ok, "B": limited, "C": ok}
     used: list[str] = []
 
-    def factory(_client: object, settings: GigaChatRuntimeSettings) -> FakeTextGenerator:
+    def factory(
+        _client: object, settings: GigaChatRuntimeSettings, _observer: object
+    ) -> FakeTextGenerator:
         model = settings.gigachat_model_rewrite
         used.append(model)
         return by_model[model]
@@ -784,7 +787,9 @@ async def test_cli_without_model_uses_the_settings_model(
     )
     used: list[str] = []
 
-    def factory(_client: object, settings: GigaChatRuntimeSettings) -> FakeTextGenerator:
+    def factory(
+        _client: object, settings: GigaChatRuntimeSettings, _observer: object
+    ) -> FakeTextGenerator:
         used.append(settings.gigachat_model_rewrite)
         return gen
 
@@ -831,7 +836,9 @@ def _patch_client(monkeypatch: pytest.MonkeyPatch, gen: FakeTextGenerator) -> li
         "svoi_pravila.evals.rewrite_cli.create_gigachat_client", lambda _s: _Client()
     )
     monkeypatch.setattr("svoi_pravila.evals.rewrite_cli.close_gigachat_client", close)
-    monkeypatch.setattr("svoi_pravila.evals.rewrite_cli.GigaChatTextGenerator", lambda _c, _s: gen)
+    monkeypatch.setattr(
+        "svoi_pravila.evals.rewrite_cli.GigaChatTextGenerator", lambda _c, _s, _o: gen
+    )
     return closed
 
 
@@ -1020,3 +1027,28 @@ def test_main_parses_arguments_and_exits_with_the_run_code(
         main()
     assert exit_info.value.code == 0
     assert f"Total planned calls: {len(load_rewrite_cases(_DATA)) * 3}\n" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+async def test_cli_binds_one_attempt_recorder_per_model_and_puts_its_texts_in_the_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    gen = FakeTextGenerator(rewrite_result=_result(*_GOOD_VARIANTS))
+    observers: list[object] = []
+
+    def factory(
+        _client: object, _settings: GigaChatRuntimeSettings, observer: object
+    ) -> FakeTextGenerator:
+        observers.append(observer)
+        return gen
+
+    _patch_client(monkeypatch, gen)
+    monkeypatch.setattr("svoi_pravila.evals.rewrite_cli.GigaChatTextGenerator", factory)
+    out = tmp_path / "recorder.md"
+    await async_main(
+        _cli_args(data=_one_case(tmp_path), max_tokens=1_000_000, out=str(out), model=["A", "B"])
+    )
+    assert len(observers) == 2
+    assert all(isinstance(item, AttemptRecorder) for item in observers)
+    assert observers[0] is not observers[1]
+    assert "### Invalid output diagnostics" in out.read_text(encoding="utf-8")

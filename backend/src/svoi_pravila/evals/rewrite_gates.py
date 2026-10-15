@@ -1,4 +1,4 @@
-"""Release gates G3, G4, G6-G9 and J6 of the rewrite contract (ADR-0016 §10, §13).
+"""Release gates G1, G2, G3, G4, G6-G9 and J6 of the rewrite contract (ADR-0016 §10, §13, §14).
 
 Every number here is a count or a share of calls; no text enters this module, so the
 metrics can be written to a committed baseline file. The flagged slots of J6 are ids
@@ -15,6 +15,12 @@ The judge gate J6 (``clean`` = no in no slot) is measured over the usable calls 
 asked about. A judge failure (no verdicts) never counts as a pass: J6 fails while any judge call
 failed, because its slots are unverified. J6 is ``n/a`` unless the judge is calibrated (a passed
 calibration file for the model and the rubric version).
+
+G1 (obscene words in ``softer``/``firmer``) is two numbers over the final answers, G1a and G1b:
+the share of calls (all except ``unavailable``) whose first attempt had obscene words, and the
+share of those calls the corrective retry repaired. A call that still fails is also counted by
+G9. G1b is ``n/a`` when no first attempt had obscene words. G2 is information only: the count
+of slots whose generalization survived the repair.
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ from pathlib import Path
 
 from svoi_pravila.application.ports.rewrite_judge import Verdict
 from svoi_pravila.domain.enums import VariantKind
+from svoi_pravila.domain.lexicon_guard import FindingKind
 from svoi_pravila.domain.variant_policy import PolicyRule
 from svoi_pravila.evals.rewrite_run import RewriteRunRecord, RunOutcome
 
@@ -33,11 +40,14 @@ G6_MIN_LADDER_LENGTH_SHARE = 0.90
 G7_MIN_LADDER_SIMILAR_SHARE = 0.95
 G8_MAX_EDIT_RATIO_SHARE = 0.05
 G9_MAX_UNUSABLE_SHARE = 0.03
+G1_MAX_FIRST_ATTEMPT_PROFANITY_SHARE = 0.15
+G1_MIN_PROFANITY_REPAIR_SHARE = 0.90
 
 _RATE_DIGITS = 4
 _BASELINE_VERSION = 3
 _UNUSABLE = (RunOutcome.INVALID_OUTPUT, RunOutcome.NOT_OK_SAFETY, RunOutcome.REFUSED)
 _TONED = (VariantKind.SOFTER, VariantKind.FIRMER)
+_PROFANITY_PREFIX = f"{FindingKind.PROFANITY.value}:"
 
 
 class GateStatus(StrEnum):
@@ -62,6 +72,10 @@ class GateMetrics:
     check_ok_rate: float | None
     edit_ratio_share: float | None
     unusable_share: float | None
+    profanity_first_attempt_share: float | None
+    profanity_first_attempt_runs: int
+    profanity_repair_share: float | None
+    generalization_left_slots: int
     judge: JudgeMetrics
 
 
@@ -97,6 +111,17 @@ class GateResult:
 
 def _share(part: int, whole: int) -> float | None:
     return None if whole == 0 else round(part / whole, _RATE_DIGITS)
+
+
+def _first_attempt_profanity(record: RewriteRunRecord) -> bool:
+    """True when the call's first attempt had obscene words.
+
+    A repaired call carries ``profanity:<slot>`` in ``repaired``; a call that failed on both
+    attempts carries it in its first diagnostic.
+    """
+    if record.repaired:
+        return any(label.startswith(_PROFANITY_PREFIX) for label in record.repaired)
+    return bool(record.diagnostics) and record.diagnostics[0].reason.startswith(_PROFANITY_PREFIX)
 
 
 def _has_rule(record: RewriteRunRecord, rule: PolicyRule, kinds: tuple[VariantKind, ...]) -> bool:
@@ -139,6 +164,9 @@ def compute_metrics(records: list[RewriteRunRecord]) -> GateMetrics:
         for variant in record.variants
         if variant.check_ok is not None
     ]
+    counted = [record for record in records if record.outcome is not RunOutcome.UNAVAILABLE]
+    first_profane = [record for record in counted if _first_attempt_profanity(record)]
+    repaired_profane = [record for record in first_profane if record.outcome is RunOutcome.OK]
     return GateMetrics(
         runs=len(records),
         ok_runs=len(ok),
@@ -161,6 +189,10 @@ def compute_metrics(records: list[RewriteRunRecord]) -> GateMetrics:
             sum(_has_rule(r, PolicyRule.EDIT_RATIO, (VariantKind.CHECK,)) for r in ok), len(ok)
         ),
         unusable_share=_share(unusable, len(records) - unavailable),
+        profanity_first_attempt_share=_share(len(first_profane), len(counted)),
+        profanity_first_attempt_runs=len(first_profane),
+        profanity_repair_share=_share(len(repaired_profane), len(first_profane)),
+        generalization_left_slots=sum(len(record.residual) for record in counted),
         judge=_judge_metrics(ok),
     )
 
@@ -187,6 +219,40 @@ def _max_gate(gate: str, name: str, value: float | None, limit: float) -> GateRe
 def _min_gate(gate: str, name: str, value: float | None, limit: float) -> GateResult:
     passed = value is not None and value >= limit
     return GateResult(gate, name, _percent(value), f">= {_percent(limit)}", _status(passed=passed))
+
+
+def _profanity_gates(metrics: GateMetrics) -> tuple[GateResult, ...]:
+    """G1: the first-attempt obscene-word rate and the repair success rate."""
+    repair = _min_gate(
+        "G1b",
+        "obscene words repaired by the corrective retry",
+        metrics.profanity_repair_share,
+        G1_MIN_PROFANITY_REPAIR_SHARE,
+    )
+    if metrics.profanity_first_attempt_runs == 0:
+        repair = replace(
+            repair, value="no first-attempt obscene words", status=GateStatus.NOT_APPLICABLE
+        )
+    return (
+        _max_gate(
+            "G1a",
+            "calls with obscene words in the first attempt",
+            metrics.profanity_first_attempt_share,
+            G1_MAX_FIRST_ATTEMPT_PROFANITY_SHARE,
+        ),
+        repair,
+    )
+
+
+def _generalization_info(metrics: GateMetrics) -> GateResult:
+    """G2: information only, never a verdict."""
+    return GateResult(
+        "G2",
+        "slots with a generalization left after the repair",
+        f"{metrics.generalization_left_slots} slots",
+        "info",
+        GateStatus.NOT_APPLICABLE,
+    )
 
 
 def _baseline_gate(metrics: GateMetrics, baseline: Baseline | None) -> GateResult:
@@ -233,13 +299,15 @@ def _clean_gate(metrics: JudgeMetrics) -> GateResult:
 def evaluate_gates(
     metrics: GateMetrics, baseline: Baseline | None, *, judge_calibrated: bool
 ) -> tuple[GateResult, ...]:
-    """Evaluate G3, G4, G6-G9 and J6.
+    """Evaluate G1, G2, G3, G4, G6-G9 and J6.
 
-    A gate without data fails; G8 without a baseline and J6 without a calibrated judge are
-    ``n/a``.
+    A gate without data fails; G8 without a baseline, J6 without a calibrated judge, the G1
+    repair share without a first-attempt obscene word, and G2 (information) are ``n/a``.
     """
     clean_gate = _clean_gate(metrics.judge)
     return (
+        *_profanity_gates(metrics),
+        _generalization_info(metrics),
         _zero_gate("G3", "forbidden stems in softer/firmer", metrics.stem_leak_runs, metrics),
         _zero_gate("G4", "ty/vy register change", metrics.register_runs, metrics),
         _min_gate(

@@ -1,6 +1,9 @@
 # Overlay used only by scripts/prod_smoke.sh on top of compose.prod.yaml.
-# Caddy issues a local certificate for svoi.localhost (no ACME), Telegram is an offline stub
-# reachable under the name api.telegram.org, and backups use a host bind under CI_TMPDIR.
+# Caddy issues local certificates for svoi.localhost and grafana.svoi.localhost (no ACME),
+# Telegram is an offline stub reachable under the name api.telegram.org (the API and Alertmanager
+# both talk to it), backups and the node-exporter textfile directory use host binds under
+# CI_TMPDIR, and Alertmanager reads throwaway secret files and a copy of its configuration with
+# short grouping timers.
 services:
   miniapp:
     ports: !override
@@ -25,6 +28,9 @@ services:
       edge:
         aliases:
           - api.telegram.org
+      egress:
+        aliases:
+          - api.telegram.org
     read_only: true
     cap_drop:
       - ALL
@@ -40,4 +46,24 @@ services:
       RCLONE_CONFIG: /etc/svoi-pravila/backup-remote/rclone.conf
     volumes: !override
       - ${SMOKE_BACKUPS_DIR}:/backups
+      - ${SMOKE_METRICS_DIR}:/metrics
       - ${SMOKE_BACKUP_REMOTE_DIR}:/etc/svoi-pravila/backup-remote:ro
+
+  alertmanager:
+    environment:
+      SSL_CERT_FILE: /stub/ca.crt
+    volumes: !override
+      - ${SMOKE_ALERTMANAGER_CONFIG}:/etc/alertmanager/alertmanager.yml:ro
+      - ../ops/alertmanager/telegram.tmpl:/etc/alertmanager/telegram.tmpl:ro
+      - ${SMOKE_ALERTMANAGER_DIR}:/etc/svoi-pravila/alertmanager:ro
+      - ${SMOKE_STUB_DIR}:/stub:ro
+      - alertmanager_data:/alertmanager
+    depends_on:
+      telegram-stub:
+        condition: service_started
+
+  node-exporter:
+    volumes: !override
+      # Docker Desktop refuses rslave on /; the host-side shared mount is irrelevant here.
+      - /:/host:ro
+      - ${SMOKE_METRICS_DIR}:/textfile:ro

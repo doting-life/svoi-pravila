@@ -7,7 +7,8 @@
 #
 # Hardens SSH (key-only, deploy user only, no root login), opens ufw 22/80/443, enables
 # unattended upgrades, installs Docker from the official Debian apt repository, limits logs,
-# sets UTC, prepares /srv/svoi-pravila and /etc/svoi-pravila, clones the repository with a
+# sets UTC, prepares /srv/svoi-pravila (including the metrics textfile directory) and /etc/svoi-pravila
+# (including the alert bot secrets directory), clones the repository with a
 # read-only deploy key and installs the backup systemd units. Existing configuration files of
 # the application are never overwritten.
 set -euo pipefail
@@ -18,6 +19,9 @@ DEPLOY_GID=1500
 APP_DIR="/srv/svoi-pravila"
 ETC_DIR="/etc/svoi-pravila"
 BACKUP_REMOTE_DIR="${ETC_DIR}/backup-remote"
+ALERTMANAGER_DIR="${ETC_DIR}/alertmanager"
+ALERTMANAGER_GID=65534
+TEXTFILE_DIR="${APP_DIR}/metrics/textfile"
 REPO_DIR="${APP_DIR}/repo"
 REPO_KEY_NAME="svoi_pravila_repo"
 GITHUB_HOST_KEY="github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
@@ -298,6 +302,10 @@ setup_directories() {
     "${APP_DIR}/backups/pre-release"
   install -d -m 0750 -o root -g "$DEPLOY_USER" "$ETC_DIR"
   install -d -m 0700 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "$BACKUP_REMOTE_DIR"
+  # Alert bot secrets (token, chat id) are read by Alertmanager (uid/gid 65534) only.
+  install -d -m 0750 -o "$DEPLOY_USER" -g "$ALERTMANAGER_GID" "$ALERTMANAGER_DIR"
+  # Backup results for node-exporter's textfile collector; world-readable on purpose.
+  install -d -m 0755 -o "$DEPLOY_USER" -g "$DEPLOY_USER" "${APP_DIR}/metrics" "$TEXTFILE_DIR"
 }
 
 as_deploy() {

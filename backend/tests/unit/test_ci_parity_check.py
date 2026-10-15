@@ -27,6 +27,7 @@ JOBS = [
     "miniapp",
     "secrets",
     "image",
+    "ops",
     "stack-smoke",
     "prod-smoke",
     "ownership-guard",
@@ -58,7 +59,7 @@ VALID_JOB = """
 
 VALID_PUBLISH_JOB = """
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    needs: [backend, miniapp, secrets, image, stack-smoke, prod-smoke]
+    needs: [backend, miniapp, secrets, image, ops, stack-smoke, prod-smoke]
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -76,6 +77,7 @@ job_backend() { :; }
 job_miniapp() { :; }
 job_secrets() { :; }
 job_image() { :; }
+job_ops() { :; }
 job_stack_smoke() { :; }
 job_prod_smoke() { :; }
 job_publish() {
@@ -92,6 +94,7 @@ job_backend() { :; }
 job_miniapp() { :; }
 job_secrets() { :; }
 job_image() { :; }
+job_ops() { :; }
 job_stack_smoke() { :; }
 job_prod_smoke() { :; }
 job_publish() {

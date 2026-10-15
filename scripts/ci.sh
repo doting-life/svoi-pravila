@@ -160,6 +160,11 @@ job_image() {
   fi
 }
 
+job_ops() {
+  run_stage ops toolchain job_toolchain
+  run_stage ops check make -C "$ROOT" ops-check
+}
+
 job_stack_smoke() {
   run_stage stack-smoke toolchain job_toolchain
   run_stage stack-smoke materialize materialize stack-smoke

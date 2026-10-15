@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import secrets
+import time
 from collections.abc import AsyncIterator
 from urllib.parse import quote, urlparse, urlunparse
 
@@ -18,6 +19,8 @@ from svoi_pravila.config import Settings
 _READER_PASSWORD = "grafana-reader-integration-test-only"
 _WRONG_PASSWORD = "definitely-not-the-reader-password"
 _DEFAULT_ROLE = "grafana_reader"
+_GROUP_ROLE = "svoi_analytics_read"
+_MAX_TIMEOUT_SECONDS = 12.0
 
 _SELECT_DAILY = "SELECT COUNT(*) FROM analytics_daily"
 _SELECT_SCENARIO = "SELECT COUNT(*) FROM analytics_daily_scenario"
@@ -68,6 +71,10 @@ def _reader_url(admin_url: str, role_name: str, password: str) -> str:
 def _is_privilege_error(exc: BaseException) -> bool:
     text_repr = str(exc).lower()
     return "permission denied" in text_repr or "insufficientprivilege" in text_repr
+
+
+def _is_read_only_error(exc: BaseException) -> bool:
+    return "read-only transaction" in str(exc).lower()
 
 
 def _is_auth_error(exc: BaseException) -> bool:
@@ -174,28 +181,41 @@ async def test_grafana_reader_select_sensitive_tables_denied(
 
 
 @pytest.mark.integration
-async def test_grafana_reader_dml_on_aggregates_denied(
+async def test_grafana_reader_dml_is_refused_in_a_default_session(
     engine: AsyncEngine,
     migrated_schema: Settings,
     grafana_test_reader: str,
 ) -> None:
-    await provision_grafana_reader(
-        engine, SecretStr(_READER_PASSWORD), role_name=grafana_test_reader
-    )
-    reader = create_async_engine(
-        _reader_url(
-            migrated_schema.database_url.get_secret_value(),
-            grafana_test_reader,
-            _READER_PASSWORD,
-        ),
-        hide_parameters=True,
-    )
+    reader = await _provisioned_reader(engine, migrated_schema, grafana_test_reader)
     try:
         for sql in _DML_STATEMENTS:
             async with reader.connect() as conn:
                 with pytest.raises((DBAPIError, ProgrammingError)) as caught:
                     await conn.execute(text(sql))
+                assert _is_read_only_error(caught.value)
+    finally:
+        await reader.dispose()
+
+
+@pytest.mark.integration
+async def test_grafana_reader_dml_is_refused_by_privileges_when_read_only_is_lifted(
+    engine: AsyncEngine,
+    migrated_schema: Settings,
+    grafana_test_reader: str,
+) -> None:
+    """``default_transaction_read_only`` is user-settable: the privilege set is the boundary."""
+    reader = await _provisioned_reader(engine, migrated_schema, grafana_test_reader)
+    try:
+        for sql in _DML_STATEMENTS:
+            async with reader.connect() as conn:
+                await conn.execute(text("SET default_transaction_read_only = off"))
+                await conn.commit()
+                assert (await conn.execute(text("SHOW transaction_read_only"))).scalar() == "off"
+                await conn.rollback()
+                with pytest.raises((DBAPIError, ProgrammingError)) as caught:
+                    await conn.execute(text(sql))
                 assert _is_privilege_error(caught.value)
+                assert not _is_read_only_error(caught.value)
     finally:
         await reader.dispose()
 
@@ -274,3 +294,153 @@ async def test_default_grafana_reader_password_unchanged_after_suite(
     )
     after = await _rolpassword(engine, _DEFAULT_ROLE)
     assert before == after
+
+
+async def _provisioned_reader(
+    engine: AsyncEngine,
+    migrated_schema: Settings,
+    role_name: str,
+) -> AsyncEngine:
+    """Provision ``role_name`` and return an engine connected as that role."""
+    await provision_grafana_reader(engine, SecretStr(_READER_PASSWORD), role_name=role_name)
+    return create_async_engine(
+        _reader_url(
+            migrated_schema.database_url.get_secret_value(),
+            role_name,
+            _READER_PASSWORD,
+        ),
+        hide_parameters=True,
+    )
+
+
+@pytest.mark.integration
+async def test_grafana_reader_ddl_denied(
+    engine: AsyncEngine,
+    migrated_schema: Settings,
+    grafana_test_reader: str,
+) -> None:
+    reader = await _provisioned_reader(engine, migrated_schema, grafana_test_reader)
+    try:
+        for sql in ("CREATE TABLE grafana_reader_probe (id integer)", "DROP TABLE users"):
+            async with reader.connect() as conn:
+                with pytest.raises((DBAPIError, ProgrammingError)):
+                    await conn.execute(text(sql))
+    finally:
+        await reader.dispose()
+
+
+@pytest.mark.integration
+async def test_grafana_reader_cannot_switch_role(
+    engine: AsyncEngine,
+    migrated_schema: Settings,
+    grafana_test_reader: str,
+) -> None:
+    reader = await _provisioned_reader(engine, migrated_schema, grafana_test_reader)
+    app_role = urlparse(migrated_schema.database_url.get_secret_value()).username
+    assert app_role is not None
+    try:
+        for target in (_GROUP_ROLE, app_role):
+            async with reader.connect() as conn:
+                with pytest.raises((DBAPIError, ProgrammingError)) as caught:
+                    await conn.execute(text(f'SET ROLE "{target}"'))
+                assert _is_privilege_error(caught.value)
+    finally:
+        await reader.dispose()
+
+
+@pytest.mark.integration
+async def test_provision_tightens_a_legacy_group_membership(
+    engine: AsyncEngine,
+    migrated_schema: Settings,
+    grafana_test_reader: str,
+) -> None:
+    async with engine.connect() as base_conn:
+        conn = await base_conn.execution_options(isolation_level="AUTOCOMMIT")
+        await conn.execute(text(f'CREATE ROLE "{grafana_test_reader}" LOGIN IN ROLE {_GROUP_ROLE}'))
+    reader = await _provisioned_reader(engine, migrated_schema, grafana_test_reader)
+    try:
+        async with reader.connect() as conn:
+            with pytest.raises((DBAPIError, ProgrammingError)) as caught:
+                await conn.execute(text(f'SET ROLE "{_GROUP_ROLE}"'))
+            assert _is_privilege_error(caught.value)
+        async with reader.connect() as conn:
+            assert (await conn.execute(text(_SELECT_DAILY))).scalar() is not None
+    finally:
+        await reader.dispose()
+
+
+@pytest.mark.integration
+async def test_grafana_reader_long_query_is_cancelled_by_statement_timeout(
+    engine: AsyncEngine,
+    migrated_schema: Settings,
+    grafana_test_reader: str,
+) -> None:
+    reader = await _provisioned_reader(engine, migrated_schema, grafana_test_reader)
+    try:
+        async with reader.connect() as conn:
+            started = time.monotonic()
+            with pytest.raises((DBAPIError, ProgrammingError)) as caught:
+                await conn.execute(text("SELECT pg_sleep(15)"))
+            elapsed = time.monotonic() - started
+        assert "statement timeout" in str(caught.value).lower()
+        assert elapsed < _MAX_TIMEOUT_SECONDS
+    finally:
+        await reader.dispose()
+
+
+@pytest.mark.integration
+async def test_grafana_reader_role_limits_are_idempotent(
+    engine: AsyncEngine,
+    grafana_test_reader: str,
+) -> None:
+    for _ in range(2):
+        await provision_grafana_reader(
+            engine, SecretStr(_READER_PASSWORD), role_name=grafana_test_reader
+        )
+    async with engine.connect() as conn:
+        limit = (
+            await conn.execute(
+                text("SELECT rolconnlimit FROM pg_roles WHERE rolname = :name"),
+                {"name": grafana_test_reader},
+            )
+        ).scalar()
+        settings = (
+            (
+                await conn.execute(
+                    text(
+                        "SELECT s.setconfig FROM pg_db_role_setting s "
+                        "JOIN pg_roles r ON r.oid = s.setrole "
+                        "WHERE r.rolname = :name AND s.setdatabase = 0"
+                    ),
+                    {"name": grafana_test_reader},
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert limit == 5
+    assert len(settings) == 1
+    assert sorted(settings[0]) == [
+        "default_transaction_read_only=on",
+        "idle_in_transaction_session_timeout=30s",
+        "statement_timeout=10s",
+        "temp_file_limit=256MB",
+    ]
+
+
+@pytest.mark.integration
+async def test_grafana_reader_cannot_lift_the_temp_file_limit(
+    engine: AsyncEngine,
+    migrated_schema: Settings,
+    grafana_test_reader: str,
+) -> None:
+    reader = await _provisioned_reader(engine, migrated_schema, grafana_test_reader)
+    try:
+        async with reader.connect() as conn:
+            assert (await conn.execute(text("SHOW temp_file_limit"))).scalar() == "256MB"
+        async with reader.connect() as conn:
+            with pytest.raises((DBAPIError, ProgrammingError)) as caught:
+                await conn.execute(text("SET temp_file_limit = '1GB'"))
+            assert _is_privilege_error(caught.value)
+    finally:
+        await reader.dispose()

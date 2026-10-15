@@ -17,6 +17,7 @@ DEFAULT_JOBS = (
     "miniapp",
     "secrets",
     "image",
+    "ops",
     "stack-smoke",
     "prod-smoke",
     "ownership-guard",
@@ -25,6 +26,8 @@ DEFAULT_JOBS = (
 DOCS_JOBS = frozenset({"secrets", "ownership-guard"})
 BACKEND_JOBS = frozenset({"backend", "secrets", "image", "stack-smoke"})
 MINIAPP_JOBS = frozenset({"miniapp", "secrets", "image", "stack-smoke"})
+OPS_JOBS = frozenset({"ops", "prod-smoke"})
+OPS_PREFIXES = ("ops/prometheus/", "ops/alertmanager/")
 
 IMAGE_LOCKFILES = frozenset({"backend/uv.lock", "miniapp/pnpm-lock.yaml"})
 IMAGE_PINS = frozenset({"scripts/image-pins.env", "ops/grafana/image-pins.env"})
@@ -94,6 +97,7 @@ def jobs_for_paths(paths: list[str]) -> frozenset[str]:
     saw_docs = False
     saw_backend = False
     saw_miniapp = False
+    saw_ops = False
     for path in paths:
         if path.startswith("backend/"):
             saw_backend = True
@@ -103,12 +107,16 @@ def jobs_for_paths(paths: list[str]) -> frozenset[str]:
             saw_miniapp = True
             jobs |= MINIAPP_JOBS
             continue
+        if path.startswith(OPS_PREFIXES):
+            saw_ops = True
+            jobs |= OPS_JOBS
+            continue
         if is_docs_path(path):
             saw_docs = True
             jobs |= DOCS_JOBS
             continue
         return frozenset(all_jobs())
-    if saw_docs and not saw_backend and not saw_miniapp:
+    if saw_docs and not saw_backend and not saw_miniapp and not saw_ops:
         # Docs-only when every path is a docs path (already enforced by loop).
         return frozenset(DOCS_JOBS)
     if not jobs:

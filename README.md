@@ -57,7 +57,9 @@ More diagrams — system context, containers and networks, the inline sequence, 
 | Service metrics: HTTP, Telegram updates, LLM duration and tokens, budget, cache errors, event-loop lag | Prometheus | 15 days |
 | Application logs: JSON with PII redaction | container stdout (rotated) | 50 MB per container |
 
-Grafana ships two dashboards (operations and analytics) and is reachable only through an SSH tunnel. Grafana reads the aggregates through a dedicated read-only database role, which is also how the next stage can connect.
+Grafana ships two dashboards (operations and analytics). In production it is served at its own subdomain with personal accounts and the Viewer role for non-owners (no tunnel). It reads the aggregates through a dedicated database role limited to the aggregate tables, which is also how the next stage can connect.
+
+Prometheus evaluates the alert rules and Alertmanager sends them to a private Telegram group of the owners through a separate alert bot. Alerts cover availability, LLM budget and errors, latency, 5xx, cache, analytics jobs and backups. Host metrics (CPU, memory, disk, network) come from node-exporter; the daily backup writes its result as a metrics file. Alert catalogue and first steps: `deploy/RUNBOOK.md`.
 
 ## Load test and LLM cost
 
@@ -147,9 +149,9 @@ The trycloudflare URL **changes every run**. Stop the tunnel with `make miniapp-
 
 #### Analytics dashboard
 
-Grafana reads only the aggregate tables (`analytics_daily`, `analytics_daily_scenario`, `analytics_cohorts`) via the configured Grafana DB user (`SP_GRAFANA_DB_USER`, default `grafana_reader`), a member of `svoi_analytics_read`. It is never exposed on a public interface — only `127.0.0.1`, on an internal compose network shared with Postgres.
+Grafana reads only the aggregate tables (`analytics_daily`, `analytics_daily_scenario`, `analytics_cohorts`) via the configured Grafana DB user (`SP_GRAFANA_DB_USER`, default `grafana_reader`), a member of `svoi_analytics_read` with at most 5 connections, a statement timeout and a temporary file limit. In production it has no published port: Caddy serves it on `SP_GRAFANA_DOMAIN` (own DNS record, own certificate), and it sits on internal networks only. Locally it stays on `127.0.0.1`.
 
-The one-shot `migrate` service needs a Postgres role with `CREATEROLE` (not superuser) so it can create the analytics group role and the Grafana LOGIN role. Full separation of migrate / app / analytics roles is planned for task 0022.
+The one-shot `migrate` service needs a Postgres role with `CREATEROLE` (not superuser) so it can create the analytics group role and the Grafana LOGIN role. Because `temp_file_limit` is a superuser-only parameter, a non-superuser migrate role also needs `GRANT SET ON PARAMETER temp_file_limit` from a superuser. Full separation of migrate / app / analytics roles is planned for task 0022.
 
 Locally:
 
@@ -160,13 +162,7 @@ make observability-up
 
 Open `http://127.0.0.1:${GRAFANA_PORT:-3000}` (admin password from `SP_GRAFANA_ADMIN_PASSWORD` in your env file). Stop with `make observability-down`.
 
-On the VPS, open an SSH tunnel and keep Grafana bound to loopback only:
-
-```bash
-ssh -L 3000:127.0.0.1:3000 <host>
-```
-
-Then open `http://127.0.0.1:3000` on your machine. Do not publish Grafana ports on the host firewall.
+On the VPS, Grafana is opened in the browser at `https://<SP_GRAFANA_DOMAIN>/` with a personal account; the runbook describes the subdomain, the mentor's Viewer account and the alert bot.
 
 Data lives in Docker named volumes (`postgres_data`, `valkey_data`). To reset local data:
 
@@ -211,6 +207,9 @@ The integration suite connects to Postgres as the compose admin role (`POSTGRES_
 | `image` | Build API and mini-app CI images |
 | `image-scan` | Trivy HIGH/CRITICAL scan of both CI images |
 | `stack-smoke` | Compose stack smoke (env file outside the repo) |
+| `ops-check` | Validate Prometheus config, alert rules (with `promtool test rules`), Alertmanager config and the Telegram template in the pinned upstream images |
+| `prod-smoke` | Production-shaped smoke on throwaway secrets: Grafana subdomain, Viewer limits, alert delivery to a stub, host and backup metrics, backups. `PROD_SMOKE_KEEP=1` leaves the stack running and prints the local Grafana URL |
+| `prod-smoke-down` | Remove a stack left by `PROD_SMOKE_KEEP=1` |
 | `ownership-guard` | Forbid task-branch edits to CTO-owned paths (`BASE=<ref>`) |
 | `migrations-check` | Alembic upgrade + check against compose DB |
 | `infra-up` / `infra-down` | Start/stop local Postgres and Valkey (tests/gates) |

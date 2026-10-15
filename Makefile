@@ -2,13 +2,14 @@
 	audit secrets migrations-check image image-scan openapi miniapp-install miniapp-api-check \
 	miniapp-check miniapp-tunnel miniapp-tunnel-down observability-up observability-down \
 	dev-env infra-up infra-down build up down logs ps bench-llm eval-llm eval-rewrite analytics check \
-	toolchain-check stack-smoke prod-smoke publish ownership-guard hooks ci quick shellcheck
+	toolchain-check ops-check stack-smoke prod-smoke prod-smoke-down publish ownership-guard hooks ci quick shellcheck
 
 BACKEND := backend
 MINIAPP := miniapp
 include scripts/image-pins.env
-export GITLEAKS_IMAGE TRIVY_IMAGE ACTIONLINT_IMAGE SHELLCHECK_IMAGE PROMETHEUS_IMAGE
-CI_JOBS := backend miniapp secrets image stack-smoke prod-smoke ownership-guard
+export GITLEAKS_IMAGE TRIVY_IMAGE ACTIONLINT_IMAGE SHELLCHECK_IMAGE PROMETHEUS_IMAGE \
+	ALERTMANAGER_IMAGE NODE_EXPORTER_IMAGE
+CI_JOBS := backend miniapp secrets image ops stack-smoke prod-smoke ownership-guard
 export CI_JOBS
 export JOB
 export BASE
@@ -112,11 +113,17 @@ image-scan:
 toolchain-check:
 	cd $(BACKEND) && uv run python ../scripts/toolchain_check.py
 
+ops-check:
+	./scripts/ops_check.sh
+
 stack-smoke:
 	./scripts/stack_smoke.sh
 
 prod-smoke:
 	./scripts/prod_smoke.sh
+
+prod-smoke-down:
+	./scripts/prod_smoke.sh --down
 
 publish:
 	./scripts/publish.sh
@@ -158,7 +165,7 @@ miniapp-tunnel-down:
 
 observability-up: build
 	$(COMPOSE) --profile observability up -d --wait migrate prometheus grafana
-	@echo "Grafana: http://127.0.0.1:$$(docker compose $(COMPOSE_ENV) port grafana 3000 | sed 's/.*://') (loopback only; SSH tunnel on VPS)"
+	@echo "Grafana: http://127.0.0.1:$$(docker compose $(COMPOSE_ENV) port grafana 3000 | sed 's/.*://') (loopback only)"
 
 observability-down:
 	$(COMPOSE) --profile observability stop grafana prometheus

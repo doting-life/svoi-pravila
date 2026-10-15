@@ -3,7 +3,7 @@
 # Pins: see ops/grafana/image-pins.env (enforced by toolchain-check).
 # Plugins live under /usr/share/grafana/plugins so the data volume on
 # /var/lib/grafana cannot hide them.
-FROM grafana/grafana:13.2.3-slim@sha256:7c2b05e94eb43e2b88aa814d7a1c9421affc7f3593a951148177f29feaff6017
+FROM grafana/grafana:13.2.4-slim@sha256:e1b9840daaea5ebbe9ac585257ed88cf7ea569d28d5058231b0778f8898ef736
 
 USER root
 

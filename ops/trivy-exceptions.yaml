@@ -1,27 +1,96 @@
-# Timed Trivy exceptions for third-party internal images only (ADR-0012).
-# Allowed images: grafana, prometheus. api / miniapp / backup are forbidden.
+# Timed Trivy exceptions for third-party internal images only (ADR-0012, ADR-0017 §4 as amended
+# by the CTO decision on issue 94). Allowed images: grafana (datasource plugin binaries only,
+# target_prefix), prometheus, alertmanager, node-exporter. api / miniapp / backup are forbidden.
+# Every row expires within 30 days of the change that adds it; renew only after a fresh scan.
 exceptions:
   - cve: CVE-2026-78667
     image: grafana
-    statement: Grafana listens on 127.0.0.1 only; Prometheus is on internal networks only
-    expires: "2026-11-09"
+    target_prefix: usr/share/grafana/plugins/
+    statement: "Go stdlib net/http in the Postgres and Prometheus datasource plugin binaries (FileServer/ServeContent Range handling). The plugins serve no files over HTTP, and they are subprocesses reachable only by the Grafana server over the local plugin channel, so no viewer or network client can reach the code path."
+    expires: "2026-11-14"
   - cve: CVE-2026-78669
     image: grafana
-    statement: Grafana listens on 127.0.0.1 only; Prometheus is on internal networks only
-    expires: "2026-11-09"
+    target_prefix: usr/share/grafana/plugins/
+    statement: "Go stdlib net/http and golang.org/x/net http2 in the datasource plugin binaries (SETTINGS flood from an HTTP/2 peer). The Postgres plugin speaks no HTTP; the Prometheus plugin talks plain http://prometheus:9090 (HTTP/1.1, no TLS, no h2c) to our own Prometheus, which is the only peer."
+    expires: "2026-11-14"
   - cve: CVE-2026-97031
     image: grafana
-    statement: Grafana listens on 127.0.0.1 only; Prometheus is on internal networks only
-    expires: "2026-11-09"
+    target_prefix: usr/share/grafana/plugins/
+    statement: "Go stdlib crypto/tls in the datasource plugin binaries (ECH extension memory exhaustion in a TLS server). The plugins run no TLS server reachable by anything except the Grafana server process."
+    expires: "2026-11-14"
   - cve: CVE-2026-78667
     image: prometheus
-    statement: Grafana listens on 127.0.0.1 only; Prometheus is on internal networks only
-    expires: "2026-11-09"
+    statement: "Go stdlib net/http in bin/prometheus and bin/promtool (Range handling in file serving). Prometheus is not published to the host or the internet; it is queried over HTTP/1.1 only by the Grafana datasource plugin on the internal metrics network (authenticated Grafana users)."
+    expires: "2026-11-14"
   - cve: CVE-2026-78669
     image: prometheus
-    statement: Grafana listens on 127.0.0.1 only; Prometheus is on internal networks only
-    expires: "2026-11-09"
+    statement: "Go stdlib net/http and golang.org/x/net http2 in bin/prometheus and bin/promtool (HTTP/2 SETTINGS flood). Prometheus listens on plain HTTP (no TLS, no h2c) on the internal metrics network; every peer (Grafana plugin, node-exporter, Alertmanager) speaks HTTP/1.1 and is one of our own services."
+    expires: "2026-11-14"
   - cve: CVE-2026-97031
     image: prometheus
-    statement: Grafana listens on 127.0.0.1 only; Prometheus is on internal networks only
-    expires: "2026-11-09"
+    statement: "Go stdlib crypto/tls in bin/prometheus and bin/promtool (ECH memory exhaustion in a TLS server). No TLS server is configured (no web config file); scrape and alert targets are plain HTTP inside the internal networks."
+    expires: "2026-11-14"
+  - cve: CVE-2026-78667
+    image: alertmanager
+    statement: "Go stdlib net/http in bin/alertmanager and bin/amtool (Range handling in file serving). Alertmanager is not published to the host or the internet; its HTTP listener is reachable only from Prometheus on the internal alerting network."
+    expires: "2026-11-14"
+  - cve: CVE-2026-78669
+    image: alertmanager
+    statement: "Go stdlib net/http and golang.org/x/net http2 in bin/alertmanager and bin/amtool (HTTP/2 SETTINGS flood). Its own listener is plain HTTP/1.1 on the internal alerting network, peers are Prometheus only; as an HTTPS client its only peer is the Telegram Bot API."
+    expires: "2026-11-14"
+  - cve: CVE-2026-97031
+    image: alertmanager
+    statement: "Go stdlib crypto/tls in bin/alertmanager and bin/amtool (ECH memory exhaustion in a TLS server). Alertmanager runs no TLS server (no web config file); it is an HTTPS client of Telegram only."
+    expires: "2026-11-14"
+  - cve: CVE-2026-84445
+    image: alertmanager
+    statement: "google.golang.org/grpc in bin/alertmanager and bin/amtool (xds.NewGRPCServer authority-header panic). No gRPC server or client is active in our configuration: tracing is not configured, and Alertmanager runs single-instance with clustering disabled (--cluster.listen-address=), so no peer listener exists; the only listener is the plain HTTP API."
+    expires: "2026-11-14"
+  - cve: CVE-2026-33818
+    image: node-exporter
+    statement: "Go stdlib encoding/asn1 in bin/node_exporter (recursion in Unmarshal). node-exporter serves plain HTTP only to Prometheus on the internal metrics network and parses no ASN.1 from any peer."
+    expires: "2026-11-14"
+  - cve: CVE-2026-39821
+    image: node-exporter
+    statement: "golang.org/x/net/idna in bin/node_exporter (Punycode label handling). No privilege or access decision is made on host names; the only peer is Prometheus on the internal metrics network."
+    expires: "2026-11-14"
+  - cve: CVE-2026-46600
+    image: node-exporter
+    statement: "golang.org/x/net/dnsmessage in bin/node_exporter (SVCB/HTTPS record parsing). The restricted collector set performs no DNS lookups, and the only peer is Prometheus on the internal metrics network."
+    expires: "2026-11-14"
+  - cve: CVE-2026-56853
+    image: node-exporter
+    statement: "Go stdlib net/http unencrypted HTTP/2 in bin/node_exporter. h2c is not enabled; the listener is plain HTTP/1.1, scraped only by Prometheus on the internal metrics network."
+    expires: "2026-11-14"
+  - cve: CVE-2026-56854
+    image: node-exporter
+    statement: "golang.org/x/crypto/ssh in bin/node_exporter (source-address restriction). node-exporter runs no SSH server or client."
+    expires: "2026-11-14"
+  - cve: CVE-2026-56858
+    image: node-exporter
+    statement: "Go stdlib html/template in bin/node_exporter (pathological input). Only the static landing page is rendered; no peer-supplied data reaches a template, and the only peer is Prometheus on the internal metrics network."
+    expires: "2026-11-14"
+  - cve: CVE-2026-56859
+    image: node-exporter
+    statement: "Go stdlib encoding/xml in bin/node_exporter (DecodeElement depth). No XML from any peer is decoded; the only peer is Prometheus on the internal metrics network."
+    expires: "2026-11-14"
+  - cve: CVE-2026-56860
+    image: node-exporter
+    statement: "Go stdlib net/url in bin/node_exporter (quadratic relative-path resolution). Requests come only from Prometheus on the internal metrics network with a fixed /metrics path."
+    expires: "2026-11-14"
+  - cve: CVE-2026-56862
+    image: node-exporter
+    statement: "Go stdlib crypto/tls in bin/node_exporter (KeyUpdate flood). No TLS is configured; the listener is plain HTTP on the internal metrics network."
+    expires: "2026-11-14"
+  - cve: CVE-2026-78667
+    image: node-exporter
+    statement: "Go stdlib net/http in bin/node_exporter (Range handling in file serving). node-exporter serves no files and is scraped only by Prometheus on the internal metrics network."
+    expires: "2026-11-14"
+  - cve: CVE-2026-78669
+    image: node-exporter
+    statement: "Go stdlib net/http and golang.org/x/net http2 in bin/node_exporter (HTTP/2 SETTINGS flood). The listener is plain HTTP/1.1 (no TLS, no h2c); the only peer is Prometheus on the internal metrics network."
+    expires: "2026-11-14"
+  - cve: CVE-2026-97031
+    image: node-exporter
+    statement: "Go stdlib crypto/tls in bin/node_exporter (ECH memory exhaustion in a TLS server). No TLS server is configured; the listener is plain HTTP on the internal metrics network."
+    expires: "2026-11-14"

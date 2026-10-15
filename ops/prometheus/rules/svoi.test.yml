@@ -1,0 +1,687 @@
+# promtool test rules (task 0049, requirement 16): every alert has one case that fires (labels and
+# the exact annotations) and one that does not. Series use a one-minute step.
+rule_files:
+  - svoi.yml
+
+evaluation_interval: 1m
+
+tests:
+  # --- SpApiDown -------------------------------------------------------------------------------
+  - name: SpApiDown fires when the target is down
+    interval: 1m
+    input_series:
+      - series: 'up{job="api",instance="api:8000"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: SpApiDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: api
+              instance: api:8000
+            exp_annotations:
+              summary: "API недоступен"
+              description: "Prometheus не получает метрики API: бот и мини-приложение могут не работать."
+              runbook: SpApiDown
+
+  - name: SpApiDown fires when the target is absent
+    interval: 1m
+    input_series:
+      - series: 'up{job="node",instance="node-exporter:9100"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: SpApiDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              job: api
+            exp_annotations:
+              summary: "API недоступен"
+              description: "Prometheus не получает метрики API: бот и мини-приложение могут не работать."
+              runbook: SpApiDown
+
+  - name: SpApiDown stays quiet when the target is up
+    interval: 1m
+    input_series:
+      - series: 'up{job="api",instance="api:8000"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: SpApiDown
+        exp_alerts: []
+
+  # --- SpNodeExporterDown ----------------------------------------------------------------------
+  - name: SpNodeExporterDown fires
+    interval: 1m
+    input_series:
+      - series: 'up{job="node",instance="node-exporter:9100"}'
+        values: '0x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SpNodeExporterDown
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: node
+              instance: node-exporter:9100
+            exp_annotations:
+              summary: "Метрики сервера недоступны"
+              description: "node-exporter не отвечает, алерты по диску и памяти сейчас не работают."
+              runbook: SpNodeExporterDown
+
+  - name: SpNodeExporterDown stays quiet below the for window
+    interval: 1m
+    input_series:
+      - series: 'up{job="node",instance="node-exporter:9100"}'
+        values: '1x3 0x3 1x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SpNodeExporterDown
+        exp_alerts: []
+
+  # --- LLM budget ------------------------------------------------------------------------------
+  - name: SpLlmBudget80 fires at 80 percent
+    interval: 1m
+    input_series:
+      - series: 'sp_llm_budget_spent_tokens'
+        values: '80x15'
+      - series: 'sp_llm_budget_tokens'
+        values: '100x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SpLlmBudget80
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Израсходовано 80% дневного бюджета LLM"
+              description: "Потрачено 80% дневного бюджета токенов."
+              runbook: SpLlmBudget80
+      - eval_time: 10m
+        alertname: SpLlmBudgetExhausted
+        exp_alerts: []
+
+  - name: SpLlmBudget80 stays quiet below 80 percent
+    interval: 1m
+    input_series:
+      - series: 'sp_llm_budget_spent_tokens'
+        values: '79x15'
+      - series: 'sp_llm_budget_tokens'
+        values: '100x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SpLlmBudget80
+        exp_alerts: []
+
+  - name: SpLlmBudgetExhausted and SpLlmBudget80 both fire at 100 percent
+    interval: 1m
+    input_series:
+      - series: 'sp_llm_budget_spent_tokens'
+        values: '100x15'
+      - series: 'sp_llm_budget_tokens'
+        values: '100x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SpLlmBudgetExhausted
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "Дневной бюджет LLM исчерпан"
+              description: "Потрачено 100% дневного бюджета токенов, новые запросы к LLM отклоняются."
+              runbook: SpLlmBudgetExhausted
+      - eval_time: 10m
+        alertname: SpLlmBudget80
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Израсходовано 80% дневного бюджета LLM"
+              description: "Потрачено 100% дневного бюджета токенов."
+              runbook: SpLlmBudget80
+
+  - name: SpLlmBudgetExhausted stays quiet just below the budget
+    interval: 1m
+    input_series:
+      - series: 'sp_llm_budget_spent_tokens'
+        values: '99x15'
+      - series: 'sp_llm_budget_tokens'
+        values: '100x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SpLlmBudgetExhausted
+        exp_alerts: []
+
+  # --- SpLlmSpendSpike -------------------------------------------------------------------------
+  - name: SpLlmSpendSpike fires on a quarter of the budget in an hour
+    interval: 1m
+    input_series:
+      - series: 'sp_llm_tokens_total{scenario="rewrite",kind="billable"}'
+        values: '0+500x120'
+      - series: 'sp_llm_budget_tokens'
+        values: '100000x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: SpLlmSpendSpike
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Всплеск расхода токенов LLM"
+              description: "За последний час потрачено 30k токенов, это не меньше четверти дневного бюджета."
+              runbook: SpLlmSpendSpike
+
+  - name: SpLlmSpendSpike stays quiet below a quarter of the budget
+    interval: 1m
+    input_series:
+      - series: 'sp_llm_tokens_total{scenario="rewrite",kind="billable"}'
+        values: '0+300x120'
+      - series: 'sp_llm_tokens_total{scenario="rewrite",kind="input"}'
+        values: '0+5000x120'
+      - series: 'sp_llm_budget_tokens'
+        values: '100000x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: SpLlmSpendSpike
+        exp_alerts: []
+
+  # --- SpHttp5xxRatio --------------------------------------------------------------------------
+  - name: SpHttp5xxRatio fires above five percent
+    interval: 1m
+    input_series:
+      - series: 'sp_http_request_duration_seconds_count{route="/health",method="GET",status_class="5xx"}'
+        values: '0+6x40'
+      - series: 'sp_http_request_duration_seconds_count{route="/health",method="GET",status_class="2xx"}'
+        values: '0+94x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: SpHttp5xxRatio
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Много ошибок 5xx в API"
+              description: "Доля ответов 5xx за 10 минут: 6%."
+              runbook: SpHttp5xxRatio
+
+  - name: SpHttp5xxRatio stays quiet at five percent or less
+    interval: 1m
+    input_series:
+      - series: 'sp_http_request_duration_seconds_count{route="/health",method="GET",status_class="5xx"}'
+        values: '0+5x40'
+      - series: 'sp_http_request_duration_seconds_count{route="/health",method="GET",status_class="2xx"}'
+        values: '0+95x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: SpHttp5xxRatio
+        exp_alerts: []
+
+  - name: SpHttp5xxRatio stays quiet below the minimum traffic
+    interval: 1m
+    input_series:
+      - series: 'sp_http_request_duration_seconds_count{route="/health",method="GET",status_class="5xx"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: SpHttp5xxRatio
+        exp_alerts: []
+
+  # --- SpLlmErrorRatio -------------------------------------------------------------------------
+  - name: SpLlmErrorRatio fires above ten percent
+    interval: 1m
+    input_series:
+      - series: 'sp_usage_events_total{scenario="rewrite",surface="inline",outcome="unavailable",limit_kind="none"}'
+        values: '0+3x60'
+      - series: 'sp_usage_events_total{scenario="rewrite",surface="inline",outcome="ok",limit_kind="none"}'
+        values: '0+17x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: SpLlmErrorRatio
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Много сбоев LLM"
+              description: "Доля запросов с недоступным LLM или невалидным ответом за 15 минут: 15%."
+              runbook: SpLlmErrorRatio
+
+  - name: SpLlmErrorRatio stays quiet at ten percent or less
+    interval: 1m
+    input_series:
+      - series: 'sp_usage_events_total{scenario="rewrite",surface="inline",outcome="invalid_output",limit_kind="none"}'
+        values: '0+1x60'
+      - series: 'sp_usage_events_total{scenario="rewrite",surface="inline",outcome="ok",limit_kind="none"}'
+        values: '0+9x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: SpLlmErrorRatio
+        exp_alerts: []
+
+  - name: SpLlmErrorRatio stays quiet below the minimum number of events
+    interval: 1m
+    input_series:
+      - series: 'sp_usage_events_total{scenario="rewrite",surface="inline",outcome="unavailable",limit_kind="none"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: SpLlmErrorRatio
+        exp_alerts: []
+
+  # --- SpRewriteLatencyHigh --------------------------------------------------------------------
+  - name: SpRewriteLatencyHigh fires above three seconds
+    interval: 1m
+    input_series:
+      - series: 'sp_llm_request_duration_seconds_bucket{scenario="rewrite",outcome="ok",le="1"}'
+        values: '0x60'
+      - series: 'sp_llm_request_duration_seconds_bucket{scenario="rewrite",outcome="ok",le="5"}'
+        values: '0+10x60'
+      - series: 'sp_llm_request_duration_seconds_bucket{scenario="rewrite",outcome="ok",le="+Inf"}'
+        values: '0+10x60'
+      - series: 'sp_llm_request_duration_seconds_count{scenario="rewrite",outcome="ok"}'
+        values: '0+10x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: SpRewriteLatencyHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Медленный ответ «Переписать»"
+              description: "95-й процентиль времени ответа «Переписать» за 15 минут: 4.8s."
+              runbook: SpRewriteLatencyHigh
+
+  - name: SpRewriteLatencyHigh stays quiet below three seconds
+    interval: 1m
+    input_series:
+      - series: 'sp_llm_request_duration_seconds_bucket{scenario="rewrite",outcome="ok",le="1"}'
+        values: '0+10x60'
+      - series: 'sp_llm_request_duration_seconds_bucket{scenario="rewrite",outcome="ok",le="5"}'
+        values: '0+10x60'
+      - series: 'sp_llm_request_duration_seconds_bucket{scenario="rewrite",outcome="ok",le="+Inf"}'
+        values: '0+10x60'
+      - series: 'sp_llm_request_duration_seconds_count{scenario="rewrite",outcome="ok"}'
+        values: '0+10x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: SpRewriteLatencyHigh
+        exp_alerts: []
+
+  - name: SpRewriteLatencyHigh stays quiet below the minimum number of calls
+    interval: 1m
+    input_series:
+      - series: 'sp_llm_request_duration_seconds_bucket{scenario="rewrite",outcome="ok",le="1"}'
+        values: '0x60'
+      - series: 'sp_llm_request_duration_seconds_bucket{scenario="rewrite",outcome="ok",le="5"}'
+        values: '0+1x60'
+      - series: 'sp_llm_request_duration_seconds_bucket{scenario="rewrite",outcome="ok",le="+Inf"}'
+        values: '0+1x60'
+      - series: 'sp_llm_request_duration_seconds_count{scenario="rewrite",outcome="ok"}'
+        values: '0+1x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: SpRewriteLatencyHigh
+        exp_alerts: []
+
+  # --- SpDecodeTtfcHigh ------------------------------------------------------------------------
+  - name: SpDecodeTtfcHigh fires above two seconds
+    interval: 1m
+    input_series:
+      - series: 'sp_llm_ttfc_seconds_bucket{scenario="decode",surface="inline",le="0.5"}'
+        values: '0x60'
+      - series: 'sp_llm_ttfc_seconds_bucket{scenario="decode",surface="inline",le="3"}'
+        values: '0+2x60'
+      - series: 'sp_llm_ttfc_seconds_bucket{scenario="decode",surface="inline",le="+Inf"}'
+        values: '0+2x60'
+      - series: 'sp_llm_ttfc_seconds_count{scenario="decode",surface="inline"}'
+        values: '0+2x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: SpDecodeTtfcHigh
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Медленный первый ответ «Расшифровать»"
+              description: "95-й процентиль времени до первого фрагмента «Расшифровать» за 15 минут: 2.875s."
+              runbook: SpDecodeTtfcHigh
+
+  - name: SpDecodeTtfcHigh stays quiet below two seconds
+    interval: 1m
+    input_series:
+      - series: 'sp_llm_ttfc_seconds_bucket{scenario="decode",surface="inline",le="0.5"}'
+        values: '0+2x60'
+      - series: 'sp_llm_ttfc_seconds_bucket{scenario="decode",surface="inline",le="3"}'
+        values: '0+2x60'
+      - series: 'sp_llm_ttfc_seconds_bucket{scenario="decode",surface="inline",le="+Inf"}'
+        values: '0+2x60'
+      - series: 'sp_llm_ttfc_seconds_count{scenario="decode",surface="inline"}'
+        values: '0+2x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: SpDecodeTtfcHigh
+        exp_alerts: []
+
+  - name: SpDecodeTtfcHigh stays quiet below the minimum number of observations
+    interval: 1m
+    input_series:
+      - series: 'sp_llm_ttfc_seconds_bucket{scenario="decode",surface="inline",le="0.5"}'
+        values: '0x60'
+      - series: 'sp_llm_ttfc_seconds_bucket{scenario="decode",surface="inline",le="3"}'
+        values: '0+0.5x60'
+      - series: 'sp_llm_ttfc_seconds_bucket{scenario="decode",surface="inline",le="+Inf"}'
+        values: '0+0.5x60'
+      - series: 'sp_llm_ttfc_seconds_count{scenario="decode",surface="inline"}'
+        values: '0+0.5x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: SpDecodeTtfcHigh
+        exp_alerts: []
+
+  # --- SpEventLoopLag --------------------------------------------------------------------------
+  - name: SpEventLoopLag fires above 0.2 seconds
+    interval: 1m
+    input_series:
+      - series: 'sp_event_loop_lag_seconds_bucket{le="0.1"}'
+        values: '0x40'
+      - series: 'sp_event_loop_lag_seconds_bucket{le="0.5"}'
+        values: '0+10x40'
+      - series: 'sp_event_loop_lag_seconds_bucket{le="+Inf"}'
+        values: '0+10x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: SpEventLoopLag
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Задержки цикла событий API"
+              description: "95-й процентиль задержки цикла событий за 5 минут: 480ms."
+              runbook: SpEventLoopLag
+
+  - name: SpEventLoopLag stays quiet below 0.2 seconds
+    interval: 1m
+    input_series:
+      - series: 'sp_event_loop_lag_seconds_bucket{le="0.1"}'
+        values: '0+10x40'
+      - series: 'sp_event_loop_lag_seconds_bucket{le="0.5"}'
+        values: '0+10x40'
+      - series: 'sp_event_loop_lag_seconds_bucket{le="+Inf"}'
+        values: '0+10x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: SpEventLoopLag
+        exp_alerts: []
+
+  # --- SpCacheErrors ---------------------------------------------------------------------------
+  - name: SpCacheErrors fires on any increase
+    interval: 1m
+    input_series:
+      - series: 'sp_cache_errors_total{kind="network"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: SpCacheErrors
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              kind: network
+            exp_annotations:
+              summary: "Ошибки кэша Valkey"
+              description: "За 10 минут были ошибки кэша (тип network): 10."
+              runbook: SpCacheErrors
+
+  - name: SpCacheErrors stays quiet without an increase
+    interval: 1m
+    input_series:
+      - series: 'sp_cache_errors_total{kind="network"}'
+        values: '3x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: SpCacheErrors
+        exp_alerts: []
+
+  # --- SpAnalyticsJobFailed --------------------------------------------------------------------
+  - name: SpAnalyticsJobFailed fires on a failed run
+    interval: 1m
+    input_series:
+      - series: 'sp_analytics_job_runs_total{job="daily_aggregates",status="failed"}'
+        values: '0x5 1x60'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SpAnalyticsJobFailed
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: daily_aggregates
+              status: failed
+            exp_annotations:
+              summary: "Сбой расчёта аналитики"
+              description: "Задача daily_aggregates завершилась с ошибкой за последние 2 часа."
+              runbook: SpAnalyticsJobFailed
+
+  - name: SpAnalyticsJobFailed stays quiet on successful runs
+    interval: 1m
+    input_series:
+      - series: 'sp_analytics_job_runs_total{job="daily_aggregates",status="failed"}'
+        values: '1x65'
+      - series: 'sp_analytics_job_runs_total{job="daily_aggregates",status="succeeded"}'
+        values: '0+1x65'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SpAnalyticsJobFailed
+        exp_alerts: []
+
+  # --- SpBackupFailed --------------------------------------------------------------------------
+  - name: SpBackupFailed fires when the last daily run failed
+    interval: 1m
+    input_series:
+      - series: 'sp_backup_last_run_success{kind="daily",job="node",instance="node-exporter:9100"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: SpBackupFailed
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              kind: daily
+              job: node
+              instance: node-exporter:9100
+            exp_annotations:
+              summary: "Ежедневный бэкап не удался"
+              description: "Последний запуск ежедневного бэкапа (daily) завершился ошибкой."
+              runbook: SpBackupFailed
+
+  - name: SpBackupFailed stays quiet after a successful run or for another kind
+    interval: 1m
+    input_series:
+      - series: 'sp_backup_last_run_success{kind="daily",job="node",instance="node-exporter:9100"}'
+        values: '1x10'
+      - series: 'sp_backup_last_run_success{kind="manual",job="node",instance="node-exporter:9100"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: SpBackupFailed
+        exp_alerts: []
+
+  # --- SpBackupStale ---------------------------------------------------------------------------
+  - name: SpBackupStale fires when the last success is older than 26 hours
+    interval: 1m
+    input_series:
+      - series: 'sp_backup_last_success_timestamp_seconds{kind="daily",job="node",instance="node-exporter:9100"}'
+        values: '0x1700'
+    alert_rule_test:
+      - eval_time: 27h
+        alertname: SpBackupStale
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              kind: daily
+              job: node
+              instance: node-exporter:9100
+            exp_annotations:
+              summary: "Давно не было успешного бэкапа"
+              description: "Последний успешный ежедневный бэкап был 1d 3h 0m 0s назад."
+              runbook: SpBackupStale
+
+  - name: SpBackupStale stays quiet when the last success is fresh
+    interval: 1m
+    input_series:
+      - series: 'sp_backup_last_success_timestamp_seconds{kind="daily",job="node",instance="node-exporter:9100"}'
+        values: '0+60x1700'
+    alert_rule_test:
+      - eval_time: 27h
+        alertname: SpBackupStale
+        exp_alerts: []
+
+  - name: SpBackupStale fires when the series is absent for 26 hours
+    interval: 1m
+    input_series:
+      - series: 'up{job="node",instance="node-exporter:9100"}'
+        values: '1x1700'
+    alert_rule_test:
+      - eval_time: 27h
+        alertname: SpBackupStale
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              data: missing
+              kind: daily
+            exp_annotations:
+              summary: "Давно не было успешного бэкапа"
+              description: "Нет данных об успешном ежедневном бэкапе."
+              runbook: SpBackupStale
+      - eval_time: 25h
+        alertname: SpBackupStale
+        exp_alerts: []
+
+  # --- SpDiskSpaceLow / SpDiskSpaceCritical ----------------------------------------------------
+  - name: SpDiskSpaceLow fires below 15 percent free
+    interval: 1m
+    input_series:
+      - series: 'node_filesystem_avail_bytes{fstype="ext4",mountpoint="/",device="/dev/vda1",job="node",instance="node-exporter:9100"}'
+        values: '10x30'
+      - series: 'node_filesystem_size_bytes{fstype="ext4",mountpoint="/",device="/dev/vda1",job="node",instance="node-exporter:9100"}'
+        values: '100x30'
+      - series: 'node_filesystem_readonly{fstype="ext4",mountpoint="/",device="/dev/vda1",job="node",instance="node-exporter:9100"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: SpDiskSpaceLow
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              fstype: ext4
+              mountpoint: /
+              device: /dev/vda1
+              job: node
+              instance: node-exporter:9100
+            exp_annotations:
+              summary: "Мало места на диске"
+              description: "На / свободно 10%."
+              runbook: SpDiskSpaceLow
+      - eval_time: 20m
+        alertname: SpDiskSpaceCritical
+        exp_alerts: []
+
+  - name: SpDiskSpaceLow stays quiet at 15 percent free, on read-only and on pseudo filesystems
+    interval: 1m
+    input_series:
+      - series: 'node_filesystem_avail_bytes{fstype="ext4",mountpoint="/",device="/dev/vda1",job="node",instance="node-exporter:9100"}'
+        values: '15x30'
+      - series: 'node_filesystem_size_bytes{fstype="ext4",mountpoint="/",device="/dev/vda1",job="node",instance="node-exporter:9100"}'
+        values: '100x30'
+      - series: 'node_filesystem_readonly{fstype="ext4",mountpoint="/",device="/dev/vda1",job="node",instance="node-exporter:9100"}'
+        values: '0x30'
+      - series: 'node_filesystem_avail_bytes{fstype="ext4",mountpoint="/boot",device="/dev/vda2",job="node",instance="node-exporter:9100"}'
+        values: '1x30'
+      - series: 'node_filesystem_size_bytes{fstype="ext4",mountpoint="/boot",device="/dev/vda2",job="node",instance="node-exporter:9100"}'
+        values: '100x30'
+      - series: 'node_filesystem_readonly{fstype="ext4",mountpoint="/boot",device="/dev/vda2",job="node",instance="node-exporter:9100"}'
+        values: '1x30'
+      - series: 'node_filesystem_avail_bytes{fstype="tmpfs",mountpoint="/run",device="tmpfs",job="node",instance="node-exporter:9100"}'
+        values: '1x30'
+      - series: 'node_filesystem_size_bytes{fstype="tmpfs",mountpoint="/run",device="tmpfs",job="node",instance="node-exporter:9100"}'
+        values: '100x30'
+      - series: 'node_filesystem_readonly{fstype="tmpfs",mountpoint="/run",device="tmpfs",job="node",instance="node-exporter:9100"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: SpDiskSpaceLow
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: SpDiskSpaceCritical
+        exp_alerts: []
+
+  - name: SpDiskSpaceCritical fires below 5 percent free
+    interval: 1m
+    input_series:
+      - series: 'node_filesystem_avail_bytes{fstype="ext4",mountpoint="/",device="/dev/vda1",job="node",instance="node-exporter:9100"}'
+        values: '4x30'
+      - series: 'node_filesystem_size_bytes{fstype="ext4",mountpoint="/",device="/dev/vda1",job="node",instance="node-exporter:9100"}'
+        values: '100x30'
+      - series: 'node_filesystem_readonly{fstype="ext4",mountpoint="/",device="/dev/vda1",job="node",instance="node-exporter:9100"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SpDiskSpaceCritical
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              fstype: ext4
+              mountpoint: /
+              device: /dev/vda1
+              job: node
+              instance: node-exporter:9100
+            exp_annotations:
+              summary: "Диск почти заполнен"
+              description: "На / свободно 4%."
+              runbook: SpDiskSpaceCritical
+
+  - name: SpDiskSpaceCritical stays quiet at 5 percent free
+    interval: 1m
+    input_series:
+      - series: 'node_filesystem_avail_bytes{fstype="ext4",mountpoint="/",device="/dev/vda1",job="node",instance="node-exporter:9100"}'
+        values: '5x30'
+      - series: 'node_filesystem_size_bytes{fstype="ext4",mountpoint="/",device="/dev/vda1",job="node",instance="node-exporter:9100"}'
+        values: '100x30'
+      - series: 'node_filesystem_readonly{fstype="ext4",mountpoint="/",device="/dev/vda1",job="node",instance="node-exporter:9100"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: SpDiskSpaceCritical
+        exp_alerts: []
+
+  # --- SpMemoryLow -----------------------------------------------------------------------------
+  - name: SpMemoryLow fires below 10 percent available
+    interval: 1m
+    input_series:
+      - series: 'node_memory_MemAvailable_bytes{job="node",instance="node-exporter:9100"}'
+        values: '9x30'
+      - series: 'node_memory_MemTotal_bytes{job="node",instance="node-exporter:9100"}'
+        values: '100x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: SpMemoryLow
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: node
+              instance: node-exporter:9100
+            exp_annotations:
+              summary: "Мало свободной памяти"
+              description: "Доступно 9% оперативной памяти."
+              runbook: SpMemoryLow
+
+  - name: SpMemoryLow stays quiet at 10 percent available
+    interval: 1m
+    input_series:
+      - series: 'node_memory_MemAvailable_bytes{job="node",instance="node-exporter:9100"}'
+        values: '10x30'
+      - series: 'node_memory_MemTotal_bytes{job="node",instance="node-exporter:9100"}'
+        values: '100x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: SpMemoryLow
+        exp_alerts: []

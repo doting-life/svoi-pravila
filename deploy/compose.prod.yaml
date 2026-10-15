@@ -141,6 +141,7 @@ services:
     command: ["/usr/bin/caddy", "run", "--config", "/etc/caddy/Caddyfile.prod", "--adapter", "caddyfile"]
     environment:
       SP_DOMAIN: ${SP_DOMAIN}
+      SP_GRAFANA_DOMAIN: ${SP_GRAFANA_DOMAIN}
       SP_ACME_EMAIL: ${SP_ACME_EMAIL}
       SP_TELEGRAM_WEBHOOK_PATH_SECRET: ${SP_TELEGRAM_WEBHOOK_PATH_SECRET}
     ports:
@@ -151,6 +152,7 @@ services:
     networks:
       edge:
         ipv4_address: 172.30.250.10
+      grafana_proxy:
     depends_on:
       api:
         condition: service_healthy
@@ -168,15 +170,77 @@ services:
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=15d
       - --web.listen-address=0.0.0.0:9090
+      - --query.timeout=30s
     volumes:
       - ../ops/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../ops/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus_data:/prometheus
     networks:
       - metrics
       - observability
+      - alerting
     tmpfs:
       - /tmp
     mem_limit: 512m
+
+  alertmanager:
+    <<: *hardened
+    image: ${ALERTMANAGER_IMAGE}
+    user: "65534:65534"
+    # A single instance: no cluster listener, silences and the notification log live in the volume.
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.listen-address=0.0.0.0:9093
+      - --cluster.listen-address=
+    volumes:
+      - ../ops/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - ../ops/alertmanager/telegram.tmpl:/etc/alertmanager/telegram.tmpl:ro
+      - /etc/svoi-pravila/alertmanager:/etc/svoi-pravila/alertmanager:ro
+      - alertmanager_data:/alertmanager
+    networks:
+      - alerting
+      - egress
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:9093/-/ready >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
+    tmpfs:
+      - /tmp
+    mem_limit: 64m
+
+  node-exporter:
+    <<: *hardened
+    image: ${NODE_EXPORTER_IMAGE}
+    user: "65534:65534"
+    # Host metrics only: no host name, no hardware addresses (uname, netclass, dmi stay off).
+    pid: host
+    command:
+      - --path.rootfs=/host
+      - --web.listen-address=0.0.0.0:9100
+      - --collector.disable-defaults
+      - --collector.cpu
+      - --collector.meminfo
+      - --collector.loadavg
+      - --collector.filesystem
+      - --collector.diskstats
+      - --collector.netdev
+      - --collector.pressure
+      - --collector.stat
+      - --collector.time
+      - --collector.textfile
+      - --collector.textfile.directory=/textfile
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run|var/lib/docker/.+|var/lib/containers/storage/.+)($$|/)
+    volumes:
+      - /:/host:ro,rslave
+      - /srv/svoi-pravila/metrics/textfile:/textfile:ro
+    networks:
+      - metrics
+    tmpfs:
+      - /tmp
+    mem_limit: 64m
 
   grafana:
     <<: *hardened
@@ -194,18 +258,41 @@ services:
       GF_PATHS_PROVISIONING: /etc/grafana/provisioning
       GF_PATHS_PLUGINS: /usr/share/grafana/plugins
       GF_SERVER_HTTP_ADDR: "0.0.0.0"
+      GF_SERVER_DOMAIN: ${SP_GRAFANA_DOMAIN}
+      GF_SERVER_ROOT_URL: https://${SP_GRAFANA_DOMAIN}/
+      GF_SERVER_ENFORCE_DOMAIN: "true"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "false"
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_SECURITY_COOKIE_SAMESITE: strict
+      GF_SECURITY_STRICT_TRANSPORT_SECURITY: "true"
+      GF_SECURITY_ALLOW_EMBEDDING: "false"
+      GF_SECURITY_DISABLE_BRUTE_FORCE_LOGIN_PROTECTION: "false"
+      GF_SECURITY_DISABLE_IP_ADDRESS_LOGIN_PROTECTION: "false"
+      GF_SECURITY_CONTENT_SECURITY_POLICY: "true"
+      # Grafana's default template without grafana.com in connect-src ($$ keeps Compose from
+      # interpolating Grafana's own placeholders).
+      GF_SECURITY_CONTENT_SECURITY_POLICY_TEMPLATE: >-
+        script-src 'self' 'unsafe-eval' 'unsafe-inline' 'strict-dynamic' $$NONCE;object-src 'none';font-src 'self';style-src 'self' 'unsafe-inline' blob:;img-src * data: blob:;base-uri 'self';connect-src 'self' *.cartocdn.com ws://$$ROOT_PATH wss://$$ROOT_PATH;manifest-src 'self';media-src 'none';form-action 'self' $$FORM_ACTION_ADDITIONAL_HOSTS;
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_USERS_AUTO_ASSIGN_ORG_ROLE: Viewer
+      GF_USERS_VIEWERS_CAN_EDIT: "false"
+      GF_SNAPSHOTS_ENABLED: "false"
+      GF_SNAPSHOTS_EXTERNAL_ENABLED: "false"
+      GF_PUBLIC_DASHBOARDS_ENABLED: "false"
+      GF_PLUGINS_PLUGIN_ADMIN_ENABLED: "false"
+      GF_METRICS_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/svoi-analytics.json
       POSTGRES_DB: ${POSTGRES_DB}
       SP_GRAFANA_DB_USER: ${SP_GRAFANA_DB_USER:-grafana_reader}
       SP_GRAFANA_DB_PASSWORD: ${SP_GRAFANA_DB_PASSWORD}
-    ports:
-      - "127.0.0.1:3000:3000"
     volumes:
       - grafana_data:/var/lib/grafana
+      - ../ops/grafana/grafana.ini:/etc/grafana/grafana.ini:ro
       - ../ops/grafana/provisioning:/etc/grafana/provisioning:ro
       - ../ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
     networks:
       - observability
-      - grafana_edge
+      - grafana_proxy
     depends_on:
       postgres:
         condition: service_healthy
@@ -244,6 +331,7 @@ services:
       RCLONE_CONFIG: /etc/svoi-pravila/backup-remote/rclone.conf
     volumes:
       - /srv/svoi-pravila/backups:/backups
+      - /srv/svoi-pravila/metrics/textfile:/metrics
       - /etc/svoi-pravila/backup-remote:/etc/svoi-pravila/backup-remote:ro
     networks:
       - data
@@ -263,7 +351,10 @@ networks:
     internal: true
   observability:
     internal: true
-  grafana_edge:
+  alerting:
+    internal: true
+  grafana_proxy:
+    internal: true
   egress:
 
 volumes:
@@ -272,3 +363,4 @@ volumes:
   caddy_data:
   grafana_data:
   prometheus_data:
+  alertmanager_data:

@@ -98,6 +98,9 @@ async def test_analytics_read_role_upgrade_downgrade_as_createrole(
         # upgrade), so the CREATEROLE user is not its owner — grant ADMIN for the test.
         async with admin.connect() as conn:
             await conn.execute(text(f"GRANT svoi_analytics_read TO {mig_user} WITH ADMIN OPTION"))
+            # temp_file_limit is superuser-only: a non-superuser migrator may preset it on the
+            # reader role only when a superuser has granted it the SET privilege (Postgres 15+).
+            await conn.execute(text(f"GRANT SET ON PARAMETER temp_file_limit TO {mig_user}"))
 
         mig_engine = create_async_engine(mig_url, hide_parameters=True)
         try:
@@ -111,5 +114,6 @@ async def test_analytics_read_role_upgrade_downgrade_as_createrole(
         await drop_temporary_database(migrated_schema, temp_name)
         async with admin.connect() as conn:
             await _drop_role_if_exists(conn, reader)
+            await conn.execute(text(f"REVOKE SET ON PARAMETER temp_file_limit FROM {mig_user}"))
             await _drop_role_if_exists(conn, mig_user)
         await admin.dispose()

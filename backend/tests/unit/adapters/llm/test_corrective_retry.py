@@ -470,8 +470,8 @@ async def test_the_observer_gets_every_invalid_attempt_with_the_answer_fields() 
     ]
     assert observer.attempts[0].texts == (
         ("check", "c"),
-        ("softer", "давай обсудим спокойно"),
         ("firmer", "ты сука"),
+        ("softer", "давай обсудим спокойно"),
         ("safety", "ok"),
     )
     assert "сука" not in repr(observer.attempts[0])

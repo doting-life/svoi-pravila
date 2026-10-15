@@ -14,7 +14,13 @@ from svoi_pravila.application.ports.rewrite_judge import SlotVerdicts, Verdict
 from svoi_pravila.domain.enums import RewriteGoal
 from svoi_pravila.domain.lexicon import normalize_lexicon_text
 from svoi_pravila.evals.judge_calibration import CRITERIA, SLOT_CRITERIA, defect_value
-from svoi_pravila.evals.judge_cases import JudgeCase, load_judge_cases, parse_judge_case
+from svoi_pravila.evals.judge_cases import (
+    SOURCE_EVAL_OUTPUT,
+    SOURCE_SYNTHETIC,
+    JudgeCase,
+    load_judge_cases,
+    parse_judge_case,
+)
 
 _ROOT = Path(__file__).resolve().parents[3]
 _DATA = _ROOT / "evals" / "data" / "judge_calibration_v1.jsonl"
@@ -40,6 +46,19 @@ _MIN_PER_GOAL = 6
 _MIN_WITH_RULES = 8
 _MIN_PER_FAILURE_PATTERN = 3
 _MIN_DEFECT_SHARE = 0.25
+_MAX_FAMILY_ITEMS = 8
+_MAX_SOFTER_PATTERN_ITEMS = 6
+_MAX_FIRMER_PATTERN_ITEMS = 6
+_MIN_ELIGIBLE_PAIRS = 40
+_MIN_LADDER_NO_SHARE = 0.3
+_MIN_EVAL_OUTPUT = 50
+_MIN_EVAL_PROFANITY = 15
+_MIN_EVAL_GOAL = 15
+_MIN_EVAL_LADDER_OR_BASE = 10
+_MIN_EVAL_FULLY_CORRECT = 10
+_SOFTER_PATTERN = re.compile(r"иногда|бывает|бывают|случа(ет|ют)ся", re.IGNORECASE)
+_FIRMER_PATTERN = re.compile(r",\s+[^\s,.!?]+[.!?]*$")
+_FAMILY_SUFFIX = re.compile(r"-\d+$")
 _MIN_SINGLE_DEFECT_SHARE = 0.6
 _MAX_WRECK_ITEMS = 16
 _MIN_COLLOQUIAL_CLEAN = 6
@@ -59,6 +78,14 @@ _OBSCENE_ROOTS = (
 
 def _cases() -> list[JudgeCase]:
     return load_judge_cases(_DATA)
+
+
+def _synthetic() -> list[JudgeCase]:
+    return [case for case in _cases() if case.source == SOURCE_SYNTHETIC]
+
+
+def _eval_output() -> list[JudgeCase]:
+    return [case for case in _cases() if case.source == SOURCE_EVAL_OUTPUT]
 
 
 def _values(cases: list[JudgeCase], criterion: str) -> list[Verdict]:
@@ -126,7 +153,10 @@ def test_every_failure_pattern_has_at_least_three_items(prefix: str) -> None:
 @pytest.mark.unit
 @pytest.mark.parametrize("criterion", CRITERIA)
 def test_defect_label_share_per_criterion_is_at_least_twenty_five_percent(criterion: str) -> None:
-    values = [value for value in _values(_cases(), criterion) if value is not Verdict.NA]
+    # The synthetic items that are not part of the good-pair coverage; the real outputs
+    # keep the distribution of the model and the eligible pairs are good by definition.
+    cases = [case for case in _synthetic() if not case.ladder_eligible]
+    values = [value for value in _values(cases, criterion) if value is not Verdict.NA]
     assert values
     share = sum(value is defect_value(criterion) for value in values) / len(values)
     assert share >= _MIN_DEFECT_SHARE
@@ -172,7 +202,7 @@ def test_colloquial_words_that_are_not_vulgar_are_clean() -> None:
 
 @pytest.mark.unit
 def test_obscene_forms_are_flagged_and_each_form_is_used_once() -> None:
-    cases = _cases()
+    cases = _synthetic()
     texts = [
         (case.id, name, getattr(case, name)) for case in cases for name in ("softer", "firmer")
     ]
@@ -195,7 +225,7 @@ def test_labels_follow_the_na_rules() -> None:
 
 
 @pytest.mark.unit
-def test_no_draft_equals_another_dataset_draft_or_a_prompt_example() -> None:
+def test_no_synthetic_draft_equals_another_dataset_draft_or_a_prompt_example() -> None:
     other = {
         normalize_lexicon_text(str(json.loads(line).get("draft", "")))
         for path in _OTHER_DRAFTS
@@ -207,16 +237,79 @@ def test_no_draft_equals_another_dataset_draft_or_a_prompt_example() -> None:
         for path in _PROMPTS.rglob("*.md")
         for match in _DRAFT_LINE.findall(path.read_text(encoding="utf-8"))
     }
-    drafts = {normalize_lexicon_text(case.draft) for case in _cases()}
+    drafts = {normalize_lexicon_text(case.draft) for case in _synthetic()}
     assert not drafts & (other | examples)
 
 
 @pytest.mark.unit
-def test_variants_are_never_blank_and_drafts_are_unique() -> None:
-    cases = _cases()
-    assert all(case.softer.strip() and case.firmer.strip() for case in cases)
-    drafts = [normalize_lexicon_text(case.draft) for case in cases if case.goal is None]
+def test_variants_are_never_blank_and_synthetic_drafts_are_unique() -> None:
+    assert all(case.softer.strip() and case.firmer.strip() for case in _cases())
+    drafts = [normalize_lexicon_text(case.draft) for case in _synthetic() if case.goal is None]
     assert len(set(drafts)) == len(drafts)
+
+
+def _is_good(slot: SlotVerdicts) -> bool:
+    return slot.all_good
+
+
+@pytest.mark.unit
+def test_every_item_has_a_source_and_the_real_output_block_has_at_least_fifty_pairs() -> None:
+    assert {case.source for case in _cases()} == {SOURCE_SYNTHETIC, SOURCE_EVAL_OUTPUT}
+    assert len(_eval_output()) >= _MIN_EVAL_OUTPUT
+    assert all(case.id.startswith("eo-") for case in _eval_output())
+    assert not any(case.id.startswith("eo-") for case in _synthetic())
+
+
+@pytest.mark.unit
+def test_the_real_output_block_is_stratified() -> None:
+    cases = _eval_output()
+    profanity = [case for case in cases if case.id.startswith("eo-prof-")]
+    goal = [case for case in cases if case.id.startswith("eo-goal-")]
+    ladder_or_base = [case for case in cases if case.id.startswith(("eo-ladder-", "eo-i"))]
+    fully_correct = [
+        case for case in cases if case.ladder_eligible and case.expected.ladder_ok is Verdict.YES
+    ]
+    assert len(profanity) >= _MIN_EVAL_PROFANITY
+    assert len(goal) >= _MIN_EVAL_GOAL
+    assert len(ladder_or_base) >= _MIN_EVAL_LADDER_OR_BASE
+    assert len(fully_correct) >= _MIN_EVAL_FULLY_CORRECT
+
+
+@pytest.mark.unit
+def test_every_synthetic_id_family_has_at_most_eight_items() -> None:
+    families = Counter(_FAMILY_SUFFIX.sub("", case.id) for case in _synthetic())
+    assert max(families.values()) <= _MAX_FAMILY_ITEMS, families.most_common(3)
+
+
+@pytest.mark.unit
+def test_the_softer_aside_pattern_is_used_at_most_six_times() -> None:
+    users = [case.id for case in _synthetic() if _SOFTER_PATTERN.search(case.softer)]
+    assert len(users) <= _MAX_SOFTER_PATTERN_ITEMS, users
+
+
+@pytest.mark.unit
+def test_the_firmer_trailing_insult_pattern_is_used_at_most_six_times() -> None:
+    users = [
+        case.id
+        for case in _synthetic()
+        if _FIRMER_PATTERN.search(case.firmer.strip()) and case.expected.firmer.clean is Verdict.NO
+    ]
+    assert len(users) <= _MAX_FIRMER_PATTERN_ITEMS, users
+
+
+@pytest.mark.unit
+def test_at_least_forty_pairs_are_eligible_and_a_third_of_them_break_the_ladder() -> None:
+    eligible = [case for case in _cases() if case.ladder_eligible]
+    assert len(eligible) >= _MIN_ELIGIBLE_PAIRS
+    broken = [case for case in eligible if case.expected.ladder_ok is Verdict.NO]
+    assert len(broken) / len(eligible) >= _MIN_LADDER_NO_SHARE
+
+
+@pytest.mark.unit
+def test_an_eligible_pair_has_only_good_slot_labels() -> None:
+    for case in _cases():
+        good = _is_good(case.expected.softer) and _is_good(case.expected.firmer)
+        assert case.ladder_eligible is good, case.id
 
 
 def _item() -> dict[str, Any]:
@@ -229,6 +322,7 @@ def _item() -> dict[str, Any]:
     }
     return {
         "id": "x",
+        "source": "synthetic",
         "draft": "d",
         "goal": None,
         "rules": [],
@@ -241,6 +335,22 @@ def _item() -> dict[str, Any]:
 @pytest.mark.unit
 def test_a_well_formed_item_parses() -> None:
     assert parse_judge_case(_item()).id == "x"
+
+
+@pytest.mark.unit
+def test_an_unknown_source_is_rejected() -> None:
+    raw = _item()
+    raw["source"] = "invented"
+    with pytest.raises(ValueError, match="source"):
+        parse_judge_case(raw)
+
+
+@pytest.mark.unit
+def test_a_missing_source_is_rejected() -> None:
+    raw = _item()
+    del raw["source"]
+    with pytest.raises(ValueError, match="missing"):
+        parse_judge_case(raw)
 
 
 @pytest.mark.unit

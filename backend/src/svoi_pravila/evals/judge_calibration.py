@@ -7,15 +7,21 @@ The judge grades every calibration item once. Per criterion the numbers are:
   defect. A defect is ``no`` for ``clean``, ``meaning_kept``, ``goal_done``, ``rule_done`` and
   ``ladder_ok``, and ``yes`` for ``invented``.
 
-A judge call without verdicts reproduces nothing and finds no defect. The calibration is
-``passed`` when every criterion has accuracy >= 0.90 and defect recall >= 0.85, and ``clean``
-has defect recall >= 0.95. The committed file holds numbers only, never text.
+A judge call without verdicts reproduces nothing and finds no defect. ``ladder_ok`` is measured
+only on eligible pairs: pairs whose every slot label is good (see ``judge_cases``).
+
+The numbers are given overall and per source of the items (``synthetic``, ``eval_output``). The
+calibration is ``passed`` when, overall, every criterion has accuracy >= 0.90 and defect recall
+>= 0.85 and ``clean`` has defect recall >= 0.95, and on ``eval_output`` every criterion has
+accuracy >= 0.85 and ``clean`` has defect recall >= 0.95. The committed file holds numbers only,
+never text.
 """
 
 from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -33,18 +39,19 @@ from svoi_pravila.application.ports.rewrite_judge import (
     Verdict,
 )
 from svoi_pravila.benchmarks.runner import SpendTracker
-from svoi_pravila.evals.judge_cases import JudgeCase
+from svoi_pravila.evals.judge_cases import SOURCE_EVAL_OUTPUT, SOURCES, JudgeCase
 
 RUBRIC_VERSION = "judge_rewrite@v1"
 MIN_ACCURACY = 0.90
 MIN_DEFECT_RECALL = 0.85
 MIN_CLEAN_DEFECT_RECALL = 0.95
+MIN_REAL_ACCURACY = 0.85
 
 SLOT_CRITERIA = ("clean", "meaning_kept", "invented", "goal_done", "rule_done")
 PAIR_CRITERION = "ladder_ok"
 CRITERIA = (*SLOT_CRITERIA, PAIR_CRITERION)
 
-_FILE_VERSION = 1
+_FILE_VERSION = 2
 _RATE_DIGITS = 4
 _MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _STOP_KINDS = frozenset({UnavailableKind.RATE_LIMITED, UnavailableKind.AUTH})
@@ -79,7 +86,7 @@ class CriterionStats:
     defect_recall: float | None
 
     def passes(self) -> bool:
-        """True when accuracy and defect recall reach their thresholds."""
+        """True when accuracy and defect recall reach their overall thresholds."""
         floor = MIN_CLEAN_DEFECT_RECALL if self.criterion == "clean" else MIN_DEFECT_RECALL
         return (
             self.accuracy is not None
@@ -87,6 +94,14 @@ class CriterionStats:
             and self.accuracy >= MIN_ACCURACY
             and self.defect_recall >= floor
         )
+
+    def passes_real(self) -> bool:
+        """True when the numbers over ``eval_output`` items reach the real-output thresholds."""
+        if self.accuracy is None or self.accuracy < MIN_REAL_ACCURACY:
+            return False
+        if self.criterion != "clean":
+            return True
+        return self.defect_recall is not None and self.defect_recall >= MIN_CLEAN_DEFECT_RECALL
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,11 +113,15 @@ class Calibration:
     items: int
     failed_items: int
     criteria: tuple[CriterionStats, ...]
+    by_source: tuple[tuple[str, tuple[CriterionStats, ...]], ...]
 
     @property
     def passed(self) -> bool:
-        """True when every criterion passes."""
-        return all(stats.passes() for stats in self.criteria)
+        """True when every criterion passes overall and on the ``eval_output`` items."""
+        real = dict(self.by_source)[SOURCE_EVAL_OUTPUT]
+        return all(stats.passes() for stats in self.criteria) and all(
+            stats.passes_real() for stats in real
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,10 +151,15 @@ def _slot_value(slot: SlotVerdicts, criterion: str) -> Verdict:
 def _values(
     outcome: ItemOutcome, criterion: str
 ) -> list[tuple[str | None, Verdict, Verdict | None]]:
-    """(slot, expected, got) for each value of ``criterion`` in one item."""
+    """(slot, expected, got) for each value of ``criterion`` in one item.
+
+    ``ladder_ok`` has a value only on an eligible pair.
+    """
     expected = outcome.case.expected
     result = outcome.result
     if criterion == PAIR_CRITERION:
+        if not outcome.case.ladder_eligible:
+            return []
         return [(None, expected.ladder_ok, None if result is None else result.ladder_ok)]
     return [
         (
@@ -161,6 +185,10 @@ def criterion_stats(outcomes: list[ItemOutcome], criterion: str) -> CriterionSta
     )
 
 
+def _all_criteria(outcomes: list[ItemOutcome]) -> tuple[CriterionStats, ...]:
+    return tuple(criterion_stats(outcomes, criterion) for criterion in CRITERIA)
+
+
 def calibrate(model: str, outcomes: list[ItemOutcome]) -> Calibration:
     """Reduce the outcomes of a complete run to the committed numbers."""
     return Calibration(
@@ -168,7 +196,11 @@ def calibrate(model: str, outcomes: list[ItemOutcome]) -> Calibration:
         rubric=RUBRIC_VERSION,
         items=len(outcomes),
         failed_items=sum(outcome.result is None for outcome in outcomes),
-        criteria=tuple(criterion_stats(outcomes, criterion) for criterion in CRITERIA),
+        criteria=_all_criteria(outcomes),
+        by_source=tuple(
+            (source, _all_criteria([item for item in outcomes if item.case.source == source]))
+            for source in SOURCES
+        ),
     )
 
 
@@ -236,6 +268,18 @@ def calibration_path(directory: Path, model: str) -> Path:
     return directory / f"judge_calibration_{model}_v1.json"
 
 
+def _criteria_payload(criteria: tuple[CriterionStats, ...]) -> dict[str, object]:
+    return {
+        stats.criterion: {
+            "labels": stats.labels,
+            "accuracy": stats.accuracy,
+            "defects": stats.defects,
+            "defect_recall": stats.defect_recall,
+        }
+        for stats in criteria
+    }
+
+
 def calibration_payload(calibration: Calibration) -> dict[str, object]:
     """The C0 content of the committed file: rubric, model and per-criterion numbers."""
     return {
@@ -244,14 +288,9 @@ def calibration_payload(calibration: Calibration) -> dict[str, object]:
         "model": calibration.model,
         "items": calibration.items,
         "failed_items": calibration.failed_items,
-        "criteria": {
-            stats.criterion: {
-                "labels": stats.labels,
-                "accuracy": stats.accuracy,
-                "defects": stats.defects,
-                "defect_recall": stats.defect_recall,
-            }
-            for stats in calibration.criteria
+        "criteria": _criteria_payload(calibration.criteria),
+        "sources": {
+            source: _criteria_payload(criteria) for source, criteria in calibration.by_source
         },
         "passed": calibration.passed,
     }
@@ -295,6 +334,27 @@ def _cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
 
 
+def _stats_table(
+    title: str,
+    criteria: tuple[CriterionStats, ...],
+    status: Callable[[CriterionStats], bool] | None,
+) -> list[str]:
+    """A table of one source; ``status`` is ``None`` where the source has no threshold."""
+    return [
+        f"## {title}",
+        "",
+        "| criterion | labels | accuracy | defects | defect recall | status |",
+        "|---|---:|---:|---:|---:|---|",
+        *(
+            f"| {stats.criterion} | {stats.labels} | {_percent(stats.accuracy)} | {stats.defects} "
+            f"| {_percent(stats.defect_recall)} "
+            f"| {'-' if status is None else 'PASS' if status(stats) else 'FAIL'} |"
+            for stats in criteria
+        ),
+        "",
+    ]
+
+
 def render_calibration_report(
     calibration: Calibration, outcomes: list[ItemOutcome], *, spent_billable: int
 ) -> str:
@@ -308,14 +368,13 @@ def render_calibration_report(
         f"- billable tokens: {spent_billable}",
         f"- passed: {'yes' if calibration.passed else 'no'}",
         "",
-        "| criterion | labels | accuracy | defects | defect recall | status |",
-        "|---|---:|---:|---:|---:|---|",
-        *(
-            f"| {stats.criterion} | {stats.labels} | {_percent(stats.accuracy)} | {stats.defects} "
-            f"| {_percent(stats.defect_recall)} | {'PASS' if stats.passes() else 'FAIL'} |"
-            for stats in calibration.criteria
+        *_stats_table("Overall", calibration.criteria, CriterionStats.passes),
+        *_stats_table("synthetic", dict(calibration.by_source)["synthetic"], None),
+        *_stats_table(
+            "eval_output",
+            dict(calibration.by_source)[SOURCE_EVAL_OUTPUT],
+            CriterionStats.passes_real,
         ),
-        "",
         "## Disagreements",
         "",
         "| item | slot | criterion | expected | judge | draft | softer | firmer |",

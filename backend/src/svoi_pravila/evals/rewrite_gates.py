@@ -13,7 +13,9 @@ and are reported as a count.
 
 The judge gates J1-J6 are measured over the usable calls the judge was asked about. A judge
 failure (no verdicts) stays in every denominator and never counts as a pass; J6 fails while
-any judge call failed, because its slots are unverified. J1-J6 are ``n/a`` unless the judge
+any judge call failed, because its slots are unverified. J5 is measured only over the judged
+calls whose two slots the judge itself found otherwise good (``SlotVerdicts.all_good``): the
+ladder is a single-defect criterion. J1-J6 are ``n/a`` unless the judge
 is calibrated (a passed calibration file for the model and the rubric version).
 """
 
@@ -143,6 +145,13 @@ def _judge_metrics(ok: list[RewriteRunRecord]) -> JudgeMetrics:
     rule_asked = [record for record in asked if record.had_rules]
     goal_verdicts = [verdict for record in goal_asked for _, verdict in _slots(record)]
     rule_verdicts = [verdict for record in rule_asked for _, verdict in _slots(record)]
+    eligible_ladders = [
+        record.judgement.ladder_ok
+        for record in asked
+        if record.judgement is not None
+        and record.judgement.softer.all_good
+        and record.judgement.firmer.all_good
+    ]
     return JudgeMetrics(
         judged_calls=len(judged),
         failed_calls=len(asked) - len(judged),
@@ -157,11 +166,7 @@ def _judge_metrics(ok: list[RewriteRunRecord]) -> JudgeMetrics:
             sum(v.rule_done is Verdict.YES for v in rule_verdicts), 2 * len(rule_asked)
         ),
         ladder_ok_share=_share(
-            sum(
-                record.judgement is not None and record.judgement.ladder_ok is Verdict.YES
-                for record in asked
-            ),
-            len(asked),
+            sum(ladder is Verdict.YES for ladder in eligible_ladders), len(eligible_ladders)
         ),
         closing_ask_with_rule=_closing_ask_rate([r for r in ok if r.had_rules]),
         closing_ask_without_rule=_closing_ask_rate([r for r in ok if not r.had_rules]),

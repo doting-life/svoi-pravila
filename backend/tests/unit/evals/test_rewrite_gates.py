@@ -450,6 +450,27 @@ def test_j5_counts_calls_where_the_ladder_holds() -> None:
 
 
 @pytest.mark.unit
+def test_j5_ignores_calls_where_the_judge_found_another_defect() -> None:
+    defect = {"meaning_kept": _NO}
+    records = _judged_pass(bad_kind="plain", bad=10, defect=defect, ladder_bad=10)
+    gates = _by_gate(records)
+    assert gates["J5"].status is GateStatus.PASSED
+    assert gates["J5"].value == "100.0 %"
+    assert gates["J1"].status is GateStatus.FAILED
+
+
+@pytest.mark.unit
+def test_j5_counts_the_ladder_only_on_calls_that_are_otherwise_good() -> None:
+    # ten plain calls carry a defect and a broken ladder and stay out; of the 25 eligible calls
+    # five break the ladder: 20/25.
+    records = [
+        *_judged_pass(bad_kind="plain", bad=10, defect={"clean": _NO}, ladder_bad=10),
+        *(_call("goal", 100 + index, ladder_ok=_NO) for index in range(5)),
+    ]
+    assert _by_gate(records)["J5"].value == "80.0 %"
+
+
+@pytest.mark.unit
 def test_j6_fails_on_one_flagged_slot_and_lists_it_as_case_run_slot() -> None:
     gates = _by_gate(_judged_pass(bad=1, defect={"clean": _NO}))
     assert gates["J6"].status is GateStatus.FAILED
@@ -464,7 +485,7 @@ def test_a_judge_failure_is_never_a_pass() -> None:
     assert (metrics.judge.judged_calls, metrics.judge.failed_calls) == (30, 1)
     gates = _by_gate(records)
     assert gates["J1"].value == "96.8 %"
-    assert gates["J5"].value == "96.8 %"
+    assert gates["J5"].value == "100.0 %"
     assert gates["J6"].status is GateStatus.FAILED
     assert gates["J6"].value == "0 slots; 1 judge failures"
     only_failures = _by_gate([_record(check_ok=True, judge_failed=True)])

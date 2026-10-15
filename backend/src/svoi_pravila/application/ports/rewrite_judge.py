@@ -49,6 +49,17 @@ class SlotVerdicts:
             msg = "clean, meaning_kept and invented are never na"
             raise ValueError(msg)
 
+    @property
+    def all_good(self) -> bool:
+        """True when no criterion is a defect; ``na`` of ``goal_done``/``rule_done`` is good."""
+        return (
+            self.clean is Verdict.YES
+            and self.meaning_kept is Verdict.YES
+            and self.invented is Verdict.NO
+            and self.goal_done is not Verdict.NO
+            and self.rule_done is not Verdict.NO
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class JudgeResult:

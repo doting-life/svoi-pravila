@@ -22,7 +22,14 @@ rules, which restate the judge prompt; a label that breaks one is a defect of th
   always when there are no rules).
 * R6 ``ladder_ok`` is ``no`` when ``firmer`` has softeners or excuses or adds new pressure
   (a threat, an ultimatum, a jab), when ``softer`` is not warmer, or when the two differ only by
-  punctuation. ``clean`` does not affect ``ladder_ok``.
+  punctuation. ``clean`` does not affect ``ladder_ok``. Only an eligible pair is measured: one
+  whose every slot label is good (``clean`` yes, ``meaning_kept`` yes, ``invented`` no,
+  ``goal_done`` and ``rule_done`` yes or ``na``). On every other pair the label stays in the file
+  but takes no part in the calibration.
+
+Every item has a ``source``: ``synthetic`` (written for the set) or ``eval_output`` (a real
+``softer``/``firmer`` pair of a rewrite eval run, copied exactly and labelled by R1-R6; these
+may repeat drafts of ``rewrite_v2.jsonl``).
 
 Quotas are enforced by ``tests/unit/evals/test_judge_calibration_dataset.py``.
 """
@@ -38,7 +45,11 @@ from svoi_pravila.application.ports.rewrite_judge import SlotVerdicts, Verdict
 from svoi_pravila.domain.enums import RewriteGoal
 from svoi_pravila.evals.cases import parse_rules
 
-_FIELDS = frozenset({"id", "draft", "goal", "rules", "softer", "firmer", "expected"})
+SOURCE_SYNTHETIC = "synthetic"
+SOURCE_EVAL_OUTPUT = "eval_output"
+SOURCES = (SOURCE_SYNTHETIC, SOURCE_EVAL_OUTPUT)
+
+_FIELDS = frozenset({"id", "source", "draft", "goal", "rules", "softer", "firmer", "expected"})
 _SLOT_FIELDS = frozenset({"clean", "meaning_kept", "invented", "goal_done", "rule_done"})
 _EXPECTED_FIELDS = frozenset({"softer", "firmer", "ladder_ok"})
 
@@ -62,12 +73,18 @@ class JudgeCase:
     """One draft with two variants and the labels the judge is calibrated against."""
 
     id: str
+    source: str
     draft: str
     goal: RewriteGoal | None
     rules: tuple[RuleContext, ...]
     softer: str
     firmer: str
     expected: ExpectedVerdicts
+
+    @property
+    def ladder_eligible(self) -> bool:
+        """True when every slot label is good, so ``ladder_ok`` is measured on this pair."""
+        return self.expected.softer.all_good and self.expected.firmer.all_good
 
 
 def _text(raw: dict[str, object], field_name: str) -> str:
@@ -76,6 +93,13 @@ def _text(raw: dict[str, object], field_name: str) -> str:
         msg = f"{field_name} must be a non-empty string"
         raise ValueError(msg)
     return value
+
+
+def _source(raw: object) -> str:
+    if raw not in SOURCES:
+        msg = f"source must be one of {', '.join(SOURCES)}"
+        raise ValueError(msg)
+    return str(raw)
 
 
 def _verdict(raw: object, field_name: str) -> Verdict:
@@ -115,6 +139,7 @@ def parse_judge_case(raw: object) -> JudgeCase:
     rules = parse_rules(fields["rules"])
     case = JudgeCase(
         id=_text(fields, "id"),
+        source=_source(fields["source"]),
         draft=_text(fields, "draft"),
         goal=goal,
         rules=rules,

@@ -27,7 +27,6 @@ EvalCategory = Literal[
     "prompt_injection",
     "coercive_threat",
     "rule_leak",
-    "rule_effect",
 ]
 ExpectedVerdict = Literal["ok", "crisis", "refuse_manipulation"]
 OPERATIONS: tuple[RunOperation, ...] = ("rewrite", "decode_stream")
@@ -42,7 +41,6 @@ CATEGORIES: tuple[EvalCategory, ...] = (
     "prompt_injection",
     "coercive_threat",
     "rule_leak",
-    "rule_effect",
 )
 EXPECTED_VERDICTS: tuple[ExpectedVerdict, ...] = ("ok", "crisis", "refuse_manipulation")
 _CATEGORY_RUN_RANK: dict[EvalCategory, int] = {
@@ -65,7 +63,6 @@ class EvalCase:
     rewrite: RewriteRequest | None = None
     decode: DecodeRequest | None = None
     stop_stems: tuple[str, ...] = ()
-    effect_pair: str | None = None
 
     def screen_text(self) -> str:
         """User-supplied text the crisis screen inspects."""
@@ -75,14 +72,6 @@ class EvalCase:
             return self.decode.incoming
         msg = f"case {self.id} has no request payload"
         raise ValueError(msg)
-
-    def has_rules(self) -> bool:
-        """True when the case supplies a non-empty rule context."""
-        if self.rewrite is not None:
-            return bool(self.rewrite.rules)
-        if self.decode is not None:
-            return bool(self.decode.rules)
-        return False
 
 
 def parse_rules(raw: object) -> tuple[RuleContext, ...]:
@@ -129,13 +118,8 @@ def parse_case(raw: object) -> EvalCase:
     rules = parse_rules(raw.get("rules"))
     smoke = bool(raw.get("smoke", False))
     stop_stems = _stop_stems(raw.get("stop_stems"))
-    effect_pair_raw = raw.get("effect_pair")
-    effect_pair = str(effect_pair_raw) if effect_pair_raw is not None else None
     if category == "rule_leak" and not stop_stems:
         msg = "rule_leak cases require stop_stems"
-        raise ValueError(msg)
-    if category == "rule_effect" and not effect_pair:
-        msg = "rule_effect cases require effect_pair"
         raise ValueError(msg)
     if operation == "rewrite":
         goal_raw = raw.get("goal")
@@ -146,7 +130,6 @@ def parse_case(raw: object) -> EvalCase:
             expected=expected,
             smoke=smoke,
             stop_stems=stop_stems,
-            effect_pair=effect_pair,
             rewrite=RewriteRequest(
                 draft=str(raw["draft"]),
                 goal=None if goal_raw is None else RewriteGoal(str(goal_raw)),
@@ -162,7 +145,6 @@ def parse_case(raw: object) -> EvalCase:
         expected=expected,
         smoke=smoke,
         stop_stems=stop_stems,
-        effect_pair=effect_pair,
         decode=DecodeRequest(
             incoming=str(raw["incoming"]),
             rules=rules,
@@ -280,7 +262,6 @@ def with_deadline(case: EvalCase, deadline: float) -> EvalCase:
             expected=case.expected,
             smoke=case.smoke,
             stop_stems=case.stop_stems,
-            effect_pair=case.effect_pair,
             rewrite=RewriteRequest(
                 draft=req.draft,
                 goal=req.goal,
@@ -300,7 +281,6 @@ def with_deadline(case: EvalCase, deadline: float) -> EvalCase:
         expected=case.expected,
         smoke=case.smoke,
         stop_stems=case.stop_stems,
-        effect_pair=case.effect_pair,
         decode=DecodeRequest(
             incoming=req_d.incoming,
             rules=req_d.rules,

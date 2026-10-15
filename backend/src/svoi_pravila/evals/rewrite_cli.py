@@ -9,11 +9,12 @@ from pathlib import Path
 from svoi_pravila.adapters.llm.gigachat.adapter import GigaChatTextGenerator
 from svoi_pravila.adapters.llm.gigachat.client import close_gigachat_client, create_gigachat_client
 from svoi_pravila.adapters.llm.gigachat.estimate import max_billable_for_request
-from svoi_pravila.application.lexicons import load_tone_lexicons_ru_v1
+from svoi_pravila.adapters.llm.gigachat.judge import GigaChatRewriteJudge, max_judge_billable
 from svoi_pravila.application.ports.generation import RewriteRequest
 from svoi_pravila.benchmarks.llm import _print_available_models
 from svoi_pravila.benchmarks.runner import SpendTracker
 from svoi_pravila.config import LlmToolSettings
+from svoi_pravila.evals.judge_calibration import judge_is_calibrated
 from svoi_pravila.evals.rewrite_cases import RewriteCase, load_rewrite_cases, merge_cases
 from svoi_pravila.evals.rewrite_gates import (
     Baseline,
@@ -25,12 +26,15 @@ from svoi_pravila.evals.rewrite_gates import (
 )
 from svoi_pravila.evals.rewrite_report import render_report
 from svoi_pravila.evals.rewrite_run import (
+    JUDGED_VARIANTS,
     ModelEval,
     RewriteEvalParams,
     run_rewrite_eval,
+    worst_case_judge_request,
 )
 
 _DEFAULT_DATA = "/app/evals/data/rewrite_v2.jsonl"
+_DEFAULT_BASELINES = "/app/evals/baselines"
 _ESTIMATE_HELP = (
     "Worst case per call: ceil(rendered system+user characters / 3) + the output cap, "
     "times the maximum attempts."
@@ -44,8 +48,8 @@ def _load_cases(args: argparse.Namespace) -> list[RewriteCase]:
     return merge_cases(cases, load_rewrite_cases(Path(args.extra_cases)))
 
 
-def _worst_case(case: RewriteCase) -> int:
-    return max_billable_for_request(
+def _worst_case(case: RewriteCase, *, judged: bool) -> int:
+    rewrite = max_billable_for_request(
         RewriteRequest(
             draft=case.draft,
             goal=case.goal,
@@ -54,6 +58,9 @@ def _worst_case(case: RewriteCase) -> int:
             deadline_seconds=1.0,
         )
     )
+    return rewrite + (
+        JUDGED_VARIANTS * max_judge_billable(worst_case_judge_request(case, 1.0)) if judged else 0
+    )
 
 
 def _models(args: argparse.Namespace, settings: LlmToolSettings) -> list[str]:
@@ -61,11 +68,14 @@ def _models(args: argparse.Namespace, settings: LlmToolSettings) -> list[str]:
     return list(dict.fromkeys(requested))
 
 
-def _print_dry_run(cases: list[RewriteCase], *, repeat: int, models: list[str]) -> None:
-    worst = [_worst_case(case) for case in cases]
+def _print_dry_run(
+    cases: list[RewriteCase], *, repeat: int, models: list[str], judge_model: str | None
+) -> None:
+    worst = [_worst_case(case, judged=judge_model is not None) for case in cases]
     print("Dry-run (no network calls).")
     print(_ESTIMATE_HELP)
     print(f"Models: {', '.join(models)}")
+    print(f"Judge model: {judge_model or 'none'}")
     print(f"Cases: {len(cases)}")
     print(f"Repeat: {repeat}")
     print(f"Total planned calls: {len(cases) * repeat * len(models)}")
@@ -86,7 +96,12 @@ async def async_main(args: argparse.Namespace) -> int:
     """Run the rewrite eval and write the local Markdown report to ``--out``."""
     settings = LlmToolSettings()
     if args.dry_run:
-        _print_dry_run(_load_cases(args), repeat=args.repeat, models=_models(args, settings))
+        _print_dry_run(
+            _load_cases(args),
+            repeat=args.repeat,
+            models=_models(args, settings),
+            judge_model=args.judge_model,
+        )
         return 0
     if not args.list_models and (args.max_tokens is None or args.out is None):
         msg = "--max-tokens and --out are required for live runs (or use --dry-run / --list-models)"
@@ -102,11 +117,18 @@ async def async_main(args: argparse.Namespace) -> int:
         if args.write_baseline is not None and len(models) != 1:
             msg = "--write-baseline needs exactly one --model"
             raise SystemExit(msg)
+        judge_calibrated = args.judge_model is not None and judge_is_calibrated(
+            Path(args.baselines_dir), args.judge_model
+        )
+        if args.judge_model is not None and not judge_calibrated:
+            print("Judge is not calibrated for this model and rubric: gate J6 is n/a.")
         params = RewriteEvalParams(
             repeat=args.repeat,
             deadline_seconds=args.deadline,
             max_tokens=args.max_tokens,
-            lexicons=load_tone_lexicons_ru_v1(),
+            judge=(
+                None if args.judge_model is None else GigaChatRewriteJudge(client, args.judge_model)
+            ),
         )
         spend = SpendTracker()
         evals: list[ModelEval] = []
@@ -123,14 +145,25 @@ async def async_main(args: argparse.Namespace) -> int:
             evals.append(ModelEval(model, result, spend.spent_billable - before))
             if result.stop_reason is not None:
                 break
-        report = render_report(evals, not_run=tuple(models[len(evals) :]), baseline=baseline)
+        report = render_report(
+            evals,
+            not_run=tuple(models[len(evals) :]),
+            baseline=baseline,
+            judge_calibrated=judge_calibrated,
+        )
         await asyncio.to_thread(_write_report, Path(args.out), report)
         print(f"Report written. Spent billable tokens: {spend.spent_billable}")
         if args.write_baseline is not None:
             write_baseline(Path(args.write_baseline), compute_metrics(evals[0].result.records))
             print("Baseline written.")
         failed = any(
-            gates_failed(evaluate_gates(compute_metrics(item.result.records), baseline))
+            gates_failed(
+                evaluate_gates(
+                    compute_metrics(item.result.records),
+                    baseline,
+                    judge_calibrated=judge_calibrated,
+                )
+            )
             for item in evals
         )
         return 1 if evals[-1].result.stop_reason is not None or failed else 0
@@ -162,6 +195,16 @@ def main() -> None:
         action="append",
         default=None,
         help="Rewrite model to evaluate (repeatable); default: the model from settings",
+    )
+    parser.add_argument(
+        "--judge-model",
+        default=None,
+        help="Judge model: one judge call per usable call, gate J6 (n/a unless calibrated)",
+    )
+    parser.add_argument(
+        "--baselines-dir",
+        default=_DEFAULT_BASELINES,
+        help="Directory of the committed judge calibration files",
     )
     parser.add_argument("--repeat", type=int, default=3, help="Calls per case (default: 3)")
     parser.add_argument("--deadline", type=float, default=30.0, help="Per-call deadline seconds")

@@ -11,6 +11,7 @@ from types import SimpleNamespace
 import pytest
 from tests.factories import make_settings
 from tests.fakes.generation import FakeTextGenerator
+from tests.fakes.judge import FakeRewriteJudge, judge_result
 
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
@@ -19,7 +20,6 @@ from svoi_pravila.application.errors import (
     InvalidOutputReason,
     UnavailableKind,
 )
-from svoi_pravila.application.lexicons import load_tone_lexicons_ru_v1
 from svoi_pravila.application.ports.generation import (
     GenerationMeta,
     RewriteResult,
@@ -28,6 +28,7 @@ from svoi_pravila.application.ports.generation import (
     TokenUsage,
     Variant,
 )
+from svoi_pravila.application.ports.rewrite_judge import RewriteJudge, Verdict
 from svoi_pravila.benchmarks.runner import SpendTracker
 from svoi_pravila.config import GigaChatRuntimeSettings
 from svoi_pravila.domain.enums import RelationshipKind, RewriteGoal, RuleCategory, VariantKind
@@ -50,6 +51,7 @@ from svoi_pravila.evals.rewrite_run import (
 )
 
 _DATA = Path(__file__).resolve().parents[3] / "evals" / "data" / "rewrite_v2.jsonl"
+_BASELINES = Path(__file__).resolve().parents[3] / "evals" / "baselines"
 _DRAFT = "Сиди дома и жди"
 
 
@@ -57,12 +59,11 @@ def _case(case_id: str = "c1", *, goal: RewriteGoal | None = None) -> RewriteCas
     return RewriteCase(id=case_id, category=RewriteCategory.BASE, draft=_DRAFT, goal=goal)
 
 
-def _params(*, repeat: int = 1, max_tokens: int = 100_000) -> RewriteEvalParams:
+def _params(
+    *, repeat: int = 1, max_tokens: int = 100_000, judge: RewriteJudge | None = None
+) -> RewriteEvalParams:
     return RewriteEvalParams(
-        repeat=repeat,
-        deadline_seconds=5.0,
-        max_tokens=max_tokens,
-        lexicons=load_tone_lexicons_ru_v1(),
+        repeat=repeat, deadline_seconds=5.0, max_tokens=max_tokens, judge=judge
     )
 
 
@@ -100,6 +101,8 @@ def _cli_args(**overrides: object) -> Namespace:
         "list_models": False,
         "max_tokens": None,
         "model": None,
+        "judge_model": None,
+        "baselines_dir": str(_BASELINES),
     }
     values.update(overrides)
     return Namespace(**values)
@@ -180,6 +183,127 @@ async def test_run_applies_typography_and_reports_policy_violations() -> None:
     assert by_kind[VariantKind.SOFTER].violations == (PolicyRule.STOP_PHRASE,)
     assert by_kind[VariantKind.FIRMER].violations == ()
     assert spend.spent_billable == record.billable_tokens == 7
+
+
+_GOOD_VARIANTS = (
+    Variant(text="Сиди дома и жди", kind=VariantKind.CHECK),
+    Variant(text="Пожалуйста, посиди дома", kind=VariantKind.SOFTER),
+    Variant(text="Жди дома", kind=VariantKind.FIRMER),
+)
+
+
+@pytest.mark.unit
+async def test_run_judges_every_usable_call_with_the_finished_texts() -> None:
+    gen = FakeTextGenerator(rewrite_result=_result(*_GOOD_VARIANTS))
+    judge = FakeRewriteJudge(judge_result(Verdict.NO), judge_result(Verdict.YES))
+    rule = RuleContext(
+        category=RuleCategory.APOLOGY,
+        text="Извиняться первым",
+        effective_since=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    case = RewriteCase(
+        id="j",
+        category=RewriteCategory.RULE,
+        draft=_DRAFT,
+        goal=RewriteGoal.DECLINE,
+        rules=(rule,),
+    )
+    spend = SpendTracker()
+    result = await run_rewrite_eval(gen, [case], _params(repeat=2, judge=judge), spend)
+    assert len(judge.calls) == 4
+    assert [request.text for request in judge.calls[:2]] == ["Пожалуйста, посиди дома", "Жди дома"]
+    assert {request.deadline_seconds for request in judge.calls} == {5.0}
+    first = result.records[0]
+    assert first.judgement is not None
+    assert first.judgement.softer_clean is Verdict.NO
+    assert first.judgement.firmer_clean is Verdict.YES
+    assert not first.judge_failed
+    assert first.billable_tokens == 7 + 2 * 11
+    assert spend.spent_billable == 2 * (7 + 2 * 11)
+
+
+@pytest.mark.unit
+async def test_run_without_a_judge_or_a_usable_call_makes_no_judge_call() -> None:
+    judge = FakeRewriteJudge()
+    plain = await run_rewrite_eval(
+        FakeTextGenerator(rewrite_result=_result(*_GOOD_VARIANTS)),
+        [_case()],
+        _params(),
+        SpendTracker(),
+    )
+    assert plain.records[0].judgement is None
+    assert not plain.records[0].judge_failed
+    unsafe = FakeTextGenerator(rewrite_result=_result(safety=SafetyVerdict.CRISIS))
+    refused = FakeTextGenerator()
+    refused.rewrite_error = GenerationRefusedByProvider(
+        usage=TokenUsage(output=1), attempts=1, model="m", prompt_version="p"
+    )
+    for gen in (unsafe, refused):
+        result = await run_rewrite_eval(gen, [_case()], _params(judge=judge), SpendTracker())
+        assert result.records[0].judgement is None
+        assert not result.records[0].judge_failed
+    assert judge.calls == []
+
+
+@pytest.mark.unit
+async def test_run_counts_a_judge_failure_and_goes_on_unless_the_provider_stops() -> None:
+    gen = FakeTextGenerator(rewrite_result=_result(*_GOOD_VARIANTS))
+    failures = (
+        InvalidGenerationOutput(
+            (InvalidOutputReason.EMPTY_TEXT,),
+            usage=TokenUsage(output=2),
+            attempts=2,
+            model="m",
+            prompt_version="p",
+        ),
+        GenerationRefusedByProvider(
+            usage=TokenUsage(output=3), attempts=1, model="m", prompt_version="p"
+        ),
+        _unavailable(UnavailableKind.TIMEOUT),
+    )
+    judge = FakeRewriteJudge(*failures)
+    spend = SpendTracker()
+    cases = [_case("a"), _case("b"), _case("c")]
+    result = await run_rewrite_eval(gen, cases, _params(judge=judge), spend)
+    assert result.stop_reason is None
+    assert [r.judge_failed for r in result.records] == [True] * 3
+    assert all(r.judgement is None and r.outcome is RunOutcome.OK for r in result.records)
+    assert [r.billable_tokens for r in result.records] == [7 + 2, 7 + 3, 7 + 2]
+    assert spend.spent_billable == 9 + 10 + 9
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("kind", [UnavailableKind.RATE_LIMITED, UnavailableKind.AUTH])
+async def test_run_stops_at_a_judge_rate_limit_or_auth_failure(kind: UnavailableKind) -> None:
+    gen = FakeTextGenerator(rewrite_result=_result(*_GOOD_VARIANTS))
+    judge = FakeRewriteJudge(_unavailable(kind))
+    result = await run_rewrite_eval(
+        gen, [_case("a"), _case("b")], _params(judge=judge), SpendTracker()
+    )
+    assert result.stop_reason == kind.value
+    assert len(result.records) == 1
+    assert result.records[0].judge_failed
+    assert len(judge.calls) == 1
+
+
+@pytest.mark.unit
+async def test_run_budget_covers_the_rewrite_and_the_judge_worst_case() -> None:
+    gen = FakeTextGenerator(rewrite_result=_result(*_GOOD_VARIANTS))
+    gen.max_billable_value = 100
+    judge = FakeRewriteJudge()
+    judge.max_billable_value = 50
+    # The rewrite plus one judge call per variant: 100 + 2 x 50.
+    stopped = await run_rewrite_eval(
+        gen, [_case()], _params(max_tokens=199, judge=judge), SpendTracker()
+    )
+    assert stopped.stop_reason == "token_budget"
+    assert stopped.records == []
+    assert judge.calls == []
+    fits = await run_rewrite_eval(
+        gen, [_case()], _params(max_tokens=200, judge=judge), SpendTracker()
+    )
+    assert fits.stop_reason is None
+    assert len(fits.records) == 1
 
 
 @pytest.mark.unit
@@ -272,23 +396,18 @@ async def test_run_passes_rules_and_applies_the_set_policy_stems_and_closing_ask
 
 
 @pytest.mark.unit
-async def test_run_reports_ladder_and_tone_rules_on_the_variant_set() -> None:
+async def test_run_reports_ladder_rules_on_the_variant_set() -> None:
     case = RewriteCase(id="l", category=RewriteCategory.LADDER, draft="Верни деньги")
     gen = FakeTextGenerator(
         rewrite_result=_result(
             Variant(text="Верни деньги", kind=VariantKind.CHECK),
             Variant(text="Верни деньги, пожалуйста", kind=VariantKind.SOFTER),
-            Variant(text="Верни деньги, пожалуйста, хуй", kind=VariantKind.FIRMER),
+            Variant(text="Верни деньги, пожалуйста, сегодня", kind=VariantKind.FIRMER),
         )
     )
     result = await run_rewrite_eval(gen, [case], _params(), SpendTracker())
     firmer = result.records[0].variants[2]
-    assert firmer.violations == (
-        PolicyRule.LENGTH,
-        PolicyRule.PROFANITY,
-        PolicyRule.HEDGE,
-        PolicyRule.LADDER_LENGTH,
-    )
+    assert firmer.violations == (PolicyRule.LENGTH, PolicyRule.LADDER_LENGTH)
     assert firmer.stem_leak is None
     assert firmer.closing_ask_ok is None
 
@@ -713,16 +832,16 @@ async def test_cli_exit_code_follows_the_gates_and_early_stops(
         return await async_main(args)
 
     assert await code_for(FakeTextGenerator(rewrite_result=passing), "ok.md") == 0
-    profane = FakeTextGenerator(
+    longer = FakeTextGenerator(
         rewrite_result=_result(
             Variant(text="Сиди дома и жди", kind=VariantKind.CHECK),
-            Variant(text="Посиди дома, хуй с ним", kind=VariantKind.SOFTER),
-            Variant(text="Жди дома", kind=VariantKind.FIRMER),
+            Variant(text="Посиди дома", kind=VariantKind.SOFTER),
+            Variant(text="Посиди дома, пожалуйста, сегодня", kind=VariantKind.FIRMER),
         )
     )
-    assert await code_for(profane, "g1.md") == 1
-    assert "| G1 | profanity in softer/firmer | 1 of 1 calls | 0 | FAIL |" in (
-        tmp_path / "g1.md"
+    assert await code_for(longer, "g6.md") == 1
+    assert "| G6 | firmer not longer than softer | 0.0 % | >= 90.0 % | FAIL |" in (
+        tmp_path / "g6.md"
     ).read_text(encoding="utf-8")
     invalid = FakeTextGenerator()
     invalid.rewrite_error = InvalidGenerationOutput(

@@ -16,6 +16,7 @@ from svoi_pravila.application.ports.generation import (
     RewriteRequest,
     SuggestRuleRequest,
 )
+from svoi_pravila.application.ports.rewrite_judge import JudgeRequest
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +113,20 @@ def prepare_suggest_rule(request: SuggestRuleRequest) -> PreparedMessages:
             ("relationship", request.relationship.value),
         ),
     )
+    return PreparedMessages(
+        system=system, user=user, prompt_version=prompt_version, boundary_marker=marker
+    )
+
+
+def prepare_judge(request: JudgeRequest) -> PreparedMessages:
+    """Build rendered system/user messages for the eval clean judge.
+
+    The text is model output and is delimited like every other untrusted field.
+    """
+    marker = allocate_boundary_marker(untrusted_texts(request.text))
+    template, prompt_version = load_prompt_template("judge_clean", "v2")
+    system = render_system_prompt(template, boundary_marker=marker)
+    user = wrap_untrusted_payload(marker, (("text", request.text),))
     return PreparedMessages(
         system=system, user=user, prompt_version=prompt_version, boundary_marker=marker
     )

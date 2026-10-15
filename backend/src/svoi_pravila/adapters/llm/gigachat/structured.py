@@ -57,6 +57,7 @@ class StructuredCallParams[ModelT: BaseModel]:
     response_format: type[ModelT]
     max_tokens: int
     phase: str | None = None
+    top_p: float | None = None
 
 
 class _RetryAttemptError(Exception):
@@ -166,6 +167,8 @@ async def _create_once[ModelT: BaseModel](
             strict=True,
         ),
     }
+    if params.top_p is not None:
+        payload["top_p"] = params.top_p
     completion = await params.client.achat.create(payload)
     state.finish_reason = completion.finish_reason
     add_usage(state, completion.usage)

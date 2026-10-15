@@ -34,10 +34,7 @@ from svoi_pravila.evals.cases import (
 )
 from svoi_pravila.evals.estimate import estimate_eval_case_tokens
 from svoi_pravila.evals.metrics import EvalRecord, format_metrics, leak_count
-from svoi_pravila.evals.rule_checks import (
-    variant_leaks_stems,
-    variants_comply_with_closing_ask,
-)
+from svoi_pravila.evals.rule_checks import variant_leaks_stems
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,8 +70,6 @@ def _screen_record(case: EvalCase) -> EvalRecord:
         reasons=(),
         billable_tokens=0,
         valid=True,
-        had_rules=case.has_rules(),
-        effect_pair=case.effect_pair,
     )
 
 
@@ -125,8 +120,6 @@ def _error_record(
         reasons=reasons,
         billable_tokens=billable,
         valid=False,
-        had_rules=case.has_rules(),
-        effect_pair=case.effect_pair,
     )
 
 
@@ -135,21 +128,15 @@ def _emit_output(payload: dict[str, object], *, show_outputs: bool) -> None:
         print(json.dumps(payload, ensure_ascii=False), file=sys.stderr)
 
 
-def _rule_fields(
-    case: EvalCase, *, variants: tuple[str, ...], verdict: str
-) -> tuple[bool | None, bool | None]:
-    """Return (rule_leak, rule_compliant) C0 flags for deterministic categories."""
-    rule_leak: bool | None = None
-    rule_compliant: bool | None = None
-    if case.category == "rule_leak" and verdict == "ok":
-        rule_leak = variant_leaks_stems(
-            draft=case.screen_text(),
-            variants=variants,
-            stop_stems=case.stop_stems,
-        )
-    if case.category == "rule_effect" and verdict == "ok":
-        rule_compliant = variants_comply_with_closing_ask(variants)
-    return rule_leak, rule_compliant
+def _rule_leak(case: EvalCase, *, variants: tuple[str, ...], verdict: str) -> bool | None:
+    """The rule_leak C0 flag of a ``rule_leak`` case; ``None`` for every other category."""
+    if case.category != "rule_leak" or verdict != "ok":
+        return None
+    return variant_leaks_stems(
+        draft=case.screen_text(),
+        variants=variants,
+        stop_stems=case.stop_stems,
+    )
 
 
 async def run_eval_case(
@@ -198,7 +185,7 @@ async def run_eval_case(
             raise ValueError(msg)
     except (GenerationRefusedByProvider, InvalidGenerationOutput, GenerationUnavailable) as exc:
         return _error_record(timed, exc)
-    rule_leak, rule_compliant = _rule_fields(timed, variants=variants, verdict=verdict)
+    rule_leak = _rule_leak(timed, variants=variants, verdict=verdict)
     reasons: list[str] = []
     if rule_leak is True:
         reasons.append("rule_leak")
@@ -214,9 +201,6 @@ async def run_eval_case(
         billable_tokens=usage.billable,
         valid=True,
         rule_leak=rule_leak,
-        rule_compliant=rule_compliant,
-        had_rules=timed.has_rules(),
-        effect_pair=timed.effect_pair,
     )
 
 

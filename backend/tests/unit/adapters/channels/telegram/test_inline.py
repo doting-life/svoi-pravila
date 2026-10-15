@@ -297,10 +297,17 @@ async def test_inline_compose_articles_and_choice(
     assert answers[-1].is_personal is True
     assert len(answers[-1].results) == 3
     articles = [r for r in answers[-1].results if isinstance(r, InlineQueryResultArticle)]
-    assert [a.title for a in articles] == ["Проверить", "Мягче", "Твёрже"]
+    assert [a.title for a in articles] == ["Мягче", "Твёрже", "Проверить"]
+    order = (VariantKind.SOFTER, VariantKind.FIRMER, VariantKind.CHECK)
     assert [a.id for a in articles] == [
-        encode_inline_result_ref(UsageScenario.REWRITE, kind)
-        for kind in (VariantKind.CHECK, VariantKind.SOFTER, VariantKind.FIRMER)
+        encode_inline_result_ref(UsageScenario.REWRITE, k) for k in order
+    ]
+    contents = [a.input_message_content for a in articles]
+    assert all(isinstance(content, InputTextMessageContent) for content in contents)
+    assert [c.message_text for c in contents if isinstance(c, InputTextMessageContent)] == [
+        "softened",
+        "firmed",
+        "checked",
     ]
     _assert_web_app_button(
         answers[-1].button,
@@ -308,20 +315,53 @@ async def test_inline_compose_articles_and_choice(
         miniapp_url=deps.miniapp_url or "",
         handoff=True,
     )
-    first = answers[-1].results[0]
-    assert isinstance(first, InlineQueryResultArticle)
-    content = first.input_message_content
-    assert isinstance(content, InputTextMessageContent)
-    assert first.id == encode_inline_result_ref(UsageScenario.REWRITE, VariantKind.CHECK)
-    assert content.message_text == "checked"
     generations = [event for event in sink.events if event.event_kind is UsageEventKind.GENERATION]
     assert len(generations) == 1
-    await lifecycle.dispatcher.feed_update(bot, _chosen(21, 14, first.id, "please leave quietly"))
+    for offset, article in enumerate(articles):
+        await lifecycle.dispatcher.feed_update(
+            bot, _chosen(21 + offset, 14, article.id, "please leave quietly")
+        )
     chosen = [event for event in sink.events if event.event_kind is UsageEventKind.RESULT_CHOSEN]
-    assert len(chosen) == 1
-    assert chosen[0].variant_kind is VariantKind.CHECK
+    assert [event.variant_kind for event in chosen] == list(order)
     tone = [e for e in capture_log_events() if e.get("event") == "tone_signal"]
-    assert [e["outcome"] for e in tone] == ["skipped_inline"]
+    assert [e["outcome"] for e in tone] == ["skipped_inline"] * 3
+
+
+@pytest.mark.unit
+async def test_inline_empty_check_is_replaced_by_the_draft_and_shown_last() -> None:
+    catalog = FakeConsentCatalog()
+    uow = InMemoryUnitOfWorkFactory()
+    generator = FakeTextGenerator(
+        rewrite_result=RewriteResult(
+            variants=(
+                Variant(text="", kind=VariantKind.CHECK),
+                Variant(text="softened", kind=VariantKind.SOFTER),
+                Variant(text="firmed", kind=VariantKind.FIRMER),
+            ),
+            applied_rule_indexes=(),
+            safety=SafetyVerdict.OK,
+            meta=GenerationMeta(
+                model="fake",
+                prompt_version="rewrite@v2",
+                latency_ms=1,
+                attempts=1,
+                usage=TokenUsage(),
+            ),
+        )
+    )
+    deps = make_telegram_deps(TelegramTestDeps(uow=uow, catalog=catalog, generator=generator))
+    session = FakeTelegramSession()
+    bot = Bot(token="1:TEST", session=session)
+    lifecycle = build_telegram_lifecycle(_settings(), deps, bot=bot)
+    await _grant(uow, catalog, 15)
+    await lifecycle.dispatcher.feed_update(bot, _inline(30, 15, "please leave quietly"))
+    await _await_inline(deps)
+    answers = [req for req in session.requests if isinstance(req, AnswerInlineQuery)]
+    articles = [r for r in answers[-1].results if isinstance(r, InlineQueryResultArticle)]
+    assert [a.title for a in articles] == ["Мягче", "Твёрже", "Проверить"]
+    last = articles[-1].input_message_content
+    assert isinstance(last, InputTextMessageContent)
+    assert last.message_text == "please leave quietly"
 
 
 @pytest.mark.unit

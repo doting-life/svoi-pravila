@@ -35,24 +35,27 @@ class VariantOut(BaseModel):
 class RewriteOut(BaseModel):
     """Fixed three-slot rewrite output when the request carries rules.
 
-    Slot order is the generation order: ``check``, ``firmer``, then ``softer``.
+    The slots come in the order ``check``, ``softer``, ``firmer``.
     """
 
     check: str = Field(max_length=1000)
-    firmer: str = Field(max_length=1000)
     softer: str = Field(max_length=1000)
+    firmer: str = Field(max_length=1000)
     applied_rule_indexes: list[int]
     safety: SafetyOut
 
 
 class RewriteOutNoRules(BaseModel):
-    """Rewrite slots when the request has no rules (indexes omitted from the schema)."""
+    """Rewrite slots when the request has no rules (indexes omitted from the schema).
+
+    The slots come in the order ``check``, ``softer``, ``firmer``.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     check: str = Field(max_length=1000)
-    firmer: str = Field(max_length=1000)
     softer: str = Field(max_length=1000)
+    firmer: str = Field(max_length=1000)
     safety: SafetyOut
 
 

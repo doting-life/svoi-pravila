@@ -39,7 +39,12 @@ from svoi_pravila.adapters.llm.gigachat.repair import (
     first_attempt_defect,
     retry_messages,
 )
-from svoi_pravila.adapters.llm.gigachat.validation import invalid, last_reason
+from svoi_pravila.adapters.llm.gigachat.validation import (
+    SlotDefect,
+    SlotDefectsError,
+    invalid,
+    last_reason,
+)
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
     GenerationUnavailable,
@@ -102,6 +107,17 @@ class _RetryAttemptError(Exception):
     def __init__(self, defect: FirstAttemptDefect) -> None:
         self.defect = defect
         super().__init__(",".join(defect.labels))
+
+
+@dataclass(frozen=True, slots=True)
+class LabelledInvalidAttempt(InvalidAttempt):
+    """An invalid attempt that also names every defect of the answer.
+
+    ``labels`` are C0 ``reason`` or ``reason:slot`` labels, one per defect or finding of that
+    attempt, never text. An observer that does not know this type reads ``reason`` and ``slot``.
+    """
+
+    labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,12 +201,17 @@ def _field_texts(value: object, prefix: str = "") -> tuple[tuple[str, str], ...]
 
 @dataclass(frozen=True, slots=True)
 class _InvalidAnswer[ModelT: BaseModel]:
-    """What is known about an invalid attempt: the reason, the slot, the answer and findings."""
+    """What is known about an invalid attempt: the reason, slot, answer, defects and findings.
+
+    ``reason`` and ``slot`` are the first defect; ``defects`` are all the slot defects of the
+    answer when slot validation found them.
+    """
 
     reason: InvalidOutputReason
     slot: VariantKind | None = None
     answer: _Answer[ModelT] | None = None
     findings: tuple[SlotFinding, ...] = ()
+    defects: tuple[SlotDefect, ...] = ()
 
 
 def _raw_texts(state: AttemptState) -> tuple[tuple[str, str], ...]:
@@ -206,20 +227,24 @@ def _record_retryable_invalid[ModelT: BaseModel](
 ) -> NoReturn:
     reason, slot, answer = invalid_answer.reason, invalid_answer.slot, invalid_answer.answer
     note_invalid_reason(state, reason, slot)
+    raw = None if answer is None else answer.raw
+    defect = first_attempt_defect(
+        reason, slot, raw, invalid_answer.findings, invalid_answer.defects
+    )
     if params.observer is not None:
         texts = _raw_texts(state) if answer is None else _field_texts(answer.parsed.model_dump())
         params.observer.on_invalid_attempt(
-            InvalidAttempt(
+            LabelledInvalidAttempt(
                 operation=params.operation,
                 attempt=attempt,
                 reason=reason,
                 slot=slot,
                 texts=texts,
+                labels=defect.labels,
             )
         )
     if should_retry_invalid(attempt=attempt, yielded=None):
-        raw = None if answer is None else answer.raw
-        raise _RetryAttemptError(first_attempt_defect(reason, slot, raw, invalid_answer.findings))
+        raise _RetryAttemptError(defect)
     raise finalize_invalid(state) from None
 
 
@@ -365,7 +390,12 @@ async def _build_result[ModelT: BaseModel, ResultT](
         _record_retryable_invalid(
             params,
             state,
-            _InvalidAnswer(last_reason(exc), slot=exc.slots[-1], answer=answer),
+            _InvalidAnswer(
+                last_reason(exc),
+                slot=exc.slots[-1],
+                answer=answer,
+                defects=exc.defects if isinstance(exc, SlotDefectsError) else (),
+            ),
             attempt=attempt,
         )
     if findings:

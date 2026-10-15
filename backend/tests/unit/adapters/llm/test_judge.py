@@ -1,10 +1,9 @@
-"""GigaChat rewrite-judge adapter: prompt, payload, schema, retry and failure accounting."""
+"""GigaChat clean-judge adapter: prompt, payload, schema, retry and failure accounting."""
 
 from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, datetime
 from typing import Any, cast
 
 import pytest
@@ -18,7 +17,7 @@ from svoi_pravila.adapters.llm.gigachat.judge import (
     MAX_TOKENS_JUDGE,
     GigaChatRewriteJudge,
 )
-from svoi_pravila.adapters.llm.gigachat.schemas import JudgeOut, SlotJudgeOut
+from svoi_pravila.adapters.llm.gigachat.schemas import JudgeOut
 from svoi_pravila.adapters.llm.registry import load_prompt_template
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
@@ -27,18 +26,9 @@ from svoi_pravila.application.errors import (
     InvalidOutputReason,
     UnavailableKind,
 )
-from svoi_pravila.application.ports.generation import RewriteRequest, RuleContext
-from svoi_pravila.application.ports.rewrite_judge import (
-    GoalBreach,
-    JudgeRequest,
-    PairObservation,
-    Position,
-    RewriteJudge,
-    RuleCheck,
-    SlotObservation,
-    Warmer,
-)
-from svoi_pravila.domain.enums import RelationshipKind, RewriteGoal, RuleCategory
+from svoi_pravila.application.ports.generation import RewriteRequest
+from svoi_pravila.application.ports.rewrite_judge import JudgeRequest, RewriteJudge
+from svoi_pravila.domain.enums import RelationshipKind
 from tests.unit.adapters.llm.test_gigachat_adapter import (
     _collect_decode_stream,
     _decode_payload,
@@ -49,24 +39,11 @@ from tests.unit.adapters.llm.test_gigachat_adapter import (
     _rule,
 )
 
-_SLOT: dict[str, object] = {
-    "rude": [],
-    "added": [],
-    "position": "same",
-    "goal_sentence": "",
-    "goal_breach": "none",
-    "rule_evidence": [],
-    "rule_check": "not_applicable",
-}
-
 
 def _observations(**changes: object) -> dict[str, object]:
     return {
-        "softer": {**_SLOT, **cast("dict[str, object]", changes.get("softer", {}))},
-        "firmer": {**_SLOT, **cast("dict[str, object]", changes.get("firmer", {}))},
-        "firmer_softening": changes.get("firmer_softening", []),
-        "firmer_pressure": changes.get("firmer_pressure", []),
-        "warmer": changes.get("warmer", "softer"),
+        "softer_rude": changes.get("softer_rude", []),
+        "firmer_rude": changes.get("firmer_rude", []),
     }
 
 
@@ -76,20 +53,11 @@ def _out(**changes: object) -> JudgeOut:
 
 def _request(
     *,
-    goal: RewriteGoal | None = None,
-    rules: tuple[RuleContext, ...] = (),
     deadline_seconds: float = 5.0,
     softer: str = "Мне нужно время подумать",
     firmer: str = "Мне нужно время",
 ) -> JudgeRequest:
-    return JudgeRequest(
-        draft="Дай мне время",
-        goal=goal,
-        rules=rules,
-        softer=softer,
-        firmer=firmer,
-        deadline_seconds=deadline_seconds,
-    )
+    return JudgeRequest(softer=softer, firmer=firmer, deadline_seconds=deadline_seconds)
 
 
 def _judge(ache: _FakeAche) -> GigaChatRewriteJudge:
@@ -113,39 +81,13 @@ class _RecordingAche(_FakeAche):
 
 
 @pytest.mark.unit
-async def test_judge_maps_every_observation_and_the_meta() -> None:
-    out = _out(
-        softer={
-            "rude": ["блин"],
-            "goal_sentence": "Я не пойду.",
-            "goal_breach": "hedged",
-            "rule_evidence": ["Заканчиваю просьбой"],
-            "rule_check": "broken",
-        },
-        firmer={"added": ["иначе уйду"], "position": "weakened"},
-        firmer_softening=["если можно"],
-        firmer_pressure=["или уйду"],
-        warmer="equal",
-    )
+async def test_judge_maps_the_quotes_of_each_variant_and_the_meta() -> None:
+    out = _out(softer_rude=["блин"], firmer_rude=["ты вечно", "как всегда"])
     seen = await _judge(_FakeAche(create_results=[out])).judge(_request())
-    assert seen.softer == SlotObservation(
-        rude=("блин",),
-        added=(),
-        position=Position.SAME,
-        goal_sentence="Я не пойду.",
-        goal_breach=GoalBreach.HEDGED,
-        rule_evidence=("Заканчиваю просьбой",),
-        rule_check=RuleCheck.BROKEN,
-    )
-    assert seen.firmer.added == ("иначе уйду",)
-    assert seen.firmer.position is Position.WEAKENED
-    assert seen.pair == PairObservation(
-        firmer_softening=("если можно",),
-        firmer_pressure=("или уйду",),
-        warmer=Warmer.EQUAL,
-    )
+    assert seen.softer_rude == ("блин",)
+    assert seen.firmer_rude == ("ты вечно", "как всегда")
     assert seen.meta.model == "judge-model"
-    assert seen.meta.prompt_version == "judge_rewrite@v3"
+    assert seen.meta.prompt_version == "judge_clean@v1"
     assert seen.meta.attempts == 1
     assert seen.meta.usage.billable == 8
 
@@ -155,7 +97,7 @@ async def test_judge_sends_only_the_low_top_p_and_other_calls_send_none() -> Non
     judged = _RecordingAche(create_results=[_out()])
     await _judge(judged).judge(_request())
     assert judged.payloads[0]["top_p"] == JUDGE_TOP_P == 0.1
-    assert judged.payloads[0]["max_tokens"] == MAX_TOKENS_JUDGE == 1024
+    assert judged.payloads[0]["max_tokens"] == MAX_TOKENS_JUDGE == 384
 
     rewritten = _RecordingAche(create_results=[_rewrite_payload()])
     await _generator(rewritten).rewrite(
@@ -175,7 +117,7 @@ async def test_judge_sends_only_the_low_top_p_and_other_calls_send_none() -> Non
 
 @pytest.mark.unit
 async def test_judge_retries_once_on_a_schema_violation() -> None:
-    bad = json.dumps(_observations(softer={"position": "na"}))
+    bad = json.dumps({"softer_rude": "блин", "firmer_rude": []})
     ache = _FakeAche(create_results=[bad, _out()])
     seen = await _judge(ache).judge(_request())
     assert ache.create_calls == 2
@@ -187,29 +129,21 @@ async def test_judge_retries_once_on_a_schema_violation() -> None:
 @pytest.mark.parametrize(
     "bad",
     [
-        json.dumps(_observations(warmer="na")),
         json.dumps({**_observations(), "extra": "yes"}),
-        json.dumps({"softer": _SLOT}),
-        json.dumps(_observations(softer={"rude": ["а"] * 5})),
-        json.dumps(_observations(firmer={"rule_evidence": ["а"] * 5})),
-        json.dumps(_observations(firmer={"rule_evidence": [""]})),
-        json.dumps(_observations(firmer_pressure=[""])),
-        json.dumps(_observations(firmer_softening=["я" * 121])),
-        json.dumps(_observations(firmer={"goal_sentence": "я" * 301})),
-        json.dumps(_observations(softer={"goal_breach": "shouting"})),
+        json.dumps({"softer_rude": []}),
+        json.dumps(_observations(softer_rude=["а"] * 5)),
+        json.dumps(_observations(firmer_rude=["а"] * 5)),
+        json.dumps(_observations(firmer_rude=[""])),
+        json.dumps(_observations(softer_rude=["я" * 121])),
         "not json",
     ],
     ids=[
-        "warmer-na",
         "extra-field",
-        "missing-slot",
-        "five-quotes",
-        "five-rule-quotes",
-        "empty-rule-quote",
+        "missing-field",
+        "five-softer-quotes",
+        "five-firmer-quotes",
         "empty-quote",
         "long-quote",
-        "long-goal-sentence",
-        "unknown-breach",
         "not-json",
     ],
 )
@@ -219,38 +153,19 @@ async def test_judge_invalid_twice_raises_with_the_reasons(bad: str) -> None:
         await _judge(ache).judge(_request())
     assert len(exc_info.value.reasons) == MAX_ATTEMPTS
     assert exc_info.value.usage.billable == 16
-    assert exc_info.value.prompt_version == "judge_rewrite@v3"
+    assert exc_info.value.prompt_version == "judge_clean@v1"
 
 
 @pytest.mark.unit
 def test_the_schema_accepts_the_bounds() -> None:
     quote = "я" * 120
-    out = _out(
-        softer={"rude": [quote] * 4, "goal_sentence": "я" * 300, "rule_evidence": [quote] * 4},
-        firmer_softening=[quote] * 4,
-    )
-    assert len(out.softer.rude) == 4
-    assert len(out.softer.goal_sentence) == 300
+    out = _out(softer_rude=[quote] * 4, firmer_rude=[quote] * 4)
+    assert len(out.softer_rude) == len(out.firmer_rude) == 4
 
 
 @pytest.mark.unit
-def test_the_schema_orders_slots_then_pair_fields_and_evidence_before_enums() -> None:
-    assert list(JudgeOut.model_fields) == [
-        "softer",
-        "firmer",
-        "firmer_softening",
-        "firmer_pressure",
-        "warmer",
-    ]
-    assert list(SlotJudgeOut.model_fields) == [
-        "rude",
-        "added",
-        "position",
-        "goal_sentence",
-        "goal_breach",
-        "rule_evidence",
-        "rule_check",
-    ]
+def test_the_schema_orders_softer_before_firmer() -> None:
+    assert list(JudgeOut.model_fields) == ["softer_rude", "firmer_rude"]
 
 
 @pytest.mark.unit
@@ -276,51 +191,43 @@ async def test_judge_timeout_is_unavailable_with_the_kind() -> None:
     with pytest.raises(GenerationUnavailable) as exc_info:
         await _judge(SlowAche()).judge(_request(deadline_seconds=0.05))
     assert exc_info.value.kind is UnavailableKind.TIMEOUT
-    assert exc_info.value.prompt_version == "judge_rewrite@v3"
+    assert exc_info.value.prompt_version == "judge_clean@v1"
 
 
 @pytest.mark.unit
-def test_the_prompt_is_the_cto_rubric_with_the_boundary_paragraph() -> None:
-    template, version = load_prompt_template("judge_rewrite", "v3")
-    assert version == "judge_rewrite@v3"
+def test_the_prompt_is_block_jc_with_the_boundary_paragraph() -> None:
+    template, version = load_prompt_template("judge_clean", "v1")
+    assert version == "judge_clean@v1"
     assert template.startswith("Ты — проверяющий в сервисе «Свои правила».")
-    assert "Ты не ставишь оценок" in template
-    for field in (*SlotJudgeOut.model_fields, *JudgeOut.model_fields):
-        if field not in {"softer", "firmer"}:
-            assert f"- `{field}` — " in template
+    assert "Грубое:" in template
+    assert "Не грубое:" in template
+    assert "`softer:`" in template
+    assert "`firmer:`" in template
     assert template.count("{{BOUNDARY_MARKER}}") == 2
     assert "ответ другой модели" in template
 
 
 @pytest.mark.unit
-def test_the_payload_delimits_every_untrusted_field_with_one_marker() -> None:
-    rule = RuleContext(
-        category=RuleCategory.HOW_TO_ASK,
-        text="заканчивать вопросом",
-        effective_since=datetime(2026, 1, 1, tzinfo=UTC),
-    )
-    prepared = _judge(_FakeAche()).prepare(
-        _request(goal=RewriteGoal.DECLINE, rules=(rule,), softer="ВАРИАНТ-МЯГЧЕ", firmer="ВАРИАНТ")
-    )
+def test_the_payload_delimits_both_variants_with_one_marker() -> None:
+    prepared = _judge(_FakeAche()).prepare(_request(softer="ВАРИАНТ-МЯГЧЕ", firmer="ВАРИАНТ"))
     marker = prepared.boundary_marker
     assert marker.startswith(BOUNDARY_PREFIX)
     lines = prepared.user.splitlines()
     assert lines[0] == f"{marker} payload"
     assert lines[-1] == marker
     assert prepared.user.count(marker) == 2
-    assert "goal:\ndecline" in prepared.user
-    assert "category=how_to_ask" in prepared.user
     assert "softer:\nВАРИАНТ-МЯГЧЕ" in prepared.user
     assert "firmer:\nВАРИАНТ" in prepared.user
+    assert "draft:" not in prepared.user
     assert prepared.system.count(marker) == 2
-    assert prepared.prompt_version == "judge_rewrite@v3"
+    assert prepared.prompt_version == "judge_clean@v1"
 
 
 @pytest.mark.unit
-def test_a_missing_goal_is_sent_as_none() -> None:
-    prepared = _judge(_FakeAche()).prepare(_request())
-    assert "goal:\nnone" in prepared.user
-    assert "rules:\n(none)" in prepared.user
+def test_a_marker_is_allocated_that_is_not_in_either_variant() -> None:
+    clash = f"{BOUNDARY_PREFIX}fixed"
+    prepared = _judge(_FakeAche()).prepare(_request(softer=clash, firmer=clash))
+    assert prepared.boundary_marker != clash
 
 
 @pytest.mark.unit

@@ -1,27 +1,22 @@
-"""Calibrate the rewrite judge against approved labels (ADR-0016 §13).
+"""Calibrate the clean judge against approved labels (ADR-0016 §13).
 
-The judge grades every calibration item once. Per criterion the numbers are:
+The judge checks every calibration item once; each item has two labelled values, one per variant.
+The numbers are:
 
-- ``accuracy``: the share of labelled values (``na`` is a label) the judge reproduced exactly;
-- ``defect_recall``: among the values labelled as a defect, the share the judge also called a
-  defect. A defect is ``no`` for ``clean``, ``meaning_kept``, ``goal_done``, ``rule_done`` and
-  ``ladder_ok``, and ``yes`` for ``invented``.
+- ``accuracy``: the share of labelled values the judge reproduced exactly;
+- ``defect_recall``: among the values labelled ``clean = no``, the share the judge also called
+  ``no``.
 
-A judge call without verdicts reproduces nothing and finds no defect. ``ladder_ok`` is measured
-only on eligible pairs: pairs whose every slot label is good (see ``judge_cases``).
-
-The numbers are given overall and per source of the items (``synthetic``, ``eval_output``). The
-calibration is ``passed`` when, overall, every criterion has accuracy >= 0.90 and defect recall
->= 0.85 and ``clean`` has defect recall >= 0.95, and on ``eval_output`` every criterion has
-accuracy >= 0.85 and ``clean`` has defect recall >= 0.95. The committed file holds numbers only,
-never text.
+A judge call without verdicts reproduces nothing and finds no defect. The numbers are given
+overall and per source of the items (``synthetic``, ``eval_output``). The calibration is
+``passed`` when, overall, accuracy >= 0.90 and defect recall >= 0.95, and on ``eval_output``
+accuracy >= 0.85 and defect recall >= 0.95. The committed file holds numbers only, never text.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -36,29 +31,19 @@ from svoi_pravila.application.ports.rewrite_judge import (
     JudgeRequest,
     JudgeResult,
     RewriteJudge,
-    SlotVerdicts,
     Verdict,
 )
 from svoi_pravila.benchmarks.runner import SpendTracker
-from svoi_pravila.evals.judge_cases import SOURCE_EVAL_OUTPUT, SOURCES, JudgeCase
-from svoi_pravila.evals.judge_verdicts import (
-    UNGROUNDED_FIELDS,
-    derive_result,
-    evidence,
-    ungrounded_counts,
-)
+from svoi_pravila.evals.judge_cases import SOURCE_EVAL_OUTPUT, SOURCE_SYNTHETIC, SOURCES, JudgeCase
+from svoi_pravila.evals.judge_verdicts import derive_result, evidence, ungrounded_counts
 
-RUBRIC_VERSION = "judge_rewrite@v3"
+RUBRIC_VERSION = "judge_clean@v1"
 MIN_ACCURACY = 0.90
-MIN_DEFECT_RECALL = 0.85
-MIN_CLEAN_DEFECT_RECALL = 0.95
+MIN_DEFECT_RECALL = 0.95
 MIN_REAL_ACCURACY = 0.85
+MIN_REAL_DEFECT_RECALL = 0.95
 
-SLOT_CRITERIA = ("clean", "meaning_kept", "invented", "goal_done", "rule_done")
-PAIR_CRITERION = "ladder_ok"
-CRITERIA = (*SLOT_CRITERIA, PAIR_CRITERION)
-
-_FILE_VERSION = 3
+_FILE_VERSION = 4
 _RATE_DIGITS = 4
 _MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _STOP_KINDS = frozenset({UnavailableKind.RATE_LIMITED, UnavailableKind.AUTH})
@@ -87,32 +72,22 @@ class CalibrationRun:
 
 
 @dataclass(frozen=True, slots=True)
-class CriterionStats:
-    """Numbers of one criterion; ``None`` where there is no denominator."""
+class CleanStats:
+    """Numbers of ``clean`` over a set of items; ``None`` where there is no denominator."""
 
-    criterion: str
     labels: int
     accuracy: float | None
     defects: int
     defect_recall: float | None
 
-    def passes(self) -> bool:
-        """True when accuracy and defect recall reach their overall thresholds."""
-        floor = MIN_CLEAN_DEFECT_RECALL if self.criterion == "clean" else MIN_DEFECT_RECALL
+    def passes(self, *, min_accuracy: float, min_recall: float) -> bool:
+        """True when accuracy and defect recall reach the given thresholds."""
         return (
             self.accuracy is not None
             and self.defect_recall is not None
-            and self.accuracy >= MIN_ACCURACY
-            and self.defect_recall >= floor
+            and self.accuracy >= min_accuracy
+            and self.defect_recall >= min_recall
         )
-
-    def passes_real(self) -> bool:
-        """True when the numbers over ``eval_output`` items reach the real-output thresholds."""
-        if self.accuracy is None or self.accuracy < MIN_REAL_ACCURACY:
-            return False
-        if self.criterion != "clean":
-            return True
-        return self.defect_recall is not None and self.defect_recall >= MIN_CLEAN_DEFECT_RECALL
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,17 +98,23 @@ class Calibration:
     rubric: str
     items: int
     failed_items: int
-    criteria: tuple[CriterionStats, ...]
-    by_source: tuple[tuple[str, tuple[CriterionStats, ...]], ...]
-    ungrounded: tuple[tuple[str, int], ...] = ()
+    overall: CleanStats
+    by_source: tuple[tuple[str, CleanStats], ...]
+    ungrounded_softer: int
+    ungrounded_firmer: int
+
+    @property
+    def ungrounded(self) -> int:
+        """Quotes that are not in their own variant, over all items."""
+        return self.ungrounded_softer + self.ungrounded_firmer
 
     @property
     def passed(self) -> bool:
-        """True when every criterion passes overall and on the ``eval_output`` items."""
+        """True when ``clean`` passes overall and on the ``eval_output`` items."""
         real = dict(self.by_source)[SOURCE_EVAL_OUTPUT]
-        return all(stats.passes() for stats in self.criteria) and all(
-            stats.passes_real() for stats in real
-        )
+        return self.overall.passes(
+            min_accuracy=MIN_ACCURACY, min_recall=MIN_DEFECT_RECALL
+        ) and real.passes(min_accuracy=MIN_REAL_ACCURACY, min_recall=MIN_REAL_DEFECT_RECALL)
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,8 +122,7 @@ class Disagreement:
     """One value the judge got wrong, for the local report."""
 
     case: JudgeCase
-    slot: str | None
-    criterion: str
+    slot: str
     expected: Verdict
     got: Verdict | None
     evidence: str
@@ -152,81 +132,51 @@ def _share(part: int, whole: int) -> float | None:
     return None if whole == 0 else round(part / whole, _RATE_DIGITS)
 
 
-def defect_value(criterion: str) -> Verdict:
-    """The verdict that marks a defect for ``criterion``."""
-    return Verdict.YES if criterion == "invented" else Verdict.NO
-
-
-def _slot_value(slot: SlotVerdicts, criterion: str) -> Verdict:
-    return Verdict(getattr(slot, criterion))
-
-
-def _values(
-    outcome: ItemOutcome, criterion: str
-) -> list[tuple[str | None, Verdict, Verdict | None]]:
-    """(slot, expected, got) for each value of ``criterion`` in one item.
-
-    ``ladder_ok`` has a value only on an eligible pair.
-    """
+def _values(outcome: ItemOutcome) -> list[tuple[str, Verdict, Verdict | None]]:
+    """(slot, expected, got) for the two values of one item."""
     expected = outcome.case.expected
     result = outcome.result
-    if criterion == PAIR_CRITERION:
-        if not outcome.case.ladder_eligible:
-            return []
-        return [(None, expected.ladder_ok, None if result is None else result.ladder_ok)]
     return [
         (
             slot,
-            _slot_value(getattr(expected, slot), criterion),
-            None if result is None else _slot_value(getattr(result, slot), criterion),
+            getattr(expected, slot),
+            None if result is None else getattr(result, f"{slot}_clean"),
         )
         for slot in _SLOTS
     ]
 
 
-def criterion_stats(outcomes: list[ItemOutcome], criterion: str) -> CriterionStats:
-    """Accuracy and defect recall of one criterion over the outcomes."""
-    values = [value for outcome in outcomes for value in _values(outcome, criterion)]
-    defect = defect_value(criterion)
-    defects = [(expected, got) for _, expected, got in values if expected is defect]
-    return CriterionStats(
-        criterion=criterion,
+def clean_stats(outcomes: list[ItemOutcome]) -> CleanStats:
+    """Accuracy and defect recall of ``clean`` over the outcomes."""
+    values = [value for outcome in outcomes for value in _values(outcome)]
+    defects = [got for _, expected, got in values if expected is Verdict.NO]
+    return CleanStats(
         labels=len(values),
         accuracy=_share(sum(expected is got for _, expected, got in values), len(values)),
         defects=len(defects),
-        defect_recall=_share(sum(got is defect for _, got in defects), len(defects)),
+        defect_recall=_share(sum(got is Verdict.NO for got in defects), len(defects)),
     )
-
-
-def _all_criteria(outcomes: list[ItemOutcome]) -> tuple[CriterionStats, ...]:
-    return tuple(criterion_stats(outcomes, criterion) for criterion in CRITERIA)
-
-
-def _ungrounded(outcomes: list[ItemOutcome]) -> tuple[tuple[str, int], ...]:
-    """Per field, the quotes of all items that are not in their own text."""
-    totals = dict.fromkeys(UNGROUNDED_FIELDS, 0)
-    for outcome in outcomes:
-        if outcome.observation is None:
-            continue
-        counts = ungrounded_counts(judge_request(outcome.case, 1.0), outcome.observation)
-        for name, count in counts.items():
-            totals[name] += count
-    return tuple(totals.items())
 
 
 def calibrate(model: str, outcomes: list[ItemOutcome]) -> Calibration:
     """Reduce the outcomes of a complete run to the committed numbers."""
+    counts = [
+        ungrounded_counts(judge_request(outcome.case, 1.0), outcome.observation)
+        for outcome in outcomes
+        if outcome.observation is not None
+    ]
     return Calibration(
         model=model,
         rubric=RUBRIC_VERSION,
         items=len(outcomes),
         failed_items=sum(outcome.result is None for outcome in outcomes),
-        criteria=_all_criteria(outcomes),
+        overall=clean_stats(outcomes),
         by_source=tuple(
-            (source, _all_criteria([item for item in outcomes if item.case.source == source]))
+            (source, clean_stats([item for item in outcomes if item.case.source == source]))
             for source in SOURCES
         ),
-        ungrounded=_ungrounded(outcomes),
+        ungrounded_softer=sum(count.softer for count in counts),
+        ungrounded_firmer=sum(count.firmer for count in counts),
     )
 
 
@@ -236,29 +186,20 @@ def disagreements(outcomes: list[ItemOutcome]) -> list[Disagreement]:
         Disagreement(
             outcome.case,
             slot,
-            criterion,
             expected,
             got,
             "-"
             if outcome.observation is None
-            else evidence(judge_request(outcome.case, 1.0), outcome.observation, slot, criterion),
+            else evidence(judge_request(outcome.case, 1.0), outcome.observation, slot),
         )
         for outcome in outcomes
-        for criterion in CRITERIA
-        for slot, expected, got in _values(outcome, criterion)
+        for slot, expected, got in _values(outcome)
         if expected is not got
     ]
 
 
 def judge_request(case: JudgeCase, deadline_seconds: float) -> JudgeRequest:
-    return JudgeRequest(
-        draft=case.draft,
-        goal=case.goal,
-        rules=case.rules,
-        softer=case.softer,
-        firmer=case.firmer,
-        deadline_seconds=deadline_seconds,
-    )
+    return JudgeRequest(softer=case.softer, firmer=case.firmer, deadline_seconds=deadline_seconds)
 
 
 async def run_calibration(
@@ -312,35 +253,30 @@ def calibration_path(directory: Path, model: str) -> Path:
     return directory / f"{_file_stem(model)}.json"
 
 
-def _criteria_payload(criteria: tuple[CriterionStats, ...]) -> dict[str, object]:
+def _stats_payload(stats: CleanStats) -> dict[str, object]:
     return {
-        stats.criterion: {
-            "labels": stats.labels,
-            "accuracy": stats.accuracy,
-            "defects": stats.defects,
-            "defect_recall": stats.defect_recall,
-        }
-        for stats in criteria
+        "labels": stats.labels,
+        "accuracy": stats.accuracy,
+        "defects": stats.defects,
+        "defect_recall": stats.defect_recall,
     }
 
 
-def _ungrounded_total(calibration: Calibration) -> int:
-    return sum(count for _, count in calibration.ungrounded)
-
-
 def calibration_payload(calibration: Calibration) -> dict[str, object]:
-    """The C0 content of the committed file: rubric, model and per-criterion numbers."""
+    """The C0 content of the committed file: rubric, model and the numbers of ``clean``."""
     return {
         "version": _FILE_VERSION,
         "rubric": calibration.rubric,
         "model": calibration.model,
         "items": calibration.items,
         "failed_items": calibration.failed_items,
-        "criteria": _criteria_payload(calibration.criteria),
-        "sources": {
-            source: _criteria_payload(criteria) for source, criteria in calibration.by_source
+        "clean": _stats_payload(calibration.overall),
+        "sources": {source: _stats_payload(stats) for source, stats in calibration.by_source},
+        "ungrounded": {
+            "softer": calibration.ungrounded_softer,
+            "firmer": calibration.ungrounded_firmer,
+            "total": calibration.ungrounded,
         },
-        "ungrounded": {**dict(calibration.ungrounded), "total": _ungrounded_total(calibration)},
         "passed": calibration.passed,
     }
 
@@ -383,62 +319,49 @@ def _cell(text: str) -> str:
     return text.replace("|", "\\|").replace("\n", " ")
 
 
-def _stats_table(
-    title: str,
-    criteria: tuple[CriterionStats, ...],
-    status: Callable[[CriterionStats], bool] | None,
-) -> list[str]:
-    """A table of one source; ``status`` is ``None`` where the source has no threshold."""
-    return [
-        f"## {title}",
-        "",
-        "| criterion | labels | accuracy | defects | defect recall | status |",
-        "|---|---:|---:|---:|---:|---|",
-        *(
-            f"| {stats.criterion} | {stats.labels} | {_percent(stats.accuracy)} | {stats.defects} "
-            f"| {_percent(stats.defect_recall)} "
-            f"| {'-' if status is None else 'PASS' if status(stats) else 'FAIL'} |"
-            for stats in criteria
-        ),
-        "",
-    ]
-
-
-def _ungrounded_lines(calibration: Calibration) -> list[str]:
-    fields = ", ".join(f"{name} {count}" for name, count in calibration.ungrounded)
-    return [f"- ungrounded quotes: {_ungrounded_total(calibration)} ({fields})"]
+def _stats_row(title: str, stats: CleanStats, status: str) -> str:
+    return (
+        f"| {title} | {stats.labels} | {_percent(stats.accuracy)} | {stats.defects} "
+        f"| {_percent(stats.defect_recall)} | {status} |"
+    )
 
 
 def render_calibration_report(
     calibration: Calibration, outcomes: list[ItemOutcome], *, spent_billable: int
 ) -> str:
     """The local Markdown report: the numbers, then every disagreement with the texts."""
+    by_source = dict(calibration.by_source)
+    overall_ok = calibration.overall.passes(min_accuracy=MIN_ACCURACY, min_recall=MIN_DEFECT_RECALL)
+    real_ok = by_source[SOURCE_EVAL_OUTPUT].passes(
+        min_accuracy=MIN_REAL_ACCURACY, min_recall=MIN_REAL_DEFECT_RECALL
+    )
     lines = [
-        "# Judge calibration",
+        "# Judge calibration (clean)",
         "",
         f"- model: {calibration.model}",
         f"- rubric: {calibration.rubric}",
         f"- items: {calibration.items} ({calibration.failed_items} without verdicts)",
         f"- billable tokens: {spent_billable}",
-        *_ungrounded_lines(calibration),
+        f"- ungrounded quotes: {calibration.ungrounded} "
+        f"(softer {calibration.ungrounded_softer}, firmer {calibration.ungrounded_firmer})",
         f"- passed: {'yes' if calibration.passed else 'no'}",
         "",
-        *_stats_table("Overall", calibration.criteria, CriterionStats.passes),
-        *_stats_table("synthetic", dict(calibration.by_source)["synthetic"], None),
-        *_stats_table(
-            "eval_output",
-            dict(calibration.by_source)[SOURCE_EVAL_OUTPUT],
-            CriterionStats.passes_real,
+        "| set | labels | accuracy | defects | defect recall | status |",
+        "|---|---:|---:|---:|---:|---|",
+        _stats_row("overall", calibration.overall, "PASS" if overall_ok else "FAIL"),
+        _stats_row(SOURCE_SYNTHETIC, by_source[SOURCE_SYNTHETIC], "-"),
+        _stats_row(
+            SOURCE_EVAL_OUTPUT, by_source[SOURCE_EVAL_OUTPUT], "PASS" if real_ok else "FAIL"
         ),
+        "",
         "## Disagreements",
         "",
-        "| item | slot | criterion | expected | judge | evidence | draft | softer | firmer |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| item | slot | expected | judge | evidence | softer | firmer |",
+        "|---|---|---|---|---|---|---|",
     ]
     lines.extend(
-        f"| {item.case.id} | {item.slot or 'pair'} | {item.criterion} | {item.expected.value} "
+        f"| {item.case.id} | {item.slot} | {item.expected.value} "
         f"| {'none' if item.got is None else item.got.value} | {_cell(item.evidence)} "
-        f"| {_cell(item.case.draft)} "
         f"| {_cell(item.case.softer)} | {_cell(item.case.firmer)} |"
         for item in disagreements(outcomes)
     )

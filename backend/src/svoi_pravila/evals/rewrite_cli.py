@@ -118,7 +118,7 @@ async def async_main(args: argparse.Namespace) -> int:
             Path(args.baselines_dir), args.judge_model
         )
         if args.judge_model is not None and not judge_calibrated:
-            print("Judge is not calibrated for this model and rubric: gates J1-J6 are n/a.")
+            print("Judge is not calibrated for this model and rubric: gate J6 is n/a.")
         params = RewriteEvalParams(
             repeat=args.repeat,
             deadline_seconds=args.deadline,
@@ -196,7 +196,7 @@ def main() -> None:
     parser.add_argument(
         "--judge-model",
         default=None,
-        help="Judge model: one judge call per usable call, gates J1-J6 (n/a unless calibrated)",
+        help="Judge model: one judge call per usable call, gate J6 (n/a unless calibrated)",
     )
     parser.add_argument(
         "--baselines-dir",

@@ -18,48 +18,22 @@ from svoi_pravila.adapters.llm.gigachat.attempt_policy import (
 )
 from svoi_pravila.adapters.llm.gigachat.estimate import estimate_prepared_tokens
 from svoi_pravila.adapters.llm.gigachat.prepared import PreparedMessages, prepare_judge
-from svoi_pravila.adapters.llm.gigachat.schemas import JudgeOut, SlotJudgeOut
+from svoi_pravila.adapters.llm.gigachat.schemas import JudgeOut
 from svoi_pravila.adapters.llm.gigachat.structured import StructuredCallParams, structured_call
 from svoi_pravila.application.errors import GenerationUnavailable, UnavailableKind
 from svoi_pravila.application.ports.generation import GenerationMeta
-from svoi_pravila.application.ports.rewrite_judge import (
-    GoalBreach,
-    JudgeObservation,
-    JudgeRequest,
-    PairObservation,
-    Position,
-    RuleCheck,
-    SlotObservation,
-    Warmer,
-)
+from svoi_pravila.application.ports.rewrite_judge import JudgeObservation, JudgeRequest
 
-# Quotes of up to four items per list, two variants and the pair, plus the goal sentences.
-MAX_TOKENS_JUDGE = 1024
+# Up to four quotes per variant, one list each.
+MAX_TOKENS_JUDGE = 384
 # Sampling of judge calls only: low, to make the observations repeatable.
 JUDGE_TOP_P = 0.1
 
 
-def _slot_observation(parsed: SlotJudgeOut) -> SlotObservation:
-    return SlotObservation(
-        rude=tuple(parsed.rude),
-        added=tuple(parsed.added),
-        position=Position(parsed.position.value),
-        goal_sentence=parsed.goal_sentence,
-        goal_breach=GoalBreach(parsed.goal_breach.value),
-        rule_evidence=tuple(parsed.rule_evidence),
-        rule_check=RuleCheck(parsed.rule_check.value),
-    )
-
-
 def _to_observation(parsed: JudgeOut, meta: GenerationMeta) -> JudgeObservation:
     return JudgeObservation(
-        softer=_slot_observation(parsed.softer),
-        firmer=_slot_observation(parsed.firmer),
-        pair=PairObservation(
-            firmer_softening=tuple(parsed.firmer_softening),
-            firmer_pressure=tuple(parsed.firmer_pressure),
-            warmer=Warmer(parsed.warmer.value),
-        ),
+        softer_rude=tuple(parsed.softer_rude),
+        firmer_rude=tuple(parsed.firmer_rude),
         meta=meta,
     )
 
@@ -99,7 +73,7 @@ class GigaChatRewriteJudge:
                 return await structured_call(
                     StructuredCallParams(
                         client=self._client,
-                        operation="judge_rewrite",
+                        operation="judge_clean",
                         model=self._model,
                         prepared=prepared,
                         response_format=JudgeOut,

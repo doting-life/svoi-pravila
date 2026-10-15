@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 from tests.factories import make_settings
 from tests.fakes.generation import FakeTextGenerator
-from tests.fakes.judge import FakeRewriteJudge, judge_result, slot
+from tests.fakes.judge import FakeRewriteJudge, judge_result
 
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
@@ -195,12 +195,7 @@ _GOOD_VARIANTS = (
 @pytest.mark.unit
 async def test_run_judges_every_usable_call_with_the_finished_texts() -> None:
     gen = FakeTextGenerator(rewrite_result=_result(*_GOOD_VARIANTS))
-    judge = FakeRewriteJudge(
-        judge_result(
-            softer=slot(clean=Verdict.NO, goal_done=Verdict.YES),
-            ladder_ok=Verdict.NO,
-        )
-    )
+    judge = FakeRewriteJudge(judge_result(softer_clean=Verdict.NO))
     rule = RuleContext(
         category=RuleCategory.APOLOGY,
         text="Извиняться первым",
@@ -217,14 +212,12 @@ async def test_run_judges_every_usable_call_with_the_finished_texts() -> None:
     result = await run_rewrite_eval(gen, [case], _params(repeat=2, judge=judge), spend)
     assert len(judge.calls) == 2
     request = judge.calls[0]
-    assert (request.draft, request.goal, request.rules) == (_DRAFT, RewriteGoal.DECLINE, (rule,))
     assert (request.softer, request.firmer) == ("Пожалуйста, посиди дома", "Жди дома")
     assert request.deadline_seconds == 5.0
     first = result.records[0]
     assert first.judgement is not None
-    assert first.judgement.softer.clean is Verdict.NO
-    assert first.judgement.firmer.clean is Verdict.YES
-    assert first.judgement.ladder_ok is Verdict.NO
+    assert first.judgement.softer_clean is Verdict.NO
+    assert first.judgement.firmer_clean is Verdict.YES
     assert not first.judge_failed
     assert first.billable_tokens == 7 + 11
     assert spend.spent_billable == 2 * (7 + 11)

@@ -21,7 +21,6 @@ from svoi_pravila.application.ports.generation import (
 from svoi_pravila.application.ports.rewrite_judge import (
     JudgeRequest,
     RewriteJudge,
-    SlotVerdicts,
     Verdict,
 )
 from svoi_pravila.application.rewrite_variants import fill_empty_check
@@ -79,9 +78,8 @@ class InvalidDiagnostic:
 class RunJudgement:
     """The judge's verdicts for one usable call; verdicts only, no text."""
 
-    softer: SlotVerdicts
-    firmer: SlotVerdicts
-    ladder_ok: Verdict
+    softer_clean: Verdict
+    firmer_clean: Verdict
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,9 +241,6 @@ async def _judged(
     """Add the judge's verdicts to a usable call; the second item is a stop kind, if any."""
     texts = {variant.kind: variant.text for variant in record.variants}
     request = JudgeRequest(
-        draft=case.draft,
-        goal=case.goal,
-        rules=case.rules,
         softer=texts[VariantKind.SOFTER],
         firmer=texts[VariantKind.FIRMER],
         deadline_seconds=deadline_seconds,
@@ -265,7 +260,7 @@ async def _judged(
         record,
         billable_tokens=record.billable_tokens + verdicts.meta.usage.billable,
         judgement=RunJudgement(
-            softer=verdicts.softer, firmer=verdicts.firmer, ladder_ok=verdicts.ladder_ok
+            softer_clean=verdicts.softer_clean, firmer_clean=verdicts.firmer_clean
         ),
     )
     return judged, None
@@ -275,9 +270,6 @@ def worst_case_judge_request(case: RewriteCase, deadline_seconds: float) -> Judg
     """A worst-case-sized judge request: both variants as long as the length rule allows."""
     longest = (case.draft * 2)[: math.ceil(LENGTH_FACTOR * len(case.draft))]
     return JudgeRequest(
-        draft=case.draft,
-        goal=case.goal,
-        rules=case.rules,
         softer=longest,
         firmer=longest,
         deadline_seconds=deadline_seconds,

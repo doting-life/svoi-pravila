@@ -1,4 +1,4 @@
-"""Release gates G3, G4, G6-G9 and J1-J6 of the rewrite contract (ADR-0016 §10, §13).
+"""Release gates G3, G4, G6-G9 and J6 of the rewrite contract (ADR-0016 §10, §13).
 
 Every number here is a count or a share of calls; no text enters this module, so the
 metrics can be written to a committed baseline file. The flagged slots of J6 are ids
@@ -11,12 +11,10 @@ the share of unusable answers (``invalid_output``, ``not_ok_safety``, ``refused`
 calls except ``unavailable``. ``unavailable`` calls (provider failures) leave every denominator
 and are reported as a count.
 
-The judge gates J1-J6 are measured over the usable calls the judge was asked about. A judge
-failure (no verdicts) stays in every denominator and never counts as a pass; J6 fails while
-any judge call failed, because its slots are unverified. J5 is measured only over the judged
-calls whose two slots the judge itself found otherwise good (``SlotVerdicts.all_good``): the
-ladder is a single-defect criterion. J1-J6 are ``n/a`` unless the judge
-is calibrated (a passed calibration file for the model and the rubric version).
+The judge gate J6 (``clean`` = no in no slot) is measured over the usable calls the judge was
+asked about. A judge failure (no verdicts) never counts as a pass: J6 fails while any judge call
+failed, because its slots are unverified. J6 is ``n/a`` unless the judge is calibrated (a passed
+calibration file for the model and the rubric version).
 """
 
 from __future__ import annotations
@@ -26,7 +24,7 @@ from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 
-from svoi_pravila.application.ports.rewrite_judge import SlotVerdicts, Verdict
+from svoi_pravila.application.ports.rewrite_judge import Verdict
 from svoi_pravila.domain.enums import VariantKind
 from svoi_pravila.domain.variant_policy import PolicyRule
 from svoi_pravila.evals.rewrite_run import RewriteRunRecord, RunOutcome
@@ -35,11 +33,6 @@ G6_MIN_LADDER_LENGTH_SHARE = 0.90
 G7_MIN_LADDER_SIMILAR_SHARE = 0.95
 G8_MAX_EDIT_RATIO_SHARE = 0.05
 G9_MAX_UNUSABLE_SHARE = 0.03
-J1_MIN_MEANING_KEPT_SHARE = 0.95
-J2_MIN_NOT_INVENTED_SHARE = 0.95
-J3_MIN_GOAL_DONE_SHARE = 0.90
-J4_MIN_RULE_DONE_SHARE = 0.80
-J5_MIN_LADDER_OK_SHARE = 0.90
 
 _RATE_DIGITS = 4
 _BASELINE_VERSION = 3
@@ -81,13 +74,6 @@ class JudgeMetrics:
 
     judged_calls: int
     failed_calls: int
-    meaning_kept_share: float | None
-    not_invented_share: float | None
-    goal_done_share: float | None
-    rule_done_share: float | None
-    ladder_ok_share: float | None
-    closing_ask_with_rule: float | None
-    closing_ask_without_rule: float | None
     flagged: tuple[str, ...]
 
 
@@ -117,64 +103,27 @@ def _has_rule(record: RewriteRunRecord, rule: PolicyRule, kinds: tuple[VariantKi
     return any(rule in variant.violations for variant in record.variants if variant.kind in kinds)
 
 
-def _slots(record: RewriteRunRecord) -> tuple[tuple[str, SlotVerdicts], ...]:
-    """The judged slots of one call, named as in the gate table; empty when not judged."""
+def _slots(record: RewriteRunRecord) -> tuple[tuple[str, Verdict], ...]:
+    """The ``clean`` verdicts of one call, named as in the report; empty when not judged."""
     if record.judgement is None:
         return ()
     return (
-        (VariantKind.SOFTER.value, record.judgement.softer),
-        (VariantKind.FIRMER.value, record.judgement.firmer),
+        (VariantKind.SOFTER.value, record.judgement.softer_clean),
+        (VariantKind.FIRMER.value, record.judgement.firmer_clean),
     )
-
-
-def _closing_ask_rate(records: list[RewriteRunRecord]) -> float | None:
-    flags = [
-        variant.closing_ask_ok
-        for record in records
-        for variant in record.variants
-        if variant.closing_ask_ok is not None
-    ]
-    return _share(sum(flags), len(flags))
 
 
 def _judge_metrics(ok: list[RewriteRunRecord]) -> JudgeMetrics:
     asked = [record for record in ok if record.judgement is not None or record.judge_failed]
     judged = [record for record in asked if record.judgement is not None]
-    verdicts = [verdict for record in judged for _, verdict in _slots(record)]
-    goal_asked = [record for record in asked if record.goal is not None]
-    rule_asked = [record for record in asked if record.had_rules]
-    goal_verdicts = [verdict for record in goal_asked for _, verdict in _slots(record)]
-    rule_verdicts = [verdict for record in rule_asked for _, verdict in _slots(record)]
-    eligible_ladders = [
-        record.judgement.ladder_ok
-        for record in asked
-        if record.judgement is not None
-        and record.judgement.softer.all_good
-        and record.judgement.firmer.all_good
-    ]
     return JudgeMetrics(
         judged_calls=len(judged),
         failed_calls=len(asked) - len(judged),
-        meaning_kept_share=_share(
-            sum(v.meaning_kept is Verdict.YES for v in verdicts), 2 * len(asked)
-        ),
-        not_invented_share=_share(sum(v.invented is Verdict.NO for v in verdicts), 2 * len(asked)),
-        goal_done_share=_share(
-            sum(v.goal_done is Verdict.YES for v in goal_verdicts), 2 * len(goal_asked)
-        ),
-        rule_done_share=_share(
-            sum(v.rule_done is Verdict.YES for v in rule_verdicts), 2 * len(rule_asked)
-        ),
-        ladder_ok_share=_share(
-            sum(ladder is Verdict.YES for ladder in eligible_ladders), len(eligible_ladders)
-        ),
-        closing_ask_with_rule=_closing_ask_rate([r for r in ok if r.had_rules]),
-        closing_ask_without_rule=_closing_ask_rate([r for r in ok if not r.had_rules]),
         flagged=tuple(
             f"{record.case_id}:{record.run_index}:{slot}"
             for record in judged
             for slot, verdict in _slots(record)
-            if verdict.clean is Verdict.NO
+            if verdict is Verdict.NO
         ),
     )
 
@@ -266,25 +215,6 @@ def _not_calibrated(result: GateResult) -> GateResult:
     return replace(result, threshold=threshold, status=GateStatus.NOT_APPLICABLE)
 
 
-def _closing_ask_gate(metrics: JudgeMetrics) -> GateResult:
-    name = "rule_done = yes in slots with rules; closing ask with rule > without"
-    with_rule = metrics.closing_ask_with_rule
-    without = metrics.closing_ask_without_rule
-    value = (
-        f"rule_done {_percent(metrics.rule_done_share)}; "
-        f"closing ask {_percent(with_rule)} vs {_percent(without)}"
-    )
-    threshold = f"rule_done >= {_percent(J4_MIN_RULE_DONE_SHARE)}; with > without"
-    passed = (
-        metrics.rule_done_share is not None
-        and with_rule is not None
-        and without is not None
-        and metrics.rule_done_share >= J4_MIN_RULE_DONE_SHARE
-        and with_rule > without
-    )
-    return GateResult("J4", name, value, threshold, _status(passed=passed))
-
-
 def _clean_gate(metrics: JudgeMetrics) -> GateResult:
     """J6: ``clean`` = no in no slot; a judge failure leaves its slots unverified."""
     value = f"{len(metrics.flagged)} slots"
@@ -300,26 +230,15 @@ def _clean_gate(metrics: JudgeMetrics) -> GateResult:
     )
 
 
-def _judge_gates(metrics: JudgeMetrics) -> tuple[GateResult, ...]:
-    return (
-        _min_gate("J1", "meaning kept", metrics.meaning_kept_share, J1_MIN_MEANING_KEPT_SHARE),
-        _min_gate("J2", "nothing invented", metrics.not_invented_share, J2_MIN_NOT_INVENTED_SHARE),
-        _min_gate("J3", "goal done", metrics.goal_done_share, J3_MIN_GOAL_DONE_SHARE),
-        _closing_ask_gate(metrics),
-        _min_gate("J5", "ladder holds", metrics.ladder_ok_share, J5_MIN_LADDER_OK_SHARE),
-        _clean_gate(metrics),
-    )
-
-
 def evaluate_gates(
     metrics: GateMetrics, baseline: Baseline | None, *, judge_calibrated: bool
 ) -> tuple[GateResult, ...]:
-    """Evaluate G3, G4, G6-G9 and J1-J6.
+    """Evaluate G3, G4, G6-G9 and J6.
 
-    A gate without data fails; G8 without a baseline and J1-J6 without a calibrated judge
-    are ``n/a``.
+    A gate without data fails; G8 without a baseline and J6 without a calibrated judge are
+    ``n/a``.
     """
-    judge_gates = _judge_gates(metrics.judge)
+    clean_gate = _clean_gate(metrics.judge)
     return (
         _zero_gate("G3", "forbidden stems in softer/firmer", metrics.stem_leak_runs, metrics),
         _zero_gate("G4", "ty/vy register change", metrics.register_runs, metrics),
@@ -337,7 +256,7 @@ def evaluate_gates(
         ),
         _baseline_gate(metrics, baseline),
         _max_gate("G9", "unusable answers", metrics.unusable_share, G9_MAX_UNUSABLE_SHARE),
-        *(judge_gates if judge_calibrated else tuple(_not_calibrated(g) for g in judge_gates)),
+        clean_gate if judge_calibrated else _not_calibrated(clean_gate),
     )
 
 

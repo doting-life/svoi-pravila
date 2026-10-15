@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable
 
-from svoi_pravila.application.ports.rewrite_judge import SlotVerdicts, Verdict
+from svoi_pravila.application.ports.rewrite_judge import Verdict
 from svoi_pravila.benchmarks.report import percentile
 from svoi_pravila.domain.enums import VariantKind
 from svoi_pravila.domain.variant_policy import PolicyRule
@@ -111,7 +111,7 @@ def _gates(item: ModelEval, baseline: Baseline | None, *, judge_calibrated: bool
         "",
         "Denominators (ADR-0016 §10): G3, G4, G6, G7, G8 edit_ratio: usable calls (outcome ok); "
         "G8 check_ok: check variants with a reference; G9: all calls except unavailable; "
-        "J1-J6: usable calls the judge was asked about (a judge failure is never a pass).",
+        "J6: usable calls the judge was asked about (a judge failure is never a pass).",
         "",
         f"- usable calls: {metrics.ok_runs} of {metrics.runs}",
         f"- unavailable calls (in no denominator): {metrics.unavailable_runs}",
@@ -139,15 +139,15 @@ def _flagged(records: list[RewriteRunRecord]) -> list[str]:
     for record in records:
         if record.judgement is None:
             continue
-        verdicts: dict[VariantKind, SlotVerdicts] = {
-            VariantKind.SOFTER: record.judgement.softer,
-            VariantKind.FIRMER: record.judgement.firmer,
+        verdicts: dict[VariantKind, Verdict] = {
+            VariantKind.SOFTER: record.judgement.softer_clean,
+            VariantKind.FIRMER: record.judgement.firmer_clean,
         }
         texts = {variant.kind: variant.text for variant in record.variants}
         lines.extend(
             f"| {record.case_id}:{record.run_index}:{kind.value} | {_cell(texts[kind])} |"
             for kind, verdict in verdicts.items()
-            if verdict.clean is Verdict.NO
+            if verdict is Verdict.NO
         )
     lines.append("")
     return lines
@@ -249,7 +249,7 @@ def render_report(
     """Render the local report: a model comparison, then one section per model.
 
     An early stop marks the model ``INCOMPLETE`` with its reason; models after it are
-    listed as not run. Each model section lists the gates G3, G4, G6-G9 and J1-J6, then the
+    listed as not run. Each model section lists the gates G3, G4, G6-G9 and J6, then the
     slots flagged by J6.
     """
     lines = ["# Rewrite eval", "", *_comparison(evals)]

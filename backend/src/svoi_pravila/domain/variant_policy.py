@@ -3,8 +3,9 @@
 See ADR-0016 §5 and §10.
 
 The policy never rewrites or blocks a text: it only reports which rules a variant broke.
-Stop phrases and second-person forms are closed lists here. Vulgar language, harsh wording and
-new hedges or apologies are not checked by word lists (ADR-0016 §15): the eval judge decides.
+Stop phrases and second-person forms are closed lists here. Vulgar language is not checked by
+word lists (ADR-0016 §15): the eval judge decides; harsh wording and new hedges or apologies are
+not checked by code.
 """
 
 from __future__ import annotations

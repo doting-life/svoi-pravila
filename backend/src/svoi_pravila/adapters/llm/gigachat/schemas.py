@@ -80,41 +80,8 @@ class SuggestRuleOut(BaseModel):
     text: str | None = Field(default=None, max_length=RULE_TEXT_MAX_CHARS)
 
 
-class PositionOut(StrEnum):
-    SAME = "same"
-    WEAKENED = "weakened"
-    LOST = "lost"
-    INVERTED = "inverted"
-    OTHER_ACTOR = "other_actor"
-
-
-class GoalBreachOut(StrEnum):
-    NONE = "none"
-    HEDGED = "hedged"
-    CONDITIONAL = "conditional"
-    WISH_OR_QUESTION = "wish_or_question"
-    EXCUSE = "excuse"
-    SELF_BLAME = "self_blame"
-    REPROACH = "reproach"
-    PROHIBITION = "prohibition"
-    ULTIMATUM = "ultimatum"
-
-
-class RuleCheckOut(StrEnum):
-    FOLLOWED = "followed"
-    BROKEN = "broken"
-    NOT_APPLICABLE = "not_applicable"
-
-
-class WarmerOut(StrEnum):
-    SOFTER = "softer"
-    FIRMER = "firmer"
-    EQUAL = "equal"
-
-
 JUDGE_MAX_QUOTES = 4
 JUDGE_MAX_QUOTE_CHARS = 120
-JUDGE_MAX_SENTENCE_CHARS = 300
 
 _Quotes = Annotated[
     list[Annotated[str, Field(min_length=1, max_length=JUDGE_MAX_QUOTE_CHARS)]],
@@ -122,27 +89,10 @@ _Quotes = Annotated[
 ]
 
 
-class SlotJudgeOut(BaseModel):
-    """Observations for one variant (rubric ``judge_rewrite@v3``): quotes, then enums."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    rude: _Quotes
-    added: _Quotes
-    position: PositionOut
-    goal_sentence: str = Field(max_length=JUDGE_MAX_SENTENCE_CHARS)
-    goal_breach: GoalBreachOut
-    rule_evidence: _Quotes
-    rule_check: RuleCheckOut
-
-
 class JudgeOut(BaseModel):
-    """Judge output: observations per toned variant, then the pair observations."""
+    """Clean-judge output (rubric ``judge_clean@v1``): the rude quotes of each variant."""
 
     model_config = ConfigDict(extra="forbid")
 
-    softer: SlotJudgeOut
-    firmer: SlotJudgeOut
-    firmer_softening: _Quotes
-    firmer_pressure: _Quotes
-    warmer: WarmerOut
+    softer_rude: _Quotes
+    firmer_rude: _Quotes

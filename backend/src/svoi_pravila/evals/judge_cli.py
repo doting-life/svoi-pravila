@@ -1,4 +1,4 @@
-"""CLI entry for the judge calibration (on demand, never from pytest)."""
+"""CLI entry for the clean-judge calibration (on demand, never from pytest)."""
 
 from __future__ import annotations
 
@@ -41,6 +41,12 @@ def _print_dry_run(cases: list[JudgeCase], *, model: str) -> None:
     print(f"Largest single-call worst-case estimate: {max(worst)}")
 
 
+def _cases(args: argparse.Namespace) -> list[JudgeCase]:
+    """The calibration items; ``--limit`` keeps the first items only (a smoke run)."""
+    cases = load_judge_cases(Path(args.data))
+    return cases if args.limit is None else cases[: args.limit]
+
+
 def _report_path(args: argparse.Namespace) -> Path:
     return Path(args.out) if args.out else Path(_OUT_DIR) / report_name(args.model)
 
@@ -53,7 +59,7 @@ def _write_report(out: Path, report: str) -> None:
 async def async_main(args: argparse.Namespace) -> int:
     """Calibrate the judge model on the items; write the report and the committed file."""
     if args.dry_run:
-        _print_dry_run(load_judge_cases(Path(args.data)), model=args.model)
+        _print_dry_run(_cases(args), model=args.model)
         return 0
     if not args.list_models and args.max_tokens is None:
         msg = "--max-tokens is required for live runs (or use --dry-run / --list-models)"
@@ -67,7 +73,7 @@ async def async_main(args: argparse.Namespace) -> int:
         spend = SpendTracker()
         run = await run_calibration(
             GigaChatRewriteJudge(client, args.model),
-            load_judge_cases(Path(args.data)),
+            _cases(args),
             deadline_seconds=args.deadline,
             max_tokens=args.max_tokens,
             spend=spend,
@@ -81,6 +87,12 @@ async def async_main(args: argparse.Namespace) -> int:
         if run.stop_reason is not None:
             print(f"Run incomplete ({run.stop_reason}); no calibration file written.")
             return 1
+        if args.limit is not None:
+            print(
+                f"Smoke run of {calibration.items} items: {calibration.failed_items} without "
+                "verdicts; no calibration file written."
+            )
+            return 0
         path = await asyncio.to_thread(write_calibration, Path(args.baselines_dir), calibration)
         print(f"Calibration written: {path.name} (passed: {calibration.passed})")
         return 0 if calibration.passed else 1
@@ -90,7 +102,7 @@ async def async_main(args: argparse.Namespace) -> int:
 
 def main() -> None:
     """CLI entrypoint for ``svoi-pravila-eval-judge``."""
-    parser = argparse.ArgumentParser(description="Rewrite judge calibration", epilog=_ESTIMATE_HELP)
+    parser = argparse.ArgumentParser(description="Clean judge calibration", epilog=_ESTIMATE_HELP)
     parser.add_argument("--model", required=True, help="Judge model to calibrate")
     parser.add_argument("--data", default=_DEFAULT_DATA, help="Path to the calibration JSONL")
     parser.add_argument(
@@ -103,6 +115,12 @@ def main() -> None:
         "--out",
         default=None,
         help="Markdown report path (local only); default carries the model and the rubric",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Judge only the first N items (a smoke run; no calibration file is written)",
     )
     parser.add_argument(
         "--dry-run",

@@ -1,4 +1,4 @@
-"""Offline proof of gates G3-G9 and J1-J6: recorded runs make each gate PASS, FAIL or n/a."""
+"""Offline proof of gates G3-G9 and J6: recorded runs make each gate PASS, FAIL or n/a."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from svoi_pravila.application.ports.rewrite_judge import SlotVerdicts, Verdict
+from svoi_pravila.application.ports.rewrite_judge import Verdict
 from svoi_pravila.domain.enums import RewriteGoal, VariantKind
 from svoi_pravila.domain.variant_policy import PolicyRule
 from svoi_pravila.evals.rewrite_cases import RewriteCategory
@@ -126,12 +126,12 @@ _BASELINE = Baseline(check_ok_rate=1.0)
 @pytest.mark.unit
 def test_clean_pass_makes_every_gate_pass_and_g8_needs_a_baseline() -> None:
     gates = _by_gate(_clean(20), judge_calibrated=False)
-    assert list(gates) == ["G3", "G4", "G6", "G7", "G8", "G9", "J1", "J2", "J3", "J4", "J5", "J6"]
+    assert list(gates) == ["G3", "G4", "G6", "G7", "G8", "G9", "J6"]
     assert [g.status for g in gates.values()] == [
         *[GateStatus.PASSED] * 4,
         GateStatus.NOT_APPLICABLE,
         GateStatus.PASSED,
-        *[GateStatus.NOT_APPLICABLE] * 6,
+        GateStatus.NOT_APPLICABLE,
     ]
     assert not gates_failed(tuple(gates.values()))
     with_baseline = _by_gate(_clean(20), _BASELINE)
@@ -231,7 +231,7 @@ def test_a_pass_without_ok_calls_fails_every_gate_that_needs_data() -> None:
     statuses = {gate: result.status for gate, result in gates.items()}
     assert statuses["G3"] is statuses["G6"] is statuses["G7"] is GateStatus.FAILED
     assert gates["G3"].value == "no data"
-    assert statuses["J1"] is statuses["J5"] is statuses["J6"] is GateStatus.FAILED
+    assert statuses["J6"] is GateStatus.FAILED
     assert gates["J6"].value == "no data"
     assert statuses["G8"] is GateStatus.NOT_APPLICABLE
     assert statuses["G9"] is GateStatus.FAILED
@@ -264,13 +264,6 @@ def test_metrics_count_runs_and_ignore_non_ok_calls_in_the_ok_shares() -> None:
         judge=JudgeMetrics(
             judged_calls=0,
             failed_calls=0,
-            meaning_kept_share=None,
-            not_invented_share=None,
-            goal_done_share=None,
-            rule_done_share=None,
-            ladder_ok_share=None,
-            closing_ask_with_rule=None,
-            closing_ask_without_rule=None,
             flagged=(),
         ),
     )
@@ -325,8 +318,8 @@ def test_report_has_a_gates_section_and_group_summaries() -> None:
     assert "- unavailable calls (in no denominator): 0" in report
     assert "| G4 | ty/vy register change | 1 of 4 calls | 0 | FAIL |" in report
     assert (
-        "| J1 | meaning kept | no data | >= 95.0 %; needs a passed judge calibration | n/a |"
-        in report
+        "| J6 | no vulgar or rude language (clean = no) | no data "
+        "| 0; needs a passed judge calibration | n/a |" in report
     )
     assert "| G8 | " in report
     assert "### Per category" in report
@@ -339,143 +332,56 @@ def test_report_has_a_gates_section_and_group_summaries() -> None:
 
 _YES = Verdict.YES
 _NO = Verdict.NO
-_NA = Verdict.NA
 
 
-def _slot(
-    *,
-    clean: Verdict = _YES,
-    meaning_kept: Verdict = _YES,
-    invented: Verdict = _NO,
-    goal_done: Verdict = _NA,
-    rule_done: Verdict = _NA,
-) -> SlotVerdicts:
-    return SlotVerdicts(clean, meaning_kept, invented, goal_done, rule_done)
-
-
-def _call(
-    kind: str,
-    index: int,
-    *,
-    defect: dict[str, Verdict] | None = None,
-    ladder_ok: Verdict = _YES,
-    closing_ask_with_rule: bool = True,
-) -> RewriteRunRecord:
-    """A usable call the judge graded; ``defect`` overrides the verdicts of ``softer`` only."""
-    goal = RewriteGoal.DECLINE if kind == "goal" else None
-    has_rules = kind == "rule"
-    good = {
-        "goal_done": _YES if goal is not None else _NA,
-        "rule_done": _YES if has_rules else _NA,
-    }
+def _call(kind: str, index: int, *, softer: Verdict = _YES) -> RewriteRunRecord:
+    """A usable call the judge graded; ``softer`` overrides the verdict of ``softer`` only."""
     return _record(
         check_ok=True,
-        goal=goal,
-        had_rules=has_rules,
-        closing_ask_ok=closing_ask_with_rule if has_rules else False,
         case_id=f"{kind}{index}",
-        judgement=RunJudgement(_slot(**{**good, **(defect or {})}), _slot(**good), ladder_ok),
+        judgement=RunJudgement(softer_clean=softer, firmer_clean=_YES),
     )
 
 
-def _judged_pass(
-    *,
-    bad_kind: str = "plain",
-    bad: int = 0,
-    defect: dict[str, Verdict] | None = None,
-    ladder_bad: int = 0,
-    closing_ask_with_rule: bool = True,
-) -> list[RewriteRunRecord]:
-    """Ten plain, ten goal and ten rule calls; the first ``bad`` of ``bad_kind`` are flawed."""
+def _judged_pass(*, bad: int = 0) -> list[RewriteRunRecord]:
+    """Thirty calls; the ``softer`` of the first ``bad`` plain calls is rude."""
     return [
-        _call(
-            kind,
-            index,
-            defect=defect if kind == bad_kind and index < bad else None,
-            ladder_ok=_NO if kind == bad_kind and index < ladder_bad else _YES,
-            closing_ask_with_rule=closing_ask_with_rule,
-        )
+        _call(kind, index, softer=_NO if kind == "plain" and index < bad else _YES)
         for kind in ("plain", "goal", "rule")
         for index in range(10)
     ]
 
 
 @pytest.mark.unit
-def test_a_good_judged_pass_makes_every_j_gate_pass() -> None:
+def test_a_good_judged_pass_makes_j6_pass() -> None:
     gates = _by_gate(_judged_pass())
-    assert [gates[name].status for name in ("J1", "J2", "J3", "J4", "J5", "J6")] == [
-        GateStatus.PASSED
-    ] * 6
+    assert gates["J6"].status is GateStatus.PASSED
     assert gates["J6"].value == "0 slots"
-    assert gates["J4"].value == "rule_done 100.0 %; closing ask 100.0 % vs 0.0 %"
     assert not gates_failed(tuple(gates.values()))
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    ("gate", "bad_kind", "defect", "passing", "failing"),
-    [
-        ("J1", "plain", {"meaning_kept": _NO}, 3, 4),
-        ("J2", "plain", {"invented": _YES}, 3, 4),
-        ("J3", "goal", {"goal_done": _NO}, 2, 3),
-        ("J4", "rule", {"rule_done": _NO}, 4, 5),
-    ],
-)
-def test_share_gates_sit_exactly_on_their_threshold(
-    gate: str, bad_kind: str, defect: dict[str, Verdict], passing: int, failing: int
-) -> None:
-    at_limit = _by_gate(_judged_pass(bad_kind=bad_kind, bad=passing, defect=defect))
-    assert at_limit[gate].status is GateStatus.PASSED
-    below = _by_gate(_judged_pass(bad_kind=bad_kind, bad=failing, defect=defect))
-    assert below[gate].status is GateStatus.FAILED
-    assert gates_failed(tuple(below.values()))
-
-
-@pytest.mark.unit
-def test_j4_also_needs_closing_ask_compliance_with_the_rule_above_without_it() -> None:
-    gates = _by_gate(_judged_pass(closing_ask_with_rule=False))
-    assert gates["J4"].status is GateStatus.FAILED
-    assert gates["J4"].value == "rule_done 100.0 %; closing ask 0.0 % vs 0.0 %"
-    no_rule_calls = [_call("rule", index) for index in range(10)]
-    assert _by_gate(no_rule_calls)["J4"].value.endswith("vs no data")
-    assert _by_gate(no_rule_calls)["J4"].status is GateStatus.FAILED
-
-
-@pytest.mark.unit
-def test_j5_counts_calls_where_the_ladder_holds() -> None:
-    assert _by_gate(_judged_pass(ladder_bad=3))["J5"].status is GateStatus.PASSED
-    failing = _by_gate(_judged_pass(ladder_bad=4))
-    assert failing["J5"].status is GateStatus.FAILED
-    assert failing["J5"].value == "86.7 %"
-
-
-@pytest.mark.unit
-def test_j5_ignores_calls_where_the_judge_found_another_defect() -> None:
-    defect = {"meaning_kept": _NO}
-    records = _judged_pass(bad_kind="plain", bad=10, defect=defect, ladder_bad=10)
-    gates = _by_gate(records)
-    assert gates["J5"].status is GateStatus.PASSED
-    assert gates["J5"].value == "100.0 %"
-    assert gates["J1"].status is GateStatus.FAILED
-
-
-@pytest.mark.unit
-def test_j5_counts_the_ladder_only_on_calls_that_are_otherwise_good() -> None:
-    # ten plain calls carry a defect and a broken ladder and stay out; of the 25 eligible calls
-    # five break the ladder: 20/25.
-    records = [
-        *_judged_pass(bad_kind="plain", bad=10, defect={"clean": _NO}, ladder_bad=10),
-        *(_call("goal", 100 + index, ladder_ok=_NO) for index in range(5)),
-    ]
-    assert _by_gate(records)["J5"].value == "80.0 %"
+def test_only_j6_is_a_judge_gate() -> None:
+    assert [name for name in _by_gate(_judged_pass()) if name.startswith("J")] == ["J6"]
 
 
 @pytest.mark.unit
 def test_j6_fails_on_one_flagged_slot_and_lists_it_as_case_run_slot() -> None:
-    gates = _by_gate(_judged_pass(bad=1, defect={"clean": _NO}))
+    gates = _by_gate(_judged_pass(bad=1))
     assert gates["J6"].status is GateStatus.FAILED
     assert gates["J6"].value == "1 slots: plain0:1:softer"
     assert gates["J6"].threshold == "0"
+    assert gates_failed(tuple(gates.values()))
+
+
+@pytest.mark.unit
+def test_a_rude_firmer_is_flagged_as_the_firmer_slot() -> None:
+    record = _record(
+        check_ok=True,
+        case_id="x",
+        judgement=RunJudgement(softer_clean=_YES, firmer_clean=_NO),
+    )
+    assert _by_gate([record])["J6"].value == "1 slots: x:1:firmer"
 
 
 @pytest.mark.unit
@@ -484,13 +390,11 @@ def test_a_judge_failure_is_never_a_pass() -> None:
     metrics = compute_metrics(records)
     assert (metrics.judge.judged_calls, metrics.judge.failed_calls) == (30, 1)
     gates = _by_gate(records)
-    assert gates["J1"].value == "96.8 %"
-    assert gates["J5"].value == "100.0 %"
     assert gates["J6"].status is GateStatus.FAILED
     assert gates["J6"].value == "0 slots; 1 judge failures"
     only_failures = _by_gate([_record(check_ok=True, judge_failed=True)])
-    assert only_failures["J1"].value == "0.0 %"
     assert only_failures["J6"].status is GateStatus.FAILED
+    assert only_failures["J6"].value == "0 slots; 1 judge failures"
 
 
 @pytest.mark.unit
@@ -499,16 +403,14 @@ def test_unjudged_and_unusable_calls_stay_out_of_the_judge_numbers() -> None:
     metrics = compute_metrics(records)
     assert metrics.judge.judged_calls == 30
     assert metrics.judge.failed_calls == 0
-    assert _by_gate(records)["J1"].value == "100.0 %"
+    assert _by_gate(records)["J6"].status is GateStatus.PASSED
 
 
 @pytest.mark.unit
-def test_without_a_calibrated_judge_every_j_gate_is_not_applicable_even_on_defects() -> None:
-    records = _judged_pass(bad=5, defect={"clean": _NO, "meaning_kept": _NO})
-    gates = _by_gate(records, judge_calibrated=False)
-    for name in ("J1", "J2", "J3", "J4", "J5", "J6"):
-        assert gates[name].status is GateStatus.NOT_APPLICABLE
-        assert gates[name].threshold.endswith("needs a passed judge calibration")
+def test_without_a_calibrated_judge_j6_is_not_applicable_even_on_defects() -> None:
+    gates = _by_gate(_judged_pass(bad=5), judge_calibrated=False)
+    assert gates["J6"].status is GateStatus.NOT_APPLICABLE
+    assert gates["J6"].threshold.endswith("needs a passed judge calibration")
     assert gates["J6"].value.startswith("5 slots: plain0:1:softer")
     assert not gates_failed(tuple(gates.values()))
 
@@ -520,13 +422,13 @@ def test_report_lists_every_flagged_slot_with_its_text() -> None:
         case_id="x1",
         run_index=2,
         texts=("Мягко | и вежливо", "Твёрдо"),
-        judgement=RunJudgement(_slot(clean=_NO), _slot(), _YES),
+        judgement=RunJudgement(softer_clean=_NO, firmer_clean=_YES),
     )
     both = _record(
         check_ok=True,
         case_id="x2",
         texts=("Первый", "Второй"),
-        judgement=RunJudgement(_slot(clean=_NO), _slot(clean=_NO), _YES),
+        judgement=RunJudgement(softer_clean=_NO, firmer_clean=_NO),
     )
     result = RewriteEvalResult(records=[flagged, both, *_judged_pass()])
     report = render_report([ModelEval("m", result, 33)], judge_calibrated=True)

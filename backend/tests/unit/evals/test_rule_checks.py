@@ -1,4 +1,4 @@
-"""Offline tests for deterministic rule_leak / rule_effect checkers."""
+"""Offline tests for deterministic rule_leak and closing-ask checkers."""
 
 from __future__ import annotations
 
@@ -17,17 +17,8 @@ from svoi_pravila.benchmarks.out_writer import OutWriter
 from svoi_pravila.benchmarks.runner import SpendTracker
 from svoi_pravila.domain.enums import VariantKind
 from svoi_pravila.evals.cases import filter_cases, load_cases, parse_case
-from svoi_pravila.evals.metrics import (
-    rule_effect_compliance_with,
-    rule_effect_compliance_without,
-    rule_effect_delta,
-    rule_leak_count,
-)
-from svoi_pravila.evals.rule_checks import (
-    variant_complies_with_closing_ask,
-    variant_leaks_stems,
-    variants_comply_with_closing_ask,
-)
+from svoi_pravila.evals.metrics import rule_leak_count
+from svoi_pravila.evals.rule_checks import variant_complies_with_closing_ask, variant_leaks_stems
 from svoi_pravila.evals.runner import EvalRuntime, run_eval_case
 
 _DATA = (
@@ -59,8 +50,7 @@ def test_closing_ask_compliance() -> None:
     assert variant_complies_with_closing_ask("Мне важно это обсудить. Можешь ответить?")
     assert variant_complies_with_closing_ask("Давай спокойно поговорим об этом.")
     assert not variant_complies_with_closing_ask("Мне важно это обсудить без давления.")
-    assert variants_comply_with_closing_ask(("Вопрос один?", "Можешь помочь с этим?"))
-    assert not variants_comply_with_closing_ask(("Вопрос один?", "Просто факт."))
+    assert not variant_complies_with_closing_ask("")
 
 
 @pytest.mark.unit
@@ -69,16 +59,10 @@ def test_rule_leak_cases_parse_and_filter() -> None:
     leaks = filter_cases(cases, categories=("rule_leak",))
     assert len(leaks) >= 10
     assert all(c.stop_stems for c in leaks)
-    effects = filter_cases(cases, categories=("rule_effect",))
-    assert len(effects) == 8
-    with_rules = [c for c in effects if c.has_rules()]
-    without = [c for c in effects if not c.has_rules()]
-    assert len(with_rules) == 4
-    assert len(without) == 4
 
 
 @pytest.mark.unit
-async def test_runner_rule_metrics_offline() -> None:
+async def test_runner_rule_leak_offline() -> None:
     leak_case = parse_case(
         {
             "id": "offline-leak",
@@ -94,33 +78,6 @@ async def test_runner_rule_metrics_offline() -> None:
                 }
             ],
             "stop_stems": ["договор", "заранее"],
-        }
-    )
-    effect_with = parse_case(
-        {
-            "id": "offline-effect-with",
-            "operation": "rewrite",
-            "category": "rule_effect",
-            "expected": "ok",
-            "draft": "Мне нужно чтобы ты предупреждал",
-            "rules": [
-                {
-                    "category": "how_to_ask",
-                    "text": "Каждый вариант заканчивать одним конкретным вопросом или просьбой",
-                    "effective_since": "2026-01-01T00:00:00+00:00",
-                }
-            ],
-            "effect_pair": "offline-1",
-        }
-    )
-    effect_without = parse_case(
-        {
-            "id": "offline-effect-without",
-            "operation": "rewrite",
-            "category": "rule_effect",
-            "expected": "ok",
-            "draft": "Мне нужно чтобы ты предупреждал",
-            "effect_pair": "offline-1",
         }
     )
     gen = FakeTextGenerator(
@@ -148,42 +105,3 @@ async def test_runner_rule_metrics_offline() -> None:
     leak_rec = await run_eval_case(gen, leak_case, runtime, deadline=1.0, show_outputs=False)
     assert leak_rec.rule_leak is True
     assert rule_leak_count([leak_rec]) == 1
-
-    gen.rewrite_result = RewriteResult(
-        variants=(
-            Variant(text="Мне важно знать заранее. Можешь предупреждать?", kind=VariantKind.SOFTER),
-            Variant(text="Давай договоримся о предупреждениях.", kind=VariantKind.FIRMER),
-        ),
-        applied_rule_indexes=(0,),
-        safety=SafetyVerdict.OK,
-        meta=GenerationMeta(
-            model="fake",
-            prompt_version="rewrite@v1",
-            latency_ms=1,
-            attempts=1,
-            usage=TokenUsage(input=1, output=1),
-        ),
-    )
-    with_rec = await run_eval_case(gen, effect_with, runtime, deadline=1.0, show_outputs=False)
-    gen.rewrite_result = RewriteResult(
-        variants=(
-            Variant(text="Мне важно знать заранее о планах.", kind=VariantKind.SOFTER),
-            Variant(text="Предупреждай меня если опаздываешь.", kind=VariantKind.FIRMER),
-        ),
-        applied_rule_indexes=(),
-        safety=SafetyVerdict.OK,
-        meta=GenerationMeta(
-            model="fake",
-            prompt_version="rewrite@v1",
-            latency_ms=1,
-            attempts=1,
-            usage=TokenUsage(input=1, output=1),
-        ),
-    )
-    without_rec = await run_eval_case(
-        gen, effect_without, runtime, deadline=1.0, show_outputs=False
-    )
-    rows = [with_rec, without_rec]
-    assert rule_effect_compliance_with(rows) == 1.0
-    assert rule_effect_compliance_without(rows) == 0.0
-    assert rule_effect_delta(rows) == 1.0

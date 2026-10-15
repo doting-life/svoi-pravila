@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
+from svoi_pravila.application.ports.rewrite_judge import Verdict
 from svoi_pravila.benchmarks.report import percentile
 from svoi_pravila.domain.enums import VariantKind
 from svoi_pravila.domain.variant_policy import PolicyRule
+from svoi_pravila.evals.rewrite_cases import RewriteCase
 from svoi_pravila.evals.rewrite_gates import (
     Baseline,
     compute_metrics,
@@ -102,18 +104,20 @@ def _effect(records: list[RewriteRunRecord]) -> list[str]:
     ]
 
 
-def _gates(item: ModelEval, baseline: Baseline | None) -> list[str]:
+def _gates(item: ModelEval, baseline: Baseline | None, *, judge_calibrated: bool) -> list[str]:
     metrics = compute_metrics(item.result.records)
-    results = evaluate_gates(metrics, baseline)
+    results = evaluate_gates(metrics, baseline, judge_calibrated=judge_calibrated)
     return [
         "### Gates",
         "",
-        "Denominators (ADR-0016 §10): G1-G4, G6, G7, G8 edit_ratio: usable calls (outcome ok); "
-        "G5: usable calls without contact rules; G8 check_ok: check variants with a reference; "
-        "G9: all calls except unavailable.",
+        "Denominators (ADR-0016 §10): G3, G4, G6, G7, G8 edit_ratio: usable calls (outcome ok); "
+        "G8 check_ok: check variants with a reference; G9: all calls except unavailable; "
+        "J6: usable calls the judge was asked about (a judge failure is never a pass).",
         "",
         f"- usable calls: {metrics.ok_runs} of {metrics.runs}",
         f"- unavailable calls (in no denominator): {metrics.unavailable_runs}",
+        f"- judge: {metrics.judge.judged_calls} judged, {metrics.judge.failed_calls} failed",
+        f"- judge calibrated for this model and rubric: {'yes' if judge_calibrated else 'no'}",
         "",
         "| gate | check | measured | threshold | status |",
         "|---|---|---|---|---|",
@@ -123,6 +127,74 @@ def _gates(item: ModelEval, baseline: Baseline | None) -> list[str]:
         ),
         "",
     ]
+
+
+def _first_attempt_defect(record: RewriteRunRecord) -> str | None:
+    """``reason[:slot]`` of the call's first-attempt defect, if it had one.
+
+    A repaired call carries it in ``repaired``; a call that failed on both attempts in the
+    first diagnostic. A call that ended unavailable or refused has none recorded.
+    """
+    if record.repaired:
+        return record.repaired[0]
+    if record.diagnostics:
+        return record.diagnostics[0].reason
+    return None
+
+
+def _repair(records: list[RewriteRunRecord]) -> list[str]:
+    """First-attempt defect rate per reason and slot, and the repair success rate."""
+    counted = [r for r in records if r.outcome is not RunOutcome.UNAVAILABLE]
+    defects = Counter(label for r in counted if (label := _first_attempt_defect(r)) is not None)
+    total = sum(defects.values())
+    repaired = sum(1 for r in counted if r.repaired)
+    success = f"{repaired} / {total}" if total else "n/a"
+    return [
+        "### Corrective retry",
+        "",
+        "Denominators: the defect rate is over all calls except unavailable (as G9); the repair "
+        "success rate is over the calls whose first attempt had a defect. G9 still counts the "
+        "calls that failed after the repair.",
+        "",
+        "A call that ends unavailable or refused after a first-attempt defect is not recorded "
+        "as a defect (G9 counts it).",
+        "",
+        f"- calls with a first-attempt defect: {total} of {len(counted)}",
+        f"- repaired by the second attempt (repair success rate): {success}",
+        "",
+        "| first-attempt defect (reason[:slot]) | calls | rate |",
+        "|---|---:|---:|",
+        *(
+            f"| {label} | {count} | {count / len(counted):.1%} |"
+            for label, count in sorted(defects.items())
+        ),
+        "",
+    ]
+
+
+def _flagged(records: list[RewriteRunRecord]) -> list[str]:
+    """J6 listing: every slot the judge flagged as not clean, with its text."""
+    lines = [
+        "### Judge: slots flagged not clean (J6)",
+        "",
+        "| slot | text |",
+        "|---|---|",
+    ]
+    for record in records:
+        if record.judgement is None:
+            continue
+        verdicts: dict[VariantKind, Verdict] = {
+            VariantKind.SOFTER: record.judgement.softer_clean,
+            VariantKind.FIRMER: record.judgement.firmer_clean,
+        }
+        texts = {variant.kind: variant.text for variant in record.variants}
+        lines.extend(
+            f"| {record.case_id}:{record.run_index}:{kind.value} | {_cell(texts[kind])} |"
+            for kind, verdict in verdicts.items()
+            if verdict is Verdict.NO
+        )
+    lines.append("")
+    return lines
 
 
 def _refusals(records: list[RewriteRunRecord]) -> list[str]:
@@ -182,6 +254,31 @@ def _details(records: list[RewriteRunRecord]) -> list[str]:
     return lines
 
 
+def _calls(records: list[RewriteRunRecord], cases: Sequence[RewriteCase]) -> list[str]:
+    """Every call in full: its draft, goal and rules, then the three texts it returned."""
+    by_id = {case.id: case for case in cases}
+    lines = ["### Calls in full", ""]
+    for record in records:
+        case = by_id[record.case_id]
+        texts = {variant.kind: variant.text for variant in record.variants}
+        rules = "; ".join(f"{rule.category.value}: {rule.text}" for rule in case.rules)
+        lines.extend(
+            [
+                f"#### {record.case_id}:{record.run_index} ({record.outcome.value})",
+                "",
+                f"- draft: {_cell(case.draft)}",
+                f"- goal: {'none' if case.goal is None else case.goal.value}",
+                f"- rules: {_cell(rules) if rules else 'none'}",
+                *(
+                    f"- {kind.value}: {_cell(texts[kind]) if kind in texts else '-'}"
+                    for kind in (VariantKind.CHECK, VariantKind.FIRMER, VariantKind.SOFTER)
+                ),
+                "",
+            ]
+        )
+    return lines
+
+
 def _status(item: ModelEval) -> str:
     reason = item.result.stop_reason
     return "COMPLETE" if reason is None else f"INCOMPLETE ({reason})"
@@ -216,11 +313,15 @@ def render_report(
     *,
     not_run: tuple[str, ...] = (),
     baseline: Baseline | None = None,
+    judge_calibrated: bool = False,
+    cases: Sequence[RewriteCase] = (),
 ) -> str:
     """Render the local report: a model comparison, then one section per model.
 
     An early stop marks the model ``INCOMPLETE`` with its reason; models after it are
-    listed as not run. Each model section ends its summary with the gates G1-G9.
+    listed as not run. Each model section lists the gates G3, G4, G6-G9 and J6, then the
+    slots flagged by J6. When ``cases`` is given, each section ends with every call in full:
+    the draft, goal and rules of its case and the ``check``, ``firmer`` and ``softer`` texts.
     """
     lines = ["# Rewrite eval", "", *_comparison(evals)]
     if not_run:
@@ -243,10 +344,13 @@ def render_report(
                     _grouped(records, lambda r: "none" if r.goal is None else r.goal.value),
                 ),
                 *_effect(records),
-                *_gates(item, baseline),
+                *_gates(item, baseline, judge_calibrated=judge_calibrated),
+                *_repair(records),
+                *_flagged(records),
                 *_refusals(records),
                 *_invalid_diagnostics(records),
                 *_details(records),
+                *(_calls(records, cases) if cases else ()),
             ]
         )
     return "\n".join(lines)

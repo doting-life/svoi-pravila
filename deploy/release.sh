@@ -3,9 +3,10 @@
 #   deploy/release.sh <git-sha>
 #
 # Checks out that commit, pulls the four published images tagged with it from ghcr.io, pins them
-# by digest in /srv/svoi-pravila/releases/<sha>.env (Prometheus uses the digest pin from
-# image-pins.env), takes a pre-release backup, runs migrations, starts the stack and verifies it
-# (API readiness, Telegram webhook, HTTPS with CSP and HSTS).
+# by digest in /srv/svoi-pravila/releases/<sha>.env (Prometheus, Alertmanager and node-exporter
+# use the digest pins from image-pins.env), takes a pre-release backup, runs migrations, starts the
+# stack and verifies it (API readiness, Telegram webhook, HTTPS with CSP and HSTS, the Grafana
+# subdomain, Prometheus rules and targets, Alertmanager).
 # On failure it prints the rollback command. Run it as the deploy user.
 #
 # Internal: `--rollback <sha>` (used by rollback.sh) redeploys an older release without running
@@ -24,6 +25,8 @@ REGISTRY="ghcr.io"
 IMAGE_NAMES=(api miniapp grafana backup)
 MIN_FREE_KB=$((3 * 1024 * 1024))
 EXPECTED_HSTS="max-age=31536000; includeSubDomains"
+ALERTMANAGER_DIR="/etc/svoi-pravila/alertmanager"
+TEXTFILE_DIR="/srv/svoi-pravila/metrics/textfile"
 export SP_ENV_FILE="$ENV_FILE"
 
 log() {
@@ -93,6 +96,37 @@ on_exit() {
 }
 trap on_exit EXIT
 
+addresses_of() {
+  getent ahosts "$1" | awk '{ print $1 }' | sort -u
+}
+
+check_grafana_domain() {
+  local grafana_domain domain
+  grafana_domain="$(env_value "$ENV_FILE" SP_GRAFANA_DOMAIN)"
+  domain="$(env_value "$ENV_FILE" SP_DOMAIN)"
+  [[ "$grafana_domain" != "$domain" ]] \
+    || die "SP_GRAFANA_DOMAIN не должен совпадать с SP_DOMAIN: Grafana получает отдельный поддомен"
+  [[ -n "$(addresses_of "$grafana_domain")" ]] \
+    || die "имя ${grafana_domain} не разрешается в DNS; создайте A/AAAA запись (RUNBOOK, «Поддомен Grafana»)"
+  [[ "$(addresses_of "$grafana_domain")" == "$(addresses_of "$domain")" ]] \
+    || die "${grafana_domain} указывает на другие адреса, чем ${domain}; DNS-записи должны совпадать"
+}
+
+check_alertmanager_files() {
+  local file meta
+  [[ -d "$ALERTMANAGER_DIR" ]] \
+    || die "каталог ${ALERTMANAGER_DIR} не найден (RUNBOOK, «Бот уведомлений»)"
+  for file in bot_token chat_id; do
+    [[ -s "${ALERTMANAGER_DIR}/${file}" ]] \
+      || die "файл ${ALERTMANAGER_DIR}/${file} отсутствует или пуст"
+    meta="$(stat -c '%U:%g:%a' "${ALERTMANAGER_DIR}/${file}")"
+    [[ "$meta" == "deploy:65534:640" ]] \
+      || die "файл ${ALERTMANAGER_DIR}/${file}: нужны владелец deploy, группа 65534 и режим 640"
+  done
+  [[ "$(<"${ALERTMANAGER_DIR}/chat_id")" =~ ^-?[0-9]+$ ]] \
+    || die "${ALERTMANAGER_DIR}/chat_id должен содержать целое число (идентификатор чата)"
+}
+
 preflight() {
   local tool key free_kb
   for tool in docker curl jq git awk; do
@@ -133,6 +167,9 @@ preflight() {
   fi
   [[ "$backup_free_kb" -ge "$needed_kb" ]] \
     || die "less than ${needed_kb} KiB free on ${backups_dir} (need max(3 GiB, 2× newest dump))"
+  check_grafana_domain
+  check_alertmanager_files
+  [[ -d "$TEXTFILE_DIR" ]] || die "каталог ${TEXTFILE_DIR} не найден (создайте его, RUNBOOK, «Обновление сервера под 0049»)"
   install -d -m 0750 "$RELEASES_DIR" "$STATE_DIR"
 }
 
@@ -151,7 +188,7 @@ pull_digest() {
 }
 
 write_release_env() {
-  local owner name digest tmp upper
+  local owner name digest tmp upper pin
   owner="$(env_value "$ENV_FILE" SP_GHCR_OWNER)"
   tmp="$(mktemp "${RELEASES_DIR}/.${sha}.XXXXXX")"
   for name in "${IMAGE_NAMES[@]}"; do
@@ -159,7 +196,9 @@ write_release_env() {
     upper="$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')"
     printf '%s_IMAGE=%s\n' "$upper" "$digest" >>"$tmp"
   done
-  printf 'PROMETHEUS_IMAGE=%s\n' "$(env_value "${REPO_DIR}/scripts/image-pins.env" PROMETHEUS_IMAGE)" >>"$tmp"
+  for pin in PROMETHEUS_IMAGE ALERTMANAGER_IMAGE NODE_EXPORTER_IMAGE; do
+    printf '%s=%s\n' "$pin" "$(env_value "${REPO_DIR}/scripts/image-pins.env" "$pin")" >>"$tmp"
+  done
   chmod 0640 "$tmp"
   mv "$tmp" "$RELEASE_ENV"
 }
@@ -256,6 +295,47 @@ assess_webhook_last_error() {
   fi
 }
 
+grafana_healthy() {
+  local grafana_domain
+  grafana_domain="$(env_value "$ENV_FILE" SP_GRAFANA_DOMAIN)"
+  curl -fsS --max-time 10 "https://${grafana_domain}/api/health" \
+    | jq -e '.database == "ok"' >/dev/null
+}
+
+grafana_metrics_hidden() {
+  local grafana_domain code
+  grafana_domain="$(env_value "$ENV_FILE" SP_GRAFANA_DOMAIN)"
+  code="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "https://${grafana_domain}/metrics")" \
+    || return 1
+  [[ "$code" == "404" ]]
+}
+
+grafana_publishes_no_ports() {
+  local container
+  container="$(compose ps -q grafana)"
+  [[ -n "$container" ]] || return 1
+  [[ -z "$(docker port "$container")" ]]
+}
+
+prometheus_api() {
+  compose exec -T prometheus wget -qO- "http://127.0.0.1:9090$1"
+}
+
+prometheus_rules_loaded() {
+  prometheus_api /api/v1/rules \
+    | jq -e 'any(.data.groups[]; .name == "svoi-availability")' >/dev/null
+}
+
+prometheus_targets_up() {
+  prometheus_api '/api/v1/targets?state=active' \
+    | jq -e '[.data.activeTargets[] | select(.health == "up") | .labels.job] as $up
+        | all(("api", "node", "alertmanager"); . as $job | $up | index($job) != null)' >/dev/null
+}
+
+alertmanager_ready() {
+  compose exec -T alertmanager wget -qO- http://127.0.0.1:9093/-/ready
+}
+
 run_checks() {
   wait_until 120 "the API readiness probe" api_ready
   log "api ready: ok"
@@ -266,6 +346,18 @@ run_checks() {
   wait_until 60 "the Telegram webhook to point at this server" webhook_registered
   log "telegram webhook registered: ok"
   assess_webhook_last_error
+  wait_until 240 "the Grafana subdomain health check (HTTPS, database ok)" grafana_healthy
+  log "grafana subdomain health: ok"
+  grafana_metrics_hidden || die "https://<grafana domain>/metrics must answer 404"
+  log "grafana /metrics hidden: ok"
+  grafana_publishes_no_ports || die "grafana must not publish host ports"
+  log "grafana host ports: none"
+  wait_until 120 "Prometheus to load the alert rules" prometheus_rules_loaded
+  log "prometheus rules loaded: ok"
+  wait_until 120 "Prometheus targets api, node and alertmanager to be up" prometheus_targets_up
+  log "prometheus targets up: ok"
+  wait_until 60 "Alertmanager readiness" alertmanager_ready
+  log "alertmanager ready: ok"
 }
 
 preflight
@@ -282,7 +374,7 @@ SP_RELEASE_SHA="$sha" compose run --rm -T backup --pre-release
 
 if [[ "$rollback_mode" -eq 1 ]]; then
   log "rollback: skipping migrations; the database stays at its current schema"
-  compose up -d --wait --wait-timeout 300 --no-deps api miniapp prometheus grafana
+  compose up -d --wait --wait-timeout 300 --no-deps api miniapp prometheus grafana alertmanager node-exporter
 else
   log "running migrations"
   compose run --rm -T migrate

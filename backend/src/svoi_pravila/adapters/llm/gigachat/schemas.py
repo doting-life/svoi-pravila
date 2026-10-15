@@ -35,12 +35,12 @@ class VariantOut(BaseModel):
 class RewriteOut(BaseModel):
     """Fixed three-slot rewrite output when the request carries rules.
 
-    Slot order is the generation order: ``firmer``, ``softer``, then ``check``.
+    Slot order is the generation order: ``check``, ``firmer``, then ``softer``.
     """
 
+    check: str = Field(max_length=1000)
     firmer: str = Field(max_length=1000)
     softer: str = Field(max_length=1000)
-    check: str = Field(max_length=1000)
     applied_rule_indexes: list[int]
     safety: SafetyOut
 
@@ -50,9 +50,9 @@ class RewriteOutNoRules(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    check: str = Field(max_length=1000)
     firmer: str = Field(max_length=1000)
     softer: str = Field(max_length=1000)
-    check: str = Field(max_length=1000)
     safety: SafetyOut
 
 
@@ -81,3 +81,20 @@ class SuggestRuleOut(BaseModel):
     verdict: SuggestRuleVerdictOut
     category: RuleCategoryOut | None = None
     text: str | None = Field(default=None, max_length=RULE_TEXT_MAX_CHARS)
+
+
+JUDGE_MAX_QUOTES = 4
+JUDGE_MAX_QUOTE_CHARS = 120
+
+_Quotes = Annotated[
+    list[Annotated[str, Field(min_length=1, max_length=JUDGE_MAX_QUOTE_CHARS)]],
+    Field(max_length=JUDGE_MAX_QUOTES),
+]
+
+
+class JudgeOut(BaseModel):
+    """Clean-judge output (rubric ``judge_clean@v2``): the rude quotes of one text."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    rude: _Quotes

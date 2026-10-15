@@ -21,6 +21,16 @@ from svoi_pravila.observability import configure_logging
 _DEFAULT_READER = "grafana_reader"
 _ROLE_NAME_RE = re.compile(r"^[a-z_][a-z0-9_]{0,62}$")
 _GROUP_ROLE = "svoi_analytics_read"
+_CONNECTION_LIMIT = 5
+# Server-side limits on the Grafana reader (ADR-0017 §3): the database role, not the Grafana
+# role, is the access boundary. Values are constants, never settings.
+_ROLE_SETTINGS = (
+    ("default_transaction_read_only", "on"),
+    ("statement_timeout", "'10s'"),
+    ("idle_in_transaction_session_timeout", "'30s'"),
+    # Superuser-only parameter: the role cannot lift it, so a heavy query cannot fill the disk.
+    ("temp_file_limit", "'256MB'"),
+)
 
 
 def main() -> None:
@@ -92,11 +102,15 @@ async def provision_grafana_reader(
     *,
     role_name: str = _DEFAULT_READER,
 ) -> None:
-    """Create or update a LOGIN role as member of ``svoi_analytics_read``.
+    """Create or update a LOGIN role as inheriting member of ``svoi_analytics_read``.
 
     The password is never sent to Postgres in plaintext: a SCRAM-SHA-256 verifier
     is computed client-side (same format as ``psql \\password``) and embedded in
-    ``ALTER ROLE … PASSWORD`` only after a strict format check.
+    ``ALTER ROLE … PASSWORD`` only after a strict format check. The role is also
+    limited to ``CONNECTION LIMIT`` 5, read-only transactions, a 10 s statement timeout,
+    a 30 s idle-in-transaction timeout and 256 MB of temporary files; every run reapplies
+    them idempotently. The read-only and timeout defaults are user-settable: the privilege
+    set of the group role is the boundary, the superuser-only temp-file limit is the cap.
     """
     secret = password.get_secret_value()
     if not secret.strip():
@@ -112,12 +126,15 @@ async def provision_grafana_reader(
             {"name": name},
         )
         if exists.scalar() is None:
-            await conn.execute(text(f"CREATE ROLE {quoted} LOGIN IN ROLE {_GROUP_ROLE}"))
-        else:
-            await conn.execute(text(f"GRANT {_GROUP_ROLE} TO {quoted}"))
+            await conn.execute(text(f"CREATE ROLE {quoted} LOGIN"))
+        # The group's privileges are inherited, but SET ROLE into the group is refused.
+        await conn.execute(text(f"GRANT {_GROUP_ROLE} TO {quoted} WITH INHERIT TRUE, SET FALSE"))
         # Verifier is regex-validated (base64 + delimiters only). Use driver SQL so
         # SQLAlchemy does not treat `$…` fragments of the SCRAM string as binds.
         await conn.exec_driver_sql(f"ALTER ROLE {quoted} WITH LOGIN PASSWORD '{verifier}'")
+        await conn.execute(text(f"ALTER ROLE {quoted} CONNECTION LIMIT {_CONNECTION_LIMIT}"))
+        for setting, value in _ROLE_SETTINGS:
+            await conn.execute(text(f"ALTER ROLE {quoted} SET {setting} = {value}"))
 
 
 if __name__ == "__main__":

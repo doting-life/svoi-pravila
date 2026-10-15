@@ -14,14 +14,27 @@ fi
 read -r -a ALL_JOBS <<< "$CI_JOBS"
 
 REPO_ENV="$ROOT/.env"
-COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-svoi-pravila-ci}"
-export COMPOSE_PROJECT_NAME
 export UV_LOCKED=1
 export BASE="${BASE:-master}"
 
 PARENT="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
 CI_TMPDIR="$(mktemp -d "${PARENT}/svoi-pravila-ci.XXXXXX")"
 export CI_TMPDIR
+
+# shellcheck source=scripts/ci_project.sh
+source "$ROOT/scripts/ci_project.sh"
+COMPOSE_PROJECT_NAME="$(ci_project_name "$CI_TMPDIR")"
+export COMPOSE_PROJECT_NAME
+IMAGE_TAG="$(ci_image_tag "$CI_TMPDIR")"
+export IMAGE_TAG
+LOCAL_IMAGE_TAG="$(ci_local_image_tag "$CI_TMPDIR")"
+export LOCAL_IMAGE_TAG
+PROD_SMOKE_PROJECT="${PROD_SMOKE_PROJECT:-${COMPOSE_PROJECT_NAME}-prod-smoke}"
+export PROD_SMOKE_PROJECT
+# The four local images of this run (names built by scripts/image.sh).
+LOCAL_IMAGES=(svoi-pravila svoi-pravila-miniapp svoi-pravila-grafana svoi-pravila-backup)
+# The images compose builds from this repository (names in compose.yaml).
+COMPOSE_IMAGES=(svoi-pravila-api svoi-pravila-miniapp svoi-pravila-grafana)
 ENV_FILE="${CI_TMPDIR}/env"
 export ENV_FILE
 
@@ -38,6 +51,13 @@ cleanup() {
   docker compose -p "$COMPOSE_PROJECT_NAME" --env-file "$ENV_FILE" \
     --profile app --profile observability down -v >/dev/null 2>&1 || true
   docker compose -p "$COMPOSE_PROJECT_NAME" --env-file "$ENV_FILE" down -v >/dev/null 2>&1 || true
+  local name
+  for name in "${LOCAL_IMAGES[@]}"; do
+    docker image rm "${name}:${IMAGE_TAG}" >/dev/null 2>&1 || true
+  done
+  for name in "${COMPOSE_IMAGES[@]}"; do
+    docker image rm "${name}:${LOCAL_IMAGE_TAG}" >/dev/null 2>&1 || true
+  done
   rm -rf "$CI_TMPDIR"
 }
 trap cleanup EXIT
@@ -160,16 +180,30 @@ job_image() {
   fi
 }
 
+job_ops() {
+  run_stage ops toolchain job_toolchain
+  run_stage ops check make -C "$ROOT" ops-check
+}
+
 job_stack_smoke() {
   run_stage stack-smoke toolchain job_toolchain
   run_stage stack-smoke materialize materialize stack-smoke
   run_stage stack-smoke smoke make -C "$ROOT" stack-smoke ENV_FILE="$ENV_FILE"
 }
 
+# The production-shaped stack uses a fixed subnet, so one host runs one prod-smoke at a time.
+prod_smoke_locked() {
+  (
+    cd "$ROOT/backend"
+    uv run --locked python ../scripts/host_lock.py --name prod-smoke --timeout 1800 -- \
+      make -C "$ROOT" prod-smoke
+  )
+}
+
 job_prod_smoke() {
   run_stage prod-smoke toolchain job_toolchain
   run_stage prod-smoke build make -C "$ROOT" image
-  run_stage prod-smoke smoke make -C "$ROOT" prod-smoke
+  run_stage prod-smoke smoke prod_smoke_locked
 }
 
 job_publish() {

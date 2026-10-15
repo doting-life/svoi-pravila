@@ -9,6 +9,7 @@ KEEP_DAILY=30
 KEEP_MONTHLY=12
 KEEP_PRE_RELEASE=10
 LOCAL_ROOT="${SP_BACKUP_LOCAL_ROOT:-/backups}"
+METRICS_DIR="${SP_BACKUP_METRICS_DIR:-/metrics}"
 RCLONE_CONF="${RCLONE_CONFIG:-/etc/svoi-pravila/backup-remote/rclone.conf}"
 NAME_RE='^svoi-pravila-[0-9]{8}T[0-9]{6}Z(-[0-9a-f]{40})?\.dump\.age$'
 AGE_RECIPIENT_RE='^age1[02-9ac-hj-np-z]{58}$'
@@ -31,6 +32,9 @@ Usage: backup.sh [--pre-release]
 Required environment: PGHOST PGUSER PGPASSWORD PGDATABASE
                       SP_BACKUP_AGE_RECIPIENT
 Optional: SP_BACKUP_REMOTE_PATH (default svoi-pravila), SP_RELEASE_SHA
+
+  After every run (success or failure) the result is written for node-exporter's textfile
+  collector to ${SP_BACKUP_METRICS_DIR:-/metrics}/backup_<kind>.prom, kind = daily | pre_release.
 EOF
 }
 
@@ -83,6 +87,67 @@ list_remote_dumps() {
   return "$rc"
 }
 
+# Result metrics (ADR-0017 §5). The success timestamp of the previous file is carried over on
+# failure, so "last success" never moves backwards or disappears after a bad run.
+BACKUP_SIZE=""
+KIND=""
+METRICS_FILE=""
+
+previous_success_timestamp() {
+  [[ -r "$METRICS_FILE" ]] || return 0
+  local value
+  value="$(sed -n 's/^sp_backup_last_success_timestamp_seconds{kind="[a-z_]*"} \([0-9][0-9]*\)$/\1/p' \
+    "$METRICS_FILE" | head -n 1)"
+  printf '%s' "$value"
+}
+
+write_metrics() {
+  local success="$1" now success_ts tmp
+  now="$(date -u +%s)"
+  if [[ "$success" -eq 1 ]]; then
+    success_ts="$now"
+  else
+    success_ts="$(previous_success_timestamp)"
+  fi
+  tmp="${METRICS_DIR}/.backup_${KIND}.prom.tmp.$$"
+  {
+    printf '# HELP sp_backup_last_run_timestamp_seconds Unix time of the last backup run.\n'
+    printf '# TYPE sp_backup_last_run_timestamp_seconds gauge\n'
+    printf 'sp_backup_last_run_timestamp_seconds{kind="%s"} %s\n' "$KIND" "$now"
+    printf '# HELP sp_backup_last_run_success 1 when the last backup run succeeded.\n'
+    printf '# TYPE sp_backup_last_run_success gauge\n'
+    printf 'sp_backup_last_run_success{kind="%s"} %s\n' "$KIND" "$success"
+    if [[ -n "$success_ts" ]]; then
+      printf '# HELP sp_backup_last_success_timestamp_seconds Unix time of the last successful backup.\n'
+      printf '# TYPE sp_backup_last_success_timestamp_seconds gauge\n'
+      printf 'sp_backup_last_success_timestamp_seconds{kind="%s"} %s\n' "$KIND" "$success_ts"
+    fi
+    if [[ "$success" -eq 1 && -n "$BACKUP_SIZE" ]]; then
+      printf '# HELP sp_backup_last_size_bytes Size of the last successful encrypted dump.\n'
+      printf '# TYPE sp_backup_last_size_bytes gauge\n'
+      printf 'sp_backup_last_size_bytes{kind="%s"} %s\n' "$KIND" "$BACKUP_SIZE"
+    fi
+  } >"$tmp"
+  # umask 077 applies to everything else; node-exporter (another uid) must read this file.
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$METRICS_FILE"
+}
+
+finish() {
+  local rc=$?
+  rm -f "${tmp_path:-}"
+  local success=0
+  if [[ "$rc" -eq 0 ]]; then
+    success=1
+  fi
+  if [[ -d "$METRICS_DIR" ]]; then
+    write_metrics "$success" || warn "could not write the result metrics to ${METRICS_DIR}"
+  else
+    warn "metrics directory ${METRICS_DIR} is missing; result not recorded"
+  fi
+  return "$rc"
+}
+
 mode=daily
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -100,6 +165,10 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+KIND="${mode//-/_}"
+METRICS_FILE="${METRICS_DIR}/backup_${KIND}.prom"
+trap finish EXIT
 
 for var in PGHOST PGUSER PGPASSWORD PGDATABASE SP_BACKUP_AGE_RECIPIENT; do
   [[ -n "${!var:-}" ]] || die "${var} is required"
@@ -132,11 +201,6 @@ mkdir -p "${LOCAL_ROOT}/daily" "${LOCAL_ROOT}/monthly" "${LOCAL_ROOT}/pre-releas
 final_path="${local_dir}/${name}"
 tmp_path="${local_dir}/.${name}.tmp.$$"
 
-cleanup_temp() {
-  rm -f "$tmp_path"
-}
-trap cleanup_temp EXIT
-
 log "dumping ${PGDATABASE} to ${dir}/${name}"
 pg_dump --format=custom --no-password \
   | age --recipient "$SP_BACKUP_AGE_RECIPIENT" \
@@ -147,6 +211,7 @@ mv -f "$tmp_path" "$final_path"
 chmod 0600 "$final_path"
 size="$(stat -c %s "$final_path")"
 [[ "$size" =~ ^[0-9]+$ && "$size" -gt 0 ]] || die "local dump is missing or empty"
+BACKUP_SIZE="$size"
 log "wrote ${dir}/${name} (${size} bytes)"
 
 offsite_enabled=0

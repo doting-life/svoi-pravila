@@ -27,10 +27,10 @@ _SLOTS = frozenset({"check", "softer", "firmer"})
 @pytest.mark.unit
 def test_empty_answer_json_matches_schema_shapes() -> None:
     assert empty_answer_json(RewriteOutNoRules, safety=SafetyOut.CRISIS) == (
-        '{"firmer":"","softer":"","check":"","safety":"crisis"}'
+        '{"check":"","firmer":"","softer":"","safety":"crisis"}'
     )
     assert empty_answer_json(RewriteOut, safety=SafetyOut.REFUSE_MANIPULATION) == (
-        '{"firmer":"","softer":"","check":"","applied_rule_indexes":[],'
+        '{"check":"","firmer":"","softer":"","applied_rule_indexes":[],'
         '"safety":"refuse_manipulation"}'
     )
 
@@ -62,4 +62,4 @@ def test_rewrite_v3_skeleton_is_at_most_one_point_eight_times_v2() -> None:
 @pytest.mark.parametrize("schema", [RewriteOut, RewriteOutNoRules])
 def test_rewrite_schema_declares_the_slots_in_generation_order(schema: type[BaseModel]) -> None:
     slots = [name for name in schema.model_json_schema()["properties"] if name in _SLOTS]
-    assert slots == ["firmer", "softer", "check"]
+    assert slots == ["check", "firmer", "softer"]

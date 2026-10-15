@@ -1,0 +1,27 @@
+{{/*
+  Telegram message for the owners' chat (parse_mode HTML). Only static text, enum labels and
+  annotations written in ops/prometheus/rules/svoi.yml are used; every value is HTML-escaped.
+  Times are UTC. SpDeliveryTest is the manual delivery check from the RUNBOOK.
+*/}}
+{{ define "sp.telegram.alert" -}}
+{{- if eq .Labels.alertname "SpDeliveryTest" -}}
+<b>[ПРОВЕРКА] Доставка алертов работает</b>
+{{- else if eq .Status "resolved" -}}
+<b>[РЕШЕНО] {{ .Annotations.summary | html }}</b>
+Закончилось: {{ .EndsAt.UTC.Format "2006-01-02 15:04" }} UTC
+{{- else -}}
+<b>{{ if eq .Labels.severity "critical" }}[КРИТИЧНО]{{ else }}[ВНИМАНИЕ]{{ end }} {{ .Annotations.summary | html }}</b>
+{{ .Annotations.description | html }}
+Что делать: RUNBOOK → Алерты → {{ .Labels.alertname | html }}
+Началось: {{ .StartsAt.UTC.Format "2006-01-02 15:04" }} UTC
+{{- end -}}
+{{- end }}
+
+{{ define "sp.telegram" -}}
+{{- range $index, $alert := .Alerts -}}
+{{- if $index }}
+
+{{ end -}}
+{{ template "sp.telegram.alert" $alert -}}
+{{- end -}}
+{{- end }}

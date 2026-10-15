@@ -5,7 +5,7 @@ on:
   push:
     branches: [master]
   schedule:
-    - cron: "17 6 * * 1"
+    - cron: "17 2 * * *"
 
 permissions:
   contents: read
@@ -71,6 +71,20 @@ jobs:
       - name: Images
         run: make ci JOB=image
 
+  ops:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Toolchain
+        uses: ./.github/actions/toolchain
+
+      - name: Prometheus and Alertmanager config
+        run: make ci JOB=ops
+
   stack-smoke:
     runs-on: ubuntu-latest
     steps:
@@ -101,7 +115,7 @@ jobs:
 
   publish:
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-    needs: [backend, miniapp, secrets, image, stack-smoke, prod-smoke]
+    needs: [backend, miniapp, secrets, image, ops, stack-smoke, prod-smoke]
     runs-on: ubuntu-latest
     permissions:
       packages: write

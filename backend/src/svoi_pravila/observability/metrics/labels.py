@@ -84,6 +84,10 @@ SCENARIOS: frozenset[str] = frozenset(m.value for m in UsageScenario)
 VARIANT_KINDS: frozenset[str] = frozenset(m.value for m in VariantKind)
 POLICY_RULES: frozenset[str] = frozenset(m.value for m in PolicyRule)
 INVALID_REASONS: frozenset[str] = frozenset(m.value for m in InvalidOutputReason)
+REPAIRED_DEFECTS: frozenset[str] = frozenset(
+    {m.value for m in InvalidOutputReason}
+    | {f"{reason.value}:{kind.value}" for reason in InvalidOutputReason for kind in VariantKind}
+)
 FINISH_REASONS: frozenset[str] = frozenset(
     {"stop", "length", "blacklist", "error", "function_call"}
 )
@@ -124,6 +128,11 @@ def invalid_reason_label(value: InvalidOutputReason | str) -> str:
     """Return an invalid-output reason value or ``other``."""
     raw = value.value if isinstance(value, InvalidOutputReason) else value
     return raw if raw in INVALID_REASONS else OTHER
+
+
+def repaired_defect_label(value: str) -> str:
+    """Return a known ``reason`` or ``reason:slot`` repaired-defect label, else ``other``."""
+    return value if value in REPAIRED_DEFECTS else OTHER
 
 
 def variant_slot_label(value: VariantKind | None) -> str:

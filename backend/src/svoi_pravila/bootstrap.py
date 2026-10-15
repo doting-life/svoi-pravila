@@ -77,7 +77,6 @@ from svoi_pravila.api.telegram_webhook import (
 )
 from svoi_pravila.application.compose_session import COMPOSE_SESSION_TTL_SECONDS
 from svoi_pravila.application.crisis_screen import CrisisScreen
-from svoi_pravila.application.lexicons import load_tone_lexicons_ru_v1
 from svoi_pravila.application.ports.inline_result_reuse import InlineResultReuse
 from svoi_pravila.application.ports.pair_notifier import PairNotifier
 from svoi_pravila.application.use_cases.accept_age_confirmation import AcceptAgeConfirmation
@@ -152,7 +151,6 @@ from svoi_pravila.config import (
     TestInfraSettings,
 )
 from svoi_pravila.crypto import HmacPseudonymizer
-from svoi_pravila.domain.tone import ToneLexicons
 from svoi_pravila.observability import configure_logging
 from svoi_pravila.observability.metrics import EventLoopLagMonitor, start_metrics_server
 
@@ -424,7 +422,6 @@ class _ComposeWireDeps:
     policy_monitor: MetricsVariantPolicyMonitor
     monotonic: SystemMonotonicClock
     crisis_screen: CrisisScreen
-    tone_lexicons: ToneLexicons
     tone_catalog: StaticToneSuggestionCatalog
     deadline_seconds: float
     analytics_timezone: str
@@ -446,7 +443,6 @@ def _wire_compose_stack(deps: _ComposeWireDeps) -> tuple[ComposeGeneration, Reco
             ids=deps.ports.ids,
             pseudonymizer=deps.ports.pseudonymizer,
             crisis_screen=deps.crisis_screen,
-            tone_lexicons=deps.tone_lexicons,
             deadline_seconds=deps.deadline_seconds,
             analytics_timezone=deps.analytics_timezone,
         )
@@ -571,7 +567,6 @@ def create_application(settings: Settings) -> FastAPI:
             policy_monitor=MetricsVariantPolicyMonitor(),
             monotonic=monotonic,
             crisis_screen=crisis_screen,
-            tone_lexicons=load_tone_lexicons_ru_v1(),
             tone_catalog=tone_catalog,
             deadline_seconds=settings.inline_deadline_seconds,
             analytics_timezone=settings.analytics_timezone,

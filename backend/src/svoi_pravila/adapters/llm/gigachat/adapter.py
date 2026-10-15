@@ -268,6 +268,7 @@ class GigaChatTextGenerator:
                     latency_ms=int((time.perf_counter() - started) * 1000),
                     attempts=phase_a.attempts + structured.meta.attempts,
                     usage=phase_a.usage + structured.meta.usage,
+                    repaired=structured.meta.repaired,
                 )
                 yield DecodeCompleted(
                     analysis=phase_a.text,

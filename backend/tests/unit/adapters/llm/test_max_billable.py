@@ -7,6 +7,7 @@ import pytest
 from svoi_pravila.adapters.llm.gigachat.estimate import (
     estimate_prepared_tokens,
     max_billable_for_request,
+    max_structured_billable,
 )
 from svoi_pravila.adapters.llm.gigachat.prepared import (
     prepare_decode,
@@ -40,10 +41,10 @@ def test_max_billable_rewrite_known_prompt(goal: RewriteGoal | None) -> None:
         deadline_seconds=5.0,
     )
     prepared = prepare_rewrite(request)
-    expected = 2 * estimate_prepared_tokens(
-        prepared.system, prepared.user, output_cap=MAX_TOKENS_REWRITE
-    )
+    expected = max_structured_billable(prepared, output_cap=MAX_TOKENS_REWRITE)
     assert max_billable_for_request(request) == expected
+    one = estimate_prepared_tokens(prepared.system, prepared.user, output_cap=MAX_TOKENS_REWRITE)
+    assert expected > 2 * one
 
 
 @pytest.mark.unit
@@ -59,10 +60,8 @@ def test_max_billable_decode_known_prompt() -> None:
         analysis.system, analysis.user, output_cap=MAX_TOKENS_ANALYSIS
     )
     structured = prepare_decode(request, analysis="x" * MAX_ANALYSIS_CHARS)
-    phase_b = estimate_prepared_tokens(
-        structured.system, structured.user, output_cap=MAX_TOKENS_DECODE
-    )
-    expected = 2 * phase_a + 2 * phase_b
+    phase_b = max_structured_billable(structured, output_cap=MAX_TOKENS_DECODE)
+    expected = 2 * phase_a + phase_b
     assert max_billable_for_request(request) == expected
 
 
@@ -75,9 +74,7 @@ def test_max_billable_suggest_known_prompt() -> None:
         deadline_seconds=45.0,
     )
     prepared = prepare_suggest_rule(request)
-    expected = 2 * estimate_prepared_tokens(
-        prepared.system, prepared.user, output_cap=MAX_TOKENS_SUGGEST
-    )
+    expected = max_structured_billable(prepared, output_cap=MAX_TOKENS_SUGGEST)
     assert max_billable_for_request(request) == expected
 
 

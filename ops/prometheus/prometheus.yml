@@ -1,10 +1,37 @@
-# Scrape the API process metrics port on the internal metrics network.
+# Production Prometheus (ADR-0017): scrapes the API, the host (node-exporter) and the alerting
+# pair on internal networks only, evaluates the rules and hands firing alerts to Alertmanager.
+# The local compose.yaml mounts the same file; there, the node, alertmanager and rule targets are
+# simply absent (those targets show as down and no rule file exists).
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules/svoi.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
 
 scrape_configs:
   - job_name: api
     static_configs:
       - targets:
           - api:9100
+
+  - job_name: node
+    static_configs:
+      - targets:
+          - node-exporter:9100
+
+  - job_name: alertmanager
+    static_configs:
+      - targets:
+          - alertmanager:9093
+
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090

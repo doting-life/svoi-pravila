@@ -1,6 +1,6 @@
 # PostgreSQL datasource for product analytics aggregates only.
 # sslmode=disable: Grafana talks to Postgres on the internal compose network
-# (never exposed publicly). Access Grafana via SSH tunnel on the VPS.
+# (never exposed publicly). The role is read-only and limited to the aggregate tables.
 apiVersion: 1
 datasources:
   - name: Analytics
@@ -16,5 +16,8 @@ datasources:
       sslmode: disable
       postgresVersion: 1800
       timescaledb: false
+      maxOpenConns: 5
+      maxIdleConns: 2
+      connMaxLifetime: 14400
     secureJsonData:
       password: $SP_GRAFANA_DB_PASSWORD

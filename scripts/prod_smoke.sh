@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # Production-shaped smoke: compose.prod.yaml + compose.prod-smoke.yaml with locally built images,
-# a Caddy-issued local certificate, an offline Telegram stub and local-first backups
-# (with and without optional rclone offsite).
-# Expects `make image` to have produced the svoi-pravila*:ci images. Never reads the repo .env.
+# Caddy-issued local certificates (Mini App and Grafana subdomain), an offline Telegram stub that
+# also plays the alert bot, Prometheus rules and targets, Alertmanager delivery and local-first
+# backups (with and without optional rclone offsite).
+# Expects `make image` to have produced the svoi-pravila*:${IMAGE_TAG} images (default tag `ci`). Never reads the repo .env.
+#
+#   scripts/prod_smoke.sh          run the smoke and tear the stack down
+#   PROD_SMOKE_KEEP=1 scripts/prod_smoke.sh
+#                                  leave the stack running after a pass (see the printed hints)
+#   scripts/prod_smoke.sh --down   remove a stack left by PROD_SMOKE_KEEP=1 (make prod-smoke-down)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -11,15 +17,36 @@ cd "$ROOT"
 # shellcheck source=scripts/image-pins.env
 source "$ROOT/scripts/image-pins.env"
 
+IMAGE_TAG="${IMAGE_TAG:-ci}"
 PROJECT="${PROD_SMOKE_PROJECT:-svoi-pravila-prod-smoke}"
 DOMAIN="svoi.localhost"
+GRAFANA_DOMAIN="grafana.svoi.localhost"
 EXPECTED_HSTS="max-age=31536000; includeSubDomains"
 RELEASE_SHA="0000000000000000000000000000000000000000"
 OFFSITE_WARN="backup: offsite not configured (local copy only)"
 BACKUP_UID=1500
 BACKUP_MODE=600
 
-if [[ -z "${CI_TMPDIR:-}" ]]; then
+KEEP="${PROD_SMOKE_KEEP:-0}"
+KEEP_DIR="${PROD_SMOKE_KEEP_DIR:-${TMPDIR:-/tmp}/svoi-pravila-prod-smoke-keep}"
+MODE=run
+if [[ "${1:-}" == "--down" ]]; then
+  MODE=down
+elif [[ $# -gt 0 ]]; then
+  echo "usage: prod_smoke.sh [--down]" >&2
+  exit 2
+fi
+
+if [[ "$MODE" == "down" ]]; then
+  TMP="$KEEP_DIR"
+elif [[ "$KEEP" == "1" ]]; then
+  [[ ! -e "$KEEP_DIR" ]] || {
+    echo "prod-smoke: ${KEEP_DIR} exists; run make prod-smoke-down first" >&2
+    exit 1
+  }
+  mkdir -p "$KEEP_DIR"
+  TMP="$KEEP_DIR"
+elif [[ -z "${CI_TMPDIR:-}" ]]; then
   TMP="$(mktemp -d "${TMPDIR:-/tmp}/svoi-pravila-prod-smoke.XXXXXX")"
 else
   TMP="$(mktemp -d "${CI_TMPDIR}/prod-smoke.XXXXXX")"
@@ -29,11 +56,20 @@ RELEASE_ENV="${TMP}/release.env"
 STUB_DIR="${TMP}/stub"
 BACKUPS_DIR="${TMP}/backups"
 BACKUP_REMOTE_DIR="${TMP}/backup-remote"
+METRICS_DIR="${TMP}/metrics/textfile"
+ALERTMANAGER_DIR="${TMP}/alertmanager"
+ALERTMANAGER_CONFIG="${TMP}/alertmanager.yml"
 # Offsite target must live under the /backups bind so rclone inside the container can see it.
 OFFSITE_DIR="${BACKUPS_DIR}/.offsite-sp"
-mkdir -p "$STUB_DIR" "$BACKUPS_DIR" "$BACKUP_REMOTE_DIR" "$OFFSITE_DIR"
-# Container runs as UID 1500; make the bind writable without requiring host root chown.
-chmod 0777 "$BACKUPS_DIR"
+ALERT_BOT_TOKEN="987654:ALERT-SMOKE-STUB"
+ALERT_CHAT_ID="-1001234567890"
+kept=0
+if [[ "$MODE" == "run" ]]; then
+  mkdir -p "$STUB_DIR" "$BACKUPS_DIR" "$BACKUP_REMOTE_DIR" "$OFFSITE_DIR" "$METRICS_DIR" \
+    "$ALERTMANAGER_DIR"
+  # Container runs as UID 1500; make the binds writable without requiring host root chown.
+  chmod 0777 "$BACKUPS_DIR" "$METRICS_DIR"
+fi
 export SP_ENV_FILE="$ENV_FILE"
 
 compose=(
@@ -67,12 +103,15 @@ wipe_backups_bind() {
 
 cleanup() {
   local rc=$?
+  if [[ "$rc" -eq 0 && "$kept" -eq 1 ]]; then
+    exit 0
+  fi
   if [[ "$rc" -ne 0 && -f "$RELEASE_ENV" ]]; then
     # Write bulky service logs aside so the quiet CI tail keeps the fail reason.
     local svc_log="${TMP}/service-logs-on-fail.txt"
     echo "prod-smoke: FAILED (exit ${rc}); service logs: ${svc_log}" >&2
-    "${compose[@]}" logs --no-color --tail 40 api migrate miniapp telegram-stub \
-      >"$svc_log" 2>&1 || true
+    "${compose[@]}" logs --no-color --tail 40 api migrate miniapp grafana prometheus alertmanager \
+      node-exporter telegram-stub >"$svc_log" 2>&1 || true
   fi
   if [[ -f "$RELEASE_ENV" ]]; then
     # Best-effort teardown after the smoke run.
@@ -85,17 +124,31 @@ cleanup() {
 }
 trap cleanup EXIT
 
+if [[ "$MODE" == "down" ]]; then
+  if [[ ! -f "$RELEASE_ENV" ]]; then
+    echo "prod-smoke: nothing to remove (${KEEP_DIR} has no kept stack)"
+    trap - EXIT
+    exit 0
+  fi
+  BACKUP_IMAGE="$(grep -E '^BACKUP_IMAGE=' "$RELEASE_ENV" | head -n 1 | cut -d= -f2-)"
+  # cleanup tears the stack down, wipes the binds and removes the directory.
+  echo "prod-smoke: removing the kept stack"
+  exit 0
+fi
+
 image_id() {
   docker image inspect --format '{{.Id}}' "$1" 2>/dev/null \
     || fail "$1 is missing; run make image first"
 }
 
-API_IMAGE="$(image_id svoi-pravila:ci)"
-MINIAPP_IMAGE="$(image_id svoi-pravila-miniapp:ci)"
-GRAFANA_IMAGE="$(image_id svoi-pravila-grafana:ci)"
-BACKUP_IMAGE="$(image_id svoi-pravila-backup:ci)"
-# Upstream digest from scripts/image-pins.env (sourced above).
+API_IMAGE="$(image_id "svoi-pravila:${IMAGE_TAG}")"
+MINIAPP_IMAGE="$(image_id "svoi-pravila-miniapp:${IMAGE_TAG}")"
+GRAFANA_IMAGE="$(image_id "svoi-pravila-grafana:${IMAGE_TAG}")"
+BACKUP_IMAGE="$(image_id "svoi-pravila-backup:${IMAGE_TAG}")"
+# Upstream digests from scripts/image-pins.env (sourced above).
 : "${PROMETHEUS_IMAGE:?PROMETHEUS_IMAGE is unset}"
+: "${ALERTMANAGER_IMAGE:?ALERTMANAGER_IMAGE is unset}"
+: "${NODE_EXPORTER_IMAGE:?NODE_EXPORTER_IMAGE is unset}"
 
 set_key() {
   local file="$1" key="$2" value="$3"
@@ -142,6 +195,7 @@ chmod 0644 "${TMP}/age.key"
 cp "$ROOT/deploy/env.prod.example" "$ENV_FILE"
 chmod 0600 "$ENV_FILE"
 set_key "$ENV_FILE" SP_DOMAIN "$DOMAIN"
+set_key "$ENV_FILE" SP_GRAFANA_DOMAIN "$GRAFANA_DOMAIN"
 set_key "$ENV_FILE" SP_ACME_EMAIL "prod-smoke@example.test"
 set_key "$ENV_FILE" SP_DATA_KEK "$(openssl rand -base64 32)"
 set_key "$ENV_FILE" SP_PSEUDONYM_PEPPER "$(openssl rand -base64 32)"
@@ -162,18 +216,39 @@ if grep -qE '^[A-Z][A-Z0-9_]*=CHANGE_ME$' "$ENV_FILE"; then
   fail "deploy/env.prod.example has CHANGE_ME values the smoke test does not fill"
 fi
 
+# Alertmanager reads its secrets from files (production: /etc/svoi-pravila/alertmanager, 0640
+# deploy:65534). The smoke files are throwaway and world-readable because the runner cannot chown.
+printf '%s' "$ALERT_BOT_TOKEN" >"${ALERTMANAGER_DIR}/bot_token"
+printf '%s' "$ALERT_CHAT_ID" >"${ALERTMANAGER_DIR}/chat_id"
+chmod 0755 "$ALERTMANAGER_DIR"
+chmod 0644 "${ALERTMANAGER_DIR}/bot_token" "${ALERTMANAGER_DIR}/chat_id"
+# The production configuration with short grouping timers, so one run sees both the firing and the
+# resolved message.
+sed -e 's/^  group_wait: 30s$/  group_wait: 1s/' -e 's/^  group_interval: 5m$/  group_interval: 5s/' \
+  "$ROOT/ops/alertmanager/alertmanager.yml" >"$ALERTMANAGER_CONFIG"
+chmod 0644 "$ALERTMANAGER_CONFIG"
+if ! grep -q '^  group_wait: 1s$' "$ALERTMANAGER_CONFIG" \
+  || ! grep -q '^  group_interval: 5s$' "$ALERTMANAGER_CONFIG"; then
+  fail "could not shorten the Alertmanager timers"
+fi
+
 cat >"$RELEASE_ENV" <<EOF
 API_IMAGE=${API_IMAGE}
 MINIAPP_IMAGE=${MINIAPP_IMAGE}
 GRAFANA_IMAGE=${GRAFANA_IMAGE}
 BACKUP_IMAGE=${BACKUP_IMAGE}
 PROMETHEUS_IMAGE=${PROMETHEUS_IMAGE}
+ALERTMANAGER_IMAGE=${ALERTMANAGER_IMAGE}
+NODE_EXPORTER_IMAGE=${NODE_EXPORTER_IMAGE}
 SMOKE_HTTP_PORT=${HTTP_PORT}
 SMOKE_HTTPS_PORT=${HTTPS_PORT}
 SMOKE_STUB_DIR=${STUB_DIR}
 SMOKE_CERTIFI_BUNDLE=${CERTIFI_BUNDLE}
 SMOKE_BACKUPS_DIR=${BACKUPS_DIR}
 SMOKE_BACKUP_REMOTE_DIR=${BACKUP_REMOTE_DIR}
+SMOKE_METRICS_DIR=${METRICS_DIR}
+SMOKE_ALERTMANAGER_CONFIG=${ALERTMANAGER_CONFIG}
+SMOKE_ALERTMANAGER_DIR=${ALERTMANAGER_DIR}
 EOF
 
 PATH_SECRET="$(env_value SP_TELEGRAM_WEBHOOK_PATH_SECRET)"
@@ -265,22 +340,168 @@ published_ports() {
   [[ -n "$container" ]] || fail "service $1 has no container"
   docker port "$container" 2>/dev/null || true
 }
-for service in postgres valkey migrate api prometheus; do
+for service in postgres valkey migrate api prometheus alertmanager node-exporter; do
   ports="$(published_ports "$service")"
   [[ -z "$ports" ]] || fail "${service} publishes host ports: ${ports}"
 done
 grafana_ports="$(published_ports grafana)"
-[[ -n "$grafana_ports" ]] || fail "grafana publishes no port"
-if printf '%s\n' "$grafana_ports" | grep -qv -- '-> 127.0.0.1:'; then
-  fail "grafana is not bound to loopback only: ${grafana_ports}"
-fi
-for net in data metrics observability; do
+[[ -z "$grafana_ports" ]] || fail "grafana publishes host ports (it is reached through the proxy only): ${grafana_ports}"
+for net in data metrics observability alerting grafana_proxy; do
   [[ "$(docker network inspect --format '{{.Internal}}' "${PROJECT}_${net}")" == "true" ]] \
     || fail "network ${net} must be internal"
 done
 [[ "$(docker network inspect --format '{{.Internal}}' "${PROJECT}_edge")" == "false" ]] \
   || fail "network edge must not be internal"
+network_members() {
+  docker network inspect --format '{{range $id, $c := .Containers}}{{$id}}{{"\n"}}{{end}}' \
+    "${PROJECT}_$1" | sed '/^$/d' | sort
+}
+container_networks() {
+  docker inspect --format '{{range $name, $n := .NetworkSettings.Networks}}{{$name}}{{"\n"}}{{end}}' \
+    "$("${compose[@]}" ps -q "$1")" | sed -e "s/^${PROJECT}_//" -e '/^$/d' | sort
+}
+expected_members="$(printf '%s\n%s\n' "$("${compose[@]}" ps -q miniapp)" \
+  "$("${compose[@]}" ps -q grafana)" | sort)"
+[[ "$(network_members grafana_proxy)" == "$expected_members" ]] \
+  || fail "grafana_proxy must contain exactly the proxy and Grafana"
+[[ "$(container_networks grafana)" == "$(printf 'grafana_proxy\nobservability')" ]] \
+  || fail "grafana must be on grafana_proxy and observability only: $(container_networks grafana | tr '\n' ' ')"
 echo "prod-smoke: isolation_ok"
+
+py() {
+  (cd "$ROOT/backend" && uv run --locked python "$@")
+}
+
+# --- Grafana on its subdomain -------------------------------------------------------------------
+grafana_redirect="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code} %{redirect_url}' \
+  --resolve "${GRAFANA_DOMAIN}:${HTTP_PORT}:127.0.0.1" "http://${GRAFANA_DOMAIN}:${HTTP_PORT}/d/x?y=1")"
+[[ "$grafana_redirect" == "301 https://${GRAFANA_DOMAIN}/d/x?y=1" ]] \
+  || fail "grafana http redirect was '${grafana_redirect}'"
+echo "prod-smoke: grafana_http_redirect_ok"
+
+# Mini App domain: /grafana/ is not Grafana any more; the SPA fallback answers.
+code="$(https_curl -o "${TMP}/grafana-path.html" -w '%{http_code}' "$(https_url /grafana/)")"
+[[ "$code" == "200" ]] || fail "/grafana/ on the Mini App domain returned ${code}"
+cmp -s "${TMP}/grafana-path.html" "${TMP}/index.html" \
+  || fail "/grafana/ on the Mini App domain must serve the SPA index.html"
+echo "prod-smoke: miniapp_grafana_path_spa_ok"
+
+VIEWER_PASSWORD="$(openssl rand -hex 16)"
+py "$ROOT/scripts/prod_smoke/grafana_checks.py" \
+  --host "$GRAFANA_DOMAIN" --port "$HTTPS_PORT" --ca "${TMP}/caddy-root.crt" \
+  --admin-password "$(env_value SP_GRAFANA_ADMIN_PASSWORD)" \
+  --viewer-password "$VIEWER_PASSWORD" \
+  --dashboards "$ROOT/ops/grafana/dashboards"
+
+# Grafana reaches Prometheus and Postgres, and nothing else: not the API, not Valkey, not Telegram.
+in_grafana_reaches() {
+  "${compose[@]}" exec -T grafana sh -c "nc -z -w 3 $1 $2" >/dev/null 2>&1
+}
+in_grafana_reaches prometheus 9090 || fail "grafana cannot reach prometheus:9090"
+in_grafana_reaches postgres 5432 || fail "grafana cannot reach postgres:5432"
+for target in "api 8000" "valkey 6379" "alertmanager 9093" "node-exporter 9100" \
+  "api.telegram.org 443"; do
+  # shellcheck disable=SC2086
+  if in_grafana_reaches $target; then
+    fail "grafana can reach ${target// /:}"
+  fi
+done
+echo "prod-smoke: grafana_egress_blocked_ok"
+
+# --- Prometheus rules and targets ---------------------------------------------------------------
+prom_query() {
+  "${compose[@]}" exec -T prometheus wget -qO- --post-data="query=$1" \
+    http://127.0.0.1:9090/api/v1/query
+}
+prom_value() {
+  prom_query "$1" | py -c '
+import json
+import sys
+
+result = json.load(sys.stdin)["data"]["result"]
+print(result[0]["value"][1] if result else "")'
+}
+wait_until() {
+  local what="$1" tries="$2"
+  shift 2
+  local _
+  for _ in $(seq 1 "$tries"); do
+    if "$@"; then
+      return 0
+    fi
+    sleep 3
+  done
+  fail "timed out waiting for ${what}"
+}
+rules_loaded() {
+  local expected got
+  expected="$(grep -cE '^ +- alert: ' "$ROOT/ops/prometheus/rules/svoi.yml")"
+  got="$("${compose[@]}" exec -T prometheus wget -qO- http://127.0.0.1:9090/api/v1/rules | py -c '
+import json
+import sys
+
+rules = [r for g in json.load(sys.stdin)["data"]["groups"] for r in g["rules"]]
+print(len(rules) if all(r["health"] == "ok" for r in rules) else 0)')"
+  [[ "$got" == "$expected" ]]
+}
+targets_up() {
+  [[ "$(prom_value 'count(up == 1)')" == "4" && "$(prom_value 'count(up)')" == "4" ]]
+}
+wait_until "all Prometheus rules loaded and healthy" 40 rules_loaded
+wait_until "all four Prometheus targets up" 40 targets_up
+echo "prod-smoke: prometheus_rules_targets_ok"
+
+# --- Alertmanager delivery to the (stub) alert bot ---------------------------------------------
+alert_json() {
+  # $1 alertname, $2 summary, $3 endsAt offset in seconds (negative: already resolved)
+  py -c '
+import json
+import sys
+from datetime import UTC, datetime, timedelta
+
+now = datetime.now(UTC)
+name, summary, offset = sys.argv[1], sys.argv[2], int(sys.argv[3])
+print(json.dumps([{
+    "labels": {"alertname": name, "severity": "warning"},
+    "annotations": {"summary": summary, "description": "Тест доставки"},
+    "startsAt": (now - timedelta(seconds=30)).isoformat(),
+    "endsAt": (now + timedelta(seconds=offset)).isoformat(),
+}]))' "$1" "$2" "$3"
+}
+post_alert() {
+  alert_json "$@" | "${compose[@]}" exec -T alertmanager sh -c \
+    "wget -qO- --header='Content-Type: application/json' --post-data=\"\$(cat)\" http://127.0.0.1:9093/api/v2/alerts" \
+    >/dev/null
+}
+stub_messages() {
+  "${compose[@]}" exec -T telegram-stub python -c '
+import ssl
+import urllib.request
+
+context = ssl.create_default_context(cafile="/stub/ca.crt")
+with urllib.request.urlopen("https://api.telegram.org/smoke/messages", context=context, timeout=5) as r:
+    print(r.read().decode())'
+}
+message_arrived() {
+  # $1 text fragment; the chat id and token must be the configured ones.
+  stub_messages | py -c '
+import json
+import sys
+
+fragment, chat_id, token = sys.argv[1], sys.argv[2], sys.argv[3]
+messages = json.load(sys.stdin)
+sys.exit(0 if any(
+    fragment in m["text"] and str(m["chat_id"]) == chat_id and m["token"] == token
+    and m.get("parse_mode") == "HTML"
+    for m in messages) else 1)' "$1" "$ALERT_CHAT_ID" "$ALERT_BOT_TOKEN"
+}
+post_alert SpDeliveryTest "Delivery test" 120
+wait_until "the delivery test message" 20 message_arrived "[ПРОВЕРКА] Доставка алертов работает"
+post_alert SpSmokeAlert "Smoke alert" 120
+wait_until "the firing message" 20 message_arrived "[ВНИМАНИЕ] Smoke alert"
+post_alert SpSmokeAlert "Smoke alert" -1
+wait_until "the resolved message" 20 message_arrived "[РЕШЕНО] Smoke alert"
+echo "prod-smoke: alert_delivery_ok"
 
 prepare_backup_dirs() {
   # Host-owned 0777 dirs: UID 1500 can write dumps (mode 600); the runner can wipe the bind.
@@ -401,6 +622,35 @@ decrypt_dump_ok "${BACKUPS_DIR}/pre-release/${pre_local}"
   --entrypoint restore-verify.sh backup
 echo "prod-smoke: backup_local_only_ok"
 
+backup_metric_file="${METRICS_DIR}/backup_daily.prom"
+[[ -s "$backup_metric_file" ]] || fail "the daily backup wrote no ${backup_metric_file}"
+metric_mode="$("${compose[@]}" run --rm -T --no-deps --entrypoint stat backup \
+  -c '%a' /metrics/backup_daily.prom | tr -d '\r')"
+[[ "$metric_mode" == "644" ]] || fail "backup_daily.prom mode is ${metric_mode}, expected 644"
+grep -qx 'sp_backup_last_run_success{kind="daily"} 1' "$backup_metric_file" \
+  || fail "backup_daily.prom does not report success"
+success_ts="$(sed -n 's/^sp_backup_last_success_timestamp_seconds{kind="daily"} //p' "$backup_metric_file")"
+[[ "$success_ts" =~ ^[0-9]+$ ]] || fail "backup_daily.prom has no success timestamp"
+backup_scraped() {
+  [[ "$(prom_value 'sp_backup_last_run_success{kind="daily"}')" == "1" ]]
+}
+wait_until "Prometheus to scrape the backup metric" 40 backup_scraped
+echo "prod-smoke: backup_metric_success_ok"
+
+# A failing run (wrong database password) reports failure and keeps the last success timestamp.
+if "${compose[@]}" run --rm -T -e PGPASSWORD=wrong-password backup >"${TMP}/backup-bad.log" 2>&1; then
+  fail "a backup with a wrong database password must fail"
+fi
+grep -qx 'sp_backup_last_run_success{kind="daily"} 0' "$backup_metric_file" \
+  || fail "a failed backup must set sp_backup_last_run_success to 0"
+grep -qx "sp_backup_last_success_timestamp_seconds{kind=\"daily\"} ${success_ts}" "$backup_metric_file" \
+  || fail "a failed backup must keep the last success timestamp"
+failure_scraped() {
+  [[ "$(prom_value 'sp_backup_last_run_success{kind="daily"}')" == "0" ]]
+}
+wait_until "Prometheus to scrape the failed backup" 40 failure_scraped
+echo "prod-smoke: backup_metric_failure_ok"
+
 echo "prod-smoke: backups segment 2 (local rclone remote sp)"
 wipe_backups_bind
 # rclone type=local uses the path after "sp:" as a host path inside the container.
@@ -465,3 +715,11 @@ decrypt_dump_ok "${OFFSITE_DIR}/svoi-pravila/daily/${newest_offsite}"
 echo "prod-smoke: backup_offsite_ok"
 
 echo "prod-smoke: PASS"
+
+if [[ "$KEEP" == "1" ]]; then
+  kept=1
+  echo "prod-smoke: stack kept (${PROJECT}); Grafana: https://${GRAFANA_DOMAIN}:${HTTPS_PORT}/"
+  echo "prod-smoke: Grafana user admin, password SP_GRAFANA_ADMIN_PASSWORD in ${ENV_FILE}"
+  echo "prod-smoke: the local Caddy CA is ${TMP}/caddy-root.crt (curl --cacert, --resolve ${GRAFANA_DOMAIN}:${HTTPS_PORT}:127.0.0.1)"
+  echo "prod-smoke: remove everything with make prod-smoke-down"
+fi

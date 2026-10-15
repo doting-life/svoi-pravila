@@ -19,24 +19,30 @@ from svoi_pravila.application.ports.generation import (
     RewriteRequest,
     SuggestRuleRequest,
 )
+from svoi_pravila.application.ports.rewrite_judge import JudgeRequest
 
 
 @dataclass(frozen=True, slots=True)
 class PreparedMessages:
-    """Rendered system/user messages and prompt metadata for one call."""
+    """Rendered system/user messages and prompt metadata for one call.
+
+    ``untrusted`` holds the untrusted texts the boundary marker was allocated against.
+    """
 
     system: str
     user: str
     prompt_version: str
     boundary_marker: str
+    untrusted: tuple[str, ...]
 
 
 def prepare_rewrite(request: RewriteRequest) -> PreparedMessages:
     """Build rendered system/user messages for rewrite."""
     goal = "none" if request.goal is None else request.goal.value
-    marker = allocate_boundary_marker(
-        untrusted_texts(request.draft, goal, request.relationship.value, rules=request.rules)
+    untrusted = untrusted_texts(
+        request.draft, goal, request.relationship.value, rules=request.rules
     )
+    marker = allocate_boundary_marker(untrusted)
     template = compose_rewrite_template(has_rules=bool(request.rules))
     prompt_version = f"rewrite@{REWRITE_PROMPT_VERSION}"
     system = render_system_prompt(template, boundary_marker=marker)
@@ -50,20 +56,23 @@ def prepare_rewrite(request: RewriteRequest) -> PreparedMessages:
         ),
     )
     return PreparedMessages(
-        system=system, user=user, prompt_version=prompt_version, boundary_marker=marker
+        system=system,
+        user=user,
+        prompt_version=prompt_version,
+        boundary_marker=marker,
+        untrusted=untrusted,
     )
 
 
 def prepare_decode(request: DecodeRequest, *, analysis: str) -> PreparedMessages:
     """Build messages for structured decode phase B (prior analysis required)."""
-    marker = allocate_boundary_marker(
-        untrusted_texts(
-            request.incoming,
-            request.relationship.value,
-            analysis,
-            rules=request.rules,
-        )
+    untrusted = untrusted_texts(
+        request.incoming,
+        request.relationship.value,
+        analysis,
+        rules=request.rules,
     )
+    marker = allocate_boundary_marker(untrusted)
     template, prompt_version = load_prompt_template("decode", "v4")
     system = render_system_prompt(template, boundary_marker=marker)
     user = wrap_untrusted_payload(
@@ -76,15 +85,18 @@ def prepare_decode(request: DecodeRequest, *, analysis: str) -> PreparedMessages
         ),
     )
     return PreparedMessages(
-        system=system, user=user, prompt_version=prompt_version, boundary_marker=marker
+        system=system,
+        user=user,
+        prompt_version=prompt_version,
+        boundary_marker=marker,
+        untrusted=untrusted,
     )
 
 
 def prepare_decode_analysis(request: DecodeRequest) -> PreparedMessages:
     """Build messages for phase-A plain-text analysis stream."""
-    marker = allocate_boundary_marker(
-        untrusted_texts(request.incoming, request.relationship.value, rules=request.rules)
-    )
+    untrusted = untrusted_texts(request.incoming, request.relationship.value, rules=request.rules)
+    marker = allocate_boundary_marker(untrusted)
     template, prompt_version = load_prompt_template("decode_analysis", "v1")
     system = render_system_prompt(template, boundary_marker=marker)
     user = wrap_untrusted_payload(
@@ -96,15 +108,18 @@ def prepare_decode_analysis(request: DecodeRequest) -> PreparedMessages:
         ),
     )
     return PreparedMessages(
-        system=system, user=user, prompt_version=prompt_version, boundary_marker=marker
+        system=system,
+        user=user,
+        prompt_version=prompt_version,
+        boundary_marker=marker,
+        untrusted=untrusted,
     )
 
 
 def prepare_suggest_rule(request: SuggestRuleRequest) -> PreparedMessages:
     """Build rendered system/user messages for suggest_rule."""
-    marker = allocate_boundary_marker(
-        untrusted_texts(request.incoming, request.relationship.value, rules=request.rules)
-    )
+    untrusted = untrusted_texts(request.incoming, request.relationship.value, rules=request.rules)
+    marker = allocate_boundary_marker(untrusted)
     template, prompt_version = load_prompt_template("suggest_rule", "v1")
     system = render_system_prompt(template, boundary_marker=marker)
     user = wrap_untrusted_payload(
@@ -116,5 +131,28 @@ def prepare_suggest_rule(request: SuggestRuleRequest) -> PreparedMessages:
         ),
     )
     return PreparedMessages(
-        system=system, user=user, prompt_version=prompt_version, boundary_marker=marker
+        system=system,
+        user=user,
+        prompt_version=prompt_version,
+        boundary_marker=marker,
+        untrusted=untrusted,
+    )
+
+
+def prepare_judge(request: JudgeRequest) -> PreparedMessages:
+    """Build rendered system/user messages for the eval clean judge.
+
+    The text is model output and is delimited like every other untrusted field.
+    """
+    untrusted = untrusted_texts(request.text)
+    marker = allocate_boundary_marker(untrusted)
+    template, prompt_version = load_prompt_template("judge_clean", "v2")
+    system = render_system_prompt(template, boundary_marker=marker)
+    user = wrap_untrusted_payload(marker, (("text", request.text),))
+    return PreparedMessages(
+        system=system,
+        user=user,
+        prompt_version=prompt_version,
+        boundary_marker=marker,
+        untrusted=untrusted,
     )

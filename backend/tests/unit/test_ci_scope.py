@@ -64,6 +64,7 @@ def scope() -> ModuleType:
                     "miniapp",
                     "secrets",
                     "image",
+                    "ops",
                     "stack-smoke",
                     "prod-smoke",
                     "ownership-guard",
@@ -78,11 +79,24 @@ def scope() -> ModuleType:
                     "miniapp",
                     "secrets",
                     "image",
+                    "ops",
                     "stack-smoke",
                     "prod-smoke",
                     "ownership-guard",
                 }
             ),
+        ),
+        (
+            ["ops/prometheus/rules/svoi.yml"],
+            frozenset({"ops", "prod-smoke"}),
+        ),
+        (
+            ["ops/alertmanager/alertmanager.yml", "ops/alertmanager/telegram.tmpl"],
+            frozenset({"ops", "prod-smoke"}),
+        ),
+        (
+            ["ops/prometheus/prometheus.yml", "docs/maintainers/00-status.md"],
+            frozenset({"ops", "prod-smoke", "secrets", "ownership-guard"}),
         ),
         (
             ["unknown/path.bin"],
@@ -92,6 +106,7 @@ def scope() -> ModuleType:
                     "miniapp",
                     "secrets",
                     "image",
+                    "ops",
                     "stack-smoke",
                     "prod-smoke",
                     "ownership-guard",

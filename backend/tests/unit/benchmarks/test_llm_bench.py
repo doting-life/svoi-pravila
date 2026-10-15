@@ -21,6 +21,7 @@ from svoi_pravila.adapters.llm.gigachat.client import (
     close_gigachat_client,
     create_gigachat_client,
 )
+from svoi_pravila.adapters.llm.gigachat.estimate import max_structured_billable
 from svoi_pravila.adapters.llm.gigachat.prepared import prepare_rewrite
 from svoi_pravila.adapters.llm.gigachat.validation import MAX_TOKENS_REWRITE
 from svoi_pravila.application.errors import (
@@ -1531,7 +1532,9 @@ def test_estimate_uses_validator_output_caps() -> None:
     assert case.rewrite is not None
     prepared = prepare_rewrite(case.rewrite)
     one = estimate_prepared_tokens(prepared.system, prepared.user, output_cap=MAX_TOKENS_REWRITE)
-    assert estimate_case_tokens(case, "rewrite") == 2 * one
+    estimated = estimate_case_tokens(case, "rewrite")
+    assert estimated == max_structured_billable(prepared, output_cap=MAX_TOKENS_REWRITE)
+    assert estimated > 2 * one
     assert MAX_TOKENS_REWRITE > 0
 
 

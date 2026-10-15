@@ -30,6 +30,7 @@ svoi-pravila-healthcheck = "svoi_pravila.healthcheck:main"
 svoi-pravila-bench-llm = "svoi_pravila.benchmarks.llm:main"
 svoi-pravila-eval = "svoi_pravila.evals.cli:main"
 svoi-pravila-eval-rewrite = "svoi_pravila.evals.rewrite_cli:main"
+svoi-pravila-eval-judge = "svoi_pravila.evals.judge_cli:main"
 svoi-pravila-analytics = "svoi_pravila.cli.analytics:main"
 svoi-pravila-migrate = "svoi_pravila.cli.migrate:main"
 
@@ -61,9 +62,11 @@ packages = ["src/svoi_pravila"]
 "src/svoi_pravila/adapters/llm/prompts/rewrite/refuse_extra.md" = "svoi_pravila/adapters/llm/prompts/rewrite/refuse_extra.md"
 "src/svoi_pravila/adapters/llm/prompts/rewrite/json_close_rules.md" = "svoi_pravila/adapters/llm/prompts/rewrite/json_close_rules.md"
 "src/svoi_pravila/adapters/llm/prompts/rewrite/json_close_no_rules.md" = "svoi_pravila/adapters/llm/prompts/rewrite/json_close_no_rules.md"
+"src/svoi_pravila/adapters/llm/prompts/judge_clean/v2.md" = "svoi_pravila/adapters/llm/prompts/judge_clean/v2.md"
 "src/svoi_pravila/adapters/llm/prompts/decode/v4.md" = "svoi_pravila/adapters/llm/prompts/decode/v4.md"
 "src/svoi_pravila/adapters/llm/prompts/decode_analysis/v1.md" = "svoi_pravila/adapters/llm/prompts/decode_analysis/v1.md"
 "src/svoi_pravila/adapters/llm/prompts/suggest_rule/v1.md" = "svoi_pravila/adapters/llm/prompts/suggest_rule/v1.md"
+"src/svoi_pravila/adapters/llm/prompts/repair/v1.md" = "svoi_pravila/adapters/llm/prompts/repair/v1.md"
 "src/svoi_pravila/adapters/consents/personal_data/v1.txt" = "svoi_pravila/adapters/consents/personal_data/v1.txt"
 "src/svoi_pravila/adapters/consents/special_category/v1.txt" = "svoi_pravila/adapters/consents/special_category/v1.txt"
 "src/svoi_pravila/adapters/channels/telegram/localization/ru.json" = "svoi_pravila/adapters/channels/telegram/localization/ru.json"
@@ -74,10 +77,6 @@ packages = ["src/svoi_pravila"]
 "src/svoi_pravila/adapters/cache/lua/quota_refund.lua" = "svoi_pravila/adapters/cache/lua/quota_refund.lua"
 "src/svoi_pravila/adapters/cache/lua/budget_add.lua" = "svoi_pravila/adapters/cache/lua/budget_add.lua"
 "src/svoi_pravila/domain/safety/crisis_patterns/ru/v2.txt" = "svoi_pravila/domain/safety/crisis_patterns/ru/v2.txt"
-"src/svoi_pravila/domain/safety/profanity_patterns/ru/v1.txt" = "svoi_pravila/domain/safety/profanity_patterns/ru/v1.txt"
-"src/svoi_pravila/domain/tone/harsh_patterns/ru/v1.txt" = "svoi_pravila/domain/tone/harsh_patterns/ru/v1.txt"
-"src/svoi_pravila/domain/tone/hedge_patterns/ru/v1.txt" = "svoi_pravila/domain/tone/hedge_patterns/ru/v1.txt"
-"src/svoi_pravila/domain/tone/apology_patterns/ru/v1.txt" = "svoi_pravila/domain/tone/apology_patterns/ru/v1.txt"
 "src/svoi_pravila/domain/safety/crisis_copy/ru/v1.txt" = "svoi_pravila/domain/safety/crisis_copy/ru/v1.txt"
 "src/svoi_pravila/domain/safety/decode_copy/ru/v1.txt" = "svoi_pravila/domain/safety/decode_copy/ru/v1.txt"
 "src/svoi_pravila/domain/safety/support_resources/ru/v1.txt" = "svoi_pravila/domain/safety/support_resources/ru/v1.txt"
@@ -235,6 +234,17 @@ forbidden_modules = [
     "svoi_pravila.privacy",
     "svoi_pravila.benchmarks",
     "svoi_pravila.evals",
+]
+
+[[tool.importlinter.contracts]]
+name = "The eval rewrite judge is not part of the service"
+type = "forbidden"
+source_modules = [
+    "svoi_pravila.bootstrap",
+    "svoi_pravila.api",
+]
+forbidden_modules = [
+    "svoi_pravila.adapters.llm.gigachat.judge",
 ]
 
 [[tool.importlinter.contracts]]

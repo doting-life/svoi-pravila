@@ -26,5 +26,11 @@ class VariantPolicyMonitor(Protocol):
         ``slot`` is the defective rewrite slot when known; ``finish_reason`` is the provider's.
         """
 
+    def record_repaired(self, defect: str) -> None:
+        """Count one first-attempt defect the second attempt repaired.
+
+        ``defect`` is the C0 label ``reason`` or ``reason:slot`` of ``GenerationMeta.repaired``.
+        """
+
     def record_check_empty(self) -> None:
         """Count one answer whose ``check`` slot was empty and replaced with the draft."""

@@ -11,7 +11,6 @@ from svoi_pravila.adapters.channels.telegram.inline_scheduler import InlineQuery
 from svoi_pravila.adapters.channels.telegram.localization import load_ru_strings
 from svoi_pravila.adapters.system.tone_suggestion_catalog import StaticToneSuggestionCatalog
 from svoi_pravila.application.crisis_screen import CrisisScreen
-from svoi_pravila.application.lexicons import load_tone_lexicons_ru_v1
 from svoi_pravila.application.ports.welcome_throttle import WelcomeThrottle
 from svoi_pravila.application.use_cases.compose_generation import (
     ComposeGeneration,
@@ -97,7 +96,6 @@ def make_telegram_deps(spec: TelegramTestDeps | None = None) -> TelegramDeps:
             ids=ids,
             pseudonymizer=pseudonymizer,
             crisis_screen=CrisisScreen.load_ru_v2(),
-            tone_lexicons=load_tone_lexicons_ru_v1(),
             deadline_seconds=chosen.inline_deadline_seconds,
             analytics_timezone="Europe/Moscow",
         )

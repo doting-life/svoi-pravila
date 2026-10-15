@@ -1,14 +1,15 @@
 .PHONY: install fmt fmt-check lint typecheck imports test-unit test-integration test \
 	audit secrets migrations-check image image-scan openapi miniapp-install miniapp-api-check \
 	miniapp-check miniapp-tunnel miniapp-tunnel-down observability-up observability-down \
-	dev-env infra-up infra-down build up down logs ps bench-llm eval-llm eval-rewrite analytics check \
-	toolchain-check stack-smoke prod-smoke publish ownership-guard hooks ci quick shellcheck
+	dev-env infra-up infra-down build up down logs ps bench-llm eval-llm eval-rewrite eval-judge-calibrate analytics check \
+	toolchain-check ops-check stack-smoke prod-smoke prod-smoke-down publish ownership-guard hooks ci quick shellcheck
 
 BACKEND := backend
 MINIAPP := miniapp
 include scripts/image-pins.env
-export GITLEAKS_IMAGE TRIVY_IMAGE ACTIONLINT_IMAGE SHELLCHECK_IMAGE PROMETHEUS_IMAGE
-CI_JOBS := backend miniapp secrets image stack-smoke prod-smoke ownership-guard
+export GITLEAKS_IMAGE TRIVY_IMAGE ACTIONLINT_IMAGE SHELLCHECK_IMAGE PROMETHEUS_IMAGE \
+	ALERTMANAGER_IMAGE NODE_EXPORTER_IMAGE
+CI_JOBS := backend miniapp secrets image ops stack-smoke prod-smoke ownership-guard
 export CI_JOBS
 export JOB
 export BASE
@@ -91,7 +92,17 @@ eval-rewrite:
 	mkdir -p $(BACKEND)/evals/out
 	$(COMPOSE) --profile app run --rm \
 		-v "$(CURDIR)/$(BACKEND)/evals/out:/app/evals/out" \
-		--entrypoint svoi-pravila-eval-rewrite api $(EVAL_ARGS)
+		-v "$(CURDIR)/$(BACKEND)/evals/baselines:/app/evals/baselines:ro" \
+		--entrypoint svoi-pravila-eval-rewrite api $(EVAL_ARGS) \
+		$(if $(JUDGE_MODEL),--judge-model $(JUDGE_MODEL))
+
+eval-judge-calibrate:
+	mkdir -p $(BACKEND)/evals/out
+	$(COMPOSE) --profile app run --rm \
+		-v "$(CURDIR)/$(BACKEND)/evals/out:/app/evals/out" \
+		-v "$(CURDIR)/$(BACKEND)/evals/baselines:/app/evals/baselines" \
+		--entrypoint svoi-pravila-eval-judge api --model "$(MODEL)" \
+		$(if $(MAX_TOKENS),--max-tokens $(MAX_TOKENS)) $(EVAL_ARGS)
 
 audit:
 	cd $(BACKEND) && uv export --frozen --no-dev --no-emit-project -o /tmp/svoi-pravila-requirements.txt
@@ -112,11 +123,17 @@ image-scan:
 toolchain-check:
 	cd $(BACKEND) && uv run python ../scripts/toolchain_check.py
 
+ops-check:
+	./scripts/ops_check.sh
+
 stack-smoke:
 	./scripts/stack_smoke.sh
 
 prod-smoke:
 	./scripts/prod_smoke.sh
+
+prod-smoke-down:
+	./scripts/prod_smoke.sh --down
 
 publish:
 	./scripts/publish.sh
@@ -158,7 +175,7 @@ miniapp-tunnel-down:
 
 observability-up: build
 	$(COMPOSE) --profile observability up -d --wait migrate prometheus grafana
-	@echo "Grafana: http://127.0.0.1:$$(docker compose $(COMPOSE_ENV) port grafana 3000 | sed 's/.*://') (loopback only; SSH tunnel on VPS)"
+	@echo "Grafana: http://127.0.0.1:$$(docker compose $(COMPOSE_ENV) port grafana 3000 | sed 's/.*://') (loopback only)"
 
 observability-down:
 	$(COMPOSE) --profile observability stop grafana prometheus

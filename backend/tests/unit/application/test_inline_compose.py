@@ -6,7 +6,7 @@ import asyncio
 import json
 import unicodedata
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from typing import Any
 
@@ -31,7 +31,6 @@ from svoi_pravila.application.errors import (
     UserQuotaExhausted,
 )
 from svoi_pravila.application.inline_reuse_status import InlineReuseStatus
-from svoi_pravila.application.lexicons import load_tone_lexicons_ru_v1
 from svoi_pravila.application.ports.generation import (
     BOUNDED_TEXT_MAX,
     BOUNDED_TEXT_MIN,
@@ -69,7 +68,6 @@ from svoi_pravila.application.use_cases.revoke_all_consents import (
 from svoi_pravila.domain.enums import (
     LimitKind,
     RelationshipKind,
-    RewriteGoal,
     RuleCategory,
     UsageEventKind,
     UsageOutcome,
@@ -122,7 +120,6 @@ def _compose_generation(
                 ids=world.ids,
                 pseudonymizer=FakePseudonymizer(),
                 crisis_screen=CrisisScreen.load_ru_v2(),
-                tone_lexicons=load_tone_lexicons_ru_v1(),
                 deadline_seconds=8.0,
                 analytics_timezone="Europe/Moscow",
             )
@@ -887,27 +884,9 @@ async def test_inline_compose_reports_policy_violations_without_blocking(
 async def _compose_with_context(
     world: AppWorld,
     texts: tuple[str, str, str],
-    *,
-    goal: RewriteGoal | None = None,
-    category: RuleCategory | None = None,
 ) -> list[tuple[VariantKind, PolicyRule]]:
     """Run ComposeGeneration on a fixed draft and return the recorded policy violations."""
-    user = await world.ensure_granted_user(100)
-    contact_id = None
-    if category is not None:
-        contact = (
-            await CreateContact(world.uow_factory, world.catalog, world.ids, world.clock).execute(
-                CreateContactCommand(user.id, ContactLabel("Sam"), RelationshipKind.FRIEND)
-            )
-        ).contact
-        await ProposeRule(
-            world.uow_factory, world.catalog, world.ids, world.clock, world.notifier
-        ).execute(
-            ProposeRuleCommand(
-                user.id, contact.id, category, RuleText("заканчивать вопросом"), shared=False
-            )
-        )
-        contact_id = contact.id
+    await world.ensure_granted_user(100)
     monitor = RecordingVariantPolicyMonitor()
     generator = FakeTextGenerator(rewrite_result=_rewrite_result(*texts))
     use_case, _sink = _compose_generation(
@@ -917,65 +896,28 @@ async def _compose_with_context(
         ComposeGenerationCommand(
             telegram_user_id=TelegramUserId(100),
             draft="Я опоздал на встречу",
-            goal=goal,
-            contact_id=contact_id,
+            goal=None,
+            contact_id=None,
             surface=UsageSurface.MINIAPP,
         )
     )
     return monitor.records
 
 
-_LADDER = ("Я опоздал на встречу", "Я пришёл поздно, мне жаль", "Опоздал, больше не повторится")
-
-
 @pytest.mark.unit
-async def test_compose_generation_reports_profanity_harsh_and_the_ladder(world: AppWorld) -> None:
+async def test_compose_generation_reports_the_ladder(world: AppWorld) -> None:
     records = await _compose_with_context(
-        world, ("Я опоздал на встречу", "Я опоздал, хуй с ним", "Я опоздал, хуй с ним")
+        world, ("Я опоздал на встречу", "Я опоздал, прости", "Я опоздал, прости")
     )
-    assert (VariantKind.SOFTER, PolicyRule.PROFANITY) in records
-    assert (VariantKind.FIRMER, PolicyRule.PROFANITY) in records
     assert (VariantKind.FIRMER, PolicyRule.LADDER_SIMILAR) in records
 
 
 @pytest.mark.unit
-async def test_compose_generation_without_licence_reports_a_new_apology(
-    world: AppWorld,
-) -> None:
-    records = await _compose_with_context(world, _LADDER)
-    assert (VariantKind.SOFTER, PolicyRule.APOLOGY) in records
-    assert (VariantKind.FIRMER, PolicyRule.APOLOGY) not in records
-
-
-@pytest.mark.unit
-async def test_compose_generation_goal_licenses_one_new_apology(world: AppWorld) -> None:
+async def test_compose_generation_reports_no_rule_for_a_clean_ladder(world: AppWorld) -> None:
     records = await _compose_with_context(
-        world,
-        ("Я опоздал на встречу", "Извини, я опоздал на встречу", "Опоздал. Прости, не повторится"),
-        goal=RewriteGoal.ADMIT_FAULT,
+        world, ("Я опоздал на встречу", "Я пришёл поздно, мне жаль", "Опоздал, больше не буду")
     )
-    assert not [rule for _kind, rule in records if rule is PolicyRule.APOLOGY]
-
-
-@pytest.mark.unit
-async def test_compose_generation_apology_rule_licenses_one_new_apology(
-    world: AppWorld,
-) -> None:
-    records = await _compose_with_context(
-        world,
-        ("Я опоздал на встречу", "Извини, я опоздал на встречу", "Опоздал. Прости, не повторится"),
-        category=RuleCategory.APOLOGY,
-    )
-    assert not [rule for _kind, rule in records if rule is PolicyRule.APOLOGY]
-
-
-@pytest.mark.unit
-async def test_compose_generation_rules_switch_the_hedge_check_off(world: AppWorld) -> None:
-    texts = ("Я опоздал на встречу", "Я опоздал на встречу вчера", "Опоздал, пожалуйста, пойми")
-    plain = await _compose_with_context(world, texts)
-    assert (VariantKind.FIRMER, PolicyRule.HEDGE) in plain
-    with_rule = await _compose_with_context(world, texts, category=RuleCategory.OTHER)
-    assert (VariantKind.FIRMER, PolicyRule.HEDGE) not in with_rule
+    assert records == []
 
 
 @pytest.mark.unit
@@ -1006,6 +948,35 @@ async def test_inline_compose_does_not_count_a_filled_check_as_empty(world: AppW
     use_case, _sink, _reuse = _ports(world, _Fakes(generator=generator, policy_monitor=monitor))
     await use_case.execute(InlineComposeCommand(TelegramUserId(100), "нужно поговорить"))
     assert monitor.check_empty == 0
+
+
+@pytest.mark.unit
+async def test_repaired_defects_are_counted_by_label(
+    world: AppWorld,
+) -> None:
+    await world.ensure_granted_user(100)
+    base = _rewrite_result("Нужно поговорить", "давай обсудим спокойно", "говорим сегодня")
+    generator = FakeTextGenerator(
+        rewrite_result=replace(base, meta=replace(base.meta, repaired=("empty_text:softer",)))
+    )
+    monitor = RecordingVariantPolicyMonitor()
+    use_case, _sink, _reuse = _ports(world, _Fakes(generator=generator, policy_monitor=monitor))
+    result = await use_case.execute(InlineComposeCommand(TelegramUserId(100), "нужно поговорить"))
+    assert len(result.variants) == 3
+    assert monitor.repaired == ["empty_text:softer"]
+
+
+@pytest.mark.unit
+async def test_nothing_is_counted_as_repaired_for_a_first_attempt_answer(
+    world: AppWorld,
+) -> None:
+    await world.ensure_granted_user(100)
+    monitor = RecordingVariantPolicyMonitor()
+    use_case, _sink, _reuse = _ports(
+        world, _Fakes(generator=FakeTextGenerator(), policy_monitor=monitor)
+    )
+    await use_case.execute(InlineComposeCommand(TelegramUserId(100), "нужно поговорить"))
+    assert monitor.repaired == []
 
 
 @pytest.mark.unit

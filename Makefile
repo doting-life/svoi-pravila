@@ -1,7 +1,7 @@
 .PHONY: install fmt fmt-check lint typecheck imports test-unit test-integration test \
 	audit secrets migrations-check image image-scan openapi miniapp-install miniapp-api-check \
 	miniapp-check miniapp-tunnel miniapp-tunnel-down observability-up observability-down \
-	dev-env infra-up infra-down build up down logs ps bench-llm eval-llm eval-rewrite eval-judge-calibrate analytics check \
+	dev-env infra-up infra-down build up down logs ps bench-llm eval-llm eval-rewrite eval-judge-calibrate analytics analytics-export analytics-prices check \
 	toolchain-check ops-check stack-smoke prod-smoke prod-smoke-down publish ownership-guard hooks ci quick shellcheck
 
 BACKEND := backend
@@ -78,6 +78,20 @@ test:
 
 analytics:
 	$(COMPOSE) --profile app run --rm --entrypoint svoi-pravila-analytics api $(ARGS)
+
+ANALYTICS_EXPORT_DIR := $(abspath $(BACKEND)/analytics-export)
+
+analytics-export:
+	@test -n "$(FROM)" && test -n "$(TO)" || { \
+		echo "usage: make analytics-export FROM=YYYY-MM-DD TO=YYYY-MM-DD [FORCE=1]" >&2; exit 2; }
+	mkdir -p "$(ANALYTICS_EXPORT_DIR)"
+	$(COMPOSE) --profile app run --rm --user "$$(id -u):$$(id -g)" \
+		-v "$(ANALYTICS_EXPORT_DIR):/analytics-export" \
+		--entrypoint svoi-pravila-analytics api \
+		export --from $(FROM) --to $(TO) --out-dir /analytics-export $(if $(FORCE),--force)
+
+analytics-prices:
+	$(COMPOSE) --profile app run --rm --entrypoint svoi-pravila-analytics api prices $(ARGS)
 
 bench-llm:
 	$(COMPOSE) --profile app run --rm --entrypoint svoi-pravila-bench-llm api $(BENCH_ARGS)

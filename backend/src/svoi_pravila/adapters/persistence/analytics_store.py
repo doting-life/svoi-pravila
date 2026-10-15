@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
+from svoi_pravila.adapters.persistence.program_metrics_store import SqlAlchemyProgramMetricsStore
 from svoi_pravila.application.errors import (
     AnalyticsErrorKind,
     AnalyticsJobFailed,
@@ -20,13 +21,7 @@ from svoi_pravila.application.errors import (
     AnalyticsJobStatus,
 )
 from svoi_pravila.application.ports.analytics_store import JobRun
-from svoi_pravila.domain.analytics import (
-    CohortTotals,
-    DailyTotals,
-    DayAggregate,
-    ScenarioTotals,
-)
-from svoi_pravila.domain.enums import UsageScenario, UsageSurface
+from svoi_pravila.domain.analytics import CohortTotals, DayAggregate
 
 LOCK_KEY = "svoi_pravila.analytics.daily"
 
@@ -78,6 +73,7 @@ def _new_user_sql(event_alias: str, prior_alias: str, start_ts: str) -> str:
 
 
 _APPEAL = _appeal_sql("e")
+_APPEAL_P = _appeal_sql("p")
 _NEW_USER = _new_user_sql("e", "p", "b.start_ts")
 
 
@@ -139,22 +135,26 @@ class SqlAlchemyAnalyticsStore:
         computed_at: datetime,
         llm_budget_tokens: int,
     ) -> int:
-        """Idempotent upsert of daily totals and scenario slices in one transaction."""
+        """Idempotent upsert of daily totals, slices, LLM rows and load peaks in one transaction."""
         params = {
             "day": day,
             "tz": tz_name,
             "computed_at": computed_at,
             "llm_budget_tokens": llm_budget_tokens,
         }
-        scenario_count = await self._run_write(
+        counts = await self._run_write_scalars(
             (
                 (_DAILY_UPSERT, params),
                 ("DELETE FROM analytics_daily_scenario WHERE day = :day", {"day": day}),
                 (_SCENARIO_INSERT, params),
+                ("DELETE FROM analytics_daily_llm WHERE day = :day", {"day": day}),
+                (_LLM_INSERT, params),
+                ("DELETE FROM analytics_daily_load WHERE day = :day", {"day": day}),
+                (_LOAD_INSERT, params),
             ),
-            scalar_index=2,
+            scalar_indexes=(2, 4, 6),
         )
-        return 1 + _as_int(scenario_count)
+        return 1 + sum(_as_int(count) for count in counts)
 
     async def compute_cohorts(
         self,
@@ -264,70 +264,20 @@ class SqlAlchemyAnalyticsStore:
 
     async def fetch_day(self, day: date) -> DayAggregate | None:
         """Load stored aggregates for oracle comparison."""
-        daily_row = await self._all("SELECT * FROM analytics_daily WHERE day = :day", {"day": day})
-        if not daily_row:
+        reader = SqlAlchemyProgramMetricsStore(self._engine)
+        daily = await reader.fetch_daily(day, day)
+        if not daily:
             return None
-        raw = daily_row[0]
-        daily = DailyTotals(
-            day=raw.day,
-            active_users=raw.active_users,
-            appeals=raw.appeals,
-            new_users=raw.new_users,
-            generations=raw.generations,
-            generation_errors=raw.generation_errors,
-            users_limited=raw.users_limited,
-            billable_tokens=int(raw.billable_tokens),
-            llm_budget_tokens=int(raw.llm_budget_tokens),
-            computed_at=raw.computed_at,
+        return DayAggregate(
+            daily=daily[0],
+            scenarios=await reader.fetch_scenarios(day, day),
+            llm=await reader.fetch_llm(day, day),
+            load=(await reader.fetch_load(day, day))[0],
         )
-        scenario_rows = await self._all(
-            "SELECT * FROM analytics_daily_scenario WHERE day = :day ORDER BY scenario, surface",
-            {"day": day},
-        )
-        scenarios = tuple(
-            ScenarioTotals(
-                day=item.day,
-                scenario=UsageScenario(item.scenario),
-                surface=UsageSurface(item.surface),
-                appeals=item.appeals,
-                users=item.users,
-                ok=item.ok,
-                refused=item.refused,
-                screened=item.screened,
-                invalid_output=item.invalid_output,
-                unavailable=item.unavailable,
-                chosen=item.chosen,
-                limited_user_quota=item.limited_user_quota,
-                limited_global_budget=item.limited_global_budget,
-                latency_p50_ms=_float_or_none(item.latency_p50_ms),
-                latency_p95_ms=_float_or_none(item.latency_p95_ms),
-                ttfc_p50_ms=_float_or_none(item.ttfc_p50_ms),
-                ttfc_p95_ms=_float_or_none(item.ttfc_p95_ms),
-                input_tokens=int(item.input_tokens),
-                output_tokens=int(item.output_tokens),
-                billable_tokens=int(item.billable_tokens),
-            )
-            for item in scenario_rows
-        )
-        return DayAggregate(daily=daily, scenarios=scenarios)
 
     async def fetch_cohorts(self, from_day: date, to_day: date) -> tuple[CohortTotals, ...]:
         """Load stored cohort rows for oracle comparison."""
-        rows = await self._all(
-            "SELECT * FROM analytics_cohorts "
-            "WHERE cohort_day BETWEEN :from_day AND :to_day ORDER BY cohort_day",
-            {"from_day": from_day, "to_day": to_day},
-        )
-        return tuple(
-            CohortTotals(
-                cohort_day=item.cohort_day,
-                size=item.size,
-                d1_retained=item.d1_retained,
-                d7_retained=item.d7_retained,
-                computed_at=item.computed_at,
-            )
-            for item in rows
-        )
+        return await SqlAlchemyProgramMetricsStore(self._engine).fetch_cohorts(from_day, to_day)
 
     async def fetch_job_runs(self) -> list[JobRun]:
         """Load job journal rows ordered by start time."""
@@ -358,9 +308,22 @@ class SqlAlchemyAnalyticsStore:
         scalar_index: int | None = None,
     ) -> object | None:
         """Run several statements in one transaction; optionally return one scalar."""
+        indexes = () if scalar_index is None else (scalar_index,)
+        scalars = await self._run_write_scalars(statements, scalar_indexes=indexes)
+        return scalars[0] if scalars else None
+
+    async def _run_write_scalars(
+        self,
+        statements: Sequence[tuple[str, dict[str, object]]],
+        *,
+        scalar_indexes: Sequence[int],
+    ) -> list[object | None]:
+        """Run several statements in one transaction; return the scalar of each listed index."""
         try:
             async with self._engine.begin() as conn:
-                return await self._execute_statements(conn, statements, scalar_index=scalar_index)
+                return await self._execute_statements(
+                    conn, statements, scalar_indexes=scalar_indexes
+                )
         except OSError as exc:
             raise AnalyticsJobFailed(AnalyticsErrorKind.NETWORK) from exc
         except SQLAlchemyError as exc:
@@ -371,14 +334,14 @@ class SqlAlchemyAnalyticsStore:
         conn: AsyncConnection,
         statements: Sequence[tuple[str, dict[str, object]]],
         *,
-        scalar_index: int | None,
-    ) -> object | None:
-        scalar: object | None = None
+        scalar_indexes: Sequence[int],
+    ) -> list[object | None]:
+        scalars: list[object | None] = []
         for index, (sql, params) in enumerate(statements):
             result = await conn.execute(text(sql), params)
-            if scalar_index is not None and index == scalar_index:
-                scalar = result.scalar()
-        return scalar
+            if index in scalar_indexes:
+                scalars.append(result.scalar())
+        return scalars
 
     async def _scalar_write(self, sql: str, params: dict[str, object]) -> object:
         return await self._run_write(((sql, params),), scalar_index=0)
@@ -427,25 +390,37 @@ def _as_int(value: object) -> int:
     raise AnalyticsJobFailed(AnalyticsErrorKind.DATABASE)
 
 
-def _float_or_none(value: object) -> float | None:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        raise AnalyticsJobFailed(AnalyticsErrorKind.DATABASE)
-    if isinstance(value, int | float | Decimal):
-        return float(value)
-    raise AnalyticsJobFailed(AnalyticsErrorKind.DATABASE)
+_PRICE_OF_MODEL = """(
+        SELECT lp.rub_per_1k_tokens
+        FROM llm_prices lp
+        WHERE lp.model = e.model AND lp.valid_from <= :day
+        ORDER BY lp.valid_from DESC
+        LIMIT 1
+    )"""
 
-
-_DAILY_UPSERT = """
+_DAILY_UPSERT = (
+    """
 WITH bounds AS (
     SELECT
         timezone(:tz, CAST(:day AS timestamp without time zone)) AS start_ts,
         timezone(:tz, CAST(:day AS timestamp without time zone) + interval '1 day') AS end_ts
+),
+model_day AS (
+    SELECT
+        e.model,
+        SUM(e.billable_tokens) AS billable_tokens,
+        SUM(e.attempts) AS calls,
+        __PRICE_OF_MODEL__ AS price
+    FROM usage_events e, bounds b
+    WHERE e.occurred_at >= b.start_ts AND e.occurred_at < b.end_ts
+      AND e.event_kind = 'generation'
+      AND e.model IS NOT NULL
+    GROUP BY e.model
 )
 INSERT INTO analytics_daily (
     day, active_users, appeals, new_users, generations, generation_errors,
-    users_limited, billable_tokens, llm_budget_tokens, computed_at
+    users_limited, billable_tokens, llm_budget_tokens,
+    llm_calls, target_users_total, llm_cost_rub, unpriced_models, computed_at
 )
 SELECT
     :day,
@@ -498,6 +473,25 @@ SELECT
           AND e.event_kind = 'generation'
     ),
     :llm_budget_tokens,
+    (SELECT COALESCE(SUM(calls), 0) FROM model_day),
+    (
+        SELECT COUNT(*)
+        FROM (
+            SELECT p.user_pseudonym
+            FROM usage_events p
+            WHERE __APPEAL_P__
+            GROUP BY p.user_pseudonym
+            HAVING MIN(p.occurred_at) < (SELECT end_ts FROM bounds)
+        ) AS target_users
+    ),
+    COALESCE(
+        ROUND(
+            (SELECT SUM(billable_tokens * price) FROM model_day WHERE price IS NOT NULL) / 1000,
+            4
+        ),
+        0
+    ),
+    (SELECT COUNT(*) FROM model_day WHERE price IS NULL),
     :computed_at
 FROM bounds
 ON CONFLICT (day) DO UPDATE SET
@@ -509,8 +503,16 @@ ON CONFLICT (day) DO UPDATE SET
     users_limited = EXCLUDED.users_limited,
     billable_tokens = EXCLUDED.billable_tokens,
     llm_budget_tokens = EXCLUDED.llm_budget_tokens,
+    llm_calls = EXCLUDED.llm_calls,
+    target_users_total = EXCLUDED.target_users_total,
+    llm_cost_rub = EXCLUDED.llm_cost_rub,
+    unpriced_models = EXCLUDED.unpriced_models,
     computed_at = EXCLUDED.computed_at
-""".replace("__APPEAL__", _APPEAL).replace("__NEW_USER__", _NEW_USER)
+""".replace("__PRICE_OF_MODEL__", _PRICE_OF_MODEL)
+    .replace("__APPEAL_P__", _APPEAL_P)
+    .replace("__APPEAL__", _APPEAL)
+    .replace("__NEW_USER__", _NEW_USER)
+)
 
 _SCENARIO_INSERT = """
 WITH bounds AS (
@@ -576,6 +578,90 @@ inserted AS (
 )
 SELECT COUNT(*) FROM inserted
 """.replace("__APPEAL__", _APPEAL)
+
+_LLM_INSERT = """
+WITH bounds AS (
+    SELECT
+        timezone(:tz, CAST(:day AS timestamp without time zone)) AS start_ts,
+        timezone(:tz, CAST(:day AS timestamp without time zone) + interval '1 day') AS end_ts
+),
+grouped AS (
+    SELECT
+        e.scenario,
+        e.surface,
+        e.model,
+        COUNT(*) AS generations,
+        SUM(e.attempts) AS llm_calls,
+        SUM(e.input_tokens) AS input_tokens,
+        SUM(e.output_tokens) AS output_tokens,
+        SUM(e.billable_tokens) AS billable_tokens,
+        __PRICE_OF_MODEL__ AS price
+    FROM usage_events e, bounds b
+    WHERE e.occurred_at >= b.start_ts AND e.occurred_at < b.end_ts
+      AND e.event_kind = 'generation'
+      AND e.model IS NOT NULL
+    GROUP BY e.scenario, e.surface, e.model
+),
+inserted AS (
+    INSERT INTO analytics_daily_llm (
+        day, scenario, surface, model, generations, llm_calls,
+        input_tokens, output_tokens, billable_tokens, price_rub_per_1k, cost_rub
+    )
+    SELECT
+        :day, scenario, surface, model, generations, llm_calls,
+        input_tokens, output_tokens, billable_tokens, price,
+        ROUND(billable_tokens * price / 1000, 4)
+    FROM grouped
+    RETURNING 1
+)
+SELECT COUNT(*) FROM inserted
+""".replace("__PRICE_OF_MODEL__", _PRICE_OF_MODEL)
+
+_LOAD_INSERT = """
+WITH bounds AS (
+    SELECT
+        timezone(:tz, CAST(:day AS timestamp without time zone)) AS start_ts,
+        timezone(:tz, CAST(:day AS timestamp without time zone) + interval '1 day') AS end_ts
+),
+calls AS (
+    SELECT e.occurred_at, e.billable_tokens, e.attempts
+    FROM usage_events e, bounds b
+    WHERE e.occurred_at >= b.start_ts AND e.occurred_at < b.end_ts
+      AND e.event_kind = 'generation'
+      AND e.model IS NOT NULL
+),
+per_minute AS (
+    SELECT
+        date_trunc('minute', occurred_at, 'UTC') AS bucket,
+        SUM(billable_tokens) AS tokens,
+        SUM(attempts) AS calls
+    FROM calls
+    GROUP BY 1
+),
+per_second AS (
+    SELECT
+        date_trunc('second', occurred_at, 'UTC') AS bucket,
+        SUM(billable_tokens) AS tokens,
+        SUM(attempts) AS calls
+    FROM calls
+    GROUP BY 1
+),
+inserted AS (
+    INSERT INTO analytics_daily_load (
+        day, peak_tpm, peak_tps, peak_llm_calls_per_minute,
+        peak_llm_calls_per_second, peak_tpm_minute
+    )
+    SELECT
+        :day,
+        COALESCE((SELECT MAX(tokens) FROM per_minute), 0),
+        COALESCE((SELECT MAX(tokens) FROM per_second), 0),
+        COALESCE((SELECT MAX(calls) FROM per_minute), 0),
+        COALESCE((SELECT MAX(calls) FROM per_second), 0),
+        (SELECT bucket FROM per_minute ORDER BY tokens DESC, bucket LIMIT 1)
+    RETURNING 1
+)
+SELECT COUNT(*) FROM inserted
+"""
 
 _COHORT_UPSERT = """
 WITH days AS (

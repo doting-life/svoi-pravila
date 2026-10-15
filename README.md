@@ -53,7 +53,8 @@ More diagrams — system context, containers and networks, the inline sequence, 
 | What | Where | Retention |
 |---|---|---|
 | Usage events: scenario, surface, outcome (ok, refused, limited, invalid output, unavailable), model, prompt version, tokens, latency | PostgreSQL `usage_events` | 13 months |
-| Daily aggregates: DAU, appeals, new users, generations and errors, limits hit, tokens; per scenario × surface: outcomes, p50/p95 latency and time to first chunk, tokens; D1/D7 cohorts | `analytics_daily`, `analytics_daily_scenario`, `analytics_cohorts` | unlimited (not personal data) |
+| Daily aggregates: DAU, appeals, new users, cumulative target users, generations and errors, limits hit, LLM calls, tokens, LLM cost in roubles; per scenario × surface: outcomes, p50/p95 latency and time to first chunk, tokens; per scenario × surface × model: calls, tokens, price, cost; peak tokens and calls per minute and per second; D1/D7 cohorts | `analytics_daily`, `analytics_daily_scenario`, `analytics_daily_llm`, `analytics_daily_load`, `analytics_cohorts` | unlimited (not personal data) |
+| LLM price table (roubles per 1000 billable tokens, effective by day) | `llm_prices` | unlimited |
 | Service metrics: HTTP, Telegram updates, LLM duration and tokens, budget, cache errors, event-loop lag | Prometheus | 15 days |
 | Application logs: JSON with PII redaction | container stdout (rotated) | 50 MB per container |
 
@@ -149,7 +150,29 @@ The trycloudflare URL **changes every run**. Stop the tunnel with `make miniapp-
 
 #### Analytics dashboard
 
-Grafana reads only the aggregate tables (`analytics_daily`, `analytics_daily_scenario`, `analytics_cohorts`) via the configured Grafana DB user (`SP_GRAFANA_DB_USER`, default `grafana_reader`), a member of `svoi_analytics_read` with at most 5 connections, a statement timeout and a temporary file limit. In production it has no published port: Caddy serves it on `SP_GRAFANA_DOMAIN` (own DNS record, own certificate), and it sits on internal networks only. Locally it stays on `127.0.0.1`.
+Grafana reads only the aggregate tables and the price table (`analytics_daily`, `analytics_daily_scenario`, `analytics_daily_llm`, `analytics_daily_load`, `analytics_cohorts`, `llm_prices`) via the configured Grafana DB user (`SP_GRAFANA_DB_USER`, default `grafana_reader`), a member of `svoi_analytics_read` with at most 5 connections, a statement timeout and a temporary file limit. In production it has no published port: Caddy serves it on `SP_GRAFANA_DOMAIN` (own DNS record, own certificate), and it sits on internal networks only. Locally it stays on `127.0.0.1`.
+
+The analytics dashboard opens with the row «Отчёт программы»: target users in total, LLM calls per active user, LLM cost per target action and for the period, models without a price, daily charts and a per-day summary table.
+
+#### Program metrics export and LLM prices
+
+`make analytics-export FROM=YYYY-MM-DD TO=YYYY-MM-DD` (add `FORCE=1` to overwrite) writes the program-metrics package to `backend/analytics-export/` (git-ignored; at most 400 days): `00_definitions.md` (definitions, period, generation time, prices used) and the CSV files `01_summary.csv`, `02_daily.csv`, `03_scenarios.csv`, `04_llm_models.csv`, `05_retention.csv`, `06_load_peaks.csv` (UTF-8, `,` separator, `.` decimals, ISO dates, UTC timestamps, empty cell = no value). It prints one line with the row count per file. The export reads the stored daily aggregates only, so compute the days first (`make analytics ARGS="backfill --from … --to …"`).
+
+On a server the same command runs in the production compose project with the output directory mounted:
+
+```sh
+docker compose … run --rm -v "$PWD/out:/out" --entrypoint svoi-pravila-analytics api \
+  export --from YYYY-MM-DD --to YYYY-MM-DD --out-dir /out
+```
+
+LLM cost is `billable_tokens × price / 1000`, where the price of a model is the `llm_prices` row with the greatest `valid_from` not later than the day. A model without such a row is counted in `unpriced_models` and has no cost. List the prices with `make analytics-prices ARGS="list"`. When a price changes, record it and recompute the affected days, because stored aggregates keep the price that applied when they were computed:
+
+```sh
+make analytics-prices ARGS="set --model <model> --rub-per-1k <price> --from YYYY-MM-DD"
+make analytics ARGS="backfill --from <from> --to <to>"
+```
+
+`prices set` prints the exact `backfill` command (nothing to recompute for days that are not computed yet). On a server run both through the compose form above.
 
 The one-shot `migrate` service needs a Postgres role with `CREATEROLE` (not superuser) so it can create the analytics group role and the Grafana LOGIN role. Because `temp_file_limit` is a superuser-only parameter, a non-superuser migrate role also needs `GRANT SET ON PARAMETER temp_file_limit` from a superuser. Full separation of migrate / app / analytics roles is planned for task 0022.
 

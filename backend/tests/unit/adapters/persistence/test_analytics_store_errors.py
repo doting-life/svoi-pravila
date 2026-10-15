@@ -11,11 +11,7 @@ import pytest
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from svoi_pravila.adapters.persistence.analytics_store import (
-    SqlAlchemyAnalyticsStore,
-    _as_int,
-    _float_or_none,
-)
+from svoi_pravila.adapters.persistence.analytics_store import SqlAlchemyAnalyticsStore, _as_int
 from svoi_pravila.application.errors import AnalyticsErrorKind, AnalyticsJobFailed
 
 
@@ -264,10 +260,6 @@ async def test_compute_day_maps_mid_transaction_oserror() -> None:
 def test_numeric_helpers_accept_driver_types() -> None:
     assert _as_int(3) == 3
     assert _as_int(Decimal("4")) == 4
-    assert _float_or_none(None) is None
-    assert _float_or_none(2) == 2.0
-    assert _float_or_none(1.5) == 1.5
-    assert _float_or_none(Decimal("1.5")) == 1.5
 
 
 @pytest.mark.unit
@@ -285,12 +277,6 @@ def test_numeric_helpers_reject_unexpected() -> None:
     with pytest.raises(AnalyticsJobFailed) as exc_none:
         _as_int(None)
     assert exc_none.value.kind is AnalyticsErrorKind.DATABASE
-    with pytest.raises(AnalyticsJobFailed) as exc_fbool:
-        _float_or_none(flag)
-    assert exc_fbool.value.kind is AnalyticsErrorKind.DATABASE
-    with pytest.raises(AnalyticsJobFailed) as exc_fstr:
-        _float_or_none("no")
-    assert exc_fstr.value.kind is AnalyticsErrorKind.DATABASE
 
 
 class _ScalarConn:
@@ -326,3 +312,13 @@ async def test_earliest_event_day_converts_min_timestamp() -> None:
         await store.earliest_event_day("Europe/Moscow")
         == when.astimezone(ZoneInfo("Europe/Moscow")).date()
     )
+
+
+@pytest.mark.unit
+async def test_all_maps_errors() -> None:
+    with pytest.raises(AnalyticsJobFailed) as exc:
+        await _store(_BoomConnect())._all("SELECT 1", {})
+    assert exc.value.kind is AnalyticsErrorKind.NETWORK
+    with pytest.raises(AnalyticsJobFailed) as exc_sql:
+        await _store(_BoomSql())._all("SELECT 1", {})
+    assert exc_sql.value.kind is AnalyticsErrorKind.DATABASE

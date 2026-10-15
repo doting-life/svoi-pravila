@@ -1,0 +1,124 @@
+{
+  "criteria": {
+    "clean": {
+      "accuracy": 0.94,
+      "defect_recall": 0.9843,
+      "defects": 127,
+      "labels": 600
+    },
+    "goal_done": {
+      "accuracy": 0.8833,
+      "defect_recall": 0.2436,
+      "defects": 78,
+      "labels": 600
+    },
+    "invented": {
+      "accuracy": 0.8533,
+      "defect_recall": 0.3719,
+      "defects": 121,
+      "labels": 600
+    },
+    "ladder_ok": {
+      "accuracy": 0.6102,
+      "defect_recall": 0.0,
+      "defects": 23,
+      "labels": 59
+    },
+    "meaning_kept": {
+      "accuracy": 0.8433,
+      "defect_recall": 0.6198,
+      "defects": 121,
+      "labels": 600
+    },
+    "rule_done": {
+      "accuracy": 0.9767,
+      "defect_recall": 0.625,
+      "defects": 16,
+      "labels": 600
+    }
+  },
+  "failed_items": 0,
+  "items": 300,
+  "model": "GigaChat-3-Pro",
+  "passed": false,
+  "rubric": "judge_rewrite@v1",
+  "sources": {
+    "eval_output": {
+      "clean": {
+        "accuracy": 0.9318,
+        "defect_recall": 0.9412,
+        "defects": 17,
+        "labels": 132
+      },
+      "goal_done": {
+        "accuracy": 0.9621,
+        "defect_recall": 0.5,
+        "defects": 10,
+        "labels": 132
+      },
+      "invented": {
+        "accuracy": 0.9091,
+        "defect_recall": 0.0,
+        "defects": 12,
+        "labels": 132
+      },
+      "ladder_ok": {
+        "accuracy": 0.8889,
+        "defect_recall": 0.0,
+        "defects": 4,
+        "labels": 36
+      },
+      "meaning_kept": {
+        "accuracy": 0.8788,
+        "defect_recall": 0.3333,
+        "defects": 12,
+        "labels": 132
+      },
+      "rule_done": {
+        "accuracy": 1.0,
+        "defect_recall": null,
+        "defects": 0,
+        "labels": 132
+      }
+    },
+    "synthetic": {
+      "clean": {
+        "accuracy": 0.9423,
+        "defect_recall": 0.9909,
+        "defects": 110,
+        "labels": 468
+      },
+      "goal_done": {
+        "accuracy": 0.8611,
+        "defect_recall": 0.2059,
+        "defects": 68,
+        "labels": 468
+      },
+      "invented": {
+        "accuracy": 0.8376,
+        "defect_recall": 0.4128,
+        "defects": 109,
+        "labels": 468
+      },
+      "ladder_ok": {
+        "accuracy": 0.1739,
+        "defect_recall": 0.0,
+        "defects": 19,
+        "labels": 23
+      },
+      "meaning_kept": {
+        "accuracy": 0.8333,
+        "defect_recall": 0.6514,
+        "defects": 109,
+        "labels": 468
+      },
+      "rule_done": {
+        "accuracy": 0.9701,
+        "defect_recall": 0.625,
+        "defects": 16,
+        "labels": 468
+      }
+    }
+  },
+  "version": 2
+}

@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 from dataclasses import dataclass
+from typing import ClassVar
 
 import structlog
 
@@ -227,12 +228,25 @@ def rewrite_slot_defects(check: str, softer: str, firmer: str) -> tuple[SlotDefe
     return ()
 
 
+def is_all_empty_answer(check: str, softer: str, firmer: str) -> bool:
+    """Whether all three slots of an answer are empty after ``strip()``.
+
+    Together with ``safety=ok`` this is an *all-empty answer*: a silent refusal that carries
+    nothing worth echoing back. Its defects are the ordinary ``empty_text:softer`` and
+    ``empty_text:firmer``; this is the one place that tells it apart.
+    """
+    return not (check.strip() or softer.strip() or firmer.strip())
+
+
 class SlotDefectsError(InvalidGenerationOutput):
     """Slot validation failed; ``defects`` are all the defects of that one answer.
 
     Towards the application it is an ordinary ``InvalidGenerationOutput``: one reason and slot
     per attempt, the first defect. ``defects`` stay inside the adapter, for the corrective retry.
+    ``all_empty`` is true only for ``AllEmptyAnswerError``.
     """
+
+    all_empty: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -253,6 +267,16 @@ class SlotDefectsError(InvalidGenerationOutput):
         )
         self.with_diagnostics((first.slot,), (None,))
         self.defects = defects
+
+
+class AllEmptyAnswerError(SlotDefectsError):
+    """Slot validation failed on an all-empty answer (see ``is_all_empty_answer``).
+
+    Its defects are the ordinary ``empty_text:softer`` and ``empty_text:firmer``; the type tells
+    the corrective retry not to echo the answer.
+    """
+
+    all_empty: ClassVar[bool] = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -311,7 +335,8 @@ def validate_rewrite_slots(
 
     defects = rewrite_slot_defects(*slots)
     if defects:
-        raise SlotDefectsError(
+        error_type = AllEmptyAnswerError if is_all_empty_answer(*slots) else SlotDefectsError
+        raise error_type(
             defects,
             usage=spec.usage,
             attempts=spec.attempts,

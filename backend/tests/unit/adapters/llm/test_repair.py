@@ -1,4 +1,4 @@
-"""Correction texts of the corrective retry (prompts/repair/v3.md) and the echo policy."""
+"""Correction texts of the corrective retry (prompts/repair/v4.md) and the echo policy."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from svoi_pravila.adapters.llm.gigachat.estimate import (
 from svoi_pravila.adapters.llm.gigachat.prepared import PreparedMessages
 from svoi_pravila.adapters.llm.gigachat.repair import (
     NO_ECHO,
+    all_empty_defect,
     findings_correction,
     first_attempt_defect,
     formal_correction,
@@ -33,6 +34,10 @@ _EMPTY_SOFTER = (
     "ничего не осталось, передай намерение автора спокойными словами."
 )
 _EMPTY_FIRMER = _EMPTY_SOFTER.replace("`softer`", "`firmer`")
+_EMPTY_ANSWER = (
+    "Все поля ответа пустые, а `safety` равно `ok`. Заполни `check`, `firmer` и `softer` по "
+    "правилам. Ответь только JSON по схеме."
+)
 _TOO_LONG_FIRMER = "Поле `firmer` слишком длинное. Сократи его по правилам."
 _KIND_SET = "`softer` и `firmer` совпадают. Сделай их разными по словам по правилам."
 _PREPARED = PreparedMessages(
@@ -268,3 +273,57 @@ def test_repr_of_a_defect_with_findings_never_contains_the_words() -> None:
     assert "CANARY" not in repr(error)
     assert "CANARY" not in str(error)
     assert "profanity:firmer" in str(error)
+
+
+@pytest.mark.unit
+def test_an_all_empty_answer_is_not_echoed_and_has_only_the_empty_answer_line() -> None:
+    defects = (
+        _defect(InvalidOutputReason.EMPTY_TEXT, VariantKind.SOFTER),
+        _defect(InvalidOutputReason.EMPTY_TEXT, VariantKind.FIRMER),
+    )
+    defect = all_empty_defect(defects)
+    assert defect.answer is None
+    assert defect.labels == ("empty_text:softer", "empty_text:firmer")
+    messages = retry_messages(_PREPARED, defect)
+    assert [m["role"] for m in messages] == ["system", "user", "user"]
+    assert messages[2]["content"] == _EMPTY_ANSWER
+    assert _KEEP not in messages[2]["content"]
+
+
+@pytest.mark.unit
+def test_a_partly_empty_answer_still_echoes_with_its_lines_and_keep() -> None:
+    defects = (
+        _defect(InvalidOutputReason.EMPTY_TEXT, VariantKind.SOFTER),
+        _defect(InvalidOutputReason.EMPTY_TEXT, VariantKind.FIRMER),
+    )
+    defect = first_attempt_defect(
+        InvalidOutputReason.EMPTY_TEXT, VariantKind.SOFTER, "{}", defects=defects
+    )
+    assert defect.all_empty is False
+    messages = retry_messages(_PREPARED, defect)
+    assert [m["role"] for m in messages] == ["system", "user", "assistant", "user"]
+    assert messages[3]["content"] == f"{_EMPTY_SOFTER}\n{_EMPTY_FIRMER}\n{_KEEP}"
+
+
+@pytest.mark.unit
+def test_empty_answer_is_a_correction_key_and_not_an_invalid_output_reason() -> None:
+    assert "empty_answer" not in {reason.value for reason in InvalidOutputReason}
+
+
+@pytest.mark.unit
+def test_the_longest_correction_covers_the_empty_answer_line() -> None:
+    assert longest_correction_chars() >= len(_EMPTY_ANSWER)
+
+
+@pytest.mark.unit
+def test_repr_of_an_all_empty_defect_and_of_its_retry_error_has_labels_only() -> None:
+    defects = (
+        _defect(InvalidOutputReason.EMPTY_TEXT, VariantKind.SOFTER),
+        _defect(InvalidOutputReason.EMPTY_TEXT, VariantKind.FIRMER),
+    )
+    defect = all_empty_defect(defects)
+    assert defect.answer is None
+    assert "answer=" not in repr(defect)
+    assert "all_empty=True" in repr(defect)
+    assert "reason=" in repr(defect)
+    assert str(_RetryAttemptError(defect)) == "empty_text:softer,empty_text:firmer"

@@ -6,9 +6,11 @@ import pytest
 
 from svoi_pravila.adapters.llm.gigachat.validation import (
     MAX_VARIANT_CHARS,
+    AllEmptyAnswerError,
     SlotDefect,
     SlotDefectsError,
     SlotValidation,
+    is_all_empty_answer,
     rewrite_slot_defects,
     validate_rewrite_slots,
 )
@@ -118,3 +120,31 @@ def test_the_defect_signal_and_the_error_repr_hold_labels_only() -> None:
         "empty_text:softer",
         "empty_text:firmer",
     ]
+
+
+@pytest.mark.unit
+def test_an_answer_is_all_empty_only_when_every_slot_is_blank() -> None:
+    assert is_all_empty_answer("", "", "")
+    assert is_all_empty_answer(" ", "\n", "\t ")
+    assert not is_all_empty_answer("c", "", "")
+    assert not is_all_empty_answer("", "soft", "")
+    assert not is_all_empty_answer("", "", "firm")
+
+
+@pytest.mark.unit
+def test_validation_marks_an_all_empty_answer_and_keeps_its_ordinary_defects() -> None:
+    with pytest.raises(SlotDefectsError) as exc_info:
+        validate_rewrite_slots("", " ", "", _spec())
+    error = exc_info.value
+    assert isinstance(error, AllEmptyAnswerError)
+    assert error.all_empty is True
+    assert [defect.label for defect in error.defects] == ["empty_text:softer", "empty_text:firmer"]
+    assert error.reasons == (InvalidOutputReason.EMPTY_TEXT,)
+
+
+@pytest.mark.unit
+def test_validation_does_not_mark_an_answer_with_a_filled_slot_as_all_empty() -> None:
+    with pytest.raises(SlotDefectsError) as exc_info:
+        validate_rewrite_slots("c", "", "", _spec())
+    assert not isinstance(exc_info.value, AllEmptyAnswerError)
+    assert exc_info.value.all_empty is False

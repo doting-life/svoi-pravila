@@ -25,6 +25,12 @@ export CI_TMPDIR
 source "$ROOT/scripts/ci_project.sh"
 COMPOSE_PROJECT_NAME="$(ci_project_name "$CI_TMPDIR")"
 export COMPOSE_PROJECT_NAME
+IMAGE_TAG="$(ci_image_tag "$CI_TMPDIR")"
+export IMAGE_TAG
+PROD_SMOKE_PROJECT="${PROD_SMOKE_PROJECT:-${COMPOSE_PROJECT_NAME}-prod-smoke}"
+export PROD_SMOKE_PROJECT
+# The four local images of this run (names built by scripts/image.sh).
+LOCAL_IMAGES=(svoi-pravila svoi-pravila-miniapp svoi-pravila-grafana svoi-pravila-backup)
 ENV_FILE="${CI_TMPDIR}/env"
 export ENV_FILE
 
@@ -41,6 +47,10 @@ cleanup() {
   docker compose -p "$COMPOSE_PROJECT_NAME" --env-file "$ENV_FILE" \
     --profile app --profile observability down -v >/dev/null 2>&1 || true
   docker compose -p "$COMPOSE_PROJECT_NAME" --env-file "$ENV_FILE" down -v >/dev/null 2>&1 || true
+  local name
+  for name in "${LOCAL_IMAGES[@]}"; do
+    docker image rm "${name}:${IMAGE_TAG}" >/dev/null 2>&1 || true
+  done
   rm -rf "$CI_TMPDIR"
 }
 trap cleanup EXIT

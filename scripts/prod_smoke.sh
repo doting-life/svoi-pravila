@@ -3,7 +3,7 @@
 # Caddy-issued local certificates (Mini App and Grafana subdomain), an offline Telegram stub that
 # also plays the alert bot, Prometheus rules and targets, Alertmanager delivery and local-first
 # backups (with and without optional rclone offsite).
-# Expects `make image` to have produced the svoi-pravila*:ci images. Never reads the repo .env.
+# Expects `make image` to have produced the svoi-pravila*:${IMAGE_TAG} images (default tag `ci`). Never reads the repo .env.
 #
 #   scripts/prod_smoke.sh          run the smoke and tear the stack down
 #   PROD_SMOKE_KEEP=1 scripts/prod_smoke.sh
@@ -17,6 +17,7 @@ cd "$ROOT"
 # shellcheck source=scripts/image-pins.env
 source "$ROOT/scripts/image-pins.env"
 
+IMAGE_TAG="${IMAGE_TAG:-ci}"
 PROJECT="${PROD_SMOKE_PROJECT:-svoi-pravila-prod-smoke}"
 DOMAIN="svoi.localhost"
 GRAFANA_DOMAIN="grafana.svoi.localhost"
@@ -140,10 +141,10 @@ image_id() {
     || fail "$1 is missing; run make image first"
 }
 
-API_IMAGE="$(image_id svoi-pravila:ci)"
-MINIAPP_IMAGE="$(image_id svoi-pravila-miniapp:ci)"
-GRAFANA_IMAGE="$(image_id svoi-pravila-grafana:ci)"
-BACKUP_IMAGE="$(image_id svoi-pravila-backup:ci)"
+API_IMAGE="$(image_id "svoi-pravila:${IMAGE_TAG}")"
+MINIAPP_IMAGE="$(image_id "svoi-pravila-miniapp:${IMAGE_TAG}")"
+GRAFANA_IMAGE="$(image_id "svoi-pravila-grafana:${IMAGE_TAG}")"
+BACKUP_IMAGE="$(image_id "svoi-pravila-backup:${IMAGE_TAG}")"
 # Upstream digests from scripts/image-pins.env (sourced above).
 : "${PROMETHEUS_IMAGE:?PROMETHEUS_IMAGE is unset}"
 : "${ALERTMANAGER_IMAGE:?ALERTMANAGER_IMAGE is unset}"

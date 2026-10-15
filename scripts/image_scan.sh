@@ -7,6 +7,9 @@ cd "$ROOT"
 # shellcheck source=scripts/image-pins.env
 source "$ROOT/scripts/image-pins.env"
 
+# Tag of the four local images (per run under make ci; `ci` standalone).
+IMAGE_TAG="${IMAGE_TAG:-ci}"
+
 CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/svoi-pravila/trivy"
 mkdir -p "$CACHE_DIR"
 
@@ -46,12 +49,12 @@ scan_with_exceptions() {
   )
 }
 
-scan_blocking svoi-pravila:ci
-scan_blocking svoi-pravila-miniapp:ci
+scan_blocking "svoi-pravila:${IMAGE_TAG}"
+scan_blocking "svoi-pravila-miniapp:${IMAGE_TAG}"
 # Built Grafana image (plugins baked in); not the upstream base alone. Grafana is reachable
 # from the internet: exceptions apply only to the datasource plugin binaries (target_prefix).
-scan_with_exceptions grafana svoi-pravila-grafana:ci
-scan_blocking svoi-pravila-backup:ci
+scan_with_exceptions grafana "svoi-pravila-grafana:${IMAGE_TAG}"
+scan_blocking "svoi-pravila-backup:${IMAGE_TAG}"
 # Upstream internal images (digest-pinned in image-pins.env); timed exceptions allowed (ADR-0012).
 docker pull "$PROMETHEUS_IMAGE"
 scan_with_exceptions prometheus "$PROMETHEUS_IMAGE"

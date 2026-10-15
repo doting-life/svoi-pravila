@@ -1,0 +1,16 @@
+# Accusatory generalizations (ru/v1). One regex per line.
+# Scope: «ты всегда», «вы никогда», «вечно ты», «сколько можно», «ты постоянно» — a sweeping
+# accusation instead of a concrete case. This is a soft check: a surviving match is shown and counted.
+# Applied to normalized text (lowercase, ё→е, collapsed space, edge punctuation stripped).
+# Every pattern is anchored at a word start; neutral uses («всегда рад», «никогда не поздно»)
+# must not match. «как всегда» is not listed: it is ambiguous in praise.
+# Accepted ambiguity: «сколько можно взять?» matches; it is rare in messages.
+\bты всегда\b
+\bты никогда\b
+\bты постоянно\b
+\bвы всегда\b
+\bвы никогда\b
+\bвы постоянно\b
+\bвечно ты\b
+\bвечно вы\b
+\bсколько можно\b

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 from svoi_pravila.adapters.llm.gigachat.adapter import GigaChatTextGenerator
@@ -14,6 +15,7 @@ from svoi_pravila.application.ports.generation import RewriteRequest
 from svoi_pravila.benchmarks.llm import _print_available_models
 from svoi_pravila.benchmarks.runner import SpendTracker
 from svoi_pravila.config import LlmToolSettings
+from svoi_pravila.evals.attempt_recorder import AttemptRecorder
 from svoi_pravila.evals.judge_calibration import judge_is_calibrated
 from svoi_pravila.evals.rewrite_cases import (
     RewriteCase,
@@ -140,12 +142,15 @@ async def async_main(args: argparse.Namespace) -> int:
         evals: list[ModelEval] = []
         for model in models:
             before = spend.spent_billable
+            recorder = AttemptRecorder()
             result = await run_rewrite_eval(
                 GigaChatTextGenerator(
-                    client, settings.model_copy(update={"gigachat_model_rewrite": model})
+                    client,
+                    settings.model_copy(update={"gigachat_model_rewrite": model}),
+                    recorder,
                 ),
                 cases,
-                params,
+                replace(params, recorder=recorder),
                 spend,
             )
             evals.append(ModelEval(model, result, spend.spent_billable - before))

@@ -10,6 +10,9 @@ import structlog
 
 from svoi_pravila.adapters.llm.gigachat.schemas import (
     DecodeOut,
+    RewriteOut,
+    RewriteOutNoRules,
+    SafetyOut,
     SuggestRuleOut,
     SuggestRuleVerdictOut,
     VariantOut,
@@ -252,6 +255,20 @@ def validate_rewrite_slots(
         raise fail(InvalidOutputReason.VARIANT_KIND_SET)
     variants = tuple(Variant(text=text, kind=kind) for text, kind in zip(texts, kinds, strict=True))
     return variants, tuple(spec.applied), safety
+
+
+def rewrite_slot_texts(parsed: RewriteOut | RewriteOutNoRules) -> dict[VariantKind, str]:
+    """The ``softer``/``firmer`` texts the lexicon check reads; ``check`` is exempt by design."""
+    if parsed.safety is not SafetyOut.OK:
+        return {}
+    return {VariantKind.SOFTER: parsed.softer, VariantKind.FIRMER: parsed.firmer}
+
+
+def decode_slot_texts(parsed: DecodeOut) -> dict[VariantKind, str]:
+    """The decode reply variants (``softer``/``firmer``) the lexicon check reads."""
+    if parsed.safety is not SafetyOut.OK:
+        return {}
+    return {VariantKind(item.kind.value): item.text for item in parsed.variants}
 
 
 def to_decode_result(parsed: DecodeOut, meta: GenerationMeta, *, rule_count: int) -> DecodeResult:

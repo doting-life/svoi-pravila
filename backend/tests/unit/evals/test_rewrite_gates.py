@@ -126,8 +126,11 @@ _BASELINE = Baseline(check_ok_rate=1.0)
 @pytest.mark.unit
 def test_clean_pass_makes_every_gate_pass_and_g8_needs_a_baseline() -> None:
     gates = _by_gate(_clean(20), judge_calibrated=False)
-    assert list(gates) == ["G3", "G4", "G6", "G7", "G8", "G9", "J6"]
+    assert list(gates) == ["G1a", "G1b", "G2", "G3", "G4", "G6", "G7", "G8", "G9", "J6"]
     assert [g.status for g in gates.values()] == [
+        GateStatus.PASSED,
+        GateStatus.NOT_APPLICABLE,
+        GateStatus.NOT_APPLICABLE,
         *[GateStatus.PASSED] * 4,
         GateStatus.NOT_APPLICABLE,
         GateStatus.PASSED,
@@ -261,6 +264,10 @@ def test_metrics_count_runs_and_ignore_non_ok_calls_in_the_ok_shares() -> None:
         check_ok_rate=1.0,
         edit_ratio_share=0.0,
         unusable_share=0.6667,
+        profanity_first_attempt_share=0.0,
+        profanity_first_attempt_runs=0,
+        profanity_repair_share=None,
+        generalization_left_slots=0,
         judge=JudgeMetrics(
             judged_calls=0,
             failed_calls=0,

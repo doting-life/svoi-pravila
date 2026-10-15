@@ -66,7 +66,7 @@ packages = ["src/svoi_pravila"]
 "src/svoi_pravila/adapters/llm/prompts/decode/v4.md" = "svoi_pravila/adapters/llm/prompts/decode/v4.md"
 "src/svoi_pravila/adapters/llm/prompts/decode_analysis/v1.md" = "svoi_pravila/adapters/llm/prompts/decode_analysis/v1.md"
 "src/svoi_pravila/adapters/llm/prompts/suggest_rule/v1.md" = "svoi_pravila/adapters/llm/prompts/suggest_rule/v1.md"
-"src/svoi_pravila/adapters/llm/prompts/repair/v1.md" = "svoi_pravila/adapters/llm/prompts/repair/v1.md"
+"src/svoi_pravila/adapters/llm/prompts/repair/v2.md" = "svoi_pravila/adapters/llm/prompts/repair/v2.md"
 "src/svoi_pravila/adapters/consents/personal_data/v1.txt" = "svoi_pravila/adapters/consents/personal_data/v1.txt"
 "src/svoi_pravila/adapters/consents/special_category/v1.txt" = "svoi_pravila/adapters/consents/special_category/v1.txt"
 "src/svoi_pravila/adapters/channels/telegram/localization/ru.json" = "svoi_pravila/adapters/channels/telegram/localization/ru.json"
@@ -76,6 +76,8 @@ packages = ["src/svoi_pravila"]
 "src/svoi_pravila/adapters/cache/lua/quota_reserve.lua" = "svoi_pravila/adapters/cache/lua/quota_reserve.lua"
 "src/svoi_pravila/adapters/cache/lua/quota_refund.lua" = "svoi_pravila/adapters/cache/lua/quota_refund.lua"
 "src/svoi_pravila/adapters/cache/lua/budget_add.lua" = "svoi_pravila/adapters/cache/lua/budget_add.lua"
+"src/svoi_pravila/domain/safety/profanity_patterns/ru/v1.txt" = "svoi_pravila/domain/safety/profanity_patterns/ru/v1.txt"
+"src/svoi_pravila/domain/tone/generalization_patterns/ru/v1.txt" = "svoi_pravila/domain/tone/generalization_patterns/ru/v1.txt"
 "src/svoi_pravila/domain/safety/crisis_patterns/ru/v2.txt" = "svoi_pravila/domain/safety/crisis_patterns/ru/v2.txt"
 "src/svoi_pravila/domain/safety/crisis_copy/ru/v1.txt" = "svoi_pravila/domain/safety/crisis_copy/ru/v1.txt"
 "src/svoi_pravila/domain/safety/decode_copy/ru/v1.txt" = "svoi_pravila/domain/safety/decode_copy/ru/v1.txt"
@@ -237,7 +239,7 @@ forbidden_modules = [
 ]
 
 [[tool.importlinter.contracts]]
-name = "The eval rewrite judge is not part of the service"
+name = "The eval rewrite judge and attempt recorder are not part of the service"
 type = "forbidden"
 source_modules = [
     "svoi_pravila.bootstrap",
@@ -245,6 +247,7 @@ source_modules = [
 ]
 forbidden_modules = [
     "svoi_pravila.adapters.llm.gigachat.judge",
+    "svoi_pravila.evals.attempt_recorder",
 ]
 
 [[tool.importlinter.contracts]]

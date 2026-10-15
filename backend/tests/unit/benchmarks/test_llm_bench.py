@@ -723,7 +723,7 @@ async def test_async_main_runs_models(
     def _client_factory(_settings: object) -> _Client:
         return _Client()
 
-    def _gen_factory(_client: object, _settings: object) -> FakeTextGenerator:
+    def _gen_factory(_client: object, _settings: object, _observer: object) -> FakeTextGenerator:
         return FakeTextGenerator(stream_chunks=("анализ ",))
 
     async def _uninstall() -> None:
@@ -837,7 +837,7 @@ async def test_async_main_rate_limited_incomplete(
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", lambda _s: _Client())
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.close_gigachat_client", _close)
 
-    def _limited_factory(_c: object, _s: object) -> LimitedGen:
+    def _limited_factory(_c: object, _s: object, _o: object) -> LimitedGen:
         return LimitedGen()
 
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.GigaChatTextGenerator", _limited_factory)
@@ -900,7 +900,7 @@ async def test_async_main_auth_incomplete(
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.create_gigachat_client", lambda _s: _Client())
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.close_gigachat_client", _close)
 
-    def _auth_factory(_c: object, _s: object) -> AuthGen:
+    def _auth_factory(_c: object, _s: object, _o: object) -> AuthGen:
         return AuthGen()
 
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.GigaChatTextGenerator", _auth_factory)
@@ -1229,7 +1229,7 @@ async def test_async_main_model_list_warning_continues(
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.close_gigachat_client", _close)
     monkeypatch.setattr(
         "svoi_pravila.benchmarks.llm.GigaChatTextGenerator",
-        lambda _c, _s: FakeTextGenerator(),
+        lambda _c, _s, _o: FakeTextGenerator(),
     )
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: [_rewrite_case()])
     code = await async_main(_cli_args(ops=["rewrite"]))
@@ -1508,7 +1508,7 @@ async def test_async_main_budget_incomplete(
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.close_gigachat_client", _close)
     monkeypatch.setattr(
         "svoi_pravila.benchmarks.llm.GigaChatTextGenerator",
-        lambda _c, _s: FakeTextGenerator(),
+        lambda _c, _s, _o: FakeTextGenerator(),
     )
     monkeypatch.setattr("svoi_pravila.benchmarks.llm.load_cases", lambda _path: [_rewrite_case()])
     out_path = tmp_path / "budget.md"

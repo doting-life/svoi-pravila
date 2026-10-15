@@ -10,6 +10,7 @@ from svoi_pravila.domain.lexicon import (
     Lexicon,
     compile_lexicon,
     lexicon_hit,
+    lexicon_matches,
     load_data_lines,
     normalize_lexicon_text,
 )
@@ -66,3 +67,19 @@ def test_hit_matches_any_pattern_of_the_lexicon() -> None:
 def test_normalization_is_idempotent(text: str) -> None:
     once = normalize_lexicon_text(text)
     assert normalize_lexicon_text(once) == once
+
+
+@pytest.mark.unit
+def test_lexicon_matches_widens_a_partial_match_to_the_whole_word() -> None:
+    lexicon = compile_lexicon([r"\bидиот"])
+    assert lexicon_matches("Какой ИДИОТСКИЙ поступок, идиот!", lexicon) == (
+        "идиотский",
+        "идиот",
+    )
+
+
+@pytest.mark.unit
+def test_lexicon_matches_returns_distinct_words_and_none_without_a_hit() -> None:
+    lexicon = compile_lexicon([r"\bты всегда\b", r"\bвсегда\b"])
+    assert lexicon_matches("ты всегда, ты всегда", lexicon) == ("ты всегда", "всегда")
+    assert lexicon_matches("ничего", lexicon) == ()

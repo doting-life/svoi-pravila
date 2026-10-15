@@ -8,20 +8,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from svoi_pravila.application.errors import InvalidOutputReason
+from svoi_pravila.adapters.llm.gigachat.structured import LabelledInvalidAttempt
 from svoi_pravila.application.ports.generation_attempt_observer import InvalidAttempt
-from svoi_pravila.domain.enums import VariantKind
 
 
 @dataclass(frozen=True, slots=True)
 class RecordedAttempt:
-    """One invalid attempt of one eval call; ``texts`` are text for the local report only."""
+    """One invalid attempt of one eval call; ``texts`` are text for the local report only.
+
+    ``labels`` are the ``reason[:slot]`` labels of every defect of the attempt.
+    """
 
     case_id: str
     run_index: int
     attempt: int
-    reason: InvalidOutputReason
-    slot: VariantKind | None
+    labels: tuple[str, ...]
     texts: tuple[tuple[str, str], ...] = field(repr=False)
 
 
@@ -45,8 +46,7 @@ class AttemptRecorder:
                 case_id=self._case_id,
                 run_index=self._run_index,
                 attempt=attempt.attempt + 1,
-                reason=attempt.reason,
-                slot=attempt.slot,
+                labels=_labels(attempt),
                 texts=attempt.texts,
             )
         )
@@ -56,3 +56,11 @@ class AttemptRecorder:
         rows = tuple(self._rows)
         self._rows.clear()
         return rows
+
+
+def _labels(attempt: InvalidAttempt) -> tuple[str, ...]:
+    """Every defect label of ``attempt``; the first defect when the generator names only one."""
+    if isinstance(attempt, LabelledInvalidAttempt):
+        return attempt.labels
+    slot = attempt.slot
+    return (attempt.reason.value if slot is None else f"{attempt.reason.value}:{slot.value}",)

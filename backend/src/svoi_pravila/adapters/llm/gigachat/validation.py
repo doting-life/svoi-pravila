@@ -184,6 +184,77 @@ def validate_variants(
     return tuple(variants), tuple(spec.applied), safety
 
 
+REWRITE_SLOTS = (VariantKind.CHECK, VariantKind.SOFTER, VariantKind.FIRMER)
+
+
+@dataclass(frozen=True, slots=True)
+class SlotDefect:
+    """One defect of a rewrite answer: its reason and the slot (C0, never text)."""
+
+    reason: InvalidOutputReason
+    slot: VariantKind | None = None
+
+    @property
+    def label(self) -> str:
+        """``reason`` or ``reason:slot``."""
+        return self.reason.value if self.slot is None else f"{self.reason.value}:{self.slot.value}"
+
+
+def _slot_reason(text: str, kind: VariantKind) -> InvalidOutputReason | None:
+    """An empty ``check`` means "no corrections"; every other slot must pass ``text_reason``."""
+    if kind is VariantKind.CHECK and not text:
+        return None
+    return text_reason(text)
+
+
+def rewrite_slot_defects(check: str, softer: str, firmer: str) -> tuple[SlotDefect, ...]:
+    """Every defect of the three slots of an answer with ``safety=ok``, in slot order.
+
+    This is the one place that decides what is wrong with the slots: validation raises on its
+    result and the corrective retry names exactly these defects. ``variant_kind_set`` (``softer``
+    equal to ``firmer``) is reported only when no slot has a text defect.
+    """
+    texts = (check.strip(), softer.strip(), firmer.strip())
+    defects = tuple(
+        SlotDefect(reason, kind)
+        for text, kind in zip(texts, REWRITE_SLOTS, strict=True)
+        if (reason := _slot_reason(text, kind)) is not None
+    )
+    if defects:
+        return defects
+    if texts[1] == texts[2]:
+        return (SlotDefect(InvalidOutputReason.VARIANT_KIND_SET),)
+    return ()
+
+
+class SlotDefectsError(InvalidGenerationOutput):
+    """Slot validation failed; ``defects`` are all the defects of that one answer.
+
+    Towards the application it is an ordinary ``InvalidGenerationOutput``: one reason and slot
+    per attempt, the first defect. ``defects`` stay inside the adapter, for the corrective retry.
+    """
+
+    def __init__(
+        self,
+        defects: tuple[SlotDefect, ...],
+        *,
+        usage: TokenUsage,
+        attempts: int,
+        model: str,
+        prompt_version: str,
+    ) -> None:
+        first = defects[0]
+        super().__init__(
+            (first.reason,),
+            usage=usage,
+            attempts=attempts,
+            model=model,
+            prompt_version=prompt_version,
+        )
+        self.with_diagnostics((first.slot,), (None,))
+        self.defects = defects
+
+
 @dataclass(frozen=True, slots=True)
 class SlotValidation:
     """Parameters for validating the fixed check/softer/firmer slots."""
@@ -210,17 +281,14 @@ def validate_rewrite_slots(
     the application to replace with the draft; empty ``softer``/``firmer`` are invalid.
     """
 
-    def fail(
-        reason: InvalidOutputReason, slot: VariantKind | None = None
-    ) -> InvalidGenerationOutput:
-        error = invalid(
+    def fail(reason: InvalidOutputReason) -> InvalidGenerationOutput:
+        return invalid(
             reason,
             usage=spec.usage,
             attempts=spec.attempts,
             model=spec.model,
             prompt_version=spec.prompt_version,
         )
-        return error.with_diagnostics((slot,), (None,))
 
     try:
         safety = SafetyVerdict(spec.safety_raw)
@@ -241,19 +309,18 @@ def validate_rewrite_slots(
             )
         return (), tuple(spec.applied), safety
 
-    kinds = (VariantKind.CHECK, VariantKind.SOFTER, VariantKind.FIRMER)
-    texts: list[str] = []
-    for text, kind in zip(slots, kinds, strict=True):
-        if kind is VariantKind.CHECK and not text:
-            texts.append(text)
-            continue
-        dirty = text_reason(text)
-        if dirty is not None:
-            raise fail(dirty, kind)
-        texts.append(text)
-    if texts[1] == texts[2]:
-        raise fail(InvalidOutputReason.VARIANT_KIND_SET)
-    variants = tuple(Variant(text=text, kind=kind) for text, kind in zip(texts, kinds, strict=True))
+    defects = rewrite_slot_defects(*slots)
+    if defects:
+        raise SlotDefectsError(
+            defects,
+            usage=spec.usage,
+            attempts=spec.attempts,
+            model=spec.model,
+            prompt_version=spec.prompt_version,
+        )
+    variants = tuple(
+        Variant(text=text, kind=kind) for text, kind in zip(slots, REWRITE_SLOTS, strict=True)
+    )
     return variants, tuple(spec.applied), safety
 
 

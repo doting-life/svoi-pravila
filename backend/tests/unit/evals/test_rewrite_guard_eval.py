@@ -7,6 +7,7 @@ from dataclasses import replace
 import pytest
 from tests.fakes.generation import FakeTextGenerator
 
+from svoi_pravila.adapters.llm.gigachat.structured import LabelledInvalidAttempt
 from svoi_pravila.application.errors import (
     GenerationUnavailable,
     InvalidGenerationOutput,
@@ -256,7 +257,7 @@ async def test_the_report_shows_the_texts_of_invalid_attempts_in_the_diagnostics
     )
     report = render_report([ModelEval("m", result, 0)])
     assert "### Invalid output diagnostics" in report
-    assert "| c1 | 1 | 1 | profanity | firmer | firmer: слово \\| с чертой |" in report
+    assert "| c1 | 1 | 1 | profanity:firmer | firmer: слово \\| с чертой |" in report
     assert "| G1a |" in report
     assert "| G1b |" in report
     assert "| G2 |" in report
@@ -276,7 +277,7 @@ def test_an_attempt_without_a_slot_is_listed_with_slot_none() -> None:
         )
     )
     report = render_report([ModelEval("m", RewriteEvalResult(attempts=list(recorder.take())), 0)])
-    assert "| c9 | 3 | 2 | json_decode | none | raw: not json |" in report
+    assert "| c9 | 3 | 2 | json_decode | raw: not json |" in report
 
 
 @pytest.mark.unit
@@ -294,3 +295,21 @@ def test_the_recorded_attempt_keeps_its_texts_out_of_repr() -> None:
     (row,) = recorder.take()
     assert "CANARY" not in repr(row)
     assert replace(row, case_id="x").texts == (("softer", "CANARY-text"),)
+
+
+@pytest.mark.unit
+def test_the_report_lists_every_defect_label_of_an_attempt() -> None:
+    recorder = AttemptRecorder()
+    recorder.begin_call("c7", 2)
+    recorder.on_invalid_attempt(
+        LabelledInvalidAttempt(
+            operation="rewrite",
+            attempt=0,
+            reason=InvalidOutputReason.EMPTY_TEXT,
+            slot=VariantKind.SOFTER,
+            texts=(("softer", ""), ("firmer", "")),
+            labels=("empty_text:softer", "empty_text:firmer"),
+        )
+    )
+    report = render_report([ModelEval("m", RewriteEvalResult(attempts=list(recorder.take())), 0)])
+    assert "| c7 | 2 | 1 | empty_text:softer, empty_text:firmer | softer: ; firmer:  |" in report

@@ -236,12 +236,11 @@ def _attempt_texts(attempts: list[RecordedAttempt]) -> list[str]:
     lines = [
         "Texts of the invalid attempts (conversation text; this report stays local):",
         "",
-        "| case | run | attempt | reason | slot | fields |",
-        "|---|---:|---:|---|---|---|",
+        "| case | run | attempt | defects (reason[:slot]) | fields |",
+        "|---|---:|---:|---|---|",
     ]
     lines.extend(
-        f"| {item.case_id} | {item.run_index} | {item.attempt} | {item.reason.value} "
-        f"| {'none' if item.slot is None else item.slot.value} "
+        f"| {item.case_id} | {item.run_index} | {item.attempt} | {', '.join(item.labels)} "
         f"| {_cell('; '.join(f'{name}: {text}' for name, text in item.texts))} |"
         for item in attempts
     )

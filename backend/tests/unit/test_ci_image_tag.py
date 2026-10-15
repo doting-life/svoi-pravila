@@ -116,3 +116,36 @@ def test_ci_sh_sets_and_exports_the_run_tag_and_removes_exactly_its_images() -> 
     assert built == IMAGE_NAMES
     assert 'docker image rm "${name}:${IMAGE_TAG}" >/dev/null 2>&1 || true' in text
     assert "prune" not in text
+
+
+COMPOSE_IMAGE_NAMES = ["svoi-pravila-api", "svoi-pravila-miniapp", "svoi-pravila-grafana"]
+
+
+@pytest.mark.unit
+def test_compose_images_built_here_use_the_local_image_tag_with_default_local() -> None:
+    text = (ROOT / "compose.yaml").read_text()
+
+    images = re.findall(r"^\s+image: (svoi-pravila[\w-]*):(\S+)$", text, flags=re.MULTILINE)
+    assert sorted({name for name, _ in images}) == sorted(COMPOSE_IMAGE_NAMES)
+    assert {tag for _, tag in images} == {"${LOCAL_IMAGE_TAG:-local}"}
+
+
+@pytest.mark.unit
+def test_ci_sh_exports_the_local_tag_and_removes_exactly_the_compose_images() -> None:
+    text = (SCRIPTS / "ci.sh").read_text()
+
+    assert 'LOCAL_IMAGE_TAG="$(ci_local_image_tag "$CI_TMPDIR")"\nexport LOCAL_IMAGE_TAG' in text
+    listed = re.search(r"^COMPOSE_IMAGES=\((.*)\)$", text, flags=re.MULTILINE)
+    assert listed is not None
+    assert listed.group(1).split() == COMPOSE_IMAGE_NAMES
+    assert 'docker image rm "${name}:${LOCAL_IMAGE_TAG}" >/dev/null 2>&1 || true' in text
+
+
+@pytest.mark.unit
+def test_ci_sh_runs_only_the_prod_smoke_stage_under_the_host_lock() -> None:
+    text = (SCRIPTS / "ci.sh").read_text()
+
+    assert text.count("host_lock.py") == 1
+    assert "--name prod-smoke --timeout 1800 --" in text
+    assert "run_stage prod-smoke smoke prod_smoke_locked" in text
+    assert 'run_stage prod-smoke build make -C "$ROOT" image' in text

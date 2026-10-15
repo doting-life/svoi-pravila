@@ -112,3 +112,19 @@ def test_image_tag_without_suffix_is_rejected() -> None:
 
     assert result.returncode != 0
     assert result.stdout == ""
+
+
+@pytest.mark.unit
+def test_local_image_tag_is_derived_from_the_run_suffix() -> None:
+    env = {key: value for key, value in os.environ.items() if key != "COMPOSE_PROJECT_NAME"}
+    env["HELPER"] = str(HELPER)
+    env["RUN_TMPDIR"] = "/work/svoi-pravila-ci.AbC123"
+    result = subprocess.run(
+        ["/bin/bash", "-c", 'source "$HELPER" && ci_local_image_tag "$RUN_TMPDIR"'],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.stdout.strip() == "local-abc123"

@@ -86,7 +86,7 @@ make ci
 
 `make install` syncs backend dependencies and points this clone at `.githooks` (`make hooks`). Commit runs format and lint on staged files; push runs `make ci` on the exact pushed commit in a temporary worktree.
 
-`make ci` never reads or writes the repository `.env`. It writes an ephemeral env file outside the repo, uses its own compose project (`svoi-pravila-ci-<run suffix>`), free host ports and local image tags (`ci-<run suffix>`) per run, so concurrent runs do not affect each other, and removes only that project (volumes included) and its image tags on exit. Run one GitHub job locally with `make ci JOB=backend` (or `miniapp`, `secrets`, `image`, `stack-smoke`, `ownership-guard`).
+`make ci` never reads or writes the repository `.env`. It writes an ephemeral env file outside the repo, uses its own compose project (`svoi-pravila-ci-<run suffix>`), free host ports and local image tags (`ci-<run suffix>`, `local-<run suffix>`) per run, so concurrent runs do not affect each other, and removes only that project (volumes included) and its image tags on exit. Only the `prod-smoke` stage takes a host-wide lock, because it starts the production network shape with its fixed subnet. Run one GitHub job locally with `make ci JOB=backend` (or `miniapp`, `secrets`, `image`, `stack-smoke`, `ownership-guard`).
 
 `make infra-up` starts only PostgreSQL and Valkey (for gates and tests). Use the Local stack section below to run the application itself.
 

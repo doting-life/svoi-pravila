@@ -36,3 +36,10 @@ ci_image_tag() {
   suffix="$(ci_run_suffix "$1")" || return 1
   printf 'ci-%s\n' "$suffix"
 }
+
+# Prints the tag of the images compose builds from this repository.
+ci_local_image_tag() {
+  local suffix
+  suffix="$(ci_run_suffix "$1")" || return 1
+  printf 'local-%s\n' "$suffix"
+}

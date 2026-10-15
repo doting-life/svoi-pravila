@@ -42,7 +42,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    image: svoi-pravila-api:local
+    image: svoi-pravila-api:${LOCAL_IMAGE_TAG:-local}
     restart: "no"
     env_file:
       - ${ENV_FILE:-.env}
@@ -70,7 +70,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    image: svoi-pravila-api:local
+    image: svoi-pravila-api:${LOCAL_IMAGE_TAG:-local}
     restart: unless-stopped
     env_file:
       - ${ENV_FILE:-.env}
@@ -115,7 +115,7 @@ services:
     build:
       context: ./miniapp
       dockerfile: Dockerfile
-    image: svoi-pravila-miniapp:local
+    image: svoi-pravila-miniapp:${LOCAL_IMAGE_TAG:-local}
     restart: unless-stopped
     ports:
       - "127.0.0.1:${MINIAPP_PORT:-8080}:8080"
@@ -177,7 +177,7 @@ services:
     build:
       context: ./ops/grafana
       dockerfile: Dockerfile
-    image: svoi-pravila-grafana:local
+    image: svoi-pravila-grafana:${LOCAL_IMAGE_TAG:-local}
     restart: unless-stopped
     user: "472"
     environment:

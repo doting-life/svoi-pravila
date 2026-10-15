@@ -42,6 +42,7 @@ PY
 )"
 export MINIAPP_CSP="$csp"
 
+# The `svoi-pravila-ci` fallback is for standalone use; under make ci the exported name wins.
 compose_port() {
   local service="$1"
   local container_port="$2"

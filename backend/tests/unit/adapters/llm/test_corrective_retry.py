@@ -19,6 +19,7 @@ from svoi_pravila.adapters.llm.gigachat.schemas import (
     RewriteOutNoRules,
     SuggestRuleOut,
 )
+from svoi_pravila.adapters.llm.gigachat.structured import LabelledInvalidAttempt
 from svoi_pravila.adapters.system.noop_generation_attempt_observer import (
     NoopGenerationAttemptObserver,
 )
@@ -42,15 +43,16 @@ from tests.unit.adapters.llm.test_gigachat_adapter import (
     _rewrite_payload_no_rules,
 )
 
-# Block P (prompts/repair/v2.md), verbatim.
-_EMPTY_TEXT_SOFTER = (
-    "Поле `softer` пустое. Заполни его по правилам; остальные поля верни без изменений. "
-    "Ответь только JSON по схеме."
+# Block R3 (prompts/repair/v3.md), verbatim: one line per defect, then ``keep`` once.
+_KEEP = "Остальные поля верни без изменений. Ответь только JSON по схеме."
+_EMPTY_TEXT_SOFTER_LINE = (
+    "Поле `softer` пустое. Заполни его по правилам; если после перевода грубых слов от фразы "
+    "ничего не осталось, передай намерение автора спокойными словами."
 )
-_KIND_SET = (
-    "`softer` и `firmer` совпадают. Сделай их разными по словам по правилам; "
-    "остальные поля верни без изменений. Ответь только JSON по схеме."
-)
+_EMPTY_TEXT_FIRMER_LINE = _EMPTY_TEXT_SOFTER_LINE.replace("`softer`", "`firmer`")
+_TOO_LONG_FIRMER_LINE = "Поле `firmer` слишком длинное. Сократи его по правилам."
+_EMPTY_TEXT_SOFTER = f"{_EMPTY_TEXT_SOFTER_LINE}\n{_KEEP}"
+_KIND_SET = f"`softer` и `firmer` совпадают. Сделай их разными по словам по правилам.\n{_KEEP}"
 _GENERIC = (
     "Предыдущий ответ не прошёл проверку. Ответь заново строго по правилам и только JSON по схеме."
 )
@@ -132,6 +134,71 @@ async def test_identical_slots_get_the_variant_kind_set_correction() -> None:
     assert second["messages"][2]["content"] == first.model_dump_json()
     assert second["messages"][3]["content"] == _KIND_SET
     assert result.meta.repaired == ("variant_kind_set",)
+
+
+@pytest.mark.unit
+async def test_both_slots_empty_get_one_correction_with_two_lines_and_keep_once() -> None:
+    first = _slots(softer="", firmer="")
+    ache = _ScriptedAche([first, _clean_slots()])
+    result = await _generator(ache).rewrite(_rewrite_request())
+    correction = ache.payloads[1]["messages"][3]["content"]
+    assert correction == f"{_EMPTY_TEXT_SOFTER_LINE}\n{_EMPTY_TEXT_FIRMER_LINE}\n{_KEEP}"
+    assert correction.count(_KEEP) == 1
+    assert ache.create_calls == 2
+    assert result.meta.repaired == ("empty_text:softer", "empty_text:firmer")
+
+
+@pytest.mark.unit
+async def test_one_empty_slot_gets_one_line_and_keep() -> None:
+    first = _slots(softer="давай обсудим спокойно", firmer="")
+    ache = _ScriptedAche([first, _clean_slots()])
+    result = await _generator(ache).rewrite(_rewrite_request())
+    assert ache.payloads[1]["messages"][3]["content"] == f"{_EMPTY_TEXT_FIRMER_LINE}\n{_KEEP}"
+    assert result.meta.repaired == ("empty_text:firmer",)
+
+
+@pytest.mark.unit
+async def test_both_slots_empty_on_both_attempts_still_report_one_reason_per_attempt() -> None:
+    first = _slots(softer="", firmer="")
+    ache = _ScriptedAche([first, first])
+    with pytest.raises(InvalidGenerationOutput) as exc_info:
+        await _generator(ache).rewrite(_rewrite_request())
+    error = exc_info.value
+    assert error.reasons == (InvalidOutputReason.EMPTY_TEXT, InvalidOutputReason.EMPTY_TEXT)
+    assert error.slots == (VariantKind.SOFTER, VariantKind.SOFTER)
+    assert error.labelled_reasons() == ("empty_text:softer", "empty_text:softer")
+
+
+@pytest.mark.unit
+async def test_a_defect_without_its_own_line_gets_generic_alone_even_next_to_an_empty_slot() -> (
+    None
+):
+    first = _slots(check="see https://example.test/x", softer="", firmer="мне это важно")
+    ache = _ScriptedAche([first, _clean_slots()])
+    result = await _generator(ache).rewrite(_rewrite_request())
+    correction = ache.payloads[1]["messages"][3]["content"]
+    assert correction == _GENERIC
+    assert _KEEP not in correction
+    assert result.meta.repaired == ("url_in_text:check", "empty_text:softer")
+
+
+@pytest.mark.unit
+async def test_the_observer_gets_every_defect_label_of_an_attempt() -> None:
+    first = _slots(softer="", firmer="")
+    ache = _ScriptedAche([first, first])
+    generator, observer = _observed(ache)
+    with pytest.raises(InvalidGenerationOutput):
+        await generator.rewrite(_rewrite_request())
+    assert [
+        (item.reason, item.slot, item.labels)
+        for item in cast("list[LabelledInvalidAttempt]", observer.attempts)
+    ] == [
+        (
+            InvalidOutputReason.EMPTY_TEXT,
+            VariantKind.SOFTER,
+            ("empty_text:softer", "empty_text:firmer"),
+        )
+    ] * 2
 
 
 @pytest.mark.unit
@@ -275,17 +342,17 @@ async def test_both_requests_carry_plain_messages_and_no_top_p() -> None:
         assert "top_p" not in payload
 
 
-# Block P2 (prompts/repair/v2.md), verbatim.
-_PROFANITY_FIRMER = (
+_PROFANITY_FIRMER_LINE = (
     "В поле `firmer` остались грубые слова: сука. Переведи их на нормативный язык по смыслу: "
     "усилитель убери, оскорбление замени названием поступка, грубое требование скажи теми же "
-    "словами без грубости; остальные поля верни без изменений. Ответь только JSON по схеме."
+    "словами без грубости."
 )
-_GENERALIZATION_SOFTER = (
-    "В поле `softer` есть обобщение: ты всегда. Скажи о конкретном случае, без обобщения; "
-    "остальные поля верни без изменений. Ответь только JSON по схеме."
+_GENERALIZATION_SOFTER_LINE = (
+    "В поле `softer` есть обобщение: ты всегда. Скажи о конкретном случае, без обобщения."
 )
-_PROFANITY_SOFTER = _PROFANITY_FIRMER.replace("`firmer`", "`softer`")
+_PROFANITY_SOFTER_LINE = _PROFANITY_FIRMER_LINE.replace("`firmer`", "`softer`")
+_PROFANITY_FIRMER = f"{_PROFANITY_FIRMER_LINE}\n{_KEEP}"
+_GENERALIZATION_SOFTER = f"{_GENERALIZATION_SOFTER_LINE}\n{_KEEP}"
 _CLEAN = {"check": "c", "softer": "давай обсудим спокойно", "firmer": "мне это важно"}
 
 
@@ -374,7 +441,7 @@ async def test_findings_in_both_slots_get_one_correction_with_two_lines() -> Non
     second = ache.payloads[1]
     assert _roles(second) == ["system", "user", "assistant", "user"]
     assert second["messages"][3]["content"] == "\n".join(
-        [_GENERALIZATION_SOFTER, _PROFANITY_FIRMER]
+        [_GENERALIZATION_SOFTER_LINE, _PROFANITY_FIRMER_LINE, _KEEP]
     )
     assert result.meta.repaired == ("generalization:softer", "profanity:firmer")
 
@@ -387,7 +454,7 @@ async def test_profanity_has_priority_over_a_generalization_in_the_failure() -> 
         await _generator(ache).rewrite(_rewrite_request())
     assert exc_info.value.labelled_reasons() == ("profanity:softer", "profanity:softer")
     assert ache.payloads[1]["messages"][3]["content"] == "\n".join(
-        [_PROFANITY_SOFTER, _GENERALIZATION_SOFTER]
+        [_PROFANITY_SOFTER_LINE, _GENERALIZATION_SOFTER_LINE, _KEEP]
     )
 
 

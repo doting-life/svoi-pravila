@@ -14,14 +14,17 @@ fi
 read -r -a ALL_JOBS <<< "$CI_JOBS"
 
 REPO_ENV="$ROOT/.env"
-COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-svoi-pravila-ci}"
-export COMPOSE_PROJECT_NAME
 export UV_LOCKED=1
 export BASE="${BASE:-master}"
 
 PARENT="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
 CI_TMPDIR="$(mktemp -d "${PARENT}/svoi-pravila-ci.XXXXXX")"
 export CI_TMPDIR
+
+# shellcheck source=scripts/ci_project.sh
+source "$ROOT/scripts/ci_project.sh"
+COMPOSE_PROJECT_NAME="$(ci_project_name "$CI_TMPDIR")"
+export COMPOSE_PROJECT_NAME
 ENV_FILE="${CI_TMPDIR}/env"
 export ENV_FILE
 

@@ -6,6 +6,7 @@ import argparse
 import base64
 import re
 import secrets
+import socket
 import stat
 from pathlib import Path
 
@@ -13,11 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE_PATH = ROOT / ".env.example"
 _ENV_MODE = 0o600
 
-CI_POSTGRES_PORT = "15432"
-CI_VALKEY_PORT = "16379"
-CI_API_PORT = "18000"
-CI_MINIAPP_PORT = "18080"
-CI_GRAFANA_PORT = "13000"
+PORT_KEYS = ("POSTGRES_PORT", "VALKEY_PORT", "API_PORT", "MINIAPP_PORT", "GRAFANA_PORT")
 
 STACK_SMOKE_OVERRIDES = (
     ("SP_ENVIRONMENT", "test"),
@@ -27,6 +24,25 @@ STACK_SMOKE_OVERRIDES = (
     ("SP_GIGACHAT_CREDENTIALS", "ci-placeholder"),
     ("SP_GIGACHAT_SCOPE", "PERS"),
 )
+
+
+def _free_ports(count: int) -> list[int]:
+    """Return ``count`` distinct free local TCP ports, chosen at call time.
+
+    All sockets stay bound until every port is known, so the ports are distinct.
+    A port may still be taken by another process before compose binds it; ``up``
+    then fails clearly.
+    """
+    sockets: list[socket.socket] = []
+    try:
+        for _ in range(count):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sockets.append(sock)
+            sock.bind(("127.0.0.1", 0))
+        return [int(sock.getsockname()[1]) for sock in sockets]
+    finally:
+        for sock in sockets:
+            sock.close()
 
 
 def _set_key(text: str, key: str, value: str) -> str:
@@ -51,11 +67,9 @@ def materialize(*, env_file: Path, stack_smoke: bool) -> None:
     text = _set_key(text, "SP_DATA_KEK", base64.b64encode(secrets.token_bytes(32)).decode())
     text = _set_key(text, "SP_PSEUDONYM_PEPPER", base64.b64encode(secrets.token_bytes(32)).decode())
     text = _set_key(text, "SP_GIGACHAT_CREDENTIALS", "ci-placeholder")
-    text = _set_key(text, "POSTGRES_PORT", CI_POSTGRES_PORT)
-    text = _set_key(text, "VALKEY_PORT", CI_VALKEY_PORT)
-    text = _set_key(text, "API_PORT", CI_API_PORT)
-    text = _set_key(text, "MINIAPP_PORT", CI_MINIAPP_PORT)
-    text = _set_key(text, "GRAFANA_PORT", CI_GRAFANA_PORT)
+    ports = dict(zip(PORT_KEYS, _free_ports(len(PORT_KEYS)), strict=True))
+    for key, port in ports.items():
+        text = _set_key(text, key, str(port))
     text = _set_key(text, "SP_GRAFANA_DB_PASSWORD", secrets.token_urlsafe(32))
     text = _set_key(text, "SP_GRAFANA_ADMIN_PASSWORD", secrets.token_urlsafe(32))
     text = _set_key(text, "SP_GRAFANA_DB_USER", "grafana_reader")
@@ -70,12 +84,12 @@ def materialize(*, env_file: Path, stack_smoke: bool) -> None:
     text = _set_key(
         text,
         "SP_DATABASE_URL",
-        f"postgresql+asyncpg://{user}:{password}@127.0.0.1:{CI_POSTGRES_PORT}/{db_name}",
+        f"postgresql+asyncpg://{user}:{password}@127.0.0.1:{ports['POSTGRES_PORT']}/{db_name}",
     )
     text = _set_key(
         text,
         "SP_VALKEY_URL",
-        f"redis://:{valkey_password}@127.0.0.1:{CI_VALKEY_PORT}/0",
+        f"redis://:{valkey_password}@127.0.0.1:{ports['VALKEY_PORT']}/0",
     )
     if stack_smoke:
         for key, value in STACK_SMOKE_OVERRIDES:

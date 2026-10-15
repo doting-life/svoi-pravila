@@ -41,6 +41,7 @@ from svoi_pravila.evals.rewrite_cases import (
     load_rewrite_cases,
     merge_cases,
     parse_rewrite_case,
+    select_categories,
 )
 from svoi_pravila.evals.rewrite_cli import async_main, main
 from svoi_pravila.evals.rewrite_gates import compute_metrics
@@ -96,6 +97,7 @@ def _cli_args(**overrides: object) -> Namespace:
     values: dict[str, object] = {
         "data": str(_DATA),
         "extra_cases": None,
+        "category": None,
         "baseline": None,
         "write_baseline": None,
         "repeat": 1,
@@ -509,6 +511,48 @@ async def test_report_lists_summary_refusals_and_details() -> None:
 
 
 @pytest.mark.unit
+async def test_report_with_cases_lists_every_call_in_full() -> None:
+    rule = RuleContext(
+        category=RuleCategory.HOW_TO_ASK,
+        text="Просить | спокойно",
+        effective_since=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    case = replace(_case("a", goal=RewriteGoal.RECONNECT), rules=(rule,))
+    gen = FakeTextGenerator(
+        rewrite_result=_result(
+            Variant(text="Сиди дома, и жди", kind=VariantKind.CHECK),
+            Variant(text="Сиди дома\nи жди, пожалуйста", kind=VariantKind.SOFTER),
+            Variant(text="Жди дома", kind=VariantKind.FIRMER),
+        )
+    )
+    spend = SpendTracker()
+    result = await run_rewrite_eval(gen, [case], _params(repeat=2), spend)
+    gen.rewrite_error = GenerationRefusedByProvider(
+        usage=TokenUsage(), attempts=1, model="m", prompt_version="p"
+    )
+    refused_case = _case("b")
+    refused = await run_rewrite_eval(gen, [refused_case], _params(), spend)
+    result.records.extend(refused.records)
+    report = render_report(
+        [ModelEval("m", result, spend.spent_billable)], cases=[case, refused_case]
+    )
+    full = report.split("### Calls in full")[1]
+    assert full.count("#### a:") == 2
+    assert "#### a:1 (ok)" in full
+    assert f"- draft: {_DRAFT}" in full
+    assert "- goal: reconnect" in full
+    assert "- rules: how_to_ask: Просить \\| спокойно" in full
+    assert "- check: Сиди дома, и жди" in full
+    assert "- firmer: Жди дома" in full
+    assert "- softer: Сиди дома и жди, пожалуйста" in full
+    assert "#### b:1 (refused)" in full
+    assert "- goal: none" in full
+    assert "- rules: none" in full
+    assert "- softer: -" in full
+    assert "### Calls in full" not in render_report([ModelEval("m", result, 0)])
+
+
+@pytest.mark.unit
 def test_interview_cases_carry_reference_corrections_for_check() -> None:
     expected = {
         case.id: case.check_expected
@@ -720,6 +764,63 @@ async def test_cli_dry_run_prints_plan_and_makes_no_client(
 
 
 @pytest.mark.unit
+async def test_cli_category_filter_keeps_only_the_selected_categories(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("svoi_pravila.evals.rewrite_cli.LlmToolSettings", make_settings)
+    cases = load_rewrite_cases(_DATA)
+    wanted = {RewriteCategory.PROFANITY, RewriteCategory.LADDER}
+    await async_main(_cli_args(dry_run=True, category=[RewriteCategory.PROFANITY]))
+    only_profanity = len([c for c in cases if c.category is RewriteCategory.PROFANITY])
+    assert f"Cases: {only_profanity}\n" in capsys.readouterr().out
+    await async_main(_cli_args(dry_run=True, category=sorted(wanted)))
+    both = len([c for c in cases if c.category in wanted])
+    assert f"Cases: {both}\n" in capsys.readouterr().out
+
+
+@pytest.mark.unit
+def test_select_categories_keeps_everything_without_a_filter_and_rejects_an_empty_result() -> None:
+    cases = load_rewrite_cases(_DATA)
+    assert select_categories(cases, ()) == cases
+    profanity = select_categories(cases, {RewriteCategory.PROFANITY})
+    assert profanity
+    assert {case.category for case in profanity} == {RewriteCategory.PROFANITY}
+    with pytest.raises(ValueError, match="selected categories"):
+        select_categories(profanity, {RewriteCategory.GOAL})
+
+
+@pytest.mark.unit
+def test_main_accepts_repeatable_category(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr("svoi_pravila.evals.rewrite_cli.LlmToolSettings", make_settings)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "svoi-pravila-eval-rewrite",
+            "--data",
+            str(_DATA),
+            "--dry-run",
+            "--category",
+            "profanity",
+            "--category",
+            "ladder",
+        ],
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        main()
+    assert exit_info.value.code == 0
+    expected = len(
+        [
+            case
+            for case in load_rewrite_cases(_DATA)
+            if case.category in {RewriteCategory.PROFANITY, RewriteCategory.LADDER}
+        ]
+    )
+    assert f"Cases: {expected}\n" in capsys.readouterr().out
+
+
+@pytest.mark.unit
 async def test_cli_dry_run_multiplies_the_plan_by_distinct_models(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -871,7 +972,9 @@ async def test_cli_live_run_writes_report_and_exit_code(
     code = await async_main(_cli_args(data=_one_case(tmp_path), max_tokens=1_000_000, out=str(out)))
     assert code == 0
     assert len(gen.rewrite_calls) == 1
-    assert "- status: COMPLETE" in out.read_text(encoding="utf-8")
+    written = out.read_text(encoding="utf-8")
+    assert "- status: COMPLETE" in written
+    assert "### Calls in full" in written
     assert "Spent billable tokens: 7" in capsys.readouterr().out
     assert closed == ["closed"]
 

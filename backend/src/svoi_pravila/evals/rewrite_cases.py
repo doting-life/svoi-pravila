@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -141,6 +142,19 @@ def load_rewrite_cases(path: Path) -> list[RewriteCase]:
         msg = f"{path}: dataset is empty"
         raise ValueError(msg)
     return cases
+
+
+def select_categories(
+    cases: list[RewriteCase], categories: Collection[RewriteCategory]
+) -> list[RewriteCase]:
+    """Keep the cases of the given categories; no categories keeps every case."""
+    if not categories:
+        return cases
+    selected = [case for case in cases if case.category in categories]
+    if not selected:
+        msg = "no case belongs to the selected categories"
+        raise ValueError(msg)
+    return selected
 
 
 def merge_cases(base: list[RewriteCase], extra: list[RewriteCase]) -> list[RewriteCase]:

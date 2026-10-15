@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from svoi_pravila.application.ports.rewrite_judge import Verdict
 from svoi_pravila.benchmarks.report import percentile
 from svoi_pravila.domain.enums import VariantKind
 from svoi_pravila.domain.variant_policy import PolicyRule
 from svoi_pravila.evals.attempt_recorder import RecordedAttempt
+from svoi_pravila.evals.rewrite_cases import RewriteCase
 from svoi_pravila.evals.rewrite_gates import (
     Baseline,
     compute_metrics,
@@ -275,6 +276,31 @@ def _details(records: list[RewriteRunRecord]) -> list[str]:
     return lines
 
 
+def _calls(records: list[RewriteRunRecord], cases: Sequence[RewriteCase]) -> list[str]:
+    """Every call in full: its draft, goal and rules, then the three texts it returned."""
+    by_id = {case.id: case for case in cases}
+    lines = ["### Calls in full", ""]
+    for record in records:
+        case = by_id[record.case_id]
+        texts = {variant.kind: variant.text for variant in record.variants}
+        rules = "; ".join(f"{rule.category.value}: {rule.text}" for rule in case.rules)
+        lines.extend(
+            [
+                f"#### {record.case_id}:{record.run_index} ({record.outcome.value})",
+                "",
+                f"- draft: {_cell(case.draft)}",
+                f"- goal: {'none' if case.goal is None else case.goal.value}",
+                f"- rules: {_cell(rules) if rules else 'none'}",
+                *(
+                    f"- {kind.value}: {_cell(texts[kind]) if kind in texts else '-'}"
+                    for kind in (VariantKind.CHECK, VariantKind.FIRMER, VariantKind.SOFTER)
+                ),
+                "",
+            ]
+        )
+    return lines
+
+
 def _status(item: ModelEval) -> str:
     reason = item.result.stop_reason
     return "COMPLETE" if reason is None else f"INCOMPLETE ({reason})"
@@ -310,12 +336,14 @@ def render_report(
     not_run: tuple[str, ...] = (),
     baseline: Baseline | None = None,
     judge_calibrated: bool = False,
+    cases: Sequence[RewriteCase] = (),
 ) -> str:
     """Render the local report: a model comparison, then one section per model.
 
     An early stop marks the model ``INCOMPLETE`` with its reason; models after it are
     listed as not run. Each model section lists the gates G1-G4, G6-G9 and J6, then the
-    slots flagged by J6.
+    slots flagged by J6. When ``cases`` is given, each section ends with every call in full:
+    the draft, goal and rules of its case and the ``check``, ``firmer`` and ``softer`` texts.
     """
     lines = ["# Rewrite eval", "", *_comparison(evals)]
     if not_run:
@@ -344,6 +372,7 @@ def render_report(
                 *_refusals(records),
                 *_invalid_diagnostics(records, item.result.attempts),
                 *_details(records),
+                *(_calls(records, cases) if cases else ()),
             ]
         )
     return "\n".join(lines)

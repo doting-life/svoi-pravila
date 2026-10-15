@@ -159,6 +159,23 @@ class AnalyticsJobFailed(ApplicationError):
         super().__init__(kind.value)
 
 
+class ProgramExportErrorKind(StrEnum):
+    """Typed ``ProgramExportFailed.kind`` (never exception text or paths)."""
+
+    INVALID_RANGE = "invalid_range"
+    RANGE_TOO_LONG = "range_too_long"
+    TARGET_EXISTS = "target_exists"
+    WRITE_FAILED = "write_failed"
+
+
+class ProgramExportFailed(ApplicationError):
+    """The program-metrics package could not be produced."""
+
+    def __init__(self, kind: ProgramExportErrorKind) -> None:
+        self.kind = kind
+        super().__init__(kind.value)
+
+
 class GenerationUnavailable(ApplicationError):
     """Generation provider is unavailable, timed out, or rate-limited."""
 

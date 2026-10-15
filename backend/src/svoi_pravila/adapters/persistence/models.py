@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
@@ -16,6 +17,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     MetaData,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -552,6 +554,10 @@ class AnalyticsDailyRow(Base):
     users_limited: Mapped[int] = mapped_column(Integer, nullable=False)
     billable_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
     llm_budget_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    llm_calls: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    target_users_total: Mapped[int] = mapped_column(Integer, nullable=False)
+    llm_cost_rub: Mapped[Decimal] = mapped_column(Numeric(14, 4), nullable=False)
+    unpriced_models: Mapped[int] = mapped_column(Integer, nullable=False)
     computed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
@@ -563,6 +569,10 @@ class AnalyticsDailyRow(Base):
         CheckConstraint("users_limited >= 0", name="users_limited_nonneg"),
         CheckConstraint("billable_tokens >= 0", name="billable_tokens_nonneg"),
         CheckConstraint("llm_budget_tokens >= 0", name="llm_budget_tokens_nonneg"),
+        CheckConstraint("llm_calls >= 0", name="llm_calls_nonneg"),
+        CheckConstraint("target_users_total >= 0", name="target_users_total_nonneg"),
+        CheckConstraint("llm_cost_rub >= 0", name="llm_cost_rub_nonneg"),
+        CheckConstraint("unpriced_models >= 0", name="unpriced_models_nonneg"),
     )
 
 
@@ -608,6 +618,69 @@ class AnalyticsDailyScenarioRow(Base):
         CheckConstraint("input_tokens >= 0", name="input_tokens_nonneg"),
         CheckConstraint("output_tokens >= 0", name="output_tokens_nonneg"),
         CheckConstraint("billable_tokens >= 0", name="billable_tokens_nonneg"),
+    )
+
+
+class AnalyticsDailyLlmRow(Base):
+    """C0 per-day LLM usage and cost by scenario, surface and model (no pseudonyms)."""
+
+    __tablename__ = "analytics_daily_llm"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    scenario: Mapped[str] = mapped_column(Text(), primary_key=True)
+    surface: Mapped[str] = mapped_column(Text(), primary_key=True)
+    model: Mapped[str] = mapped_column(Text(), primary_key=True)
+    generations: Mapped[int] = mapped_column(Integer, nullable=False)
+    llm_calls: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    input_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    billable_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    price_rub_per_1k: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    cost_rub: Mapped[Decimal | None] = mapped_column(Numeric(14, 4), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint(f"scenario IN {_SCENARIO_VALUES}", name="usage_scenario"),
+        CheckConstraint(f"surface IN {_SURFACE_VALUES}", name="usage_surface"),
+        CheckConstraint("generations >= 0", name="generations_nonneg"),
+        CheckConstraint("llm_calls >= 0", name="llm_calls_nonneg"),
+        CheckConstraint("input_tokens >= 0", name="input_tokens_nonneg"),
+        CheckConstraint("output_tokens >= 0", name="output_tokens_nonneg"),
+        CheckConstraint("billable_tokens >= 0", name="billable_tokens_nonneg"),
+    )
+
+
+class AnalyticsDailyLoadRow(Base):
+    """C0 per-day peak LLM traffic per minute and per second (no pseudonyms)."""
+
+    __tablename__ = "analytics_daily_load"
+
+    day: Mapped[date] = mapped_column(Date, primary_key=True)
+    peak_tpm: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    peak_tps: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    peak_llm_calls_per_minute: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    peak_llm_calls_per_second: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    peak_tpm_minute: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("peak_tpm >= 0", name="peak_tpm_nonneg"),
+        CheckConstraint("peak_tps >= 0", name="peak_tps_nonneg"),
+        CheckConstraint("peak_llm_calls_per_minute >= 0", name="peak_llm_calls_per_minute_nonneg"),
+        CheckConstraint("peak_llm_calls_per_second >= 0", name="peak_llm_calls_per_second_nonneg"),
+    )
+
+
+class LlmPriceRow(Base):
+    """C0 price of one LLM model in roubles per 1000 billable tokens from a date."""
+
+    __tablename__ = "llm_prices"
+
+    model: Mapped[str] = mapped_column(Text(), primary_key=True)
+    valid_from: Mapped[date] = mapped_column(Date, primary_key=True)
+    rub_per_1k_tokens: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("rub_per_1k_tokens > 0", name="rub_per_1k_positive"),
+        CheckConstraint("model <> ''", name="model_nonempty"),
     )
 
 

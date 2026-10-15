@@ -31,6 +31,13 @@ _SELECT_NEW_DAILY_COLS = (
 _SELECT_NEW_SCENARIO_COLS = (
     "SELECT limited_user_quota, limited_global_budget FROM analytics_daily_scenario LIMIT 1"
 )
+_SELECT_LLM = "SELECT COUNT(*) FROM analytics_daily_llm"
+_SELECT_LOAD = "SELECT COUNT(*) FROM analytics_daily_load"
+_SELECT_PRICES = "SELECT COUNT(*) FROM llm_prices"
+_SELECT_PROGRAM_COLS = (
+    "SELECT llm_calls, target_users_total, llm_cost_rub, unpriced_models "
+    "FROM analytics_daily LIMIT 1"
+)
 _SELECT_USAGE = "SELECT COUNT(*) FROM usage_events"
 _SELECT_JOB_RUNS = "SELECT COUNT(*) FROM job_runs"
 _SELECT_USERS = "SELECT COUNT(*) FROM users"
@@ -38,8 +45,9 @@ _SELECT_USERS = "SELECT COUNT(*) FROM users"
 _DML_STATEMENTS = (
     "INSERT INTO analytics_daily "
     "(day, active_users, appeals, new_users, generations, "
-    "generation_errors, users_limited, billable_tokens, llm_budget_tokens, computed_at) "
-    "VALUES (CURRENT_DATE, 0, 0, 0, 0, 0, 0, 0, 0, NOW())",
+    "generation_errors, users_limited, billable_tokens, llm_budget_tokens, "
+    "llm_calls, target_users_total, llm_cost_rub, unpriced_models, computed_at) "
+    "VALUES (CURRENT_DATE, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NOW())",
     "UPDATE analytics_daily SET appeals = 1 WHERE FALSE",
     "DELETE FROM analytics_daily WHERE FALSE",
     "INSERT INTO analytics_daily_scenario "
@@ -56,6 +64,20 @@ _DML_STATEMENTS = (
     "VALUES (CURRENT_DATE, 0, NULL, NULL, NOW())",
     "UPDATE analytics_cohorts SET size = 1 WHERE FALSE",
     "DELETE FROM analytics_cohorts WHERE FALSE",
+    "INSERT INTO analytics_daily_llm "
+    "(day, scenario, surface, model, generations, llm_calls, input_tokens, "
+    "output_tokens, billable_tokens, price_rub_per_1k, cost_rub) "
+    "VALUES (CURRENT_DATE, 'decode', 'dm', 'm', 0, 0, 0, 0, 0, NULL, NULL)",
+    "UPDATE analytics_daily_llm SET llm_calls = 1 WHERE FALSE",
+    "DELETE FROM analytics_daily_llm WHERE FALSE",
+    "INSERT INTO analytics_daily_load "
+    "(day, peak_tpm, peak_tps, peak_llm_calls_per_minute, peak_llm_calls_per_second, "
+    "peak_tpm_minute) VALUES (CURRENT_DATE, 0, 0, 0, 0, NULL)",
+    "UPDATE analytics_daily_load SET peak_tpm = 1 WHERE FALSE",
+    "DELETE FROM analytics_daily_load WHERE FALSE",
+    "INSERT INTO llm_prices (model, valid_from, rub_per_1k_tokens) VALUES ('m', CURRENT_DATE, 1)",
+    "UPDATE llm_prices SET rub_per_1k_tokens = 2 WHERE FALSE",
+    "DELETE FROM llm_prices WHERE FALSE",
 )
 
 
@@ -148,10 +170,17 @@ async def test_grafana_reader_select_aggregates_allowed(
     )
     try:
         async with reader.connect() as conn:
-            for sql in (_SELECT_DAILY, _SELECT_SCENARIO, _SELECT_COHORTS):
+            for sql in (
+                _SELECT_DAILY,
+                _SELECT_SCENARIO,
+                _SELECT_COHORTS,
+                _SELECT_LLM,
+                _SELECT_LOAD,
+                _SELECT_PRICES,
+            ):
                 result = await conn.execute(text(sql))
                 assert result.scalar() is not None
-            for sql in (_SELECT_NEW_DAILY_COLS, _SELECT_NEW_SCENARIO_COLS):
+            for sql in (_SELECT_NEW_DAILY_COLS, _SELECT_NEW_SCENARIO_COLS, _SELECT_PROGRAM_COLS):
                 await conn.execute(text(sql))
     finally:
         await reader.dispose()

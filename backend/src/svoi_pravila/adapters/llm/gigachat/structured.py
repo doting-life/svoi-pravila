@@ -36,10 +36,12 @@ from svoi_pravila.adapters.llm.gigachat.prompt_leak import (
 )
 from svoi_pravila.adapters.llm.gigachat.repair import (
     FirstAttemptDefect,
+    all_empty_defect,
     first_attempt_defect,
     retry_messages,
 )
 from svoi_pravila.adapters.llm.gigachat.validation import (
+    AllEmptyAnswerError,
     SlotDefect,
     SlotDefectsError,
     invalid,
@@ -212,6 +214,7 @@ class _InvalidAnswer[ModelT: BaseModel]:
     answer: _Answer[ModelT] | None = None
     findings: tuple[SlotFinding, ...] = ()
     defects: tuple[SlotDefect, ...] = ()
+    all_empty: bool = False
 
 
 def _raw_texts(state: AttemptState) -> tuple[tuple[str, str], ...]:
@@ -228,8 +231,12 @@ def _record_retryable_invalid[ModelT: BaseModel](
     reason, slot, answer = invalid_answer.reason, invalid_answer.slot, invalid_answer.answer
     note_invalid_reason(state, reason, slot)
     raw = None if answer is None else answer.raw
-    defect = first_attempt_defect(
-        reason, slot, raw, invalid_answer.findings, invalid_answer.defects
+    defect = (
+        all_empty_defect(invalid_answer.defects)
+        if invalid_answer.all_empty
+        else first_attempt_defect(
+            reason, slot, raw, invalid_answer.findings, invalid_answer.defects
+        )
     )
     if params.observer is not None:
         texts = _raw_texts(state) if answer is None else _field_texts(answer.parsed.model_dump())
@@ -395,6 +402,7 @@ async def _build_result[ModelT: BaseModel, ResultT](
                 slot=exc.slots[-1],
                 answer=answer,
                 defects=exc.defects if isinstance(exc, SlotDefectsError) else (),
+                all_empty=isinstance(exc, AllEmptyAnswerError),
             ),
             attempt=attempt,
         )

@@ -1,15 +1,20 @@
 """Corrective retry: the second request that repairs the first attempt's defect.
 
-The correction texts live in the versioned fragment ``prompts/repair/v3.md`` (one
-``reason: text`` line each, ``{slot}`` and ``{words}`` filled here). The first answer is echoed
-back (as an ``assistant`` message) only when it parsed as JSON and the defect is not one of
-``NO_ECHO``.
+The correction texts live in the versioned fragment ``prompts/repair/v4.md`` (one
+``key: text`` line each, ``{slot}`` and ``{words}`` filled here). The keys are the invalid-output
+reasons, plus the correction keys ``keep``, ``generic`` and ``empty_answer``, which are not
+reasons. The first answer is echoed back (as an ``assistant`` message) only when it parsed as JSON
+and the defect is not one of ``NO_ECHO`` and the answer is not an all-empty one.
 
 The correction is one user message naming every defect of the answer: one line per formal slot
 defect, or one line per lexicon finding (obscene words, generalizations), then the ``keep`` line
 once. The two kinds never share a message. When a defect has no line of its own, the message is
 ``generic`` alone, without ``keep``. The matched words are conversation text: they stay in
 memory, out of ``repr``, and go only into that message.
+
+An all-empty answer (every slot empty with ``safety=ok``) is not echoed and gets the single
+``empty_answer`` line alone: no per-slot lines, no ``keep``. Its defects and labels stay the
+ordinary ``empty_text:softer`` and ``empty_text:firmer``.
 """
 
 from __future__ import annotations
@@ -30,8 +35,9 @@ from svoi_pravila.domain.lexicon_guard import (
 )
 
 GENERIC_REASON = "generic"
-REPAIR_VERSION = "v3"
+REPAIR_VERSION = "v4"
 KEEP_REASON = "keep"
+EMPTY_ANSWER_KEY = "empty_answer"
 _SLOT_PLACEHOLDER = "{slot}"
 _WORDS_PLACEHOLDER = "{words}"
 _WORDS_SEPARATOR = ", "
@@ -58,6 +64,7 @@ class FirstAttemptDefect:
     JSON to echo back, or ``None`` when it is not echoed. ``findings`` are the lexicon findings
     that the correction names; they are empty for formal defects. ``answer`` and ``findings`` are
     conversation text, so they are kept out of ``repr`` (and thus out of exceptions and logs).
+    ``all_empty`` marks an all-empty answer: it is not echoed and gets the ``empty_answer`` line.
     """
 
     reason: InvalidOutputReason
@@ -65,6 +72,7 @@ class FirstAttemptDefect:
     answer: str | None = field(repr=False)
     defects: tuple[SlotDefect, ...] = ()
     findings: tuple[SlotFinding, ...] = field(default=(), repr=False)
+    all_empty: bool = False
 
     @property
     def labels(self) -> tuple[str, ...]:
@@ -86,6 +94,17 @@ def first_attempt_defect(
     named = () if findings else defects or (SlotDefect(reason, slot),)
     return FirstAttemptDefect(
         reason=reason, slot=slot, answer=echoed, defects=named, findings=findings
+    )
+
+
+def all_empty_defect(defects: tuple[SlotDefect, ...]) -> FirstAttemptDefect:
+    """The defect signal of an all-empty answer: nothing is echoed, ``empty_answer`` is sent.
+
+    ``defects`` are the answer's ordinary slot defects (never empty); they give the labels.
+    """
+    first = defects[0]
+    return FirstAttemptDefect(
+        reason=first.reason, slot=first.slot, answer=None, defects=defects, all_empty=True
     )
 
 
@@ -144,14 +163,20 @@ def findings_correction(findings: tuple[SlotFinding, ...]) -> str:
 def longest_correction_chars() -> int:
     """Length of the longest possible correction message (worst case for the token estimate).
 
-    It is the widest of: ``generic``; the formal message (every formal line, once per rewrite
-    slot for the lines that name a slot, then ``keep``); and the findings message (one line for
-    every kind and guarded slot with the most and the longest words allowed, then ``keep``).
+    It is the widest of: ``generic``; ``empty_answer``; the formal message (every formal line,
+    once per rewrite slot for the lines that name a slot, then ``keep``); and the findings
+    message (one line for every kind and guarded slot with the most and the longest words
+    allowed, then ``keep``).
     """
     lines = _correction_lines()
     widest_slot = max(VariantKind, key=lambda kind: len(kind.value)).value
     widest_words = _WORDS_SEPARATOR.join(("x" * MAX_FINDING_WORD_CHARS,) * MAX_FINDING_WORDS)
-    not_formal = {KEEP_REASON, GENERIC_REASON, *(kind.value for kind in FindingKind)}
+    not_formal = {
+        KEEP_REASON,
+        GENERIC_REASON,
+        EMPTY_ANSWER_KEY,
+        *(kind.value for kind in FindingKind),
+    }
     formal = [
         _fill(body, widest_slot, widest_words)
         for key, body in lines.items()
@@ -165,6 +190,7 @@ def longest_correction_chars() -> int:
     ]
     return max(
         len(lines[GENERIC_REASON]),
+        len(lines[EMPTY_ANSWER_KEY]),
         len(_with_keep(lines, formal)),
         len(_with_keep(lines, findings)),
     )
@@ -178,10 +204,13 @@ def retry_messages(prepared: PreparedMessages, defect: FirstAttemptDefect) -> li
     ]
     if defect.answer is not None:
         messages.append({"role": "assistant", "content": defect.answer})
-    correction = (
-        findings_correction(defect.findings)
-        if defect.findings
-        else formal_correction(defect.defects)
-    )
-    messages.append({"role": "user", "content": correction})
+    messages.append({"role": "user", "content": _correction(defect)})
     return messages
+
+
+def _correction(defect: FirstAttemptDefect) -> str:
+    if defect.all_empty:
+        return _correction_lines()[EMPTY_ANSWER_KEY]
+    if defect.findings:
+        return findings_correction(defect.findings)
+    return formal_correction(defect.defects)

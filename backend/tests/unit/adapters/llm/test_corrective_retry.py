@@ -43,7 +43,7 @@ from tests.unit.adapters.llm.test_gigachat_adapter import (
     _rewrite_payload_no_rules,
 )
 
-# Block R3 (prompts/repair/v3.md), verbatim: one line per defect, then ``keep`` once.
+# Blocks R3 and R4 (prompts/repair/v4.md), verbatim: one line per defect, then ``keep`` once.
 _KEEP = "Остальные поля верни без изменений. Ответь только JSON по схеме."
 _EMPTY_TEXT_SOFTER_LINE = (
     "Поле `softer` пустое. Заполни его по правилам; если после перевода грубых слов от фразы "
@@ -51,6 +51,10 @@ _EMPTY_TEXT_SOFTER_LINE = (
 )
 _EMPTY_TEXT_FIRMER_LINE = _EMPTY_TEXT_SOFTER_LINE.replace("`softer`", "`firmer`")
 _TOO_LONG_FIRMER_LINE = "Поле `firmer` слишком длинное. Сократи его по правилам."
+_EMPTY_ANSWER = (
+    "Все поля ответа пустые, а `safety` равно `ok`. Заполни `check`, `firmer` и `softer` по "
+    "правилам. Ответь только JSON по схеме."
+)
 _EMPTY_TEXT_SOFTER = f"{_EMPTY_TEXT_SOFTER_LINE}\n{_KEEP}"
 _KIND_SET = f"`softer` и `firmer` совпадают. Сделай их разными по словам по правилам.\n{_KEEP}"
 _GENERIC = (
@@ -146,6 +150,82 @@ async def test_both_slots_empty_get_one_correction_with_two_lines_and_keep_once(
     assert correction.count(_KEEP) == 1
     assert ache.create_calls == 2
     assert result.meta.repaired == ("empty_text:softer", "empty_text:firmer")
+
+
+@pytest.mark.unit
+async def test_an_all_empty_answer_is_not_echoed_and_gets_only_the_empty_answer_line() -> None:
+    first = _slots(check="", softer="", firmer="")
+    ache = _ScriptedAche([first, _clean_slots()])
+    result = await _generator(ache).rewrite(_rewrite_request())
+    second = ache.payloads[1]
+    assert _roles(second) == ["system", "user", "user"]
+    assert second["messages"][:2] == ache.payloads[0]["messages"]
+    assert second["messages"][2]["content"] == _EMPTY_ANSWER
+    assert ache.create_calls == 2
+    assert result.meta.repaired == ("empty_text:softer", "empty_text:firmer")
+    assert result.meta.attempts == 2
+
+
+@pytest.mark.unit
+async def test_a_whitespace_only_answer_is_all_empty_too() -> None:
+    first = _slots(check=" ", softer="\n", firmer="  ")
+    ache = _ScriptedAche([first, _clean_slots()])
+    await _generator(ache).rewrite(_rewrite_request())
+    assert _roles(ache.payloads[1]) == ["system", "user", "user"]
+    assert ache.payloads[1]["messages"][2]["content"] == _EMPTY_ANSWER
+
+
+@pytest.mark.unit
+async def test_an_empty_check_with_filled_slots_is_valid_without_a_retry() -> None:
+    ache = _ScriptedAche([_slots(check="", softer="мягче", firmer="твёрже")])
+    result = await _generator(ache).rewrite(_rewrite_request())
+    assert ache.create_calls == 1
+    assert result.meta.repaired == ()
+    assert [variant.text for variant in result.variants] == ["", "мягче", "твёрже"]
+
+
+@pytest.mark.unit
+async def test_empty_slots_with_a_filled_check_keep_the_echo_two_lines_and_keep() -> None:
+    first = _slots(check="проверка", softer="", firmer="")
+    ache = _ScriptedAche([first, _clean_slots()])
+    result = await _generator(ache).rewrite(_rewrite_request())
+    second = ache.payloads[1]
+    assert _roles(second) == ["system", "user", "assistant", "user"]
+    assert second["messages"][2]["content"] == first.model_dump_json()
+    assert second["messages"][3]["content"] == (
+        f"{_EMPTY_TEXT_SOFTER_LINE}\n{_EMPTY_TEXT_FIRMER_LINE}\n{_KEEP}"
+    )
+    assert result.meta.repaired == ("empty_text:softer", "empty_text:firmer")
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("safety", ["crisis", "refuse_manipulation"])
+async def test_an_all_empty_answer_with_a_non_ok_safety_is_a_valid_refusal_without_retry(
+    safety: str,
+) -> None:
+    first = RewriteOutNoRules.model_validate(
+        {"check": "", "softer": "", "firmer": "", "safety": safety}
+    )
+    ache = _ScriptedAche([first])
+    result = await _generator(ache).rewrite(_rewrite_request())
+    assert ache.create_calls == 1
+    assert result.variants == ()
+    assert result.safety.value == safety
+    assert result.meta.repaired == ()
+
+
+@pytest.mark.unit
+async def test_an_all_empty_answer_twice_ends_as_two_empty_text_attempts() -> None:
+    first = _slots(check="", softer="", firmer="")
+    ache = _ScriptedAche([first, first])
+    generator, observer = _observed(ache)
+    with pytest.raises(InvalidGenerationOutput) as exc_info:
+        await generator.rewrite(_rewrite_request())
+    assert ache.create_calls == 2
+    assert exc_info.value.labelled_reasons() == ("empty_text:softer", "empty_text:softer")
+    assert [item.labels for item in cast("list[LabelledInvalidAttempt]", observer.attempts)] == [
+        ("empty_text:softer", "empty_text:firmer")
+    ] * 2
 
 
 @pytest.mark.unit

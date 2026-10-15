@@ -17,6 +17,7 @@ from svoi_pravila.adapters.llm.gigachat.repair import (
     longest_correction_chars,
     retry_messages,
 )
+from svoi_pravila.adapters.llm.gigachat.structured import _RetryAttemptError
 from svoi_pravila.application.errors import InvalidOutputReason
 from svoi_pravila.domain.enums import VariantKind
 
@@ -100,3 +101,17 @@ def test_max_structured_billable_counts_the_larger_second_request() -> None:
     assert correction == chars_to_tokens("x" * longest_correction_chars())
     assert max_structured_billable(_PREPARED, output_cap=cap) == first + first + cap + correction
     assert max_structured_billable(_PREPARED, output_cap=cap) > 2 * first
+
+
+@pytest.mark.unit
+def test_repr_of_a_defect_and_of_the_retry_error_has_the_label_but_never_the_answer() -> None:
+    answer = '{"softer": "CANARY-answer-text"}'
+    defect = first_attempt_defect(InvalidOutputReason.EMPTY_TEXT, VariantKind.FIRMER, answer)
+    assert defect.answer == answer
+    assert "empty_text:firmer" in defect.label
+    assert "CANARY" not in repr(defect)
+    assert "reason=" in repr(defect)
+    error = _RetryAttemptError(defect)
+    assert "empty_text:firmer" in repr(error)
+    assert "CANARY" not in repr(error)
+    assert "CANARY" not in str(error)

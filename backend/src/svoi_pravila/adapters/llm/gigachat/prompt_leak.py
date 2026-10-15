@@ -48,8 +48,8 @@ def prompt_leak_reason(
     texts: Iterable[str],
     *,
     windows: frozenset[str],
-    marker: str | None = None,
-    untrusted: Sequence[str] = (),
+    marker: str,
+    untrusted: Sequence[str],
 ) -> InvalidOutputReason | None:
     """Return ``PROMPT_LEAK`` when a field echoes the marker or the system prompt.
 
@@ -61,7 +61,7 @@ def prompt_leak_reason(
     prefix_is_untrusted = any(BOUNDARY_PREFIX in text for text in untrusted)
     normalized_untrusted = tuple(normalize_prompt_whitespace(text) for text in untrusted)
     for text in texts:
-        if marker is not None and marker in text:
+        if marker in text:
             return InvalidOutputReason.PROMPT_LEAK
         if BOUNDARY_PREFIX in text and not prefix_is_untrusted:
             return InvalidOutputReason.PROMPT_LEAK

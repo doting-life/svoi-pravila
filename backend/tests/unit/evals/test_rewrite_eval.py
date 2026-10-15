@@ -676,6 +676,10 @@ async def test_report_without_first_attempt_defects_has_no_repair_success_rate()
     result = await run_rewrite_eval(gen, [_case("a")], _params(), SpendTracker())
     report = render_report([ModelEval("m", result, 0)])
     assert "- calls with a first-attempt defect: 0 of 1" in report
+    assert (
+        "A call that ends unavailable or refused after a first-attempt defect is not recorded "
+        "as a defect (G9 counts it)."
+    ) in report
     assert "- repaired by the second attempt (repair success rate): n/a" in report
 
 

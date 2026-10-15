@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 
 from svoi_pravila.adapters.llm.gigachat.prompt_leak import (
@@ -12,17 +14,27 @@ from svoi_pravila.adapters.llm.gigachat.prompt_leak import (
 )
 from svoi_pravila.application.errors import InvalidOutputReason
 
+_MARKER = "SPBOUND_allocatedmarkervalue"
+
 
 @pytest.mark.unit
 def test_windows_and_short_phrase_pass() -> None:
     system = "alpha " * 20 + "unique-instruction-block-for-the-model-please"
     windows = system_prompt_windows(system)
     assert all(len(item) == LEAK_WINDOW for item in windows)
-    assert prompt_leak_reason(["please be kind"], windows=windows) is None
-    leaked = next(window for window in windows if window[0].isalnum() and window[-1].isalnum())
-    assert prompt_leak_reason([leaked], windows=windows) is InvalidOutputReason.PROMPT_LEAK
     assert (
-        prompt_leak_reason(["prefix SPBOUND_zzz suffix"], windows=windows)
+        prompt_leak_reason(["please be kind"], windows=windows, marker=_MARKER, untrusted=())
+        is None
+    )
+    leaked = next(window for window in windows if window[0].isalnum() and window[-1].isalnum())
+    assert (
+        prompt_leak_reason([leaked], windows=windows, marker=_MARKER, untrusted=())
+        is InvalidOutputReason.PROMPT_LEAK
+    )
+    assert (
+        prompt_leak_reason(
+            ["prefix SPBOUND_zzz suffix"], windows=windows, marker=_MARKER, untrusted=()
+        )
         is InvalidOutputReason.PROMPT_LEAK
     )
 
@@ -35,11 +47,13 @@ def test_collect_text_fields_nested() -> None:
 @pytest.mark.unit
 def test_short_system_prompt_has_no_windows() -> None:
     assert system_prompt_windows("short") == frozenset()
-    assert prompt_leak_reason(["also short"], windows=frozenset()) is None
+    assert (
+        prompt_leak_reason(["also short"], windows=frozenset(), marker=_MARKER, untrusted=())
+        is None
+    )
 
 
 _SYSTEM = "alpha " * 20 + "unique-instruction-block-for-the-model-please"
-_MARKER = "SPBOUND_allocatedmarkervalue"
 
 
 def _windows_with_alnum_edges() -> list[str]:
@@ -121,3 +135,15 @@ def test_branch_c_one_untrusted_window_does_not_excuse_another_one() -> None:
         )
         is InvalidOutputReason.PROMPT_LEAK
     )
+
+
+@pytest.mark.unit
+def test_marker_and_untrusted_are_required_keyword_arguments() -> None:
+    windows = system_prompt_windows(_SYSTEM)
+    call = cast(Any, prompt_leak_reason)
+    with pytest.raises(TypeError):
+        call(["x"], windows=windows)
+    with pytest.raises(TypeError):
+        call(["x"], windows=windows, marker=_MARKER)
+    with pytest.raises(TypeError):
+        call(["x"], windows=windows, untrusted=())

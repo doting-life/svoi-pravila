@@ -155,6 +155,9 @@ def _repair(records: list[RewriteRunRecord]) -> list[str]:
         "success rate is over the calls whose first attempt had a defect. G9 still counts the "
         "calls that failed after the repair.",
         "",
+        "A call that ends unavailable or refused after a first-attempt defect is not recorded "
+        "as a defect (G9 counts it).",
+        "",
         f"- calls with a first-attempt defect: {total} of {len(counted)}",
         f"- repaired by the second attempt (repair success rate): {success}",
         "",

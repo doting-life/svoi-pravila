@@ -8,7 +8,7 @@ as JSON and the defect is not one of ``NO_ECHO``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from svoi_pravila.adapters.llm.gigachat.prepared import PreparedMessages
 from svoi_pravila.adapters.llm.registry import load_prompt_template
@@ -35,11 +35,12 @@ class FirstAttemptDefect:
     """The first attempt's defect, carried to the second attempt.
 
     ``answer`` is the first answer's JSON to echo back, or ``None`` when it is not echoed.
+    It is conversation text, so it is kept out of ``repr`` (and thus out of exceptions and logs).
     """
 
     reason: InvalidOutputReason
     slot: VariantKind | None
-    answer: str | None
+    answer: str | None = field(repr=False)
 
     @property
     def label(self) -> str:

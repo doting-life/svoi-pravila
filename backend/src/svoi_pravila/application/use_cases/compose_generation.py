@@ -303,6 +303,8 @@ class ComposeGeneration:
         variants, check_empty = fill_empty_check(draft, generated.variants)
         if check_empty:
             self._ports.policy_monitor.record_check_empty()
+        for defect in generated.meta.repaired:
+            self._ports.policy_monitor.record_repaired(defect)
         finished = tuple(
             Variant(text=humanize_typography(draft, variant.text), kind=variant.kind)
             for variant in variants

@@ -17,6 +17,7 @@ from svoi_pravila.adapters.llm.gigachat.judge import (
     MAX_TOKENS_JUDGE,
     GigaChatRewriteJudge,
 )
+from svoi_pravila.adapters.llm.gigachat.repair import longest_correction_chars
 from svoi_pravila.adapters.llm.gigachat.schemas import JudgeOut
 from svoi_pravila.adapters.llm.registry import load_prompt_template
 from svoi_pravila.application.errors import (
@@ -221,10 +222,10 @@ def test_a_marker_is_allocated_that_is_not_in_the_text() -> None:
 
 
 @pytest.mark.unit
-def test_max_billable_counts_both_messages_the_output_cap_and_every_attempt() -> None:
+def test_max_billable_counts_both_messages_the_output_cap_and_the_corrective_retry() -> None:
     judge = _judge(_FakeAche())
     prepared = judge.prepare(_request())
-    expected = MAX_ATTEMPTS * (
-        chars_to_tokens(prepared.system) + chars_to_tokens(prepared.user) + MAX_TOKENS_JUDGE
-    )
-    assert judge.max_billable(_request()) == expected
+    first = chars_to_tokens(prepared.system) + chars_to_tokens(prepared.user) + MAX_TOKENS_JUDGE
+    # Second request: the same messages, the first answer at the cap, the longest correction.
+    second = first + MAX_TOKENS_JUDGE + chars_to_tokens("x" * longest_correction_chars())
+    assert judge.max_billable(_request()) == first + second

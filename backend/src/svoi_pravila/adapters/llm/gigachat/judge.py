@@ -12,11 +12,10 @@ import time
 from gigachat import GigaChat
 
 from svoi_pravila.adapters.llm.gigachat.attempt_policy import (
-    MAX_ATTEMPTS,
     AttemptState,
     token_usage_from_state,
 )
-from svoi_pravila.adapters.llm.gigachat.estimate import estimate_prepared_tokens
+from svoi_pravila.adapters.llm.gigachat.estimate import max_structured_billable
 from svoi_pravila.adapters.llm.gigachat.prepared import PreparedMessages, prepare_judge
 from svoi_pravila.adapters.llm.gigachat.schemas import JudgeOut
 from svoi_pravila.adapters.llm.gigachat.structured import StructuredCallParams, structured_call
@@ -38,10 +37,8 @@ def _to_observation(parsed: JudgeOut, meta: GenerationMeta) -> JudgeObservation:
 
 
 def max_judge_billable(request: JudgeRequest) -> int:
-    """Worst-case billable tokens of one judge call: rendered messages plus the output cap."""
-    prepared = prepare_judge(request)
-    one = estimate_prepared_tokens(prepared.system, prepared.user, output_cap=MAX_TOKENS_JUDGE)
-    return MAX_ATTEMPTS * one
+    """Worst-case billable tokens of one judge call, including its corrective retry."""
+    return max_structured_billable(prepare_judge(request), output_cap=MAX_TOKENS_JUDGE)
 
 
 class GigaChatRewriteJudge:
@@ -56,7 +53,7 @@ class GigaChatRewriteJudge:
         return prepare_judge(request)
 
     def max_billable(self, request: JudgeRequest) -> int:
-        """Worst-case billable tokens: rendered messages plus the output cap, per attempt."""
+        """Worst-case billable tokens: both attempts, the second with the correction."""
         return max_judge_billable(request)
 
     async def judge(self, request: JudgeRequest) -> JudgeObservation:

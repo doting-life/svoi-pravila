@@ -6,7 +6,7 @@ import asyncio
 import json
 import unicodedata
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, timedelta
 from typing import Any
 
@@ -948,6 +948,35 @@ async def test_inline_compose_does_not_count_a_filled_check_as_empty(world: AppW
     use_case, _sink, _reuse = _ports(world, _Fakes(generator=generator, policy_monitor=monitor))
     await use_case.execute(InlineComposeCommand(TelegramUserId(100), "нужно поговорить"))
     assert monitor.check_empty == 0
+
+
+@pytest.mark.unit
+async def test_repaired_defects_are_counted_by_label(
+    world: AppWorld,
+) -> None:
+    await world.ensure_granted_user(100)
+    base = _rewrite_result("Нужно поговорить", "давай обсудим спокойно", "говорим сегодня")
+    generator = FakeTextGenerator(
+        rewrite_result=replace(base, meta=replace(base.meta, repaired=("empty_text:softer",)))
+    )
+    monitor = RecordingVariantPolicyMonitor()
+    use_case, _sink, _reuse = _ports(world, _Fakes(generator=generator, policy_monitor=monitor))
+    result = await use_case.execute(InlineComposeCommand(TelegramUserId(100), "нужно поговорить"))
+    assert len(result.variants) == 3
+    assert monitor.repaired == ["empty_text:softer"]
+
+
+@pytest.mark.unit
+async def test_nothing_is_counted_as_repaired_for_a_first_attempt_answer(
+    world: AppWorld,
+) -> None:
+    await world.ensure_granted_user(100)
+    monitor = RecordingVariantPolicyMonitor()
+    use_case, _sink, _reuse = _ports(
+        world, _Fakes(generator=FakeTextGenerator(), policy_monitor=monitor)
+    )
+    await use_case.execute(InlineComposeCommand(TelegramUserId(100), "нужно поговорить"))
+    assert monitor.repaired == []
 
 
 @pytest.mark.unit

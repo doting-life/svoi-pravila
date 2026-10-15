@@ -108,3 +108,14 @@ def test_invalid_output_labels_cover_reasons_slots_and_finish_reasons() -> None:
         assert labels.finish_reason_label(finish_reason) == finish_reason
     assert labels.finish_reason_label(None) == labels.NONE
     assert labels.finish_reason_label("surprise") == labels.OTHER
+
+
+@pytest.mark.unit
+def test_repaired_defect_label_accepts_reason_and_reason_slot_only() -> None:
+    for reason in InvalidOutputReason:
+        assert labels.repaired_defect_label(reason.value) == reason.value
+        for kind in VariantKind:
+            label = f"{reason.value}:{kind.value}"
+            assert labels.repaired_defect_label(label) == label
+    assert labels.repaired_defect_label("empty_text:free-text") == labels.OTHER
+    assert labels.repaired_defect_label("free text") == labels.OTHER

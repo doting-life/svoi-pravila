@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from argparse import Namespace
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -41,11 +42,13 @@ from svoi_pravila.evals.rewrite_cases import (
     parse_rewrite_case,
 )
 from svoi_pravila.evals.rewrite_cli import async_main, main
+from svoi_pravila.evals.rewrite_gates import compute_metrics
 from svoi_pravila.evals.rewrite_report import render_report
 from svoi_pravila.evals.rewrite_run import (
     ModelEval,
     RewriteEvalParams,
     RewriteEvalResult,
+    RewriteRunRecord,
     RunOutcome,
     run_rewrite_eval,
 )
@@ -627,6 +630,53 @@ async def test_run_records_slot_and_finish_reason_of_invalid_attempts() -> None:
     report = render_report([ModelEval("m", result, 3)])
     assert "| a | 1 | 1 | empty_text:softer | stop |" in report
     assert "| a | 1 | 2 | empty_text:check | none |" in report
+
+
+def _repaired_result(*labels: str) -> RewriteResult:
+    base = _result(*_GOOD_VARIANTS)
+    return replace(base, meta=replace(base.meta, repaired=labels))
+
+
+@pytest.mark.unit
+async def test_run_records_repaired_labels_and_the_report_shows_the_repair_rates() -> None:
+    repaired = FakeTextGenerator(rewrite_result=_repaired_result("empty_text:softer"))
+    failed = FakeTextGenerator()
+    failed.rewrite_error = InvalidGenerationOutput(
+        (InvalidOutputReason.VARIANT_KIND_SET, InvalidOutputReason.EMPTY_TEXT),
+        usage=TokenUsage(output=3),
+        attempts=2,
+        model="m",
+        prompt_version="p",
+    ).with_diagnostics((None, VariantKind.SOFTER), ("stop", "stop"))
+    clean = FakeTextGenerator(rewrite_result=_result(*_GOOD_VARIANTS))
+    records: list[RewriteRunRecord] = []
+    for gen in (repaired, failed, clean, clean):
+        outcome = await run_rewrite_eval(gen, [_case("a")], _params(), SpendTracker())
+        records.extend(outcome.records)
+    assert [r.repaired for r in records] == [("empty_text:softer",), (), (), ()]
+    report = render_report([ModelEval("m", RewriteEvalResult(records=records), 0)])
+    assert "- calls with a first-attempt defect: 2 of 4" in report
+    assert "- repaired by the second attempt (repair success rate): 1 / 2" in report
+    assert "| empty_text:softer | 1 | 25.0% |" in report
+    assert "| variant_kind_set | 1 | 25.0% |" in report
+
+
+@pytest.mark.unit
+async def test_repair_does_not_change_g9_which_counts_calls_that_still_failed() -> None:
+    gen = FakeTextGenerator(rewrite_result=_repaired_result("empty_text:softer"))
+    result = await run_rewrite_eval(gen, [_case("a")], _params(), SpendTracker())
+    metrics = compute_metrics(result.records)
+    assert metrics.unusable_share == 0.0
+    assert metrics.ok_runs == 1
+
+
+@pytest.mark.unit
+async def test_report_without_first_attempt_defects_has_no_repair_success_rate() -> None:
+    gen = FakeTextGenerator(rewrite_result=_result(*_GOOD_VARIANTS))
+    result = await run_rewrite_eval(gen, [_case("a")], _params(), SpendTracker())
+    report = render_report([ModelEval("m", result, 0)])
+    assert "- calls with a first-attempt defect: 0 of 1" in report
+    assert "- repaired by the second attempt (repair success rate): n/a" in report
 
 
 @pytest.mark.unit

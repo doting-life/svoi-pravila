@@ -128,6 +128,46 @@ def _gates(item: ModelEval, baseline: Baseline | None, *, judge_calibrated: bool
     ]
 
 
+def _first_attempt_defect(record: RewriteRunRecord) -> str | None:
+    """``reason[:slot]`` of the call's first-attempt defect, if it had one.
+
+    A repaired call carries it in ``repaired``; a call that failed on both attempts in the
+    first diagnostic. A call that ended unavailable or refused has none recorded.
+    """
+    if record.repaired:
+        return record.repaired[0]
+    if record.diagnostics:
+        return record.diagnostics[0].reason
+    return None
+
+
+def _repair(records: list[RewriteRunRecord]) -> list[str]:
+    """First-attempt defect rate per reason and slot, and the repair success rate."""
+    counted = [r for r in records if r.outcome is not RunOutcome.UNAVAILABLE]
+    defects = Counter(label for r in counted if (label := _first_attempt_defect(r)) is not None)
+    total = sum(defects.values())
+    repaired = sum(1 for r in counted if r.repaired)
+    success = f"{repaired} / {total}" if total else "n/a"
+    return [
+        "### Corrective retry",
+        "",
+        "Denominators: the defect rate is over all calls except unavailable (as G9); the repair "
+        "success rate is over the calls whose first attempt had a defect. G9 still counts the "
+        "calls that failed after the repair.",
+        "",
+        f"- calls with a first-attempt defect: {total} of {len(counted)}",
+        f"- repaired by the second attempt (repair success rate): {success}",
+        "",
+        "| first-attempt defect (reason[:slot]) | calls | rate |",
+        "|---|---:|---:|",
+        *(
+            f"| {label} | {count} | {count / len(counted):.1%} |"
+            for label, count in sorted(defects.items())
+        ),
+        "",
+    ]
+
+
 def _flagged(records: list[RewriteRunRecord]) -> list[str]:
     """J6 listing: every slot the judge flagged as not clean, with its text."""
     lines = [
@@ -274,6 +314,7 @@ def render_report(
                 ),
                 *_effect(records),
                 *_gates(item, baseline, judge_calibrated=judge_calibrated),
+                *_repair(records),
                 *_flagged(records),
                 *_refusals(records),
                 *_invalid_diagnostics(records),

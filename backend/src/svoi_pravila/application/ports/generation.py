@@ -144,13 +144,18 @@ class TokenUsage:
 
 @dataclass(frozen=True, slots=True)
 class GenerationMeta:
-    """Non-text metadata about a generation call."""
+    """Non-text metadata about a generation call.
+
+    ``repaired`` lists the C0 labels (``reason`` or ``reason:slot``) of the first-attempt
+    defects the second attempt repaired; never text.
+    """
 
     model: str
     prompt_version: str
     latency_ms: int
     attempts: int
     usage: TokenUsage
+    repaired: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

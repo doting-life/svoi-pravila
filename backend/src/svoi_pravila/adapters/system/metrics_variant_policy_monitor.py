@@ -10,6 +10,7 @@ from svoi_pravila.observability.metrics.labels import (
     finish_reason_label,
     invalid_reason_label,
     policy_rule_label,
+    repaired_defect_label,
     variant_kind_label,
     variant_slot_label,
 )
@@ -36,6 +37,10 @@ class MetricsVariantPolicyMonitor:
             slot=variant_slot_label(slot),
             finish_reason=finish_reason_label(finish_reason),
         ).inc()
+
+    def record_repaired(self, defect: str) -> None:
+        """Count one first-attempt defect repaired by the second attempt."""
+        families.VARIANT_REPAIRED.labels(defect=repaired_defect_label(defect)).inc()
 
     def record_check_empty(self) -> None:
         """Count one answer whose ``check`` slot was empty."""

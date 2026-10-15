@@ -90,7 +90,8 @@ class RewriteRunRecord:
 
     A usable call is judged when a judge is configured: ``judgement`` holds its verdicts, or
     ``judge_failed`` is set when the judge call produced none. ``billable_tokens`` covers both
-    calls.
+    calls. ``repaired`` holds the ``reason[:slot]`` labels of first-attempt defects the second
+    attempt repaired.
     """
 
     case_id: str
@@ -104,6 +105,7 @@ class RewriteRunRecord:
     billable_tokens: int
     diagnostics: tuple[InvalidDiagnostic, ...] = ()
     check_empty: bool = False
+    repaired: tuple[str, ...] = ()
     judgement: RunJudgement | None = None
     judge_failed: bool = False
 
@@ -231,6 +233,7 @@ async def _call(
         latency_ms=result.meta.latency_ms,
         billable_tokens=result.meta.usage.billable,
         check_empty=check_empty,
+        repaired=result.meta.repaired,
     )
 
 

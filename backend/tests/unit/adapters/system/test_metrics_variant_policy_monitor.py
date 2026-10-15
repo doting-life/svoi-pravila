@@ -72,3 +72,17 @@ def test_record_check_empty_increments_its_unlabelled_counter() -> None:
     before = REGISTRY.get_sample_value("sp_variant_check_empty_total") or 0.0
     MetricsVariantPolicyMonitor().record_check_empty()
     assert REGISTRY.get_sample_value("sp_variant_check_empty_total") == before + 1
+
+
+@pytest.mark.unit
+def test_record_repaired_counts_the_defect_label_and_coerces_unknown_values() -> None:
+    def count(defect: str) -> float:
+        return REGISTRY.get_sample_value("sp_variant_repaired_total", {"defect": defect}) or 0.0
+
+    known = count("empty_text:softer")
+    unknown = count("other")
+    monitor = MetricsVariantPolicyMonitor()
+    monitor.record_repaired("empty_text:softer")
+    monitor.record_repaired("not a label")
+    assert count("empty_text:softer") == known + 1
+    assert count("other") == unknown + 1

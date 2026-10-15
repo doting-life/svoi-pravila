@@ -47,7 +47,7 @@ from svoi_pravila.application.use_cases.inline_compose import (
 )
 from svoi_pravila.application.use_cases.issue_compose_handoff import IssueComposeHandoffCommand
 from svoi_pravila.application.use_cases.record_inline_choice import RecordInlineChoiceCommand
-from svoi_pravila.domain.enums import UsageScenario
+from svoi_pravila.domain.enums import UsageScenario, VariantKind
 from svoi_pravila.domain.ids import TelegramUserId
 from svoi_pravila.limits import load_limits_catalog
 from svoi_pravila.limits.catalog import format_reset_hhmm
@@ -56,6 +56,13 @@ _PREVIEW_MAX = 256
 _INLINE_TITLE_MAX = 64
 _LIMIT_CACHE_SECONDS = 10
 _PREPARED_PURPOSE = "prepared"
+# Presentation order of rewrite results: softer, firmer, check (ADR-0016 §6). The use case
+# and the port keep their own order; the Mini App has its own.
+_INLINE_RESULT_ORDER: tuple[VariantKind, ...] = (
+    VariantKind.SOFTER,
+    VariantKind.FIRMER,
+    VariantKind.CHECK,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -253,7 +260,7 @@ async def _answer_compose_result(
         articles = _articles(
             tg_deps,
             result.scenario,
-            result.variants,
+            _in_inline_order(result.variants),
         )
         button = await _compose_handoff_button(query, tg_deps)
         if not articles:
@@ -365,6 +372,11 @@ def _articles(
             )
         )
     return articles
+
+
+def _in_inline_order(variants: tuple[Variant, ...]) -> tuple[Variant, ...]:
+    """Rewrite variants in the inline presentation order (stable for equal kinds)."""
+    return tuple(sorted(variants, key=lambda variant: _INLINE_RESULT_ORDER.index(variant.kind)))
 
 
 def _preview(text: str) -> str:

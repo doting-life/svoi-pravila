@@ -200,6 +200,8 @@ class AnalysisPhase:
             leak = prompt_leak_reason(
                 (buffer,),
                 windows=system_prompt_windows(self._params.prepared.system),
+                marker=self._params.prepared.boundary_marker,
+                untrusted=self._params.prepared.untrusted,
             )
             defect = leak if leak is not None else analysis_reason(buffer)
             if defect is not None:

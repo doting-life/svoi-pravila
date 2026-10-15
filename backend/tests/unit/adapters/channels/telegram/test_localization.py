@@ -35,6 +35,14 @@ def test_load_ru_strings_succeeds() -> None:
 
 
 @pytest.mark.unit
+def test_help_inline_lists_variants_in_inline_order() -> None:
+    assert load_ru_strings().help_inline == (
+        "В любом чате наберите @бота и черновик — бот предложит три варианта: "
+        "«Мягче», «Твёрже» и «Проверить»."
+    )
+
+
+@pytest.mark.unit
 def test_load_ru_strings_missing_key_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     broken = tmp_path / "ru.json"
     broken.write_text(json.dumps({"dm.welcome": "x"}), encoding="utf-8")

@@ -13,6 +13,7 @@ class RecordingVariantPolicyMonitor:
     def __init__(self) -> None:
         self.records: list[tuple[VariantKind, PolicyRule]] = []
         self.invalid: list[tuple[InvalidOutputReason, VariantKind | None, str | None]] = []
+        self.repaired: list[str] = []
         self.check_empty = 0
 
     def record(self, kind: VariantKind, rule: PolicyRule) -> None:
@@ -25,6 +26,9 @@ class RecordingVariantPolicyMonitor:
         finish_reason: str | None,
     ) -> None:
         self.invalid.append((reason, slot, finish_reason))
+
+    def record_repaired(self, defect: str) -> None:
+        self.repaired.append(defect)
 
     def record_check_empty(self) -> None:
         self.check_empty += 1

@@ -6,8 +6,8 @@ rules, which restate the judge prompt; a label that breaks one is a defect of th
 * R1 ``meaning_kept`` is ``no`` only when the draft's action or position is lost, inverted or
   weakened: a refusal becomes "cannot", "maybe", "probably" or conditional; a demand becomes a
   wish or a suggestion; a boundary becomes a wish; regret becomes blame; the addressee or the
-  subject changes. Additions alone do not change meaning: insults go to ``clean``, new content
-  to ``invented``, a broken goal to ``goal_done``.
+  subject changes (including the author's grammatical gender). Additions alone do not change
+  meaning: insults go to ``clean``, new content to ``invented``, a broken goal to ``goal_done``.
 * R2 ``invented`` is ``yes`` for new facts, motives ("on purpose", "you do not care about me"),
   conditions, deadlines, promises, threats, prohibitions, ultimatums and participants. It is not
   ``yes`` for softeners and hedges, a named feeling in place of a rude word, insults (they are

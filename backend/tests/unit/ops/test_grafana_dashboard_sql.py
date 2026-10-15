@@ -66,6 +66,7 @@ def test_dashboard_sql_references_only_aggregate_tables() -> None:
 
 
 _ROW_TITLE = "Отчёт программы"
+_SECOND_ROW_TITLE = "Продукт и качество"
 _REPORT_PANELS = (
     ("stat", "Прошли целевой сценарий, всего"),
     ("stat", "Вызовы LLM на активного пользователя"),
@@ -78,6 +79,7 @@ _REPORT_PANELS = (
     ("timeseries", "Пиковые TPM и TPS"),
     ("table", "Сводка по дням"),
 )
+_EXISTING_START = 2 + len(_REPORT_PANELS)
 _EXISTING_PANELS = (
     (1, "DAU (активные пользователи)"),
     (2, "Обращения"),
@@ -148,10 +150,15 @@ def _by_title(title: str, panel_type: str) -> dict[str, object]:
 
 
 @pytest.mark.unit
-def test_program_report_row_comes_first_with_panels_in_order() -> None:
+def test_exactly_two_rows_report_first_and_product_second() -> None:
     panels = _panels()
-    row = panels[0]
-    assert (row["type"], row["title"], row["collapsed"]) == ("row", _ROW_TITLE, False)
+    rows = [panel for panel in panels if panel["type"] == "row"]
+    assert [(row["title"], row["collapsed"]) for row in rows] == [
+        (_ROW_TITLE, False),
+        (_SECOND_ROW_TITLE, False),
+    ]
+    assert panels[0] is rows[0]
+    assert panels[1 + len(_REPORT_PANELS)] is rows[1]
     assert [(panel["type"], panel["title"]) for panel in _report_panels()] == list(_REPORT_PANELS)
 
 
@@ -160,28 +167,38 @@ def test_panel_ids_are_unique_and_existing_ones_keep_id_and_order() -> None:
     panels = _panels()
     ids = [panel["id"] for panel in panels]
     assert len(set(ids)) == len(ids)
-    existing = panels[1 + len(_REPORT_PANELS) :]
+    existing = panels[_EXISTING_START:]
     assert [(panel["id"], panel["title"]) for panel in existing] == list(_EXISTING_PANELS)
-    new_ids = ids[: 1 + len(_REPORT_PANELS)]
+    new_ids = ids[:_EXISTING_START]
     assert all(isinstance(item, int) and item >= 15 for item in new_ids)
 
 
 @pytest.mark.unit
-def test_existing_panels_sit_directly_below_the_report_row() -> None:
+def test_every_panel_sits_below_its_row_in_order() -> None:
     panels = _panels()
     report_bottom = max(
         _grid(panel, "y") + _grid(panel, "h") for panel in panels[: 1 + len(_REPORT_PANELS)]
     )
-    existing = panels[1 + len(_REPORT_PANELS) :]
-    assert min(_grid(panel, "y") for panel in existing) == report_bottom
+    second_row = panels[1 + len(_REPORT_PANELS)]
+    assert _grid(second_row, "y") == report_bottom
+    assert _grid(second_row, "h") == 1
+    existing = panels[_EXISTING_START:]
+    assert min(_grid(panel, "y") for panel in existing) == report_bottom + 1
 
 
 @pytest.mark.unit
-def test_report_panels_filter_by_the_selected_period() -> None:
+def test_report_panels_filter_by_the_time_picker_with_time_filter() -> None:
     for panel in _report_panels():
         sql = _sql(panel)
-        assert "$__timeFrom()" in sql, panel["title"]
-        assert "$__timeTo()" in sql, panel["title"]
+        assert "$__timeFilter(day)" in sql, panel["title"]
+        assert "$__timeFrom()" not in sql, panel["title"]
+        assert "$__timeTo()" not in sql, panel["title"]
+
+
+@pytest.mark.unit
+def test_target_users_stat_takes_the_last_day_inside_the_filter() -> None:
+    sql = _sql(_by_title("Прошли целевой сценарий, всего", "stat"))
+    assert "WHERE $__timeFilter(day)\nORDER BY day DESC\nLIMIT 1" in sql
 
 
 @pytest.mark.unit

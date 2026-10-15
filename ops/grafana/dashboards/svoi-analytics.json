@@ -101,7 +101,7 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT target_users_total AS \"Прошли целевой сценарий, всего\"\nFROM analytics_daily\nWHERE day BETWEEN $__timeFrom()::date AND $__timeTo()::date\nORDER BY day DESC\nLIMIT 1"
+          "rawSql": "SELECT target_users_total AS \"Прошли целевой сценарий, всего\"\nFROM analytics_daily\nWHERE $__timeFilter(day)\nORDER BY day DESC\nLIMIT 1"
         }
       ]
     },
@@ -171,7 +171,7 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT SUM(llm_calls)::double precision / NULLIF(SUM(active_users), 0) AS \"Вызовы LLM / DAU\"\nFROM analytics_daily\nWHERE day BETWEEN $__timeFrom()::date AND $__timeTo()::date"
+          "rawSql": "SELECT SUM(llm_calls)::double precision / NULLIF(SUM(active_users), 0) AS \"Вызовы LLM / DAU\"\nFROM analytics_daily\nWHERE $__timeFilter(day)"
         }
       ]
     },
@@ -241,7 +241,7 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT SUM(llm_cost_rub)::double precision / NULLIF(SUM(appeals), 0) AS \"LLM-cost на целевое действие, ₽\"\nFROM analytics_daily\nWHERE day BETWEEN $__timeFrom()::date AND $__timeTo()::date"
+          "rawSql": "SELECT SUM(llm_cost_rub)::double precision / NULLIF(SUM(appeals), 0) AS \"LLM-cost на целевое действие, ₽\"\nFROM analytics_daily\nWHERE $__timeFilter(day)"
         }
       ]
     },
@@ -311,7 +311,7 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT SUM(llm_cost_rub)::double precision AS \"LLM-cost за период, ₽\"\nFROM analytics_daily\nWHERE day BETWEEN $__timeFrom()::date AND $__timeTo()::date"
+          "rawSql": "SELECT SUM(llm_cost_rub)::double precision AS \"LLM-cost за период, ₽\"\nFROM analytics_daily\nWHERE $__timeFilter(day)"
         }
       ]
     },
@@ -384,7 +384,7 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT COUNT(DISTINCT model) AS \"Модели без цены\"\nFROM analytics_daily_llm\nWHERE day BETWEEN $__timeFrom()::date AND $__timeTo()::date\n  AND price_rub_per_1k IS NULL"
+          "rawSql": "SELECT COUNT(DISTINCT model) AS \"Модели без цены\"\nFROM analytics_daily_llm\nWHERE $__timeFilter(day)\n  AND price_rub_per_1k IS NULL"
         }
       ]
     },
@@ -439,7 +439,7 @@
           },
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  day AS \"time\",\n  scenario AS metric,\n  SUM(cost_rub)::double precision AS value\nFROM analytics_daily_llm\nWHERE day BETWEEN $__timeFrom()::date AND $__timeTo()::date\nGROUP BY day, scenario\nORDER BY day"
+          "rawSql": "SELECT\n  day AS \"time\",\n  scenario AS metric,\n  SUM(cost_rub)::double precision AS value\nFROM analytics_daily_llm\nWHERE $__timeFilter(day)\nGROUP BY day, scenario\nORDER BY day"
         }
       ]
     },
@@ -490,7 +490,7 @@
           },
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  day AS \"time\",\n  llm_calls::double precision / NULLIF(active_users, 0) AS \"Вызовы LLM / DAU\"\nFROM analytics_daily\nWHERE day BETWEEN $__timeFrom()::date AND $__timeTo()::date\nORDER BY day"
+          "rawSql": "SELECT\n  day AS \"time\",\n  llm_calls::double precision / NULLIF(active_users, 0) AS \"Вызовы LLM / DAU\"\nFROM analytics_daily\nWHERE $__timeFilter(day)\nORDER BY day"
         }
       ]
     },
@@ -541,7 +541,7 @@
           },
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  day AS \"time\",\n  llm_cost_rub::double precision / NULLIF(appeals, 0) AS \"LLM-cost на целевое действие\"\nFROM analytics_daily\nWHERE day BETWEEN $__timeFrom()::date AND $__timeTo()::date\nORDER BY day"
+          "rawSql": "SELECT\n  day AS \"time\",\n  llm_cost_rub::double precision / NULLIF(appeals, 0) AS \"LLM-cost на целевое действие\"\nFROM analytics_daily\nWHERE $__timeFilter(day)\nORDER BY day"
         }
       ]
     },
@@ -604,7 +604,7 @@
           },
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "SELECT\n  day AS \"time\",\n  peak_tpm AS \"Пиковый TPM\",\n  peak_tps AS \"Пиковый TPS\"\nFROM analytics_daily_load\nWHERE day BETWEEN $__timeFrom()::date AND $__timeTo()::date\nORDER BY day"
+          "rawSql": "SELECT\n  day AS \"time\",\n  peak_tpm AS \"Пиковый TPM\",\n  peak_tps AS \"Пиковый TPS\"\nFROM analytics_daily_load\nWHERE $__timeFilter(day)\nORDER BY day"
         }
       ]
     },
@@ -643,9 +643,22 @@
           },
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  day,\n  active_users AS dau,\n  new_users,\n  target_users_total,\n  appeals AS target_actions,\n  ROUND(appeals::numeric / NULLIF(active_users, 0), 2) AS target_actions_per_dau,\n  generations,\n  generation_errors,\n  ROUND(generation_errors::numeric / NULLIF(generations, 0), 2) AS error_rate,\n  users_limited,\n  llm_calls,\n  ROUND(llm_calls::numeric / NULLIF(active_users, 0), 2) AS llm_calls_per_active_user,\n  billable_tokens,\n  ROUND(llm_cost_rub, 2) AS llm_cost_rub,\n  ROUND(llm_cost_rub / NULLIF(appeals, 0), 2) AS llm_cost_per_target_action_rub\nFROM analytics_daily\nWHERE day BETWEEN $__timeFrom()::date AND $__timeTo()::date\nORDER BY day"
+          "rawSql": "SELECT\n  day,\n  active_users AS dau,\n  new_users,\n  target_users_total,\n  appeals AS target_actions,\n  ROUND(appeals::numeric / NULLIF(active_users, 0), 2) AS target_actions_per_dau,\n  generations,\n  generation_errors,\n  ROUND(generation_errors::numeric / NULLIF(generations, 0), 2) AS error_rate,\n  users_limited,\n  llm_calls,\n  ROUND(llm_calls::numeric / NULLIF(active_users, 0), 2) AS llm_calls_per_active_user,\n  billable_tokens,\n  ROUND(llm_cost_rub, 2) AS llm_cost_rub,\n  ROUND(llm_cost_rub / NULLIF(appeals, 0), 2) AS llm_cost_per_target_action_rub\nFROM analytics_daily\nWHERE $__timeFilter(day)\nORDER BY day"
         }
       ]
+    },
+    {
+      "id": 26,
+      "type": "row",
+      "title": "Продукт и качество",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "panels": []
     },
     {
       "id": 1,
@@ -655,7 +668,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 31
+        "y": 32
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -705,7 +718,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 31
+        "y": 32
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -755,7 +768,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 39
+        "y": 40
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -817,7 +830,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 39
+        "y": 40
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -867,7 +880,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 47
+        "y": 48
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -930,7 +943,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 47
+        "y": 48
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -993,7 +1006,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 55
+        "y": 56
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -1047,7 +1060,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 65
+        "y": 66
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -1097,7 +1110,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 65
+        "y": 66
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -1159,7 +1172,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 73
+        "y": 74
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -1221,7 +1234,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 83
+        "y": 84
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -1275,7 +1288,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 93
+        "y": 94
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -1329,7 +1342,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 103
+        "y": 104
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -1407,7 +1420,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 103
+        "y": 104
       },
       "datasource": {
         "type": "grafana-postgresql-datasource",

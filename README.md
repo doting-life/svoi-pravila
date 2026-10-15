@@ -161,7 +161,9 @@ The analytics dashboard opens with the row «Отчёт программы»: ta
 On a server the same command runs in the production compose project with the output directory mounted:
 
 ```sh
-docker compose … run --rm -v "$PWD/out:/out" --entrypoint svoi-pravila-analytics api \
+mkdir -p out
+docker compose … run --rm --user "$(id -u):$(id -g)" -v "$PWD/out:/out" \
+  --entrypoint svoi-pravila-analytics api \
   export --from YYYY-MM-DD --to YYYY-MM-DD --out-dir /out
 ```
 

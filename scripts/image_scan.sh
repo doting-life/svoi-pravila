@@ -48,9 +48,14 @@ scan_with_exceptions() {
 
 scan_blocking svoi-pravila:ci
 scan_blocking svoi-pravila-miniapp:ci
-# Built Grafana image (plugin baked in); not the upstream base alone.
+# Built Grafana image (plugins baked in); not the upstream base alone. Grafana is reachable
+# from the internet: exceptions apply only to the datasource plugin binaries (target_prefix).
 scan_with_exceptions grafana svoi-pravila-grafana:ci
 scan_blocking svoi-pravila-backup:ci
-# Upstream Prometheus (digest-pinned in compose / image-pins.env).
+# Upstream internal images (digest-pinned in image-pins.env); timed exceptions allowed (ADR-0012).
 docker pull "$PROMETHEUS_IMAGE"
 scan_with_exceptions prometheus "$PROMETHEUS_IMAGE"
+docker pull "$ALERTMANAGER_IMAGE"
+scan_with_exceptions alertmanager "$ALERTMANAGER_IMAGE"
+docker pull "$NODE_EXPORTER_IMAGE"
+scan_with_exceptions node-exporter "$NODE_EXPORTER_IMAGE"

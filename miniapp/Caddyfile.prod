@@ -13,6 +13,34 @@ http://{$SP_DOMAIN} {
 	redir https://{$SP_DOMAIN}{uri} permanent
 }
 
+http://{$SP_GRAFANA_DOMAIN} {
+	redir https://{$SP_GRAFANA_DOMAIN}{uri} permanent
+}
+
+# Grafana (ADR-0017). It sends its own Content-Security-Policy. X-Forwarded-For from clients is
+# not trusted: there is no trusted_proxies setting, so Caddy replaces the header.
+{$SP_GRAFANA_DOMAIN} {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Referrer-Policy "same-origin"
+		X-Content-Type-Options "nosniff"
+		-Server
+	}
+
+	request_body {
+		max_size 1MB
+	}
+
+	@metrics path /metrics /metrics/*
+	handle @metrics {
+		respond 404
+	}
+
+	handle {
+		reverse_proxy grafana:3000
+	}
+}
+
 {$SP_DOMAIN} {
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"

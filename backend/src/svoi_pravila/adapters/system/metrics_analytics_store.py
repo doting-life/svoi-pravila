@@ -66,7 +66,7 @@ class MetricsAnalyticsStore:
         if status not in TERMINAL_ANALYTICS_STATUSES:
             return
         families.ANALYTICS_JOB_RUNS.labels(
-            job=analytics_job_label(run.job),
+            analytics_job=analytics_job_label(run.job),
             status=status,
         ).inc()
 

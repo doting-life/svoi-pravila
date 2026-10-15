@@ -1,0 +1,216 @@
+# Alert rules (ADR-0017 §5, task 0049). Texts are Russian: the owners read them in Telegram.
+# Annotations carry no free-form label values, only enum labels (scenario, kind, mountpoint, job).
+# Every alert has `runbook` = its name; deploy/RUNBOOK.md «Алерты» has one subsection per name.
+groups:
+  - name: svoi-availability
+    rules:
+      - alert: SpApiDown
+        expr: up{job="api"} == 0 or absent(up{job="api"})
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "API недоступен"
+          description: "Prometheus не получает метрики API: бот и мини-приложение могут не работать."
+          runbook: SpApiDown
+
+      - alert: SpNodeExporterDown
+        expr: up{job="node"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Метрики сервера недоступны"
+          description: "node-exporter не отвечает, алерты по диску и памяти сейчас не работают."
+          runbook: SpNodeExporterDown
+
+  - name: svoi-llm
+    rules:
+      - alert: SpLlmBudget80
+        expr: sp_llm_budget_spent_tokens / sp_llm_budget_tokens >= 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Израсходовано 80% дневного бюджета LLM"
+          description: "Потрачено {{ $value | humanizePercentage }} дневного бюджета токенов."
+          runbook: SpLlmBudget80
+
+      - alert: SpLlmBudgetExhausted
+        expr: sp_llm_budget_spent_tokens / sp_llm_budget_tokens >= 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Дневной бюджет LLM исчерпан"
+          description: "Потрачено {{ $value | humanizePercentage }} дневного бюджета токенов, новые запросы к LLM отклоняются."
+          runbook: SpLlmBudgetExhausted
+
+      - alert: SpLlmSpendSpike
+        expr: >-
+          sum(increase(sp_llm_tokens_total{kind="billable"}[1h]))
+          >= 0.25 * max(sp_llm_budget_tokens)
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Всплеск расхода токенов LLM"
+          description: "За последний час потрачено {{ $value | humanize }} токенов, это не меньше четверти дневного бюджета."
+          runbook: SpLlmSpendSpike
+
+      - alert: SpLlmErrorRatio
+        expr: >-
+          sum(increase(sp_usage_events_total{outcome=~"unavailable|invalid_output"}[15m]))
+          / sum(increase(sp_usage_events_total[15m])) > 0.10
+          and sum(increase(sp_usage_events_total[15m])) >= 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Много сбоев LLM"
+          description: "Доля запросов с недоступным LLM или невалидным ответом за 15 минут: {{ $value | humanizePercentage }}."
+          runbook: SpLlmErrorRatio
+
+      - alert: SpRewriteLatencyHigh
+        expr: >-
+          histogram_quantile(0.95, sum by (le) (rate(sp_llm_request_duration_seconds_bucket{scenario="rewrite",outcome="ok"}[15m]))) > 3
+          and sum(increase(sp_llm_request_duration_seconds_count{scenario="rewrite",outcome="ok"}[15m])) >= 20
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Медленный ответ «Переписать»"
+          description: "95-й процентиль времени ответа «Переписать» за 15 минут: {{ $value | humanizeDuration }}."
+          runbook: SpRewriteLatencyHigh
+
+      - alert: SpDecodeTtfcHigh
+        expr: >-
+          histogram_quantile(0.95, sum by (le) (rate(sp_llm_ttfc_seconds_bucket{scenario="decode"}[15m]))) > 2
+          and sum(increase(sp_llm_ttfc_seconds_count{scenario="decode"}[15m])) >= 10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Медленный первый ответ «Расшифровать»"
+          description: "95-й процентиль времени до первого фрагмента «Расшифровать» за 15 минут: {{ $value | humanizeDuration }}."
+          runbook: SpDecodeTtfcHigh
+
+  - name: svoi-api
+    rules:
+      - alert: SpHttp5xxRatio
+        expr: >-
+          sum(increase(sp_http_request_duration_seconds_count{status_class="5xx"}[10m]))
+          / sum(increase(sp_http_request_duration_seconds_count[10m])) > 0.05
+          and sum(increase(sp_http_request_duration_seconds_count[10m])) >= 50
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Много ошибок 5xx в API"
+          description: "Доля ответов 5xx за 10 минут: {{ $value | humanizePercentage }}."
+          runbook: SpHttp5xxRatio
+
+      - alert: SpEventLoopLag
+        expr: >-
+          histogram_quantile(0.95, sum by (le) (rate(sp_event_loop_lag_seconds_bucket[5m]))) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Задержки цикла событий API"
+          description: "95-й процентиль задержки цикла событий за 5 минут: {{ $value | humanizeDuration }}."
+          runbook: SpEventLoopLag
+
+      - alert: SpCacheErrors
+        expr: increase(sp_cache_errors_total[10m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Ошибки кэша Valkey"
+          description: "За 10 минут были ошибки кэша (тип {{ $labels.kind }}): {{ $value | humanize }}."
+          runbook: SpCacheErrors
+
+  - name: svoi-analytics
+    rules:
+      - alert: SpAnalyticsJobFailed
+        expr: increase(sp_analytics_job_runs_total{status="failed"}[2h]) > 0
+        for: 0m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Сбой расчёта аналитики"
+          description: "Задача {{ $labels.analytics_job }} завершилась с ошибкой за последние 2 часа."
+          runbook: SpAnalyticsJobFailed
+
+  - name: svoi-backup
+    rules:
+      - alert: SpBackupFailed
+        expr: sp_backup_last_run_success{kind="daily"} == 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Ежедневный бэкап не удался"
+          description: "Последний запуск ежедневного бэкапа ({{ $labels.kind }}) завершился ошибкой."
+          runbook: SpBackupFailed
+
+      - alert: SpBackupStale
+        expr: time() - sp_backup_last_success_timestamp_seconds{kind="daily"} > 26 * 3600
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Давно не было успешного бэкапа"
+          description: "Последний успешный ежедневный бэкап был {{ $value | humanizeDuration }} назад."
+          runbook: SpBackupStale
+
+      # `data: missing` keeps the two SpBackupStale rules distinct for `promtool check rules`.
+      - alert: SpBackupStale
+        expr: absent(sp_backup_last_success_timestamp_seconds{kind="daily"})
+        for: 26h
+        labels:
+          severity: critical
+          data: missing
+        annotations:
+          summary: "Давно не было успешного бэкапа"
+          description: "Нет данных об успешном ежедневном бэкапе."
+          runbook: SpBackupStale
+
+  - name: svoi-host
+    rules:
+      - alert: SpDiskSpaceLow
+        expr: >-
+          node_filesystem_avail_bytes{fstype=~"ext4|xfs|btrfs"}
+          / node_filesystem_size_bytes{fstype=~"ext4|xfs|btrfs"} < 0.15
+          and node_filesystem_readonly{fstype=~"ext4|xfs|btrfs"} == 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Мало места на диске"
+          description: "На {{ $labels.mountpoint }} свободно {{ $value | humanizePercentage }}."
+          runbook: SpDiskSpaceLow
+
+      - alert: SpDiskSpaceCritical
+        expr: >-
+          node_filesystem_avail_bytes{fstype=~"ext4|xfs|btrfs"}
+          / node_filesystem_size_bytes{fstype=~"ext4|xfs|btrfs"} < 0.05
+          and node_filesystem_readonly{fstype=~"ext4|xfs|btrfs"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Диск почти заполнен"
+          description: "На {{ $labels.mountpoint }} свободно {{ $value | humanizePercentage }}."
+          runbook: SpDiskSpaceCritical
+
+      - alert: SpMemoryLow
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Мало свободной памяти"
+          description: "Доступно {{ $value | humanizePercentage }} оперативной памяти."
+          runbook: SpMemoryLow

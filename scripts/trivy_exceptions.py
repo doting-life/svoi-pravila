@@ -16,8 +16,12 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_EXCEPTIONS = ROOT / "ops" / "trivy-exceptions.yaml"
 
-ALLOWED_IMAGES = frozenset({"grafana", "prometheus"})
+ALLOWED_IMAGES = frozenset({"grafana", "prometheus", "alertmanager", "node-exporter"})
 FORBIDDEN_IMAGES = frozenset({"api", "miniapp", "backup"})
+# Grafana is reachable from the internet (ADR-0017): its exceptions are valid only for the
+# datasource plugin subprocesses, never for the server binary or OS / Node packages.
+SCOPED_IMAGES = frozenset({"grafana"})
+GRAFANA_PLUGIN_PREFIX = "usr/share/grafana/plugins/"
 MAX_EXCEPTION_DAYS = 30
 
 
@@ -29,6 +33,7 @@ class ExceptionEntry:
     image: str
     statement: str
     expires: date
+    target_prefix: str | None = None
 
 
 class ExceptionError(ValueError):
@@ -72,6 +77,7 @@ def load_exceptions(
         image = row.get("image")
         statement = row.get("statement")
         expires_raw = row.get("expires")
+        prefix_raw = row.get("target_prefix")
         if not isinstance(cve, str) or not cve.strip():
             raise ExceptionError(f"exceptions[{index}].cve is required")
         if not isinstance(image, str) or not image.strip():
@@ -88,6 +94,16 @@ def load_exceptions(
                 f"exceptions[{index}]: image {image!r} is not allowed "
                 f"(only {sorted(ALLOWED_IMAGES)})"
             )
+        if image in SCOPED_IMAGES:
+            if prefix_raw != GRAFANA_PLUGIN_PREFIX:
+                raise ExceptionError(
+                    f"exceptions[{index}]: image {image!r} requires "
+                    f"target_prefix {GRAFANA_PLUGIN_PREFIX!r}"
+                )
+        elif prefix_raw is not None:
+            raise ExceptionError(
+                f"exceptions[{index}]: target_prefix is only allowed for {sorted(SCOPED_IMAGES)}"
+            )
         expires = _parse_date(expires_raw)
         if expires < day:
             raise ExceptionError(
@@ -103,25 +119,39 @@ def load_exceptions(
                 image=image.strip(),
                 statement=statement.strip(),
                 expires=expires,
+                target_prefix=prefix_raw,
             )
         )
     return tuple(out)
 
 
-def ignored_cves(entries: tuple[ExceptionEntry, ...], image: str) -> frozenset[str]:
-    """CVE ids ignored for the logical image name."""
-    return frozenset(entry.cve for entry in entries if entry.image == image)
+def is_ignored(
+    entries: tuple[ExceptionEntry, ...],
+    *,
+    image: str,
+    cve: str,
+    target: str,
+) -> bool:
+    """True when an exception for the image covers this CVE in this Trivy result target."""
+    return any(
+        entry.image == image
+        and entry.cve == cve
+        and (entry.target_prefix is None or target.startswith(entry.target_prefix))
+        for entry in entries
+    )
 
 
-def finding_ids(report: dict[str, Any]) -> list[str]:
-    """Collect VulnerabilityID values from a Trivy JSON image report."""
-    ids: list[str] = []
+def findings(report: dict[str, Any]) -> list[tuple[str, str]]:
+    """Collect (VulnerabilityID, Target) pairs from a Trivy JSON image report."""
+    found: list[tuple[str, str]] = []
     results = report.get("Results")
     if not isinstance(results, list):
-        return ids
+        return found
     for result in results:
         if not isinstance(result, dict):
             continue
+        target = result.get("Target")
+        target_name = target if isinstance(target, str) else ""
         vulns = result.get("Vulnerabilities")
         if not isinstance(vulns, list):
             continue
@@ -130,8 +160,13 @@ def finding_ids(report: dict[str, Any]) -> list[str]:
                 continue
             vid = vuln.get("VulnerabilityID")
             if isinstance(vid, str) and vid:
-                ids.append(vid)
-    return ids
+                found.append((vid, target_name))
+    return found
+
+
+def finding_ids(report: dict[str, Any]) -> list[str]:
+    """Collect VulnerabilityID values from a Trivy JSON image report."""
+    return [cve for cve, _target in findings(report)]
 
 
 def remaining_findings(
@@ -141,8 +176,11 @@ def remaining_findings(
     entries: tuple[ExceptionEntry, ...],
 ) -> list[str]:
     """Return CVE ids that are not covered by an exception for this image."""
-    ignored = ignored_cves(entries, image)
-    return [cve for cve in finding_ids(report) if cve not in ignored]
+    return [
+        cve
+        for cve, target in findings(report)
+        if not is_ignored(entries, image=image, cve=cve, target=target)
+    ]
 
 
 def main(argv: list[str] | None = None) -> int:

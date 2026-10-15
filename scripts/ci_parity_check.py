@@ -25,7 +25,7 @@ INTERNAL_JOB_FNS = frozenset({"workflow", "toolchain"})
 PUBLISH_JOB = "publish"
 PUBLISH_IF = "github.event_name == 'push' && github.ref == 'refs/heads/master'"
 PUBLISH_NEEDS = frozenset(
-    {"backend", "miniapp", "secrets", "image", "stack-smoke", "prod-smoke"},
+    {"backend", "miniapp", "secrets", "image", "ops", "stack-smoke", "prod-smoke"},
 )
 PUBLISH_PERMISSIONS = {"packages": "write", "contents": "read"}
 

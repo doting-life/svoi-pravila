@@ -50,8 +50,8 @@ async def test_metrics_analytics_store_skips_running_and_counts_terminal() -> No
         rows_affected=3,
         error_kind=None,
     )
-    before = _sample({"job": "purge", "status": "succeeded"})
+    before = _sample({"analytics_job": "purge", "status": "succeeded"})
     await store.record_run(running)
-    assert _sample({"job": "purge", "status": "succeeded"}) == before
+    assert _sample({"analytics_job": "purge", "status": "succeeded"}) == before
     await store.record_run(succeeded)
-    assert _sample({"job": "purge", "status": "succeeded"}) == before + 1.0
+    assert _sample({"analytics_job": "purge", "status": "succeeded"}) == before + 1.0

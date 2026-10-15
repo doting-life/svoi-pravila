@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from tests.fakes.judge import JUDGE_USAGE, FakeRewriteJudge, judge_result, slot
+from tests.fakes.judge import JUDGE_USAGE, FakeRewriteJudge, judge_result, observation_of, slot
 
 from svoi_pravila.application.errors import (
     GenerationRefusedByProvider,
@@ -33,6 +34,7 @@ from svoi_pravila.evals.judge_calibration import (
     defect_value,
     disagreements,
     judge_is_calibrated,
+    judge_request,
     render_calibration_report,
     run_calibration,
     write_calibration,
@@ -286,6 +288,29 @@ async def test_run_calibration_judges_every_item_once_and_counts_spend() -> None
 
 
 @pytest.mark.unit
+async def test_run_calibration_derives_the_verdicts_and_the_report_shows_the_evidence() -> None:
+    case = _full_case("c0")
+    request = judge_request(case, 5.0)
+    good = observation_of(judge_result(), request)
+    observed = replace(good, firmer=replace(good.firmer, rude=("блин",)))
+    run = await run_calibration(
+        FakeRewriteJudge(observed),
+        [case],
+        deadline_seconds=5.0,
+        max_tokens=10_000,
+        spend=SpendTracker(),
+    )
+    outcome = run.outcomes[0]
+    assert outcome.observation is observed
+    assert outcome.result is not None
+    assert outcome.result.firmer.clean is Verdict.NO
+    report = render_calibration_report(
+        calibrate("model-x", run.outcomes), run.outcomes, spent_billable=1
+    )
+    assert "| c0 | firmer | clean | yes | no | блин |" in report
+
+
+@pytest.mark.unit
 async def test_run_calibration_stops_before_a_call_that_could_cross_the_budget() -> None:
     cases = [_full_case(f"c{index}") for index in range(3)]
     judge = FakeRewriteJudge()
@@ -426,7 +451,7 @@ def test_without_eval_output_items_the_calibration_cannot_pass() -> None:
 @pytest.mark.unit
 def test_calibration_path_names_the_model_and_rejects_unsafe_names(tmp_path: Path) -> None:
     assert calibration_path(tmp_path, "GigaChat-3-Lightning").name == (
-        "judge_calibration_GigaChat-3-Lightning_v1.json"
+        "judge_calibration_GigaChat-3-Lightning_v2.json"
     )
     for model in ("../x", "a b", "", "a/b"):
         with pytest.raises(ValueError, match="cannot be used"):
@@ -485,7 +510,7 @@ def test_the_local_report_lists_disagreements_with_their_texts() -> None:
     assert f"- rubric: {RUBRIC_VERSION}" in report
     assert "- billable tokens: 220" in report
     assert "| meaning_kept | 80 | 98.8 % | 20 | 95.0 % | PASS |" in report
-    assert "| c0 | softer | meaning_kept | no | yes | черновик | мягче | твёрже |" in report
+    assert "| c0 | softer | meaning_kept | no | yes | - | черновик | мягче | твёрже |" in report
 
 
 @pytest.mark.unit

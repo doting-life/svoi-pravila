@@ -80,38 +80,68 @@ class SuggestRuleOut(BaseModel):
     text: str | None = Field(default=None, max_length=RULE_TEXT_MAX_CHARS)
 
 
-class YesNo(StrEnum):
-    """A judge verdict that always applies."""
+class PositionOut(StrEnum):
+    SAME = "same"
+    WEAKENED = "weakened"
+    LOST = "lost"
+    INVERTED = "inverted"
+    OTHER_ACTOR = "other_actor"
 
-    YES = "yes"
-    NO = "no"
+
+class GoalBreachOut(StrEnum):
+    NONE = "none"
+    HEDGED = "hedged"
+    CONDITIONAL = "conditional"
+    WISH_OR_QUESTION = "wish_or_question"
+    EXCUSE = "excuse"
+    SELF_BLAME = "self_blame"
+    REPROACH = "reproach"
+    PROHIBITION = "prohibition"
+    ULTIMATUM = "ultimatum"
 
 
-class YesNoNa(StrEnum):
-    """A judge verdict of a criterion that may not apply (no goal, no applicable rule)."""
+class RuleCheckOut(StrEnum):
+    FOLLOWED = "followed"
+    BROKEN = "broken"
+    NOT_APPLICABLE = "not_applicable"
 
-    YES = "yes"
-    NO = "no"
-    NA = "na"
+
+class WarmerOut(StrEnum):
+    SOFTER = "softer"
+    FIRMER = "firmer"
+    EQUAL = "equal"
+
+
+JUDGE_MAX_QUOTES = 4
+JUDGE_MAX_QUOTE_CHARS = 120
+JUDGE_MAX_SENTENCE_CHARS = 300
+
+_Quotes = Annotated[
+    list[Annotated[str, Field(min_length=1, max_length=JUDGE_MAX_QUOTE_CHARS)]],
+    Field(max_length=JUDGE_MAX_QUOTES),
+]
 
 
 class SlotJudgeOut(BaseModel):
-    """Judge verdicts for one variant (rubric ``judge_rewrite@v1``)."""
+    """Observations for one variant (rubric ``judge_rewrite@v2``): quotes, then enums."""
 
     model_config = ConfigDict(extra="forbid")
 
-    clean: YesNo
-    meaning_kept: YesNo
-    invented: YesNo
-    goal_done: YesNoNa
-    rule_done: YesNoNa
+    rude: _Quotes
+    added: _Quotes
+    goal_sentence: str = Field(max_length=JUDGE_MAX_SENTENCE_CHARS)
+    position: PositionOut
+    goal_breach: GoalBreachOut
+    rule_check: RuleCheckOut
 
 
 class JudgeOut(BaseModel):
-    """Judge output: verdicts per toned variant plus the pair verdict."""
+    """Judge output: observations per toned variant, then the pair observations."""
 
     model_config = ConfigDict(extra="forbid")
 
     softer: SlotJudgeOut
     firmer: SlotJudgeOut
-    ladder_ok: YesNo
+    firmer_softening: _Quotes
+    firmer_pressure: _Quotes
+    warmer: WarmerOut

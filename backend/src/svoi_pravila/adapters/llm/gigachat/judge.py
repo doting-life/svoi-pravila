@@ -23,31 +23,42 @@ from svoi_pravila.adapters.llm.gigachat.structured import StructuredCallParams, 
 from svoi_pravila.application.errors import GenerationUnavailable, UnavailableKind
 from svoi_pravila.application.ports.generation import GenerationMeta
 from svoi_pravila.application.ports.rewrite_judge import (
+    GoalBreach,
+    JudgeObservation,
     JudgeRequest,
-    JudgeResult,
-    SlotVerdicts,
-    Verdict,
+    PairObservation,
+    Position,
+    RuleCheck,
+    SlotObservation,
+    Warmer,
 )
 
-# The answer is eleven short enum values in a fixed JSON object.
-MAX_TOKENS_JUDGE = 384
+# Quotes of up to four items per list, two variants and the pair, plus the goal sentences.
+MAX_TOKENS_JUDGE = 1024
+# Sampling of judge calls only: low, to make the observations repeatable.
+JUDGE_TOP_P = 0.1
 
 
-def _slot_verdicts(parsed: SlotJudgeOut) -> SlotVerdicts:
-    return SlotVerdicts(
-        clean=Verdict(parsed.clean.value),
-        meaning_kept=Verdict(parsed.meaning_kept.value),
-        invented=Verdict(parsed.invented.value),
-        goal_done=Verdict(parsed.goal_done.value),
-        rule_done=Verdict(parsed.rule_done.value),
+def _slot_observation(parsed: SlotJudgeOut) -> SlotObservation:
+    return SlotObservation(
+        rude=tuple(parsed.rude),
+        added=tuple(parsed.added),
+        goal_sentence=parsed.goal_sentence,
+        position=Position(parsed.position.value),
+        goal_breach=GoalBreach(parsed.goal_breach.value),
+        rule_check=RuleCheck(parsed.rule_check.value),
     )
 
 
-def _to_result(parsed: JudgeOut, meta: GenerationMeta) -> JudgeResult:
-    return JudgeResult(
-        softer=_slot_verdicts(parsed.softer),
-        firmer=_slot_verdicts(parsed.firmer),
-        ladder_ok=Verdict(parsed.ladder_ok.value),
+def _to_observation(parsed: JudgeOut, meta: GenerationMeta) -> JudgeObservation:
+    return JudgeObservation(
+        softer=_slot_observation(parsed.softer),
+        firmer=_slot_observation(parsed.firmer),
+        pair=PairObservation(
+            firmer_softening=tuple(parsed.firmer_softening),
+            firmer_pressure=tuple(parsed.firmer_pressure),
+            warmer=Warmer(parsed.warmer.value),
+        ),
         meta=meta,
     )
 
@@ -74,7 +85,7 @@ class GigaChatRewriteJudge:
         """Worst-case billable tokens: rendered messages plus the output cap, per attempt."""
         return max_judge_billable(request)
 
-    async def judge(self, request: JudgeRequest) -> JudgeResult:
+    async def judge(self, request: JudgeRequest) -> JudgeObservation:
         prepared = self.prepare(request)
         state = AttemptState(
             started=time.perf_counter(),
@@ -92,8 +103,9 @@ class GigaChatRewriteJudge:
                         prepared=prepared,
                         response_format=JudgeOut,
                         max_tokens=MAX_TOKENS_JUDGE,
+                        top_p=JUDGE_TOP_P,
                     ),
-                    _to_result,
+                    _to_observation,
                     state=state,
                 )
         except TimeoutError:

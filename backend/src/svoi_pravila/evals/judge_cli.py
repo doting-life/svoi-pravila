@@ -91,7 +91,7 @@ def main() -> None:
     parser.add_argument(
         "--baselines-dir",
         default=_DEFAULT_BASELINES,
-        help="Directory of the committed judge_calibration_<model>_v1.json file",
+        help="Directory of the committed judge_calibration_<model>_<rubric version>.json file",
     )
     parser.add_argument("--deadline", type=float, default=30.0, help="Per-call deadline seconds")
     parser.add_argument("--out", default=_DEFAULT_OUT, help="Markdown report path (local only)")

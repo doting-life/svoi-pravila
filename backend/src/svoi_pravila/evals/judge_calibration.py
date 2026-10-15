@@ -32,6 +32,7 @@ from svoi_pravila.application.errors import (
     UnavailableKind,
 )
 from svoi_pravila.application.ports.rewrite_judge import (
+    JudgeObservation,
     JudgeRequest,
     JudgeResult,
     RewriteJudge,
@@ -40,8 +41,9 @@ from svoi_pravila.application.ports.rewrite_judge import (
 )
 from svoi_pravila.benchmarks.runner import SpendTracker
 from svoi_pravila.evals.judge_cases import SOURCE_EVAL_OUTPUT, SOURCES, JudgeCase
+from svoi_pravila.evals.judge_verdicts import derive_result, evidence
 
-RUBRIC_VERSION = "judge_rewrite@v1"
+RUBRIC_VERSION = "judge_rewrite@v2"
 MIN_ACCURACY = 0.90
 MIN_DEFECT_RECALL = 0.85
 MIN_CLEAN_DEFECT_RECALL = 0.95
@@ -60,10 +62,14 @@ _SLOTS = ("softer", "firmer")
 
 @dataclass(frozen=True, slots=True)
 class ItemOutcome:
-    """The judge's answer for one item; ``result`` is ``None`` when the call gave no verdicts."""
+    """The judge's answer for one item; ``result`` is ``None`` when the call gave no verdicts.
+
+    ``observation`` holds the judge's quotes for the local report; it is never committed.
+    """
 
     case: JudgeCase
     result: JudgeResult | None
+    observation: JudgeObservation | None = None
 
 
 @dataclass(slots=True)
@@ -133,6 +139,7 @@ class Disagreement:
     criterion: str
     expected: Verdict
     got: Verdict | None
+    evidence: str
 
 
 def _share(part: int, whole: int) -> float | None:
@@ -207,7 +214,14 @@ def calibrate(model: str, outcomes: list[ItemOutcome]) -> Calibration:
 def disagreements(outcomes: list[ItemOutcome]) -> list[Disagreement]:
     """Every value the judge did not reproduce, in item order."""
     return [
-        Disagreement(outcome.case, slot, criterion, expected, got)
+        Disagreement(
+            outcome.case,
+            slot,
+            criterion,
+            expected,
+            got,
+            "-" if outcome.observation is None else evidence(outcome.observation, slot, criterion),
+        )
         for outcome in outcomes
         for criterion in CRITERIA
         for slot, expected, got in _values(outcome, criterion)
@@ -246,7 +260,7 @@ async def run_calibration(
             run.stop_reason = "token_budget"
             break
         try:
-            result = await judge.judge(request)
+            observation = await judge.judge(request)
         except (GenerationRefusedByProvider, InvalidGenerationOutput, GenerationUnavailable) as exc:
             spend.add(exc.usage.billable)
             run.outcomes.append(ItemOutcome(case, None))
@@ -254,18 +268,18 @@ async def run_calibration(
                 run.stop_reason = exc.kind.value
                 break
             continue
-        spend.add(result.meta.usage.billable)
-        run.outcomes.append(ItemOutcome(case, result))
+        spend.add(observation.meta.usage.billable)
+        run.outcomes.append(ItemOutcome(case, derive_result(request, observation), observation))
     run.spent_billable = spend.spent_billable
     return run
 
 
 def calibration_path(directory: Path, model: str) -> Path:
-    """``judge_calibration_<model>_v1.json`` inside ``directory``."""
+    """``judge_calibration_<model>_<rubric version>.json`` inside ``directory``."""
     if _MODEL_NAME.fullmatch(model) is None:
         msg = f"model name {model!r} cannot be used in a file name"
         raise ValueError(msg)
-    return directory / f"judge_calibration_{model}_v1.json"
+    return directory / f"judge_calibration_{model}_{RUBRIC_VERSION.rsplit('@', 1)[1]}.json"
 
 
 def _criteria_payload(criteria: tuple[CriterionStats, ...]) -> dict[str, object]:
@@ -377,12 +391,13 @@ def render_calibration_report(
         ),
         "## Disagreements",
         "",
-        "| item | slot | criterion | expected | judge | draft | softer | firmer |",
-        "|---|---|---|---|---|---|---|---|",
+        "| item | slot | criterion | expected | judge | evidence | draft | softer | firmer |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     lines.extend(
         f"| {item.case.id} | {item.slot or 'pair'} | {item.criterion} | {item.expected.value} "
-        f"| {'none' if item.got is None else item.got.value} | {_cell(item.case.draft)} "
+        f"| {'none' if item.got is None else item.got.value} | {_cell(item.evidence)} "
+        f"| {_cell(item.case.draft)} "
         f"| {_cell(item.case.softer)} | {_cell(item.case.firmer)} |"
         for item in disagreements(outcomes)
     )

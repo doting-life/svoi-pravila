@@ -34,6 +34,7 @@ from svoi_pravila.domain.variant_policy import (
     PolicyRule,
     check_variant_set,
 )
+from svoi_pravila.evals.judge_verdicts import derive_result
 from svoi_pravila.evals.rewrite_cases import RewriteCase, RewriteCategory
 from svoi_pravila.evals.rule_checks import variant_complies_with_closing_ask, variant_leaks_stems
 
@@ -250,7 +251,7 @@ async def _judged(
         deadline_seconds=deadline_seconds,
     )
     try:
-        verdicts = await judge.judge(request)
+        observation = await judge.judge(request)
     except (GenerationRefusedByProvider, InvalidGenerationOutput, GenerationUnavailable) as exc:
         stop = (
             exc.kind if isinstance(exc, GenerationUnavailable) and exc.kind in _STOP_KINDS else None
@@ -259,6 +260,7 @@ async def _judged(
             record, judge_failed=True, billable_tokens=record.billable_tokens + exc.usage.billable
         )
         return failed, stop
+    verdicts = derive_result(request, observation)
     judged = replace(
         record,
         billable_tokens=record.billable_tokens + verdicts.meta.usage.billable,

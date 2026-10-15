@@ -1,7 +1,10 @@
 """Eval-only port of the rewrite judge (ADR-0016 §8, §13).
 
-The judge grades the two toned variants of one rewrite against a fixed rubric. Its result
-carries verdicts and call metadata only, never text. Only the eval tools construct a judge.
+The judge does not grade: it fills observations with evidence for the two toned variants of one
+rewrite (``JudgeObservation``). The verdicts (``JudgeResult``) are derived from the observation
+by code (``evals/judge_verdicts.py``). The quotes of an observation are text: they live in memory
+for the local report only. ``JudgeResult`` carries verdicts and call metadata, never text. Only
+the eval tools construct a judge.
 """
 
 from __future__ import annotations
@@ -61,9 +64,80 @@ class SlotVerdicts:
         )
 
 
+class Position(StrEnum):
+    """What became of the author's position in a variant."""
+
+    SAME = "same"
+    WEAKENED = "weakened"
+    LOST = "lost"
+    INVERTED = "inverted"
+    OTHER_ACTOR = "other_actor"
+
+
+class GoalBreach(StrEnum):
+    """What stops a variant from performing the goal."""
+
+    NONE = "none"
+    HEDGED = "hedged"
+    CONDITIONAL = "conditional"
+    WISH_OR_QUESTION = "wish_or_question"
+    EXCUSE = "excuse"
+    SELF_BLAME = "self_blame"
+    REPROACH = "reproach"
+    PROHIBITION = "prohibition"
+    ULTIMATUM = "ultimatum"
+
+
+class RuleCheck(StrEnum):
+    """Whether a variant follows the rules that apply to the draft."""
+
+    FOLLOWED = "followed"
+    BROKEN = "broken"
+    NOT_APPLICABLE = "not_applicable"
+
+
+class Warmer(StrEnum):
+    """Which variant is warmer in tone."""
+
+    SOFTER = "softer"
+    FIRMER = "firmer"
+    EQUAL = "equal"
+
+
+@dataclass(frozen=True, slots=True)
+class SlotObservation:
+    """Evidence about one variant: quotes first, then the classifications."""
+
+    rude: tuple[str, ...]
+    added: tuple[str, ...]
+    goal_sentence: str
+    position: Position
+    goal_breach: GoalBreach
+    rule_check: RuleCheck
+
+
+@dataclass(frozen=True, slots=True)
+class PairObservation:
+    """Evidence about the pair: the softeners and pressure of ``firmer``, and the warmer one."""
+
+    firmer_softening: tuple[str, ...]
+    firmer_pressure: tuple[str, ...]
+    warmer: Warmer
+
+
+@dataclass(frozen=True, slots=True)
+class JudgeObservation:
+    """The judge's answer: observations per variant and for the pair, plus call metadata."""
+
+    softer: SlotObservation
+    firmer: SlotObservation
+    pair: PairObservation
+    meta: GenerationMeta
+
+
 @dataclass(frozen=True, slots=True)
 class JudgeResult:
-    """Per-slot verdicts and the pair verdict ``ladder_ok`` (never ``na``)."""
+    """Per-slot verdicts and the pair verdict ``ladder_ok`` (never ``na``), derived by code."""
 
     softer: SlotVerdicts
     firmer: SlotVerdicts
@@ -79,8 +153,8 @@ class JudgeResult:
 class RewriteJudge(Protocol):
     """Port for the eval judge."""
 
-    async def judge(self, request: JudgeRequest) -> JudgeResult:
-        """Grade ``softer`` and ``firmer`` of one rewrite."""
+    async def judge(self, request: JudgeRequest) -> JudgeObservation:
+        """Observe ``softer`` and ``firmer`` of one rewrite."""
 
     def max_billable(self, request: JudgeRequest) -> int:
         """Worst-case billable tokens for ``request`` (input + output cap x attempts)."""

@@ -12,6 +12,9 @@ from gigachat import GigaChat
 from svoi_pravila.adapters.llm.gigachat.adapter import GigaChatTextGenerator
 from svoi_pravila.adapters.llm.gigachat.client import close_gigachat_client, create_gigachat_client
 from svoi_pravila.adapters.llm.gigachat.mapping import PROVIDER_EXCEPTIONS, map_provider_exception
+from svoi_pravila.adapters.system.noop_generation_attempt_observer import (
+    NoopGenerationAttemptObserver,
+)
 from svoi_pravila.application.ports.generation import TokenUsage
 from svoi_pravila.benchmarks.cases import (
     RUN_OPERATIONS,
@@ -138,7 +141,7 @@ async def _run_model(
             "gigachat_model_decode": run.model,
         }
     )
-    gen = GigaChatTextGenerator(run.client, run_settings)
+    gen = GigaChatTextGenerator(run.client, run_settings, NoopGenerationAttemptObserver())
     try:
         await warmup(
             gen,

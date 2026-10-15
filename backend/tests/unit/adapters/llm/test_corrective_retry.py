@@ -9,13 +9,18 @@ import pytest
 from gigachat import LengthFinishReasonError
 from gigachat.models.chat_completions import ChatCompletionResponse
 from pydantic import BaseModel
+from structlog.testing import capture_logs
 
 from svoi_pravila.adapters.llm.gigachat.adapter import GigaChatTextGenerator
 from svoi_pravila.adapters.llm.gigachat.judge import JUDGE_TOP_P, GigaChatRewriteJudge
 from svoi_pravila.adapters.llm.gigachat.schemas import (
+    DecodeOut,
     JudgeOut,
     RewriteOutNoRules,
     SuggestRuleOut,
+)
+from svoi_pravila.adapters.system.noop_generation_attempt_observer import (
+    NoopGenerationAttemptObserver,
 )
 from svoi_pravila.application.errors import InvalidGenerationOutput, InvalidOutputReason
 from svoi_pravila.application.ports.generation import (
@@ -26,8 +31,9 @@ from svoi_pravila.application.ports.generation import (
     SuggestRuleRequest,
 )
 from svoi_pravila.application.ports.rewrite_judge import JudgeRequest
-from svoi_pravila.domain.enums import RelationshipKind
+from svoi_pravila.domain.enums import RelationshipKind, VariantKind
 from tests.factories import make_settings
+from tests.fakes.generation_attempt_observer import RecordingAttemptObserver
 from tests.unit.adapters.llm.test_gigachat_adapter import (
     _completion,
     _decode_payload,
@@ -36,7 +42,7 @@ from tests.unit.adapters.llm.test_gigachat_adapter import (
     _rewrite_payload_no_rules,
 )
 
-# Block P (prompts/repair/v1.md), verbatim.
+# Block P (prompts/repair/v2.md), verbatim.
 _EMPTY_TEXT_SOFTER = (
     "Поле `softer` пустое. Заполни его по правилам; остальные поля верни без изменений. "
     "Ответь только JSON по схеме."
@@ -77,7 +83,9 @@ def _roles(payload: dict[str, Any]) -> list[str]:
 
 
 def _generator(ache: _ScriptedAche) -> GigaChatTextGenerator:
-    return GigaChatTextGenerator(cast(Any, _FakeClient(ache)), make_settings())
+    return GigaChatTextGenerator(
+        cast(Any, _FakeClient(ache)), make_settings(), NoopGenerationAttemptObserver()
+    )
 
 
 def _rewrite_request(draft: str = "ty vsegda opazdyvaesh") -> RewriteRequest:
@@ -265,3 +273,272 @@ async def test_both_requests_carry_plain_messages_and_no_top_p() -> None:
         assert all(set(message) == {"role", "content"} for message in payload["messages"])
         assert payload["max_tokens"] > 0
         assert "top_p" not in payload
+
+
+# Block P2 (prompts/repair/v2.md), verbatim.
+_PROFANITY_FIRMER = (
+    "В поле `firmer` остались грубые слова: сука. Переведи их на нормативный язык по смыслу: "
+    "усилитель убери, оскорбление замени названием поступка, грубое требование скажи теми же "
+    "словами без грубости; остальные поля верни без изменений. Ответь только JSON по схеме."
+)
+_GENERALIZATION_SOFTER = (
+    "В поле `softer` есть обобщение: ты всегда. Скажи о конкретном случае, без обобщения; "
+    "остальные поля верни без изменений. Ответь только JSON по схеме."
+)
+_PROFANITY_SOFTER = _PROFANITY_FIRMER.replace("`firmer`", "`softer`")
+_CLEAN = {"check": "c", "softer": "давай обсудим спокойно", "firmer": "мне это важно"}
+
+
+def _observed(
+    ache: _ScriptedAche,
+) -> tuple[GigaChatTextGenerator, RecordingAttemptObserver]:
+    observer = RecordingAttemptObserver()
+    generator = GigaChatTextGenerator(cast(Any, _FakeClient(ache)), make_settings(), observer)
+    return generator, observer
+
+
+def _clean_slots() -> RewriteOutNoRules:
+    return _slots(**_CLEAN)
+
+
+@pytest.mark.unit
+async def test_profanity_in_firmer_is_repaired_with_the_echo_and_a_correction() -> None:
+    first = _slots(softer="давай обсудим спокойно", firmer="ты сука")
+    ache = _ScriptedAche([first, _clean_slots()])
+    result = await _generator(ache).rewrite(_rewrite_request())
+    second = ache.payloads[1]
+    assert _roles(second) == ["system", "user", "assistant", "user"]
+    assert second["messages"][2]["content"] == first.model_dump_json()
+    assert second["messages"][3]["content"] == _PROFANITY_FIRMER
+    assert result.meta.repaired == ("profanity:firmer",)
+    assert result.meta.residual == ()
+    assert result.meta.attempts == 2
+    assert [variant.text for variant in result.variants][1:] == [
+        _CLEAN["softer"],
+        _CLEAN["firmer"],
+    ]
+
+
+@pytest.mark.unit
+async def test_profanity_left_after_the_retry_fails_the_call_with_the_slot() -> None:
+    first = _slots(softer="давай обсудим спокойно", firmer="ты сука")
+    ache = _ScriptedAche([first, first])
+    with pytest.raises(InvalidGenerationOutput) as exc_info:
+        await _generator(ache).rewrite(_rewrite_request())
+    error = exc_info.value
+    assert ache.create_calls == 2
+    assert error.reasons == (InvalidOutputReason.PROFANITY, InvalidOutputReason.PROFANITY)
+    assert error.labelled_reasons() == ("profanity:firmer", "profanity:firmer")
+    assert error.attempts == 2
+    assert "сука" not in repr(error)
+    assert "сука" not in str(error)
+
+
+@pytest.mark.unit
+async def test_a_generalization_left_after_the_retry_is_accepted_and_reported() -> None:
+    first = _slots(softer="ты всегда опаздываешь", firmer="мне это важно")
+    ache = _ScriptedAche([first, first])
+    result = await _generator(ache).rewrite(_rewrite_request())
+    assert ache.create_calls == 2
+    second = ache.payloads[1]
+    assert second["messages"][3]["content"] == _GENERALIZATION_SOFTER
+    assert result.meta.repaired == ("generalization:softer",)
+    assert result.meta.residual == (VariantKind.SOFTER,)
+    assert [variant.text for variant in result.variants][1] == "ты всегда опаздываешь"
+
+
+@pytest.mark.unit
+async def test_a_repaired_generalization_leaves_no_residual() -> None:
+    first = _slots(softer="ты всегда опаздываешь", firmer="мне это важно")
+    ache = _ScriptedAche([first, _clean_slots()])
+    result = await _generator(ache).rewrite(_rewrite_request())
+    assert result.meta.repaired == ("generalization:softer",)
+    assert result.meta.residual == ()
+
+
+@pytest.mark.unit
+async def test_profanity_in_check_only_is_not_a_finding() -> None:
+    answer = _slots(check="ты сука, ты всегда так", softer="давай обсудим", firmer="мне это важно")
+    ache = _ScriptedAche([answer])
+    result = await _generator(ache).rewrite(_rewrite_request())
+    assert ache.create_calls == 1
+    assert result.meta.repaired == ()
+    assert result.meta.residual == ()
+
+
+@pytest.mark.unit
+async def test_findings_in_both_slots_get_one_correction_with_two_lines() -> None:
+    first = _slots(softer="ты всегда опаздываешь", firmer="ты сука")
+    ache = _ScriptedAche([first, _clean_slots()])
+    result = await _generator(ache).rewrite(_rewrite_request())
+    second = ache.payloads[1]
+    assert _roles(second) == ["system", "user", "assistant", "user"]
+    assert second["messages"][3]["content"] == "\n".join(
+        [_GENERALIZATION_SOFTER, _PROFANITY_FIRMER]
+    )
+    assert result.meta.repaired == ("generalization:softer", "profanity:firmer")
+
+
+@pytest.mark.unit
+async def test_profanity_has_priority_over_a_generalization_in_the_failure() -> None:
+    first = _slots(softer="ты сука, ты всегда так", firmer="мне это важно")
+    ache = _ScriptedAche([first, first])
+    with pytest.raises(InvalidGenerationOutput) as exc_info:
+        await _generator(ache).rewrite(_rewrite_request())
+    assert exc_info.value.labelled_reasons() == ("profanity:softer", "profanity:softer")
+    assert ache.payloads[1]["messages"][3]["content"] == "\n".join(
+        [_PROFANITY_SOFTER, _GENERALIZATION_SOFTER]
+    )
+
+
+@pytest.mark.unit
+async def test_a_formal_defect_has_priority_over_a_lexicon_finding() -> None:
+    first = _slots(softer="", firmer="ты сука")
+    ache = _ScriptedAche([first, _clean_slots()])
+    result = await _generator(ache).rewrite(_rewrite_request())
+    assert ache.payloads[1]["messages"][3]["content"] == _EMPTY_TEXT_SOFTER
+    assert result.meta.repaired == ("empty_text:softer",)
+
+
+@pytest.mark.unit
+async def test_a_second_attempt_after_a_formal_defect_is_checked_with_the_final_rules() -> None:
+    first = _slots(softer="", firmer="мне это важно")
+    ache = _ScriptedAche([first, _slots(softer="давай обсудим", firmer="ты сука")])
+    with pytest.raises(InvalidGenerationOutput) as exc_info:
+        await _generator(ache).rewrite(_rewrite_request())
+    assert exc_info.value.labelled_reasons() == ("empty_text:softer", "profanity:firmer")
+
+
+@pytest.mark.unit
+async def test_a_non_ok_safety_answer_is_not_checked() -> None:
+    answer = RewriteOutNoRules.model_validate(
+        {"check": "", "softer": "ты сука", "firmer": "ты сука", "safety": "crisis"}
+    )
+    ache = _ScriptedAche([answer])
+    result = await _generator(ache).rewrite(_rewrite_request())
+    assert ache.create_calls == 1
+    assert result.variants == ()
+
+
+@pytest.mark.unit
+async def test_decode_phase_b_uses_the_same_lexicon_path() -> None:
+    first = DecodeOut.model_validate(
+        {
+            "hypotheses": ["h1"],
+            "underlying_request": "needs space",
+            "variants": [
+                {"text": "softer-reply", "kind": "softer"},
+                {"text": "ты сука", "kind": "firmer"},
+            ],
+            "applied_rule_indexes": [],
+            "safety": "ok",
+        }
+    )
+    ache = _ScriptedAche([first, _decode_payload()], stream_parts=["analiz"])
+    events = [
+        event
+        async for event in _generator(ache).decode_stream(
+            DecodeRequest(
+                incoming="mne nuzhno pobyt odnomu",
+                rules=(),
+                relationship=RelationshipKind.PARTNER,
+                deadline_seconds=5.0,
+            )
+        )
+    ]
+    completed = events[-1]
+    assert isinstance(completed, DecodeCompleted)
+    second = ache.payloads[1]
+    assert second["messages"][2]["content"] == first.model_dump_json()
+    assert second["messages"][3]["content"] == _PROFANITY_FIRMER
+    assert completed.result.meta.repaired == ("profanity:firmer",)
+    assert completed.result.meta.residual == ()
+
+
+@pytest.mark.unit
+async def test_the_observer_gets_every_invalid_attempt_with_the_answer_fields() -> None:
+    first = _slots(softer="давай обсудим спокойно", firmer="ты сука")
+    ache = _ScriptedAche([first, first])
+    generator, observer = _observed(ache)
+    with pytest.raises(InvalidGenerationOutput):
+        await generator.rewrite(_rewrite_request())
+    assert [
+        (item.operation, item.attempt, item.reason, item.slot) for item in observer.attempts
+    ] == [
+        ("rewrite", 0, InvalidOutputReason.PROFANITY, VariantKind.FIRMER),
+        ("rewrite", 1, InvalidOutputReason.PROFANITY, VariantKind.FIRMER),
+    ]
+    assert observer.attempts[0].texts == (
+        ("check", "c"),
+        ("softer", "давай обсудим спокойно"),
+        ("firmer", "ты сука"),
+        ("safety", "ok"),
+    )
+    assert "сука" not in repr(observer.attempts[0])
+
+
+@pytest.mark.unit
+async def test_the_observer_gets_the_raw_text_of_an_unparsed_answer() -> None:
+    ache = _ScriptedAche(["this is not json", _clean_slots()])
+    generator, observer = _observed(ache)
+    await generator.rewrite(_rewrite_request())
+    [attempt] = observer.attempts
+    assert attempt.reason is InvalidOutputReason.JSON_DECODE
+    assert attempt.slot is None
+    assert attempt.texts == (("raw", "this is not json"),)
+
+
+@pytest.mark.unit
+async def test_the_observer_gets_no_text_when_the_answer_had_none() -> None:
+    ache = _ScriptedAche([_completion(None, messages=[]), _clean_slots()])
+    generator, observer = _observed(ache)
+    await generator.rewrite(_rewrite_request())
+    [attempt] = observer.attempts
+    assert attempt.reason is InvalidOutputReason.EMPTY_MESSAGE
+    assert attempt.texts == ()
+
+
+@pytest.mark.unit
+async def test_the_observer_names_nested_fields_of_a_decode_answer() -> None:
+    first = DecodeOut.model_validate(
+        {
+            "hypotheses": ["h1"],
+            "underlying_request": "needs space",
+            "variants": [{"text": "https://example.test/x", "kind": "softer"}],
+            "applied_rule_indexes": [3],
+            "safety": "ok",
+        }
+    )
+    ache = _ScriptedAche([first, _decode_payload()], stream_parts=["analiz"])
+    observer = RecordingAttemptObserver()
+    generator = GigaChatTextGenerator(cast(Any, _FakeClient(ache)), make_settings(), observer)
+    [
+        event
+        async for event in generator.decode_stream(
+            DecodeRequest(
+                incoming="mne nuzhno pobyt odnomu",
+                rules=(),
+                relationship=RelationshipKind.PARTNER,
+                deadline_seconds=5.0,
+            )
+        )
+    ]
+    assert dict(observer.attempts[0].texts) == {
+        "hypotheses[0]": "h1",
+        "underlying_request": "needs space",
+        "variants[0].text": "https://example.test/x",
+        "variants[0].kind": "softer",
+        "safety": "ok",
+    }
+
+
+@pytest.mark.unit
+async def test_matched_words_never_reach_the_logs_of_the_retry_path() -> None:
+    first = _slots(softer="давай обсудим спокойно", firmer="ты сука, ты всегда так")
+    ache = _ScriptedAche([first, first])
+    with capture_logs() as logs, pytest.raises(InvalidGenerationOutput):
+        await _generator(ache).rewrite(_rewrite_request())
+    assert logs
+    rendered = json.dumps(logs, ensure_ascii=False, default=str)
+    assert "сука" not in rendered
+    assert "всегда" not in rendered

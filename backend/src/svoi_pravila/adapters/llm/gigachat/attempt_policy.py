@@ -42,7 +42,11 @@ ATTEMPT_PROVIDER_EXCEPTIONS = (
 
 @dataclass(slots=True)
 class AttemptState:
-    """Mutable counters and outcome for one generation_call log record."""
+    """Mutable counters and outcome for one generation_call log record.
+
+    ``raw_answer`` is the latest assistant text (conversation text, so out of ``repr``); it is
+    kept only to diagnose an answer that did not parse and is never logged.
+    """
 
     started: float
     model: str
@@ -59,6 +63,7 @@ class AttemptState:
     collected_reasons: list[InvalidOutputReason] = field(default_factory=list)
     collected_slots: list[VariantKind | None] = field(default_factory=list)
     collected_finish_reasons: list[str | None] = field(default_factory=list)
+    raw_answer: str = field(default="", repr=False)
 
 
 def token_usage_from_state(state: AttemptState) -> TokenUsage:

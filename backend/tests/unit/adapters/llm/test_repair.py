@@ -1,4 +1,4 @@
-"""Correction texts of the corrective retry (prompts/repair/v1.md) and the echo policy."""
+"""Correction texts of the corrective retry (prompts/repair/v2.md) and the echo policy."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from svoi_pravila.adapters.llm.gigachat.prepared import PreparedMessages
 from svoi_pravila.adapters.llm.gigachat.repair import (
     NO_ECHO,
     correction_text,
+    findings_correction,
     first_attempt_defect,
     longest_correction_chars,
     retry_messages,
@@ -20,6 +21,7 @@ from svoi_pravila.adapters.llm.gigachat.repair import (
 from svoi_pravila.adapters.llm.gigachat.structured import _RetryAttemptError
 from svoi_pravila.application.errors import InvalidOutputReason
 from svoi_pravila.domain.enums import VariantKind
+from svoi_pravila.domain.lexicon_guard import FindingKind, SlotFinding
 
 _GENERIC = (
     "Предыдущий ответ не прошёл проверку. Ответь заново строго по правилам и только JSON по схеме."
@@ -83,8 +85,10 @@ def test_other_reasons_echo_the_first_answer_and_label_has_no_text() -> None:
     messages = retry_messages(_PREPARED, defect)
     assert [m["role"] for m in messages] == ["system", "user", "assistant", "user"]
     assert messages[2]["content"] == '{"a": 1}'
-    assert defect.label == "empty_text:softer"
-    assert first_attempt_defect(InvalidOutputReason.JSON_DECODE, None, None).label == "json_decode"
+    assert defect.labels == ("empty_text:softer",)
+    assert first_attempt_defect(InvalidOutputReason.JSON_DECODE, None, None).labels == (
+        "json_decode",
+    )
 
 
 @pytest.mark.unit
@@ -108,10 +112,76 @@ def test_repr_of_a_defect_and_of_the_retry_error_has_the_label_but_never_the_ans
     answer = '{"softer": "CANARY-answer-text"}'
     defect = first_attempt_defect(InvalidOutputReason.EMPTY_TEXT, VariantKind.FIRMER, answer)
     assert defect.answer == answer
-    assert "empty_text:firmer" in defect.label
+    assert defect.labels == ("empty_text:firmer",)
     assert "CANARY" not in repr(defect)
     assert "reason=" in repr(defect)
     error = _RetryAttemptError(defect)
     assert "empty_text:firmer" in repr(error)
     assert "CANARY" not in repr(error)
     assert "CANARY" not in str(error)
+
+
+def _finding(kind: FindingKind, slot: VariantKind, *words: str) -> SlotFinding:
+    return SlotFinding(kind=kind, slot=slot, words=words)
+
+
+@pytest.mark.unit
+def test_a_findings_correction_has_one_line_per_finding_with_the_words_joined() -> None:
+    text = findings_correction(
+        (
+            _finding(FindingKind.PROFANITY, VariantKind.FIRMER, "один", "два"),
+            _finding(FindingKind.GENERALIZATION, VariantKind.SOFTER, "ты всегда"),
+        )
+    )
+    lines = text.split("\n")
+    assert len(lines) == 2
+    assert lines[0].startswith("В поле `firmer` остались грубые слова: один, два. ")
+    assert lines[1].startswith("В поле `softer` есть обобщение: ты всегда. ")
+
+
+@pytest.mark.unit
+def test_words_that_look_like_placeholders_are_not_filled_again() -> None:
+    text = findings_correction((_finding(FindingKind.PROFANITY, VariantKind.SOFTER, "{slot}"),))
+    assert "грубые слова: {slot}." in text
+
+
+@pytest.mark.unit
+def test_retry_messages_send_the_findings_correction_after_the_echo() -> None:
+    findings = (_finding(FindingKind.PROFANITY, VariantKind.FIRMER, "слово"),)
+    defect = first_attempt_defect(InvalidOutputReason.PROFANITY, VariantKind.FIRMER, "{}", findings)
+    messages = retry_messages(_PREPARED, defect)
+    assert [m["role"] for m in messages] == ["system", "user", "assistant", "user"]
+    assert messages[3]["content"] == findings_correction(findings)
+    assert defect.labels == ("profanity:firmer",)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "reason", [InvalidOutputReason.PROFANITY, InvalidOutputReason.GENERALIZATION]
+)
+def test_a_lexicon_reason_without_findings_falls_back_to_generic(
+    reason: InvalidOutputReason,
+) -> None:
+    assert correction_text(reason, VariantKind.SOFTER) == _GENERIC
+
+
+@pytest.mark.unit
+def test_the_longest_correction_is_four_lines_of_five_forty_character_words() -> None:
+    words = tuple("я" * 40 for _ in range(5))
+    findings = tuple(
+        _finding(kind, slot, *words)
+        for slot in (VariantKind.SOFTER, VariantKind.FIRMER)
+        for kind in FindingKind
+    )
+    assert longest_correction_chars() == len(findings_correction(findings))
+
+
+@pytest.mark.unit
+def test_repr_of_a_defect_with_findings_never_contains_the_words() -> None:
+    findings = (_finding(FindingKind.PROFANITY, VariantKind.FIRMER, "CANARY-word"),)
+    defect = first_attempt_defect(InvalidOutputReason.PROFANITY, VariantKind.FIRMER, "{}", findings)
+    error = _RetryAttemptError(defect)
+    assert "CANARY" not in repr(defect)
+    assert "CANARY" not in repr(error)
+    assert "CANARY" not in str(error)
+    assert "profanity:firmer" in str(error)

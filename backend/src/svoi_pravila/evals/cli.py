@@ -8,6 +8,9 @@ from pathlib import Path
 
 from svoi_pravila.adapters.llm.gigachat.adapter import GigaChatTextGenerator
 from svoi_pravila.adapters.llm.gigachat.client import close_gigachat_client, create_gigachat_client
+from svoi_pravila.adapters.system.noop_generation_attempt_observer import (
+    NoopGenerationAttemptObserver,
+)
 from svoi_pravila.application.crisis_screen import CrisisScreen
 from svoi_pravila.benchmarks.out_writer import OutWriter
 from svoi_pravila.benchmarks.recording import RateLimitCapture, install_rate_limit_capture
@@ -130,7 +133,7 @@ async def async_main(args: argparse.Namespace) -> int:
     runtime = EvalRuntime(out=out, spend=spend, screen=screen, rate_limits=rate_limits)
     try:
         uninstall_rate_limits = install_rate_limit_capture(client, rate_limits)
-        gen = GigaChatTextGenerator(client, settings)
+        gen = GigaChatTextGenerator(client, settings, NoopGenerationAttemptObserver())
         print("Calls are sequential. One unmeasured warm-up runs per distinct model.")
         print(f"Operations: {', '.join(operations)}")
         print(f"Max billable tokens: {args.max_tokens}")

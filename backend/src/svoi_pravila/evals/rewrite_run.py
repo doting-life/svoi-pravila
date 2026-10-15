@@ -33,6 +33,7 @@ from svoi_pravila.domain.variant_policy import (
     PolicyRule,
     check_variant_set,
 )
+from svoi_pravila.evals.attempt_recorder import AttemptRecorder, RecordedAttempt
 from svoi_pravila.evals.judge_verdicts import derive_result
 from svoi_pravila.evals.rewrite_cases import RewriteCase, RewriteCategory
 from svoi_pravila.evals.rule_checks import variant_complies_with_closing_ask, variant_leaks_stems
@@ -91,7 +92,7 @@ class RewriteRunRecord:
     A usable call is judged when a judge is configured: ``judgement`` holds its verdicts, or
     ``judge_failed`` is set when the judge call produced none. ``billable_tokens`` covers both
     calls. ``repaired`` holds the ``reason[:slot]`` labels of first-attempt defects the second
-    attempt repaired.
+    attempt repaired; ``residual`` the slots whose generalization survived the repair.
     """
 
     case_id: str
@@ -106,6 +107,7 @@ class RewriteRunRecord:
     diagnostics: tuple[InvalidDiagnostic, ...] = ()
     check_empty: bool = False
     repaired: tuple[str, ...] = ()
+    residual: tuple[VariantKind, ...] = ()
     judgement: RunJudgement | None = None
     judge_failed: bool = False
 
@@ -118,13 +120,18 @@ class RewriteEvalParams:
     deadline_seconds: float
     max_tokens: int
     judge: RewriteJudge | None = None
+    recorder: AttemptRecorder | None = None
 
 
 @dataclass(slots=True)
 class RewriteEvalResult:
-    """Records plus the reason a pass stopped early, if it did."""
+    """Records plus the reason a pass stopped early, if it did.
+
+    ``attempts`` are the invalid attempts of the recorder with their texts (local report only).
+    """
 
     records: list[RewriteRunRecord] = field(default_factory=list)
+    attempts: list[RecordedAttempt] = field(default_factory=list)
     stop_reason: str | None = None
 
 
@@ -234,6 +241,7 @@ async def _call(
         billable_tokens=result.meta.usage.billable,
         check_empty=check_empty,
         repaired=result.meta.repaired,
+        residual=result.meta.residual,
     )
 
 
@@ -313,6 +321,8 @@ async def run_rewrite_eval(
             if spend.spent_billable + worst_case > params.max_tokens:
                 result.stop_reason = "token_budget"
                 return result
+            if params.recorder is not None:
+                params.recorder.begin_call(case.id, run_index)
             try:
                 record = await _call(gen, case, run_index, request)
             except GenerationUnavailable as exc:
@@ -324,6 +334,9 @@ async def run_rewrite_eval(
                     result.stop_reason = exc.kind.value
                     return result
                 continue
+            finally:
+                if params.recorder is not None:
+                    result.attempts.extend(params.recorder.take())
             stop: UnavailableKind | None = None
             if params.judge is not None and record.outcome is RunOutcome.OK:
                 record, stop = await _judged(params.judge, case, record, params.deadline_seconds)

@@ -9,6 +9,7 @@ from svoi_pravila.application.ports.rewrite_judge import Verdict
 from svoi_pravila.benchmarks.report import percentile
 from svoi_pravila.domain.enums import VariantKind
 from svoi_pravila.domain.variant_policy import PolicyRule
+from svoi_pravila.evals.attempt_recorder import RecordedAttempt
 from svoi_pravila.evals.rewrite_gates import (
     Baseline,
     compute_metrics,
@@ -109,7 +110,9 @@ def _gates(item: ModelEval, baseline: Baseline | None, *, judge_calibrated: bool
     return [
         "### Gates",
         "",
-        "Denominators (ADR-0016 §10): G3, G4, G6, G7, G8 edit_ratio: usable calls (outcome ok); "
+        "Denominators (ADR-0016 §10): G1: all calls except unavailable (repair share: the calls "
+        "whose first attempt had obscene words); G2: information only; "
+        "G3, G4, G6, G7, G8 edit_ratio: usable calls (outcome ok); "
         "G8 check_ok: check variants with a reference; G9: all calls except unavailable; "
         "J6: usable calls the judge was asked about (a judge failure is never a pass).",
         "",
@@ -209,7 +212,9 @@ def _refusals(records: list[RewriteRunRecord]) -> list[str]:
     ]
 
 
-def _invalid_diagnostics(records: list[RewriteRunRecord]) -> list[str]:
+def _invalid_diagnostics(
+    records: list[RewriteRunRecord], attempts: list[RecordedAttempt]
+) -> list[str]:
     lines = [
         "### Invalid output diagnostics",
         "",
@@ -222,6 +227,24 @@ def _invalid_diagnostics(records: list[RewriteRunRecord]) -> list[str]:
             f"| {item.finish_reason or 'none'} |"
             for attempt, item in enumerate(record.diagnostics, start=1)
         )
+    lines.append("")
+    return [*lines, *_attempt_texts(attempts)]
+
+
+def _attempt_texts(attempts: list[RecordedAttempt]) -> list[str]:
+    """The texts of every invalid attempt (also the repaired ones); local report only."""
+    lines = [
+        "Texts of the invalid attempts (conversation text; this report stays local):",
+        "",
+        "| case | run | attempt | reason | slot | fields |",
+        "|---|---:|---:|---|---|---|",
+    ]
+    lines.extend(
+        f"| {item.case_id} | {item.run_index} | {item.attempt} | {item.reason.value} "
+        f"| {'none' if item.slot is None else item.slot.value} "
+        f"| {_cell('; '.join(f'{name}: {text}' for name, text in item.texts))} |"
+        for item in attempts
+    )
     lines.append("")
     return lines
 
@@ -292,7 +315,7 @@ def render_report(
     """Render the local report: a model comparison, then one section per model.
 
     An early stop marks the model ``INCOMPLETE`` with its reason; models after it are
-    listed as not run. Each model section lists the gates G3, G4, G6-G9 and J6, then the
+    listed as not run. Each model section lists the gates G1-G4, G6-G9 and J6, then the
     slots flagged by J6.
     """
     lines = ["# Rewrite eval", "", *_comparison(evals)]
@@ -320,7 +343,7 @@ def render_report(
                 *_repair(records),
                 *_flagged(records),
                 *_refusals(records),
-                *_invalid_diagnostics(records),
+                *_invalid_diagnostics(records, item.result.attempts),
                 *_details(records),
             ]
         )

@@ -731,7 +731,7 @@ async def test_async_main_live_and_failures(
     )
     monkeypatch.setattr(
         "svoi_pravila.evals.cli.GigaChatTextGenerator",
-        lambda _c, _s: FakeTextGenerator(),
+        lambda _c, _s, _o: FakeTextGenerator(),
     )
     out_path = tmp_path / "live.md"
     ns = Namespace(

@@ -3,9 +3,11 @@
 See ADR-0016 §5 and §10.
 
 The policy never rewrites or blocks a text: it only reports which rules a variant broke.
-Stop phrases and second-person forms are closed lists here. Vulgar language is not checked by
-word lists (ADR-0016 §15): the eval judge decides; harsh wording and new hedges or apologies are
-not checked by code.
+Stop phrases and second-person forms are closed lists here. Obscene words and accusatory
+generalizations are checked in the generation path (``domain.lexicon_guard``), which also reports
+a surviving generalization as ``PolicyRule.GENERALIZATION``; insults without obscene words are
+left to the prompt and the eval judge, and harsh wording and new hedges or apologies are not
+checked by code.
 """
 
 from __future__ import annotations
@@ -93,6 +95,7 @@ class PolicyRule(StrEnum):
     REGISTER = "register"
     LADDER_LENGTH = "ladder_length"
     LADDER_SIMILAR = "ladder_similar"
+    GENERALIZATION = "generalization"
 
 
 @dataclass(frozen=True, slots=True)

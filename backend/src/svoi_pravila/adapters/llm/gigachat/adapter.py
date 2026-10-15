@@ -30,12 +30,18 @@ from svoi_pravila.adapters.llm.gigachat.schemas import (
     RewriteOutNoRules,
     SuggestRuleOut,
 )
-from svoi_pravila.adapters.llm.gigachat.structured import StructuredCallParams, structured_call
+from svoi_pravila.adapters.llm.gigachat.structured import (
+    SlotGuard,
+    StructuredCallParams,
+    structured_call,
+)
 from svoi_pravila.adapters.llm.gigachat.validation import (
     MAX_TOKENS_DECODE,
     MAX_TOKENS_REWRITE,
     MAX_TOKENS_SUGGEST,
     SlotValidation,
+    decode_slot_texts,
+    rewrite_slot_texts,
     to_decode_result,
     to_suggest_rule_result,
     validate_rewrite_slots,
@@ -46,6 +52,7 @@ from svoi_pravila.application.errors import (
     InvalidGenerationOutput,
     UnavailableKind,
 )
+from svoi_pravila.application.lexicons import load_guard_lexicons_ru_v1
 from svoi_pravila.application.ports.generation import (
     DecodeCompleted,
     DecodeEvent,
@@ -59,6 +66,7 @@ from svoi_pravila.application.ports.generation import (
     SuggestRuleResult,
     TokenUsage,
 )
+from svoi_pravila.application.ports.generation_attempt_observer import GenerationAttemptObserver
 from svoi_pravila.config import GigaChatRuntimeSettings
 
 
@@ -120,9 +128,16 @@ def _timeout_unavailable(state: AttemptState) -> GenerationUnavailable:
 class GigaChatTextGenerator:
     """TextGenerator backed by the official GigaChat async SDK."""
 
-    def __init__(self, client: GigaChat, settings: GigaChatRuntimeSettings) -> None:
+    def __init__(
+        self,
+        client: GigaChat,
+        settings: GigaChatRuntimeSettings,
+        observer: GenerationAttemptObserver,
+    ) -> None:
         self._client = client
         self._settings = settings
+        self._observer = observer
+        self._lexicons = load_guard_lexicons_ru_v1()
 
     def prepare_rewrite(self, request: RewriteRequest) -> PreparedMessages:
         """Build rendered system/user messages for rewrite (also used by tests)."""
@@ -190,6 +205,8 @@ class GigaChatTextGenerator:
                         prepared=prepared,
                         response_format=response_format,
                         max_tokens=MAX_TOKENS_REWRITE,
+                        guard=SlotGuard(self._lexicons, rewrite_slot_texts),
+                        observer=self._observer,
                     ),
                     build,
                     state=state,
@@ -218,6 +235,8 @@ class GigaChatTextGenerator:
                 response_format=DecodeOut,
                 max_tokens=MAX_TOKENS_DECODE,
                 phase="structured",
+                guard=SlotGuard(self._lexicons, decode_slot_texts),
+                observer=self._observer,
             ),
             build,
             state=state,
@@ -269,6 +288,7 @@ class GigaChatTextGenerator:
                     attempts=phase_a.attempts + structured.meta.attempts,
                     usage=phase_a.usage + structured.meta.usage,
                     repaired=structured.meta.repaired,
+                    residual=structured.meta.residual,
                 )
                 yield DecodeCompleted(
                     analysis=phase_a.text,
@@ -312,6 +332,7 @@ class GigaChatTextGenerator:
                         prepared=prepared,
                         response_format=SuggestRuleOut,
                         max_tokens=MAX_TOKENS_SUGGEST,
+                        observer=self._observer,
                     ),
                     build,
                     state=state,

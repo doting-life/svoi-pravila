@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import NoReturn
 
@@ -48,12 +48,38 @@ from svoi_pravila.application.errors import (
     UnavailableKind,
 )
 from svoi_pravila.application.ports.generation import GenerationMeta
+from svoi_pravila.application.ports.generation_attempt_observer import (
+    GenerationAttemptObserver,
+    InvalidAttempt,
+)
 from svoi_pravila.domain.enums import VariantKind
+from svoi_pravila.domain.lexicon_guard import (
+    FindingKind,
+    GuardLexicons,
+    SlotFinding,
+    find_in_slots,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SlotGuard[ModelT: BaseModel]:
+    """The lexicon check of one operation: the lexicons and the slots of a parsed answer.
+
+    ``slot_texts`` returns the ``softer``/``firmer`` texts of a parsed answer, or nothing when
+    the answer carries no variants (a non-ok safety verdict). It never returns ``check``.
+    """
+
+    lexicons: GuardLexicons
+    slot_texts: Callable[[ModelT], Mapping[VariantKind, str]]
 
 
 @dataclass(frozen=True, slots=True)
 class StructuredCallParams[ModelT: BaseModel]:
-    """Arguments for one structured generation call (no nested timeout)."""
+    """Arguments for one structured generation call (no nested timeout).
+
+    ``guard`` enables the lexicon check (obscene words, generalizations) of the answer;
+    ``observer`` receives every invalid attempt.
+    """
 
     client: GigaChat
     operation: str
@@ -63,6 +89,8 @@ class StructuredCallParams[ModelT: BaseModel]:
     max_tokens: int
     phase: str | None = None
     top_p: float | None = None
+    guard: SlotGuard[ModelT] | None = None
+    observer: GenerationAttemptObserver | None = None
 
 
 class _RetryAttemptError(Exception):
@@ -73,7 +101,7 @@ class _RetryAttemptError(Exception):
 
     def __init__(self, defect: FirstAttemptDefect) -> None:
         self.defect = defect
-        super().__init__(defect.label)
+        super().__init__(",".join(defect.labels))
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,17 +164,62 @@ def _add_length_usage(state: AttemptState, exc: LengthFinishReasonError) -> None
         add_usage(state, completion.usage)
 
 
-def _record_retryable_invalid(
+def _field_texts(value: object, prefix: str = "") -> tuple[tuple[str, str], ...]:
+    """Named string leaves of a dumped answer: ``softer``, ``variants[0].text`` ..."""
+    if isinstance(value, str):
+        return ((prefix, value),)
+    if isinstance(value, Mapping):
+        return tuple(
+            pair
+            for key, item in value.items()
+            for pair in _field_texts(item, f"{prefix}.{key}" if prefix else str(key))
+        )
+    if isinstance(value, list):
+        return tuple(
+            pair
+            for index, item in enumerate(value)
+            for pair in _field_texts(item, f"{prefix}[{index}]")
+        )
+    return ()
+
+
+@dataclass(frozen=True, slots=True)
+class _InvalidAnswer[ModelT: BaseModel]:
+    """What is known about an invalid attempt: the reason, the slot, the answer and findings."""
+
+    reason: InvalidOutputReason
+    slot: VariantKind | None = None
+    answer: _Answer[ModelT] | None = None
+    findings: tuple[SlotFinding, ...] = ()
+
+
+def _raw_texts(state: AttemptState) -> tuple[tuple[str, str], ...]:
+    return (("raw", state.raw_answer),) if state.raw_answer else ()
+
+
+def _record_retryable_invalid[ModelT: BaseModel](
+    params: StructuredCallParams[ModelT],
     state: AttemptState,
-    reason: InvalidOutputReason,
+    invalid_answer: _InvalidAnswer[ModelT],
     *,
     attempt: int,
-    slot: VariantKind | None = None,
-    answer: str | None = None,
 ) -> NoReturn:
+    reason, slot, answer = invalid_answer.reason, invalid_answer.slot, invalid_answer.answer
     note_invalid_reason(state, reason, slot)
+    if params.observer is not None:
+        texts = _raw_texts(state) if answer is None else _field_texts(answer.parsed.model_dump())
+        params.observer.on_invalid_attempt(
+            InvalidAttempt(
+                operation=params.operation,
+                attempt=attempt,
+                reason=reason,
+                slot=slot,
+                texts=texts,
+            )
+        )
     if should_retry_invalid(attempt=attempt, yielded=None):
-        raise _RetryAttemptError(first_attempt_defect(reason, slot, answer))
+        raw = None if answer is None else answer.raw
+        raise _RetryAttemptError(first_attempt_defect(reason, slot, raw, invalid_answer.findings))
     raise finalize_invalid(state) from None
 
 
@@ -201,6 +274,7 @@ async def _create_once[ModelT: BaseModel](
         payload["top_p"] = params.top_p
     completion = await params.client.achat.create(payload)
     state.finish_reason = completion.finish_reason
+    state.raw_answer = _assistant_text(completion)
     add_usage(state, completion.usage)
     return _parse_completion(completion, params.response_format, state=state)
 
@@ -209,6 +283,7 @@ def _meta_from_state[ModelT: BaseModel](
     params: StructuredCallParams[ModelT],
     state: AttemptState,
     repaired: tuple[str, ...],
+    residual: tuple[VariantKind, ...] = (),
 ) -> GenerationMeta:
     return GenerationMeta(
         model=params.model,
@@ -217,6 +292,7 @@ def _meta_from_state[ModelT: BaseModel](
         attempts=state.attempts,
         usage=token_usage_from_state(state),
         repaired=repaired,
+        residual=residual,
     )
 
 
@@ -229,20 +305,27 @@ async def _run_attempt[ModelT: BaseModel](
 ) -> _Answer[ModelT]:
     state.attempts = attempt + 1
     state.finish_reason = None
+    state.raw_answer = ""
     try:
         return await _create_once(params, state, defect)
     except GenerationRefusedByProvider:
         _reraise_refused(state)
     except InvalidGenerationOutput as exc:
-        _record_retryable_invalid(state, last_reason(exc), attempt=attempt)
+        _record_retryable_invalid(params, state, _InvalidAnswer(last_reason(exc)), attempt=attempt)
     except ValidationError:
-        _record_retryable_invalid(state, InvalidOutputReason.SCHEMA_VIOLATION, attempt=attempt)
+        _record_retryable_invalid(
+            params, state, _InvalidAnswer(InvalidOutputReason.SCHEMA_VIOLATION), attempt=attempt
+        )
     except json.JSONDecodeError:
-        _record_retryable_invalid(state, InvalidOutputReason.JSON_DECODE, attempt=attempt)
+        _record_retryable_invalid(
+            params, state, _InvalidAnswer(InvalidOutputReason.JSON_DECODE), attempt=attempt
+        )
     except LengthFinishReasonError as exc:
         _add_length_usage(state, exc)
         state.finish_reason = "length"
-        _record_retryable_invalid(state, InvalidOutputReason.LENGTH, attempt=attempt)
+        _record_retryable_invalid(
+            params, state, _InvalidAnswer(InvalidOutputReason.LENGTH), attempt=attempt
+        )
     except ATTEMPT_PROVIDER_EXCEPTIONS as exc:
         mapped = map_provider_exception(
             exc,
@@ -270,13 +353,59 @@ async def _build_result[ModelT: BaseModel, ResultT](
         untrusted=params.prepared.untrusted,
     )
     if leak is not None:
-        _record_retryable_invalid(state, leak, attempt=attempt, answer=answer.raw)
-    repaired = () if defect is None else (defect.label,)
+        _record_retryable_invalid(
+            params, state, _InvalidAnswer(leak, answer=answer), attempt=attempt
+        )
+    findings = _guard_findings(params, answer.parsed)
+    residual = tuple(item.slot for item in findings if item.kind is FindingKind.GENERALIZATION)
+    repaired = () if defect is None else defect.labels
     try:
-        return build(answer.parsed, _meta_from_state(params, state, repaired))
+        result = build(answer.parsed, _meta_from_state(params, state, repaired, residual))
     except InvalidGenerationOutput as exc:
         _record_retryable_invalid(
-            state, last_reason(exc), attempt=attempt, slot=exc.slots[-1], answer=answer.raw
+            params,
+            state,
+            _InvalidAnswer(last_reason(exc), slot=exc.slots[-1], answer=answer),
+            attempt=attempt,
+        )
+    if findings:
+        _decide_findings(params, state, findings, attempt=attempt, answer=answer)
+    return result
+
+
+def _guard_findings[ModelT: BaseModel](
+    params: StructuredCallParams[ModelT], parsed: ModelT
+) -> tuple[SlotFinding, ...]:
+    if params.guard is None:
+        return ()
+    return find_in_slots(params.guard.slot_texts(parsed), params.guard.lexicons)
+
+
+def _decide_findings[ModelT: BaseModel](
+    params: StructuredCallParams[ModelT],
+    state: AttemptState,
+    findings: tuple[SlotFinding, ...],
+    *,
+    attempt: int,
+    answer: _Answer[ModelT],
+) -> None:
+    """Retry once on any finding; after the retry only obscene words fail the call.
+
+    A surviving generalization is accepted: the caller reads it from ``GenerationMeta.residual``.
+    """
+    obscene = next((item for item in findings if item.kind is FindingKind.PROFANITY), None)
+    primary = findings[0] if obscene is None else obscene
+    if should_retry_invalid(attempt=attempt, yielded=None) or obscene is not None:
+        _record_retryable_invalid(
+            params,
+            state,
+            _InvalidAnswer(
+                InvalidOutputReason(primary.kind.value),
+                slot=primary.slot,
+                answer=answer,
+                findings=findings,
+            ),
+            attempt=attempt,
         )
 
 

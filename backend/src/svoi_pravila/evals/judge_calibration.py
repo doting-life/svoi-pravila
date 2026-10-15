@@ -41,9 +41,14 @@ from svoi_pravila.application.ports.rewrite_judge import (
 )
 from svoi_pravila.benchmarks.runner import SpendTracker
 from svoi_pravila.evals.judge_cases import SOURCE_EVAL_OUTPUT, SOURCES, JudgeCase
-from svoi_pravila.evals.judge_verdicts import derive_result, evidence
+from svoi_pravila.evals.judge_verdicts import (
+    UNGROUNDED_FIELDS,
+    derive_result,
+    evidence,
+    ungrounded_counts,
+)
 
-RUBRIC_VERSION = "judge_rewrite@v2"
+RUBRIC_VERSION = "judge_rewrite@v3"
 MIN_ACCURACY = 0.90
 MIN_DEFECT_RECALL = 0.85
 MIN_CLEAN_DEFECT_RECALL = 0.95
@@ -53,7 +58,7 @@ SLOT_CRITERIA = ("clean", "meaning_kept", "invented", "goal_done", "rule_done")
 PAIR_CRITERION = "ladder_ok"
 CRITERIA = (*SLOT_CRITERIA, PAIR_CRITERION)
 
-_FILE_VERSION = 2
+_FILE_VERSION = 3
 _RATE_DIGITS = 4
 _MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 _STOP_KINDS = frozenset({UnavailableKind.RATE_LIMITED, UnavailableKind.AUTH})
@@ -120,6 +125,7 @@ class Calibration:
     failed_items: int
     criteria: tuple[CriterionStats, ...]
     by_source: tuple[tuple[str, tuple[CriterionStats, ...]], ...]
+    ungrounded: tuple[tuple[str, int], ...] = ()
 
     @property
     def passed(self) -> bool:
@@ -196,6 +202,18 @@ def _all_criteria(outcomes: list[ItemOutcome]) -> tuple[CriterionStats, ...]:
     return tuple(criterion_stats(outcomes, criterion) for criterion in CRITERIA)
 
 
+def _ungrounded(outcomes: list[ItemOutcome]) -> tuple[tuple[str, int], ...]:
+    """Per field, the quotes of all items that are not in their own text."""
+    totals = dict.fromkeys(UNGROUNDED_FIELDS, 0)
+    for outcome in outcomes:
+        if outcome.observation is None:
+            continue
+        counts = ungrounded_counts(judge_request(outcome.case, 1.0), outcome.observation)
+        for name, count in counts.items():
+            totals[name] += count
+    return tuple(totals.items())
+
+
 def calibrate(model: str, outcomes: list[ItemOutcome]) -> Calibration:
     """Reduce the outcomes of a complete run to the committed numbers."""
     return Calibration(
@@ -208,6 +226,7 @@ def calibrate(model: str, outcomes: list[ItemOutcome]) -> Calibration:
             (source, _all_criteria([item for item in outcomes if item.case.source == source]))
             for source in SOURCES
         ),
+        ungrounded=_ungrounded(outcomes),
     )
 
 
@@ -220,7 +239,9 @@ def disagreements(outcomes: list[ItemOutcome]) -> list[Disagreement]:
             criterion,
             expected,
             got,
-            "-" if outcome.observation is None else evidence(outcome.observation, slot, criterion),
+            "-"
+            if outcome.observation is None
+            else evidence(judge_request(outcome.case, 1.0), outcome.observation, slot, criterion),
         )
         for outcome in outcomes
         for criterion in CRITERIA
@@ -274,12 +295,21 @@ async def run_calibration(
     return run
 
 
-def calibration_path(directory: Path, model: str) -> Path:
-    """``judge_calibration_<model>_<rubric version>.json`` inside ``directory``."""
+def _file_stem(model: str) -> str:
     if _MODEL_NAME.fullmatch(model) is None:
         msg = f"model name {model!r} cannot be used in a file name"
         raise ValueError(msg)
-    return directory / f"judge_calibration_{model}_{RUBRIC_VERSION.rsplit('@', 1)[1]}.json"
+    return f"judge_calibration_{model}_{RUBRIC_VERSION.rsplit('@', 1)[1]}"
+
+
+def report_name(model: str) -> str:
+    """The default local report file name: it carries the model and the rubric version."""
+    return f"{_file_stem(model)}.md"
+
+
+def calibration_path(directory: Path, model: str) -> Path:
+    """``judge_calibration_<model>_<rubric version>.json`` inside ``directory``."""
+    return directory / f"{_file_stem(model)}.json"
 
 
 def _criteria_payload(criteria: tuple[CriterionStats, ...]) -> dict[str, object]:
@@ -294,6 +324,10 @@ def _criteria_payload(criteria: tuple[CriterionStats, ...]) -> dict[str, object]
     }
 
 
+def _ungrounded_total(calibration: Calibration) -> int:
+    return sum(count for _, count in calibration.ungrounded)
+
+
 def calibration_payload(calibration: Calibration) -> dict[str, object]:
     """The C0 content of the committed file: rubric, model and per-criterion numbers."""
     return {
@@ -306,6 +340,7 @@ def calibration_payload(calibration: Calibration) -> dict[str, object]:
         "sources": {
             source: _criteria_payload(criteria) for source, criteria in calibration.by_source
         },
+        "ungrounded": {**dict(calibration.ungrounded), "total": _ungrounded_total(calibration)},
         "passed": calibration.passed,
     }
 
@@ -369,6 +404,11 @@ def _stats_table(
     ]
 
 
+def _ungrounded_lines(calibration: Calibration) -> list[str]:
+    fields = ", ".join(f"{name} {count}" for name, count in calibration.ungrounded)
+    return [f"- ungrounded quotes: {_ungrounded_total(calibration)} ({fields})"]
+
+
 def render_calibration_report(
     calibration: Calibration, outcomes: list[ItemOutcome], *, spent_billable: int
 ) -> str:
@@ -380,6 +420,7 @@ def render_calibration_report(
         f"- rubric: {calibration.rubric}",
         f"- items: {calibration.items} ({calibration.failed_items} without verdicts)",
         f"- billable tokens: {spent_billable}",
+        *_ungrounded_lines(calibration),
         f"- passed: {'yes' if calibration.passed else 'no'}",
         "",
         *_stats_table("Overall", calibration.criteria, CriterionStats.passes),

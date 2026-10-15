@@ -27,12 +27,14 @@ from svoi_pravila.evals.judge_verdicts import (
     GOAL_BREACHES,
     derive_result,
     evidence,
+    normalise,
+    ungrounded_counts,
     words_differ,
 )
 
 _META = GenerationMeta(
     model="judge",
-    prompt_version="judge_rewrite@v2",
+    prompt_version="judge_rewrite@v3",
     latency_ms=1,
     attempts=1,
     usage=TokenUsage(1, 1, 0),
@@ -45,23 +47,27 @@ _RULE = RuleContext(
 _GOOD_SLOT = SlotObservation(
     rude=(),
     added=(),
-    goal_sentence="Я не пойду.",
     position=Position.SAME,
+    goal_sentence="Я не пойду",
     goal_breach=GoalBreach.NONE,
+    rule_evidence=("Прошу тебя",),
     rule_check=RuleCheck.FOLLOWED,
 )
 _GOOD_PAIR = PairObservation(firmer_softening=(), firmer_pressure=(), warmer=Warmer.SOFTER)
+_SOFTER = "Я не пойду, прости. Мне это неприятно. Прошу тебя"
+_FIRMER = "Я не пойду. Прошу тебя. Блин, ты вечно так"
 
 
 def _request(
     *,
     goal: RewriteGoal | None = None,
     rules: tuple[RuleContext, ...] = (),
-    softer: str = "Мне нужно время подумать",
-    firmer: str = "Мне нужно время",
+    draft: str = "Я не пойду, ты опять опоздал",
+    softer: str = _SOFTER,
+    firmer: str = _FIRMER,
 ) -> JudgeRequest:
     return JudgeRequest(
-        draft="Дай мне время",
+        draft=draft,
         goal=goal,
         rules=rules,
         softer=softer,
@@ -87,15 +93,95 @@ def _with(**changes: Any) -> SlotObservation:
 
 
 @pytest.mark.unit
-def test_clean_is_yes_iff_rude_is_empty() -> None:
-    assert _softer(_request()).clean is Verdict.YES
-    assert _softer(_request(), _with(rude=("блин",))).clean is Verdict.NO
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Мне, нужно: ВРЕМЯ!", "мне нужно время"),
+        ("Всё  ещё\tтут", "все еще тут"),
+        ("  ...  ", ""),
+        ("х*й", "х й"),
+        ("a_b", "a_b"),
+    ],
+)
+def test_normalise_folds_case_yo_punctuation_and_spaces(text: str, expected: str) -> None:
+    assert normalise(text) == expected
+
+
+# clean
 
 
 @pytest.mark.unit
-def test_invented_is_yes_iff_added_is_not_empty() -> None:
-    assert _softer(_request()).invented is Verdict.NO
-    assert _softer(_request(), _with(added=("иначе уйду",))).invented is Verdict.YES
+def test_clean_is_yes_iff_no_rude_quote_counts() -> None:
+    request = _request()
+    assert _softer(request).clean is Verdict.YES
+    assert _softer(request, _with(rude=("мне это неприятно",))).clean is Verdict.NO
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("quote", ["блин", "не из текста", "...", ""])
+def test_a_rude_quote_that_is_not_in_its_variant_does_not_count(quote: str) -> None:
+    assert _softer(_request(), _with(rude=(quote,))).clean is Verdict.YES
+
+
+@pytest.mark.unit
+def test_a_rude_quote_counts_after_normalisation() -> None:
+    assert _softer(_request(), _with(rude=("ПРОСТИ!",))).clean is Verdict.NO
+
+
+# invented
+
+
+@pytest.mark.unit
+def test_invented_is_yes_iff_an_added_quote_counts() -> None:
+    request = _request()
+    assert _softer(request).invented is Verdict.NO
+    assert _softer(request, _with(added=("мне это неприятно",))).invented is Verdict.YES
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("quote", ["не из текста", "...", ""])
+def test_an_added_quote_that_is_not_in_its_variant_does_not_count(quote: str) -> None:
+    assert _softer(_request(), _with(added=(quote,))).invented is Verdict.NO
+
+
+@pytest.mark.unit
+def test_an_added_quote_that_occurs_in_the_draft_does_not_count() -> None:
+    request = _request(softer="Ты опять опоздал, прости")
+    assert _softer(request, _with(added=("Ты опять опоздал",))).invented is Verdict.NO
+    assert _softer(request, _with(added=("прости",))).invented is Verdict.YES
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("rude", "added"),
+    [
+        ("мне это неприятно", "мне это неприятно"),
+        ("мне это неприятно", "это"),
+        ("неприятно", "мне это неприятно"),
+    ],
+    ids=["same", "added-inside-rude", "rude-inside-added"],
+)
+def test_an_added_quote_overlapping_a_counted_rude_quote_does_not_count(
+    rude: str, added: str
+) -> None:
+    seen = _with(rude=(rude,), added=(added,))
+    assert _softer(_request(), seen).invented is Verdict.NO
+    assert _softer(_request(), seen).clean is Verdict.NO
+
+
+@pytest.mark.unit
+def test_an_added_quote_overlapping_an_ungrounded_rude_quote_still_counts() -> None:
+    seen = _with(rude=("не из текста",), added=("прости",))
+    assert _softer(_request(), seen).invented is Verdict.YES
+
+
+@pytest.mark.unit
+def test_an_added_quote_apart_from_the_rude_quote_counts() -> None:
+    seen = _with(rude=("прости",), added=("мне это неприятно",))
+    assert _softer(_request(), seen).invented is Verdict.YES
+
+
+# meaning_kept
 
 
 @pytest.mark.unit
@@ -105,17 +191,19 @@ def test_meaning_kept_is_yes_iff_the_position_is_the_same(position: Position) ->
     assert _softer(_request(), _with(position=position)).meaning_kept is expected
 
 
-@pytest.mark.unit
-@pytest.mark.parametrize("goal_sentence", ["", "   "])
-def test_goal_done_is_no_without_a_goal_sentence(goal_sentence: str) -> None:
-    request = _request(goal=RewriteGoal.DECLINE)
-    assert _softer(request, _with(goal_sentence=goal_sentence)).goal_done is Verdict.NO
+# goal_done
 
 
 @pytest.mark.unit
-def test_goal_done_is_yes_with_a_sentence_and_no_breach() -> None:
+@pytest.mark.parametrize("sentence", ["", "   ", "не из текста", "..."])
+def test_goal_done_is_no_without_a_goal_sentence_that_is_in_the_variant(sentence: str) -> None:
     request = _request(goal=RewriteGoal.DECLINE)
-    assert _softer(request).goal_done is Verdict.YES
+    assert _softer(request, _with(goal_sentence=sentence)).goal_done is Verdict.NO
+
+
+@pytest.mark.unit
+def test_goal_done_is_yes_with_a_grounded_sentence_and_no_breach() -> None:
+    assert _softer(_request(goal=RewriteGoal.DECLINE)).goal_done is Verdict.YES
 
 
 @pytest.mark.unit
@@ -143,36 +231,51 @@ def test_the_breaches_per_goal_are_the_cto_table() -> None:
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize("sentence", ["", "Я не пойду."])
+@pytest.mark.parametrize("sentence", ["", "Я не пойду"])
 @pytest.mark.parametrize("breach", list(GoalBreach))
 def test_goal_done_is_na_without_a_goal_whatever_the_judge_answers(
     sentence: str, breach: GoalBreach
 ) -> None:
-    assert (
-        _softer(_request(goal=None), _with(goal_sentence=sentence, goal_breach=breach)).goal_done
-        is Verdict.NA
-    )
+    seen = _with(goal_sentence=sentence, goal_breach=breach)
+    assert _softer(_request(goal=None), seen).goal_done is Verdict.NA
+
+
+# rule_done
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    ("check", "expected"),
-    [
-        (RuleCheck.FOLLOWED, Verdict.YES),
-        (RuleCheck.BROKEN, Verdict.NO),
-        (RuleCheck.NOT_APPLICABLE, Verdict.NA),
-    ],
-)
-def test_rule_done_maps_the_rule_check_when_the_request_has_rules(
-    check: RuleCheck, expected: Verdict
+def test_rule_done_is_yes_for_followed_with_a_counted_evidence_quote() -> None:
+    assert _softer(_request(rules=(_RULE,))).rule_done is Verdict.YES
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("evidence_quotes", [(), ("не из текста",), ("...",), ("",)])
+def test_rule_done_is_no_for_followed_without_a_counted_evidence_quote(
+    evidence_quotes: tuple[str, ...],
 ) -> None:
-    assert _softer(_request(rules=(_RULE,)), _with(rule_check=check)).rule_done is expected
+    seen = _with(rule_evidence=evidence_quotes)
+    assert _softer(_request(rules=(_RULE,)), seen).rule_done is Verdict.NO
+
+
+@pytest.mark.unit
+def test_rule_done_is_no_for_broken_even_with_evidence() -> None:
+    seen = _with(rule_check=RuleCheck.BROKEN)
+    assert _softer(_request(rules=(_RULE,)), seen).rule_done is Verdict.NO
+
+
+@pytest.mark.unit
+def test_rule_done_is_na_for_not_applicable() -> None:
+    seen = _with(rule_check=RuleCheck.NOT_APPLICABLE)
+    assert _softer(_request(rules=(_RULE,)), seen).rule_done is Verdict.NA
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize("check", list(RuleCheck))
 def test_rule_done_is_na_without_rules_whatever_the_judge_answers(check: RuleCheck) -> None:
     assert _softer(_request(rules=()), _with(rule_check=check)).rule_done is Verdict.NA
+
+
+# ladder_ok
 
 
 def _ladder(pair: PairObservation = _GOOD_PAIR, request: JudgeRequest | None = None) -> Verdict:
@@ -188,8 +291,8 @@ def test_ladder_ok_is_yes_for_a_plain_firmer_a_warmer_softer_and_different_words
 @pytest.mark.parametrize(
     "pair",
     [
-        replace(_GOOD_PAIR, firmer_softening=("если можно",)),
-        replace(_GOOD_PAIR, firmer_pressure=("или уйду",)),
+        replace(_GOOD_PAIR, firmer_softening=("Прошу тебя",)),
+        replace(_GOOD_PAIR, firmer_pressure=("ты вечно так",)),
         replace(_GOOD_PAIR, warmer=Warmer.FIRMER),
         replace(_GOOD_PAIR, warmer=Warmer.EQUAL),
     ],
@@ -200,10 +303,22 @@ def test_ladder_ok_is_no_when_any_condition_fails(pair: PairObservation) -> None
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    "pair",
+    [
+        replace(_GOOD_PAIR, firmer_softening=("прости",)),
+        replace(_GOOD_PAIR, firmer_pressure=("не из текста",)),
+        replace(_GOOD_PAIR, firmer_softening=("...",), firmer_pressure=("",)),
+    ],
+    ids=["quote-only-in-softer", "not-in-any-text", "no-words"],
+)
+def test_ladder_quotes_count_only_when_they_are_in_firmer(pair: PairObservation) -> None:
+    assert _ladder(pair) is Verdict.YES
+
+
+@pytest.mark.unit
 def test_ladder_ok_is_no_for_the_same_words_whatever_the_judge_answers() -> None:
-    assert (
-        _ladder(request=_request(softer="Мне нужно время", firmer="Мне нужно время")) is Verdict.NO
-    )
+    assert _ladder(request=_request(softer="Я не пойду", firmer="я, не пойду!")) is Verdict.NO
 
 
 @pytest.mark.unit
@@ -223,34 +338,67 @@ def test_the_word_comparison(softer: str, firmer: str, differ: bool) -> None:  #
     assert words_differ(softer, firmer) is differ
 
 
+# the result and the report
+
+
 @pytest.mark.unit
 def test_the_derived_result_keeps_the_meta_and_every_slot() -> None:
-    observation = _observation(softer=_with(rude=("блин",)))
+    observation = _observation(firmer=_with(rude=("Блин",)))
     result = derive_result(_request(), observation)
     assert result.meta is _META
-    assert result.softer.clean is Verdict.NO
-    assert result.firmer.clean is Verdict.YES
+    assert result.firmer.clean is Verdict.NO
+    assert result.softer.clean is Verdict.YES
 
 
 @pytest.mark.unit
-def test_the_evidence_shows_the_quotes_or_the_enum() -> None:
+def test_ungrounded_quotes_are_counted_per_field() -> None:
     observation = _observation(
-        softer=replace(
-            _GOOD_SLOT,
-            rude=("блин", "чёрт"),
-            added=("иначе уйду",),
-            goal_breach=GoalBreach.HEDGED,
+        softer=_with(
+            rude=("прости", "нет такого"),
+            added=("нет такого", "нет такого тоже"),
+            goal_sentence="нет такого",
+            rule_evidence=("Прошу тебя", "нет такого"),
         ),
-        pair=PairObservation(("если можно",), (), Warmer.EQUAL),
+        firmer=_with(goal_sentence="  ", rude=("...",)),
+        pair=PairObservation(("прости", "Прошу тебя"), ("нет такого",), Warmer.SOFTER),
     )
-    assert evidence(observation, "softer", "clean") == "блин; чёрт"
-    assert evidence(observation, "firmer", "clean") == "-"
-    assert evidence(observation, "softer", "invented") == "иначе уйду"
-    assert evidence(observation, "softer", "meaning_kept") == "same"
-    assert evidence(observation, "softer", "goal_done") == "Я не пойду. [hedged]"
-    assert evidence(observation, "softer", "rule_done") == "followed"
-    assert evidence(observation, None, "ladder_ok") == (
-        "softening: если можно; pressure: -; warmer: equal"
+    assert ungrounded_counts(_request(), observation) == {
+        "rude": 2,
+        "added": 2,
+        "goal_sentence": 1,
+        "rule_evidence": 1,
+        "firmer_softening": 1,
+        "firmer_pressure": 1,
+    }
+
+
+@pytest.mark.unit
+def test_a_fully_grounded_observation_has_no_ungrounded_quotes() -> None:
+    counts = ungrounded_counts(_request(), _observation())
+    assert set(counts.values()) == {0}
+
+
+@pytest.mark.unit
+def test_the_evidence_shows_the_quotes_marking_the_ungrounded_ones() -> None:
+    request = _request()
+    observation = _observation(
+        softer=_with(
+            rude=("прости", "нет такого"),
+            added=("Мне это неприятно",),
+            goal_breach=GoalBreach.HEDGED,
+            goal_sentence="нет такого",
+        ),
+        pair=PairObservation(("Прошу тебя",), (), Warmer.EQUAL),
+    )
+    assert evidence(request, observation, "softer", "clean") == "прости; ?нет такого"
+    assert evidence(request, observation, "firmer", "clean") == "-"
+    assert evidence(request, observation, "softer", "invented") == "Мне это неприятно"
+    assert evidence(request, observation, "softer", "meaning_kept") == "same"
+    assert evidence(request, observation, "softer", "goal_done") == "?нет такого [hedged]"
+    assert evidence(request, observation, "firmer", "goal_done") == "Я не пойду [none]"
+    assert evidence(request, observation, "softer", "rule_done") == "followed: Прошу тебя"
+    assert evidence(request, observation, None, "ladder_ok") == (
+        "softening: Прошу тебя; pressure: -; warmer: equal"
     )
 
 
@@ -260,11 +408,15 @@ async def test_the_fake_judge_scripts_verdicts_that_derive_back_to_themselves() 
     scripted = judge_result(
         softer=slot(
             clean=Verdict.NO,
-            invented=Verdict.YES,
             goal_done=Verdict.NO,
             rule_done=Verdict.NO,
         ),
-        firmer=slot(meaning_kept=Verdict.NO, goal_done=Verdict.YES, rule_done=Verdict.YES),
+        firmer=slot(
+            meaning_kept=Verdict.NO,
+            invented=Verdict.YES,
+            goal_done=Verdict.YES,
+            rule_done=Verdict.YES,
+        ),
         ladder_ok=Verdict.YES,
     )
     observation = await FakeRewriteJudge(scripted).judge(request)

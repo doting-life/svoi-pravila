@@ -43,9 +43,10 @@ def _slot_observation(parsed: SlotJudgeOut) -> SlotObservation:
     return SlotObservation(
         rude=tuple(parsed.rude),
         added=tuple(parsed.added),
-        goal_sentence=parsed.goal_sentence,
         position=Position(parsed.position.value),
+        goal_sentence=parsed.goal_sentence,
         goal_breach=GoalBreach(parsed.goal_breach.value),
+        rule_evidence=tuple(parsed.rule_evidence),
         rule_check=RuleCheck(parsed.rule_check.value),
     )
 

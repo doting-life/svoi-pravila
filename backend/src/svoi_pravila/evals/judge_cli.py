@@ -15,6 +15,7 @@ from svoi_pravila.evals.judge_calibration import (
     calibrate,
     judge_request,
     render_calibration_report,
+    report_name,
     run_calibration,
     write_calibration,
 )
@@ -22,7 +23,7 @@ from svoi_pravila.evals.judge_cases import JudgeCase, load_judge_cases
 
 _DEFAULT_DATA = "/app/evals/data/judge_calibration_v1.jsonl"
 _DEFAULT_BASELINES = "/app/evals/baselines"
-_DEFAULT_OUT = "/app/evals/out/judge_calibration.md"
+_OUT_DIR = "/app/evals/out"
 _ESTIMATE_HELP = (
     "Worst case per call: ceil(rendered system+user characters / 3) + the output cap, "
     "times the maximum attempts."
@@ -38,6 +39,10 @@ def _print_dry_run(cases: list[JudgeCase], *, model: str) -> None:
     print(f"Total planned calls: {len(cases)}")
     print(f"Total worst-case billable tokens: {sum(worst)}")
     print(f"Largest single-call worst-case estimate: {max(worst)}")
+
+
+def _report_path(args: argparse.Namespace) -> Path:
+    return Path(args.out) if args.out else Path(_OUT_DIR) / report_name(args.model)
 
 
 def _write_report(out: Path, report: str) -> None:
@@ -71,7 +76,7 @@ async def async_main(args: argparse.Namespace) -> int:
         report = render_calibration_report(
             calibration, run.outcomes, spent_billable=run.spent_billable
         )
-        await asyncio.to_thread(_write_report, Path(args.out), report)
+        await asyncio.to_thread(_write_report, _report_path(args), report)
         print(f"Report written. Spent billable tokens: {run.spent_billable}")
         if run.stop_reason is not None:
             print(f"Run incomplete ({run.stop_reason}); no calibration file written.")
@@ -94,7 +99,11 @@ def main() -> None:
         help="Directory of the committed judge_calibration_<model>_<rubric version>.json file",
     )
     parser.add_argument("--deadline", type=float, default=30.0, help="Per-call deadline seconds")
-    parser.add_argument("--out", default=_DEFAULT_OUT, help="Markdown report path (local only)")
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="Markdown report path (local only); default carries the model and the rubric",
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",

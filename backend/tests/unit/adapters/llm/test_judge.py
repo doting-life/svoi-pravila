@@ -52,9 +52,10 @@ from tests.unit.adapters.llm.test_gigachat_adapter import (
 _SLOT: dict[str, object] = {
     "rude": [],
     "added": [],
-    "goal_sentence": "",
     "position": "same",
+    "goal_sentence": "",
     "goal_breach": "none",
+    "rule_evidence": [],
     "rule_check": "not_applicable",
 }
 
@@ -118,6 +119,7 @@ async def test_judge_maps_every_observation_and_the_meta() -> None:
             "rude": ["блин"],
             "goal_sentence": "Я не пойду.",
             "goal_breach": "hedged",
+            "rule_evidence": ["Заканчиваю просьбой"],
             "rule_check": "broken",
         },
         firmer={"added": ["иначе уйду"], "position": "weakened"},
@@ -129,9 +131,10 @@ async def test_judge_maps_every_observation_and_the_meta() -> None:
     assert seen.softer == SlotObservation(
         rude=("блин",),
         added=(),
-        goal_sentence="Я не пойду.",
         position=Position.SAME,
+        goal_sentence="Я не пойду.",
         goal_breach=GoalBreach.HEDGED,
+        rule_evidence=("Заканчиваю просьбой",),
         rule_check=RuleCheck.BROKEN,
     )
     assert seen.firmer.added == ("иначе уйду",)
@@ -142,7 +145,7 @@ async def test_judge_maps_every_observation_and_the_meta() -> None:
         warmer=Warmer.EQUAL,
     )
     assert seen.meta.model == "judge-model"
-    assert seen.meta.prompt_version == "judge_rewrite@v2"
+    assert seen.meta.prompt_version == "judge_rewrite@v3"
     assert seen.meta.attempts == 1
     assert seen.meta.usage.billable == 8
 
@@ -188,6 +191,8 @@ async def test_judge_retries_once_on_a_schema_violation() -> None:
         json.dumps({**_observations(), "extra": "yes"}),
         json.dumps({"softer": _SLOT}),
         json.dumps(_observations(softer={"rude": ["а"] * 5})),
+        json.dumps(_observations(firmer={"rule_evidence": ["а"] * 5})),
+        json.dumps(_observations(firmer={"rule_evidence": [""]})),
         json.dumps(_observations(firmer_pressure=[""])),
         json.dumps(_observations(firmer_softening=["я" * 121])),
         json.dumps(_observations(firmer={"goal_sentence": "я" * 301})),
@@ -199,6 +204,8 @@ async def test_judge_retries_once_on_a_schema_violation() -> None:
         "extra-field",
         "missing-slot",
         "five-quotes",
+        "five-rule-quotes",
+        "empty-rule-quote",
         "empty-quote",
         "long-quote",
         "long-goal-sentence",
@@ -212,14 +219,14 @@ async def test_judge_invalid_twice_raises_with_the_reasons(bad: str) -> None:
         await _judge(ache).judge(_request())
     assert len(exc_info.value.reasons) == MAX_ATTEMPTS
     assert exc_info.value.usage.billable == 16
-    assert exc_info.value.prompt_version == "judge_rewrite@v2"
+    assert exc_info.value.prompt_version == "judge_rewrite@v3"
 
 
 @pytest.mark.unit
 def test_the_schema_accepts_the_bounds() -> None:
     quote = "я" * 120
     out = _out(
-        softer={"rude": [quote] * 4, "goal_sentence": "я" * 300},
+        softer={"rude": [quote] * 4, "goal_sentence": "я" * 300, "rule_evidence": [quote] * 4},
         firmer_softening=[quote] * 4,
     )
     assert len(out.softer.rude) == 4
@@ -238,9 +245,10 @@ def test_the_schema_orders_slots_then_pair_fields_and_evidence_before_enums() ->
     assert list(SlotJudgeOut.model_fields) == [
         "rude",
         "added",
-        "goal_sentence",
         "position",
+        "goal_sentence",
         "goal_breach",
+        "rule_evidence",
         "rule_check",
     ]
 
@@ -268,13 +276,13 @@ async def test_judge_timeout_is_unavailable_with_the_kind() -> None:
     with pytest.raises(GenerationUnavailable) as exc_info:
         await _judge(SlowAche()).judge(_request(deadline_seconds=0.05))
     assert exc_info.value.kind is UnavailableKind.TIMEOUT
-    assert exc_info.value.prompt_version == "judge_rewrite@v2"
+    assert exc_info.value.prompt_version == "judge_rewrite@v3"
 
 
 @pytest.mark.unit
 def test_the_prompt_is_the_cto_rubric_with_the_boundary_paragraph() -> None:
-    template, version = load_prompt_template("judge_rewrite", "v2")
-    assert version == "judge_rewrite@v2"
+    template, version = load_prompt_template("judge_rewrite", "v3")
+    assert version == "judge_rewrite@v3"
     assert template.startswith("Ты — проверяющий в сервисе «Свои правила».")
     assert "Ты не ставишь оценок" in template
     for field in (*SlotJudgeOut.model_fields, *JudgeOut.model_fields):
@@ -305,7 +313,7 @@ def test_the_payload_delimits_every_untrusted_field_with_one_marker() -> None:
     assert "softer:\nВАРИАНТ-МЯГЧЕ" in prepared.user
     assert "firmer:\nВАРИАНТ" in prepared.user
     assert prepared.system.count(marker) == 2
-    assert prepared.prompt_version == "judge_rewrite@v2"
+    assert prepared.prompt_version == "judge_rewrite@v3"
 
 
 @pytest.mark.unit

@@ -243,7 +243,7 @@ def test_no_synthetic_draft_equals_another_dataset_draft_or_a_prompt_example() -
 
 @pytest.mark.unit
 def test_no_quoted_example_of_the_judge_rubric_is_a_dataset_text() -> None:
-    rubric = (_PROMPTS / "judge_rewrite" / "v2.md").read_text(encoding="utf-8")
+    rubric = (_PROMPTS / "judge_rewrite" / "v3.md").read_text(encoding="utf-8")
     examples = {
         normalize_lexicon_text(match.replace("\u2026", " "))
         for match in re.findall("\u00ab([^\u00bb]+)\u00bb", rubric)

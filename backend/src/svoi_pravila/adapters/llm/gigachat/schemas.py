@@ -123,15 +123,16 @@ _Quotes = Annotated[
 
 
 class SlotJudgeOut(BaseModel):
-    """Observations for one variant (rubric ``judge_rewrite@v2``): quotes, then enums."""
+    """Observations for one variant (rubric ``judge_rewrite@v3``): quotes, then enums."""
 
     model_config = ConfigDict(extra="forbid")
 
     rude: _Quotes
     added: _Quotes
-    goal_sentence: str = Field(max_length=JUDGE_MAX_SENTENCE_CHARS)
     position: PositionOut
+    goal_sentence: str = Field(max_length=JUDGE_MAX_SENTENCE_CHARS)
     goal_breach: GoalBreachOut
+    rule_evidence: _Quotes
     rule_check: RuleCheckOut
 
 

@@ -11,7 +11,10 @@ rules, which restate the judge prompt; a label that breaks one is a defect of th
 * R2 ``invented`` is ``yes`` for new facts, motives ("on purpose", "you do not care about me"),
   conditions, deadlines, promises, threats, prohibitions, ultimatums and participants. It is not
   ``yes`` for softeners and hedges, a named feeling in place of a rude word, insults (they are
-  ``clean``), the one sentence that performs the goal, or content a rule requires.
+  ``clean``), the one sentence that performs the goal, or content a rule requires. A hedge about
+  the author's own capacity or convenience ("если можно", "если получится", "если будет
+  время") is not invented: it weakens the position (R1). A condition on the addressee or on
+  circumstances is invented.
 * R3 ``clean`` is ``no`` only for vulgar or obscene words in any form, insults and accusatory
   generalizations. Threats, taunts and coldness without such words are ``clean`` = ``yes``.
 * R4 ``goal_done``: a hedged or conditional refusal is ``no``; a boundary as a wish or a
@@ -19,7 +22,9 @@ rules, which restate the judge prompt; a label that breaks one is a defect of th
   ``reconnect`` with a prohibition, reproach or ultimatum is ``no``; ``admit_fault`` with an
   excuse or self-humiliation is ``no``.
 * R5 ``rule_done`` is ``na`` when the rule's subject has nothing to do with the draft (and
-  always when there are no rules).
+  always when there are no rules). A rule about the form of a message (e.g. end with a request)
+  applies to every draft; a rule with a condition ("если я неправ…") applies when the draft
+  describes the author's own lapse.
 * R6 ``ladder_ok`` is ``no`` when ``firmer`` has softeners or excuses or adds new pressure
   (a threat, an ultimatum, a jab), when ``softer`` is not warmer, or when the two differ only by
   punctuation. ``clean`` does not affect ``ladder_ok``. Only an eligible pair is measured: one

@@ -7,6 +7,7 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import pytest
 from tests.fakes.judge import JUDGE_USAGE, FakeRewriteJudge, judge_result, observation_of, slot
@@ -36,6 +37,7 @@ from svoi_pravila.evals.judge_calibration import (
     judge_is_calibrated,
     judge_request,
     render_calibration_report,
+    report_name,
     run_calibration,
     write_calibration,
 )
@@ -292,7 +294,7 @@ async def test_run_calibration_derives_the_verdicts_and_the_report_shows_the_evi
     case = _full_case("c0")
     request = judge_request(case, 5.0)
     good = observation_of(judge_result(), request)
-    observed = replace(good, firmer=replace(good.firmer, rude=("блин",)))
+    observed = replace(good, firmer=replace(good.firmer, rude=("твёрже",), added=("нет такого",)))
     run = await run_calibration(
         FakeRewriteJudge(observed),
         [case],
@@ -307,7 +309,10 @@ async def test_run_calibration_derives_the_verdicts_and_the_report_shows_the_evi
     report = render_calibration_report(
         calibrate("model-x", run.outcomes), run.outcomes, spent_billable=1
     )
-    assert "| c0 | firmer | clean | yes | no | блин |" in report
+    assert "| c0 | firmer | clean | yes | no | твёрже |" in report
+    assert "- ungrounded quotes: 1 (rude 0, added 1," in report
+    payload = calibration_payload(calibrate("model-x", run.outcomes))
+    assert cast("dict[str, int]", payload["ungrounded"])["total"] == 1
 
 
 @pytest.mark.unit
@@ -451,11 +456,27 @@ def test_without_eval_output_items_the_calibration_cannot_pass() -> None:
 @pytest.mark.unit
 def test_calibration_path_names_the_model_and_rejects_unsafe_names(tmp_path: Path) -> None:
     assert calibration_path(tmp_path, "GigaChat-3-Lightning").name == (
-        "judge_calibration_GigaChat-3-Lightning_v2.json"
+        "judge_calibration_GigaChat-3-Lightning_v3.json"
     )
     for model in ("../x", "a b", "", "a/b"):
         with pytest.raises(ValueError, match="cannot be used"):
             calibration_path(tmp_path, model)
+
+
+@pytest.mark.unit
+def test_the_local_report_name_carries_the_model_and_the_rubric() -> None:
+    assert report_name("GigaChat-3-Pro") == "judge_calibration_GigaChat-3-Pro_v3.md"
+    assert report_name("GigaChat-2-Max") != report_name("GigaChat-3-Pro")
+    with pytest.raises(ValueError, match="cannot be used"):
+        report_name("../x")
+
+
+@pytest.mark.unit
+def test_the_cli_writes_the_report_to_a_path_with_the_model_unless_told_otherwise() -> None:
+    default = judge_cli._report_path(argparse.Namespace(out=None, model="GigaChat-3-Pro"))
+    assert default.name == "judge_calibration_GigaChat-3-Pro_v3.md"
+    given = judge_cli._report_path(argparse.Namespace(out="reports/x.md", model="GigaChat-3-Pro"))
+    assert given == Path("reports/x.md")
 
 
 @pytest.mark.unit
@@ -467,11 +488,20 @@ def test_the_committed_payload_has_numbers_and_no_text(tmp_path: Path) -> None:
     assert payload["rubric"] == RUBRIC_VERSION
     assert payload["model"] == "model-x"
     assert payload["passed"] is True
-    assert payload["version"] == 2
+    assert payload["version"] == 3
     assert set(payload["criteria"]) == set(CRITERIA)
     assert set(payload["sources"]) == {SOURCE_SYNTHETIC, SOURCE_EVAL_OUTPUT}
     assert set(payload["sources"][SOURCE_EVAL_OUTPUT]) == set(CRITERIA)
     assert set(payload["criteria"]["clean"]) == {"labels", "accuracy", "defects", "defect_recall"}
+    assert payload["ungrounded"] == {
+        "rude": 0,
+        "added": 0,
+        "goal_sentence": 0,
+        "rule_evidence": 0,
+        "firmer_softening": 0,
+        "firmer_pressure": 0,
+        "total": 0,
+    }
     for text in ("черновик", "мягче", "твёрже"):
         assert text not in path.read_text(encoding="utf-8")
 
@@ -497,7 +527,7 @@ def test_judge_is_calibrated_only_with_a_passed_file_of_the_current_rubric(tmp_p
 @pytest.mark.parametrize("content", ["[]", '{"version": 1, "passed": true}', '{"version": 2}'])
 def test_a_calibration_file_of_another_shape_is_an_error(tmp_path: Path, content: str) -> None:
     calibration_path(tmp_path, "model-x").write_text(content, encoding="utf-8")
-    with pytest.raises(ValueError, match="not a version 2"):
+    with pytest.raises(ValueError, match="not a version 3"):
         judge_is_calibrated(tmp_path, "model-x")
 
 

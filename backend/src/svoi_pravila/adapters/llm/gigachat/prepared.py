@@ -127,7 +127,7 @@ def prepare_judge(request: JudgeRequest) -> PreparedMessages:
     marker = allocate_boundary_marker(
         untrusted_texts(request.draft, goal, request.softer, request.firmer, rules=request.rules)
     )
-    template, prompt_version = load_prompt_template("judge_rewrite", "v2")
+    template, prompt_version = load_prompt_template("judge_rewrite", "v3")
     system = render_system_prompt(template, boundary_marker=marker)
     user = wrap_untrusted_payload(
         marker,

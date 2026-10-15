@@ -9,7 +9,7 @@ from svoi_pravila.application.ports.rewrite_judge import JudgeResult, SlotVerdic
 
 _META = GenerationMeta(
     model="judge",
-    prompt_version="judge_rewrite@v2",
+    prompt_version="judge_rewrite@v3",
     latency_ms=1,
     attempts=1,
     usage=TokenUsage(1, 1, 0),

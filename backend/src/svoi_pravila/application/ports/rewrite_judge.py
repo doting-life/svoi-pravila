@@ -110,9 +110,10 @@ class SlotObservation:
 
     rude: tuple[str, ...]
     added: tuple[str, ...]
-    goal_sentence: str
     position: Position
+    goal_sentence: str
     goal_breach: GoalBreach
+    rule_evidence: tuple[str, ...]
     rule_check: RuleCheck
 
 

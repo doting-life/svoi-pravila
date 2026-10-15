@@ -52,7 +52,7 @@ def judge_result(
         ladder_ok=ladder_ok,
         meta=GenerationMeta(
             model="fake-judge",
-            prompt_version="judge_rewrite@v2",
+            prompt_version="judge_rewrite@v3",
             latency_ms=3,
             attempts=1,
             usage=JUDGE_USAGE,
@@ -60,17 +60,27 @@ def judge_result(
     )
 
 
-def _slot_observation(request: JudgeRequest, verdicts: SlotVerdicts) -> SlotObservation:
-    """An observation that derives to ``verdicts`` for ``request``."""
+def _slot_observation(
+    request: JudgeRequest, verdicts: SlotVerdicts, variant: str
+) -> SlotObservation:
+    """An observation that derives to ``verdicts`` for ``request``.
+
+    Every quote is the whole variant: it is in its text, so it counts. A variant that is both
+    rude and inventing cannot be scripted (the two quotes would overlap and ``added`` drops).
+    """
+    if verdicts.clean is Verdict.NO and verdicts.invented is Verdict.YES:
+        msg = "a scripted variant cannot be rude and inventing at once"
+        raise ValueError(msg)
     breach = GoalBreach.NONE
     if request.goal is not None and verdicts.goal_done is Verdict.NO:
         breach = sorted(GOAL_BREACHES[request.goal])[0]
     return SlotObservation(
-        rude=("грубо",) if verdicts.clean is Verdict.NO else (),
-        added=("добавлено",) if verdicts.invented is Verdict.YES else (),
-        goal_sentence="" if request.goal is None else "цель",
+        rude=(variant,) if verdicts.clean is Verdict.NO else (),
+        added=(variant,) if verdicts.invented is Verdict.YES else (),
         position=Position.SAME if verdicts.meaning_kept is Verdict.YES else Position.LOST,
+        goal_sentence="" if request.goal is None else variant,
         goal_breach=breach,
+        rule_evidence=(variant,) if verdicts.rule_done is Verdict.YES else (),
         rule_check={
             Verdict.YES: RuleCheck.FOLLOWED,
             Verdict.NO: RuleCheck.BROKEN,
@@ -87,8 +97,8 @@ def observation_of(result: JudgeResult, request: JudgeRequest) -> JudgeObservati
     follows the request.
     """
     return JudgeObservation(
-        softer=_slot_observation(request, result.softer),
-        firmer=_slot_observation(request, result.firmer),
+        softer=_slot_observation(request, result.softer, request.softer),
+        firmer=_slot_observation(request, result.firmer, request.firmer),
         pair=PairObservation(
             firmer_softening=(),
             firmer_pressure=(),

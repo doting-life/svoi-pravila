@@ -17,7 +17,13 @@ from svoi_pravila.benchmarks.runner import SpendTracker
 from svoi_pravila.config import LlmToolSettings
 from svoi_pravila.evals.attempt_recorder import AttemptRecorder
 from svoi_pravila.evals.judge_calibration import judge_is_calibrated
-from svoi_pravila.evals.rewrite_cases import RewriteCase, load_rewrite_cases, merge_cases
+from svoi_pravila.evals.rewrite_cases import (
+    RewriteCase,
+    RewriteCategory,
+    load_rewrite_cases,
+    merge_cases,
+    select_categories,
+)
 from svoi_pravila.evals.rewrite_gates import (
     Baseline,
     compute_metrics,
@@ -45,9 +51,9 @@ _ESTIMATE_HELP = (
 
 def _load_cases(args: argparse.Namespace) -> list[RewriteCase]:
     cases = load_rewrite_cases(Path(args.data))
-    if args.extra_cases is None:
-        return cases
-    return merge_cases(cases, load_rewrite_cases(Path(args.extra_cases)))
+    if args.extra_cases is not None:
+        cases = merge_cases(cases, load_rewrite_cases(Path(args.extra_cases)))
+    return select_categories(cases, args.category or ())
 
 
 def _worst_case(case: RewriteCase, *, judged: bool) -> int:
@@ -155,6 +161,7 @@ async def async_main(args: argparse.Namespace) -> int:
             not_run=tuple(models[len(evals) :]),
             baseline=baseline,
             judge_calibrated=judge_calibrated,
+            cases=cases,
         )
         await asyncio.to_thread(_write_report, Path(args.out), report)
         print(f"Report written. Spent billable tokens: {spend.spent_billable}")
@@ -180,6 +187,14 @@ def main() -> None:
     """CLI entrypoint for ``svoi-pravila-eval-rewrite``."""
     parser = argparse.ArgumentParser(description="GigaChat rewrite eval", epilog=_ESTIMATE_HELP)
     parser.add_argument("--data", default=_DEFAULT_DATA, help="Path to the JSONL rewrite cases")
+    parser.add_argument(
+        "--category",
+        action="append",
+        type=RewriteCategory,
+        choices=list(RewriteCategory),
+        default=None,
+        help="Run only the cases of this category (repeatable); default: every category",
+    )
     parser.add_argument(
         "--extra-cases",
         default=None,
